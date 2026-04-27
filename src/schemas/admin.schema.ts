@@ -62,6 +62,16 @@ export const kratosIdentityCreateSchema = z.object({
         .optional(),
     })
     .optional(),
+  verifiable_addresses: z
+    .array(
+      z.object({
+        value: z.string().email(),
+        verified: z.boolean(),
+        via: z.string(),
+        status: z.string(),
+      })
+    )
+    .optional(),
 })
 
 // Update identity request schema
