@@ -1,6 +1,13 @@
 import { FastifyError, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
-import { Prisma } from '@prisma/client'
+import {
+  Prisma,
+  PrismaClientKnownRequestError,
+  PrismaClientValidationError,
+  PrismaClientInitializationError,
+  PrismaClientRustPanicError,
+  PrismaClientUnknownRequestError,
+} from '@prisma/client'
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
 
@@ -16,7 +23,7 @@ interface PrismaErrorResponse {
  * Handle Prisma known request errors with specific error codes
  */
 function handlePrismaKnownError(
-  error: Prisma.PrismaClientKnownRequestError
+  error: PrismaClientKnownRequestError
 ): PrismaErrorResponse {
   switch (error.code) {
     // Unique constraint violation
@@ -135,7 +142,7 @@ export function errorHandler(
   }
 
   // Prisma validation errors (invalid data shape, missing fields, etc.)
-  if (error instanceof Prisma.PrismaClientValidationError) {
+  if (error instanceof PrismaClientValidationError) {
     return reply.status(400).send({
       error: 'Bad Request',
       message: 'Invalid data format or missing required fields',
@@ -144,7 +151,7 @@ export function errorHandler(
   }
 
   // Prisma initialization errors (connection issues, schema mismatch)
-  if (error instanceof Prisma.PrismaClientInitializationError) {
+  if (error instanceof PrismaClientInitializationError) {
     return reply.status(503).send({
       error: 'Service Unavailable',
       message: 'Database connection failed',
@@ -153,7 +160,7 @@ export function errorHandler(
   }
 
   // Prisma rust panic errors (critical internal errors)
-  if (error instanceof Prisma.PrismaClientRustPanicError) {
+  if (error instanceof PrismaClientRustPanicError) {
     return reply.status(500).send({
       error: 'Internal Server Error',
       message: 'A critical database error occurred',
@@ -162,7 +169,7 @@ export function errorHandler(
   }
 
   // Prisma unknown request errors
-  if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+  if (error instanceof PrismaClientUnknownRequestError) {
     return reply.status(500).send({
       error: 'Internal Server Error',
       message: 'An unexpected database error occurred',
@@ -171,7 +178,7 @@ export function errorHandler(
   }
 
   // Prisma known errors
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+  if (error instanceof PrismaClientKnownRequestError) {
     const prismaErrorResponse = handlePrismaKnownError(error)
     return reply.status(prismaErrorResponse.status).send({
       error: prismaErrorResponse.error,
