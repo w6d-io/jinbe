@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum DBType {
+  postgresql
+  mongodb
+  influxdb
+}
+
+model BackupItem {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  database_type  String
+  name           String
+  admin_username String
+  username       String
+  filename       String
+  date           DateTime @db.Date
+  backupId       String   @db.ObjectId
+  backup         Backup   @relation(fields: [backupId], references: [id])
+}
+
+model Backup {
+  id            String       @id @default(auto()) @map("_id") @db.ObjectId
+  database_type String
+  date          DateTime     @db.Date
+  size          String
+  clusterId     String       @db.ObjectId
+  cluster       Cluster      @relation(fields: [clusterId], references: [id])
+  BackupItem    BackupItem[]
+
+  @@unique([database_type, date])
+}
+
+model Cluster {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  name      String     @unique
+  config    String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  backups   Backup[]
+  databases Database[]
+}
+
+model Database {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  type      DBType
+  host      String
+  port      Int
+  username  String
+  password  String
+  clusterId String       @db.ObjectId
+  cluster   Cluster      @relation(fields: [clusterId], references: [id])
+  api       DatabaseAPI?
+
+  @@unique([clusterId, type])
+}
+
+model DatabaseAPI {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  address    String
+  api_key    String
+  databaseId String   @unique @db.ObjectId
+  database   Database @relation(fields: [databaseId], references: [id])
+}
