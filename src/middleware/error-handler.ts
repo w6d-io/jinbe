@@ -1,13 +1,12 @@
 import { FastifyError, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
 import {
-  Prisma,
   PrismaClientKnownRequestError,
   PrismaClientValidationError,
   PrismaClientInitializationError,
   PrismaClientRustPanicError,
   PrismaClientUnknownRequestError,
-} from '@prisma/client'
+} from '@prisma/client/runtime/library.js'
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
 
