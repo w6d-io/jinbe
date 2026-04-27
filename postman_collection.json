@@ -1,0 +1,475 @@
+{
+  "info": {
+    "name": "Kuma API",
+    "description": "Standalone Kuma API - Kubernetes cluster and database management",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Check server health status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Sign In",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extract token from cookie if present",
+                  "const cookieHeader = pm.response.headers.get('Set-Cookie');",
+                  "if (cookieHeader) {",
+                  "    const tokenMatch = cookieHeader.match(/token=([^;]+)/);",
+                  "    if (tokenMatch) {",
+                  "        pm.collectionVariables.set('jwt_token', tokenMatch[1]);",
+                  "        console.log('JWT token saved to collection variable');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "signin"]
+            },
+            "description": "Authenticate user and obtain JWT token"
+          }
+        },
+        {
+          "name": "Get Session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "session"]
+            },
+            "description": "Get current user session information"
+          }
+        },
+        {
+          "name": "Sign Out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "signout"]
+            },
+            "description": "Sign out and clear authentication cookie"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"]
+            },
+            "description": "Get all users (requires authentication)"
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"role\": \"user\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"]
+            },
+            "description": "Create a new user"
+          }
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/:identifier",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", ":identifier"],
+              "variable": [
+                {
+                  "key": "identifier",
+                  "value": "507f1f77bcf86cd799439011",
+                  "description": "User ID (ObjectId) or email address"
+                }
+              ]
+            },
+            "description": "Get user by ID or email"
+          }
+        },
+        {
+          "name": "Get User by Email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/:identifier",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", ":identifier"],
+              "variable": [
+                {
+                  "key": "identifier",
+                  "value": "user@example.com",
+                  "description": "User ID (ObjectId) or email address"
+                }
+              ]
+            },
+            "description": "Get user by email address"
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/:identifier",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", ":identifier"],
+              "variable": [
+                {
+                  "key": "identifier",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Update user by ID or email"
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/:identifier",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", ":identifier"],
+              "variable": [
+                {
+                  "key": "identifier",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Delete user by ID or email"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clusters",
+      "item": [
+        {
+          "name": "List Clusters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clusters?withConfig=true&withDatabase=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["clusters"],
+              "query": [
+                {
+                  "key": "withConfig",
+                  "value": "true",
+                  "description": "Include Kubernetes config"
+                },
+                {
+                  "key": "withDatabase",
+                  "value": "true",
+                  "description": "Include database configurations"
+                }
+              ]
+            },
+            "description": "Get all clusters with optional config and database data"
+          }
+        },
+        {
+          "name": "Create Cluster",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"production-cluster\",\n  \"config\": \"<kubeconfig-yaml>\",\n  \"databases\": [\n    {\n      \"type\": \"postgresql\",\n      \"host\": \"postgres.example.com\",\n      \"port\": 5432,\n      \"username\": \"admin\",\n      \"password\": \"password123\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/clusters",
+              "host": ["{{baseUrl}}"],
+              "path": ["clusters"]
+            },
+            "description": "Create a new cluster with optional databases"
+          }
+        },
+        {
+          "name": "Get Cluster",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clusters/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clusters", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Get cluster by ID with full details"
+          }
+        },
+        {
+          "name": "Update Cluster",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"updated-cluster\",\n  \"config\": \"<updated-kubeconfig>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/clusters/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clusters", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Update cluster configuration"
+          }
+        },
+        {
+          "name": "Delete Cluster",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clusters/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clusters", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Delete cluster and associated resources"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Databases",
+      "item": [
+        {
+          "name": "Get Databases and Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/databases?cluster=production-cluster&database=postgresql",
+              "host": ["{{baseUrl}}"],
+              "path": ["databases"],
+              "query": [
+                {
+                  "key": "cluster",
+                  "value": "production-cluster",
+                  "description": "Cluster name (required)"
+                },
+                {
+                  "key": "database",
+                  "value": "postgresql",
+                  "description": "Database type (optional)"
+                }
+              ]
+            },
+            "description": "Get databases and user roles for a cluster"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Backups",
+      "item": [
+        {
+          "name": "List Backups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/backups?cluster=production-cluster",
+              "host": ["{{baseUrl}}"],
+              "path": ["backups"],
+              "query": [
+                {
+                  "key": "cluster",
+                  "value": "production-cluster",
+                  "description": "Filter by cluster name (optional)"
+                }
+              ]
+            },
+            "description": "Get all backups, optionally filtered by cluster"
+          }
+        },
+        {
+          "name": "Create Backup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"database_type\": \"postgresql\",\n  \"date\": \"2025-10-07T00:00:00Z\",\n  \"size\": \"1.5GB\",\n  \"backupItems\": [\n    {\n      \"database_type\": \"postgresql\",\n      \"name\": \"production_db\",\n      \"admin_username\": \"postgres\",\n      \"username\": \"app_user\",\n      \"filename\": \"production_db_20251007.sql\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/backups?cluster=production-cluster",
+              "host": ["{{baseUrl}}"],
+              "path": ["backups"],
+              "query": [
+                {
+                  "key": "cluster",
+                  "value": "production-cluster",
+                  "description": "Cluster name (required)"
+                }
+              ]
+            },
+            "description": "Create a new backup with items"
+          }
+        },
+        {
+          "name": "Get Backup",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/backups/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["backups", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "507f1f77bcf86cd799439011"
+                }
+              ]
+            },
+            "description": "Get backup details by ID"
+          }
+        }
+      ]
+    }
+  ]
+}

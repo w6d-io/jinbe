@@ -1,0 +1,22 @@
+# .github/actions/generate-version/action.yaml
+name: 'Generate Version Tag'
+description: 'Generate semantic version tag'
+inputs:
+  github-token:
+    description: 'GitHub token'
+    required: true
+outputs:
+  tag:
+    description: 'Generated version tag'
+    value: ${{ steps.generate_tag.outputs.tag }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate tag
+      id: generate_tag
+      uses: K-Phoen/semver-release-action@master
+      with:
+        release_branch: main
+        release_strategy: none
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
