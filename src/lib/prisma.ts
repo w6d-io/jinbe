@@ -1,5 +1,5 @@
 // lib/prisma.ts
-// @ts-ignore
+// @ts-expect-error - PrismaClient type not yet resolved before generate
 import { PrismaClient } from '@prisma/client'
 
 declare global {
