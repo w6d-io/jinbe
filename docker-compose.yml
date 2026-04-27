@@ -10,6 +10,7 @@ services:
       NODE_ENV: development
       PORT: 3000
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: mongodb://mongo:27017/jinbe
       OPA_URL: http://opa:8181
       OPA_DATA_URL: http://opa:8181
       DEV_BYPASS_AUTH: 'true'
@@ -21,6 +22,7 @@ services:
       - .env
     depends_on:
       - redis
+      - mongo
       - opa
     restart: unless-stopped
     networks:
@@ -59,8 +61,20 @@ services:
     networks:
       - jinbe-network
 
+  mongo:
+    image: mongo:7
+    container_name: jinbe-mongo
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
 volumes:
   redis_data:
+  mongo_data:
 
 networks:
   jinbe-network:
