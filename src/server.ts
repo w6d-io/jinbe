@@ -380,6 +380,7 @@ async function start() {
               traits: { email: adminEmail, name: adminName },
               credentials: { password: { config: { password: adminPassword } } },
               metadata_admin: { groups: ['super_admins'] },
+              verifiable_addresses: [{ value: adminEmail, verified: true, via: 'email', status: 'completed' }],
             })
             fastify.log.info({ email: adminEmail, id: identity.id }, 'Default admin user created')
           } else {
