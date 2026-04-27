@@ -1,0 +1,409 @@
+openapi: 3.1.0
+info:
+  title: Kuma API
+  version: 1.0.0
+  description: |
+    Standalone Kuma API for Kubernetes cluster and database management.
+    
+    ## Authentication
+    This API uses JWT-based authentication. Obtain a token via `/auth/signin` endpoint.
+    
+    Two authentication methods are supported:
+    1. **Bearer Token**: Include token in Authorization header
+    2. **Cookie**: HTTP-only cookie automatically set on signin
+    
+  contact:
+    name: Kuma Team
+    
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: https://api.kuma.example.com
+    description: Production server
+
+tags:
+  - name: auth
+    description: Authentication endpoints
+  - name: users
+    description: User management
+  - name: clusters
+    description: Kubernetes cluster management
+  - name: databases
+    description: Database management
+  - name: backups
+    description: Backup management
+  - name: health
+    description: Health check
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/signin
+    
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: token
+      description: HTTP-only cookie set automatically on signin
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        details:
+          type: object
+          description: Additional error details
+          
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: User ID (MongoDB ObjectId)
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        image:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [user, admin]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          
+    UserCreate:
+      type: object
+      required:
+        - name
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        image:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+          default: user
+          
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        image:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+          
+    SignInRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          format: email
+          description: User email address
+        password:
+          type: string
+          description: User password
+          
+    Session:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        expiresAt:
+          type: string
+          format: date-time
+          
+    HealthCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        uptime:
+          type: number
+          description: Server uptime in seconds
+        timestamp:
+          type: string
+          format: date-time
+        commitSha:
+          type: string
+          description: Git commit SHA
+
+paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: Health check
+      description: Returns server health status
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheck'
+                
+  /auth/signin:
+    post:
+      tags:
+        - auth
+      summary: Sign in user
+      description: Authenticates user and returns JWT token
+      operationId: signIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+            example:
+              username: user@example.com
+              password: password123
+      responses:
+        '200':
+          description: User authenticated or null if credentials invalid
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/User'
+                  - type: 'null'
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: token=<jwt>; HttpOnly; Secure; SameSite=Lax
+                
+  /auth/session:
+    get:
+      tags:
+        - auth
+      summary: Get current session
+      description: Returns current user session information
+      operationId: getSession
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Session information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+                
+  /auth/signout:
+    post:
+      tags:
+        - auth
+      summary: Sign out
+      description: Clears authentication cookie
+      operationId: signOut
+      responses:
+        '200':
+          description: Signed out successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    
+  /users:
+    get:
+      tags:
+        - users
+      summary: List all users
+      description: Returns list of all users (requires authentication)
+      operationId: getUsers
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+          
+    post:
+      tags:
+        - users
+      summary: Create user
+      description: Creates a new user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '409':
+          description: User with email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+                
+  /users/{identifier}:
+    parameters:
+      - name: identifier
+        in: path
+        required: true
+        description: User ID (ObjectId) or email address
+        schema:
+          type: string
+        examples:
+          byId:
+            value: 507f1f77bcf86cd799439011
+            summary: By MongoDB ObjectId
+          byEmail:
+            value: user@example.com
+            summary: By email address
+            
+    get:
+      tags:
+        - users
+      summary: Get user
+      description: Returns user by ID or email
+      operationId: getUser
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+          
+    put:
+      tags:
+        - users
+      summary: Update user
+      description: Updates user by ID or email
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+          
+    delete:
+      tags:
+        - users
+      summary: Delete user
+      description: Deletes user by ID or email
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        '200':
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  responses:
+    Unauthorized:
+      description: Unauthorized - Invalid or missing authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Unauthorized
+            message: Authentication required

@@ -1,0 +1,130 @@
+name: Build & Release
+
+on:
+  pull_request:
+    types: [closed]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    outputs:
+      version: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          LATEST=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+          MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
+          MINOR=$(echo $LATEST | cut -d. -f2)
+          PATCH=$(echo $LATEST | cut -d. -f3)
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
+          if echo "$LABELS" | grep -qw "major"; then
+            TAG="v$((MAJOR+1)).0.0"
+          elif echo "$LABELS" | grep -qw "minor"; then
+            TAG="v${MAJOR}.$((MINOR+1)).0"
+          else
+            TAG="v${MAJOR}.${MINOR}.$((PATCH+1))"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Computed version: $TAG (from $LATEST)"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Update Helm chart image tag
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          REPO="w6d-io/charts"
+          FILE="charts/auth/values.yaml"
+
+          SHA=$(gh api repos/$REPO/contents/$FILE --jq '.sha')
+          CONTENT=$(gh api repos/$REPO/contents/$FILE --jq '.content' | base64 -d)
+
+          # Replace jinbe.image.tag value in the jinbe section
+          UPDATED=$(echo "$CONTENT" | python3 -c "
+          import sys, re
+          text = sys.stdin.read()
+          # Match 'tag:' line inside jinbe.image block
+          text = re.sub(
+            r'(jinbe:\n(?:[ \t]+\S[^\n]*\n)*?[ \t]+image:\n(?:[ \t]+\S[^\n]*\n)*?[ \t]+tag:)[ \t]+[^\n]*',
+            r'\1 \"' + sys.argv[1] + '\"',
+            text
+          )
+          sys.stdout.write(text)
+          " "$VERSION")
+
+          ENCODED=$(printf '%s' "$UPDATED" | base64 -w0)
+          gh api repos/$REPO/contents/$FILE \
+            --method PUT \
+            --field message="chore: bump jinbe image to ${VERSION}" \
+            --field content="$ENCODED" \
+            --field sha="$SHA"
+
+      - name: Create GitHub Release
+        uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter.yml
+          version: ${{ steps.version.outputs.tag }}
+          tag: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          publish: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

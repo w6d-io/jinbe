@@ -1,0 +1,67 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jinbe
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      REDIS_URL: redis://redis:6379
+      OPA_URL: http://opa:8181
+      OPA_DATA_URL: http://opa:8181
+      DEV_BYPASS_AUTH: 'true'
+      DEV_USER_EMAIL: dev@localhost
+      ENCRYPTION_KEY: dev-encryption-key-minimum-32-characters!!
+      ENABLE_SWAGGER: 'true'
+      LOG_LEVEL: debug
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - opa
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: jinbe-redis
+    ports:
+      - '6379:6379'
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
+  opa:
+    image: openpolicyagent/opa:latest-static
+    container_name: jinbe-opa
+    ports:
+      - '8181:8181'
+    command:
+      - run
+      - --server
+      - --addr=:8181
+      - --set=services.jinbe.url=http://api:3000
+      - --set=bundles.authz.service=jinbe
+      - --set=bundles.authz.resource=/api/opa/bundle
+      - --set=bundles.authz.polling.min_delay_seconds=10
+      - --set=bundles.authz.polling.max_delay_seconds=30
+      - --log-level=info
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
+volumes:
+  redis_data:
+
+networks:
+  jinbe-network:
+    driver: bridge

@@ -1,0 +1,48 @@
+# .github/actions/setup-build-env/action.yaml
+name: 'Setup Build Environment'
+description: 'Setup common build environment variables and tools'
+inputs:
+  registry:
+    description: 'Container registry'
+    required: true
+  github-token:
+    description: 'GitHub token'
+    required: true
+outputs:
+  build-date:
+    description: 'Build date'
+    value: ${{ steps.vars.outputs.build-date }}
+  project-url:
+    description: 'Project URL'
+    value: ${{ steps.vars.outputs.project-url }}
+  vcs-ref:
+    description: 'VCS reference'
+    value: ${{ steps.vars.outputs.vcs-ref }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Set build variables
+      id: vars
+      shell: bash
+      run: |
+        BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        PROJECT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+        VCS_REF="$GITHUB_SHA"
+
+        echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
+        echo "VCS_REF=$VCS_REF" >> $GITHUB_ENV
+
+        echo "build-date=$BUILD_DATE" >> $GITHUB_OUTPUT
+        echo "project-url=$PROJECT_URL" >> $GITHUB_OUTPUT
+        echo "vcs-ref=$VCS_REF" >> $GITHUB_OUTPUT
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}

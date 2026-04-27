@@ -1,0 +1,27 @@
+name: Enforce PR labels
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, opened, edited, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enforce-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check_semver_label
+        if: contains(github.event.pull_request.labels.*.name, 'release')
+        uses: yogevbd/enforce-label-action@2.1.0
+        with:
+          REQUIRED_LABELS_ANY: "major,minor,patch"
+          REQUIRED_LABELS_ANY_DESCRIPTION: "Select at least one label ['major','minor','patch']"
+          BANNED_LABELS: "banned"
+      - name: check_change_label
+        uses: yogevbd/enforce-label-action@2.1.0
+        with:
+          REQUIRED_LABELS_ANY: "feature,bug,documentation,chores,perf,refactors,tests,maintenance"
+          REQUIRED_LABELS_ANY_DESCRIPTION: "Select at least one label ['feature','bug','documentation','chores','perf','refactors','tests','maintenance']"
+          BANNED_LABELS: "banned"

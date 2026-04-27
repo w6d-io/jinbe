@@ -1,0 +1,60 @@
+# .github/actions/update-helm-chart/action.yaml
+name: 'Update Helm Chart'
+description: 'Update Helm chart with new image and version'
+inputs:
+  github-token:
+    description: 'GitHub token'
+    required: true
+  version:
+    description: 'Version'
+    required: true
+  helm-repo:
+    description: 'Helm repository to update'
+    required: true
+  helm-repo-branch:
+    description: 'Branch of the Helm repository to update'
+    required: true
+    default: 'main'
+  path-to-chart:
+    description: 'Path to the Helm chart in the repository'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set app version
+      id: app_version
+      uses: catalystcommunity/action-release-update-chart@main
+      with:
+        # Github token to use, this should be a PAT so that it can trigger workflows on
+        # the destination helm repository
+        token: ${{ inputs.github-token }}
+
+        # semantic-release release configuration to use
+        # Default: @catalystcommunity/release-config-general
+        release-config: ${{ inputs.version }}
+
+        # The helm chart git repo to update
+        # Default: ${{ github.repository_owner }}/chart-${{ github.event.repository.name }}
+        helm-repo: ${{ inputs.helm-repo }}
+
+        # The helm chart git repo to branch from and PR into
+        # Default: alpha
+        helm-repo-branch: ${{ inputs.helm-repo-branch }}
+
+        # The path to the helm chart in the helm git repo
+        # Default: chart
+        path-to-chart: ${{ inputs.path-to-chart }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+
+
