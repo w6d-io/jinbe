@@ -1,6 +1,6 @@
 {
   "name": "jinbe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "RBAC control plane — identity groups, service roles, route permissions, OPA policy sync and Oathkeeper rule management",
   "main": "dist/server.js",
   "type": "module",
