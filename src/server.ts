@@ -182,23 +182,27 @@ async function start() {
         await redisRbacRepository.addService('jinbe')
         await redisRbacRepository.addService('global')
 
-        // Default Oathkeeper access rules — domain-aware from env
+        // Rego policy is managed by OPAL (pulled from git policy repo)
+        // Jinbe only seeds RBAC data (groups, roles, rules), not policy
+
+        await redisRbacRepository.invalidateBundleEtag()
+        fastify.log.info('Default RBAC data seeded successfully (groups, roles, access rules)')
+      } else {
+        fastify.log.info(`Redis has ${Object.keys(groups).length} groups — skipping RBAC seed`)
+      }
+
+      // Access rules always reseeded on startup — domain-aware, idempotent
+      {
         const kratosPublic = env.KRATOS_PUBLIC_URL || 'http://kratos-public:80'
         const jinbeInternal = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
         const authDomain = env.AUTH_DOMAIN
         const appDomain = env.APP_DOMAIN
         const apiDomain = env.API_DOMAIN || appDomain
-
-        // Derive sibling service URLs from KRATOS_PUBLIC_URL pattern
-        // e.g. http://test-auth-kratos-public:80 → http://test-auth-kratos-login-ui:80
         const loginUiUrl = kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
         const adminUiUrl = jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
-
-        // Build rules — regexp mode (non-overlapping patterns)
         const rules: OathkeeperRule[] = []
-        const esc = (d: string) => d.replace(/\./g, '\\.')  // escape dots for regex
+        const esc = (d: string) => d.replace(/\./g, '\\.')
 
-        // 1. Kratos self-service routes
         const kratosMatch = authDomain
           ? `<https?://${esc(authDomain)}/(self-service|sessions|schemas|\\.well-known)(/.*)?$>`
           : '<https?://[^/]+/(self-service|sessions|schemas|\\.well-known)(/.*)?$>'
@@ -211,7 +215,6 @@ async function start() {
           mutators: [{ handler: 'noop' }],
         })
 
-        // 2. Auth domain catch-all → Login UI (negative lookahead excludes Kratos paths)
         if (authDomain) {
           rules.push({
             id: 'auth-all',
@@ -223,7 +226,6 @@ async function start() {
           })
         }
 
-        // 3a. CORS preflight — allow OPTIONS without auth (browsers don't send cookies on preflight)
         const apiDomains = [apiDomain, appDomain].filter(Boolean).map(d => esc(d!))
         const apiMatch = apiDomains.length > 0
           ? `<https?://(${apiDomains.join('|')})/api/.*>`
@@ -236,8 +238,6 @@ async function start() {
           authorizer: { handler: 'allow' },
           mutators: [{ handler: 'noop' }],
         })
-
-        // 3b. API routes — jinbe (all methods except OPTIONS which is handled above)
         rules.push({
           id: 'jinbe',
           upstream: { url: jinbeInternal },
@@ -247,7 +247,6 @@ async function start() {
           mutators: [{ handler: 'header' }],
         })
 
-        // 4. App/Kuma domain catch-all → admin UI (excludes /api/* matched above)
         if (appDomain) {
           rules.push({
             id: 'kuma',
@@ -260,14 +259,7 @@ async function start() {
         }
 
         await redisRbacRepository.setAccessRules(rules)
-
-        // Rego policy is managed by OPAL (pulled from git policy repo)
-        // Jinbe only seeds RBAC data (groups, roles, rules), not policy
-
-        await redisRbacRepository.invalidateBundleEtag()
-        fastify.log.info('Default RBAC data seeded successfully (groups, roles, access rules)')
-      } else {
-        fastify.log.info(`Redis has ${Object.keys(groups).length} groups — skipping bootstrap`)
+        fastify.log.info({ ruleCount: rules.length, authDomain, appDomain }, 'Access rules synced to Redis')
       }
 
       // Ensure jinbe's own route_map is current — runs every startup (idempotent)
