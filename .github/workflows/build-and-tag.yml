@@ -3,6 +3,12 @@ name: Build & Release
 on:
   pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Version tag (e.g. v0.1.1). Leave empty to auto-compute from latest git tag."
+        required: false
+        default: ""
 
 env:
   REGISTRY: ghcr.io
@@ -20,7 +26,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release'))
     outputs:
       version: ${{ steps.version.outputs.tag }}
     steps:
@@ -31,21 +39,25 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST=$(git tag --list 'v*' --sort=-version:refname | head -1)
-          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
-          MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
-          MINOR=$(echo $LATEST | cut -d. -f2)
-          PATCH=$(echo $LATEST | cut -d. -f3)
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
-          if echo "$LABELS" | grep -qw "major"; then
-            TAG="v$((MAJOR+1)).0.0"
-          elif echo "$LABELS" | grep -qw "minor"; then
-            TAG="v${MAJOR}.$((MINOR+1)).0"
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            TAG="${{ github.event.inputs.version_override }}"
           else
-            TAG="v${MAJOR}.${MINOR}.$((PATCH+1))"
+            LATEST=$(git tag --list 'v*' --sort=-version:refname | head -1)
+            if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+            MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
+            MINOR=$(echo $LATEST | cut -d. -f2)
+            PATCH=$(echo $LATEST | cut -d. -f3)
+            LABELS="${{ join(github.event.pull_request.labels.*.name, ' ') }}"
+            if echo "$LABELS" | grep -qw "major"; then
+              TAG="v$((MAJOR+1)).0.0"
+            elif echo "$LABELS" | grep -qw "minor"; then
+              TAG="v${MAJOR}.$((MINOR+1)).0"
+            else
+              TAG="v${MAJOR}.${MINOR}.$((PATCH+1))"
+            fi
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Computed version: $TAG (from $LATEST)"
+          echo "Computed version: $TAG"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
