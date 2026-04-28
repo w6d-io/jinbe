@@ -195,55 +195,52 @@ async function start() {
       {
         const kratosPublic = env.KRATOS_PUBLIC_URL || 'http://kratos-public:80'
         const jinbeInternal = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-        const authDomain = env.AUTH_DOMAIN
-        const appDomain = env.APP_DOMAIN
+        const authDomain = env.AUTH_DOMAIN || ''
+        const appDomain = env.APP_DOMAIN || ''
         const apiDomain = env.API_DOMAIN || appDomain
         const loginUiUrl = kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
         const adminUiUrl = jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
+        const kumaDomain = appDomain ? `kuma.${appDomain}` : ''
+        const jinbeDomain = apiDomain ? `jinbe.${apiDomain}` : ''
         const rules: OathkeeperRule[] = []
-        const esc = (d: string) => d.replace(/\./g, '\\.')
 
-        const kratosMatch = authDomain
-          ? `<https?://${esc(authDomain)}/(self-service|sessions|schemas|\\.well-known)(/.*)?$>`
-          : '<https?://[^/]+/(self-service|sessions|schemas|\\.well-known)(/.*)?$>'
-        rules.push({
-          id: 'kratos-public',
-          upstream: { url: kratosPublic },
-          match: { url: kratosMatch, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] },
-          authenticators: [{ handler: 'noop' }],
-          authorizer: { handler: 'allow' },
-          mutators: [{ handler: 'noop' }],
-        })
-
+        // 1. selfservice-ui — login UI static assets + kratos flow pages (no auth required)
         if (authDomain) {
           rules.push({
-            id: 'auth-all',
+            id: 'selfservice-ui',
             upstream: { url: loginUiUrl, preserve_host: true },
-            match: { url: `<https?://${esc(authDomain)}/(?!self-service|sessions|schemas|\\.well-known).*>`, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] },
+            match: {
+              url: `http<(s?)>://${authDomain}/<(app|error|register|settings|_next|static|assets|logos|login|recovery|verify|verification|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
+              methods: ['GET', 'POST', 'OPTIONS'],
+            },
             authenticators: [{ handler: 'noop' }],
             authorizer: { handler: 'allow' },
             mutators: [{ handler: 'noop' }],
           })
         }
 
-        const apiDomains = [apiDomain, appDomain].filter(Boolean).map(d => esc(d!))
-        const apiMatch = apiDomains.length > 0
-          ? `<https?://(${apiDomains.join('|')})/api/.*>`
-          : '<https?://[^/]+/api/.*>'
-        rules.push({
-          id: 'api-cors',
-          upstream: { url: jinbeInternal },
-          match: { url: apiMatch, methods: ['OPTIONS'] },
-          authenticators: [{ handler: 'noop' }],
-          authorizer: { handler: 'allow' },
-          mutators: [{ handler: 'noop' }],
-        })
-        if (apiDomain) {
+        // 2. kratos-public — Kratos API endpoints (no auth required)
+        if (authDomain) {
           rules.push({
-            id: 'jinbe-preflight',
-            upstream: { url: `http://auth-w6d-jinbe:8080`, preserve_host: false },
+            id: 'kratos-public',
+            upstream: { url: kratosPublic, preserve_host: true },
             match: {
-              url: `<https://jinbe.${esc(apiDomain)}/<.*>>`,
+              url: `http<(s?)>://${authDomain}/<(\\.well-known|self-service|sessions|schemas)(.*)>`,
+              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
+
+        // 3. kuma-api-preflight — OPTIONS passthrough for CORS (no auth required)
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-api-preflight',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
               methods: ['OPTIONS'],
             },
             authenticators: [{ handler: 'noop' }],
@@ -251,28 +248,84 @@ async function start() {
             mutators: [{ handler: 'noop' }],
           })
         }
-        rules.push({
-          id: 'jinbe',
-          upstream: { url: jinbeInternal },
-          match: { url: apiMatch, methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
-          authenticators: [{ handler: 'cookie_session' }],
-          authorizer: { handler: 'remote_json' },
-          mutators: [{ handler: 'header' }],
-        })
 
-        if (appDomain) {
+        // 4. kuma-api — Jinbe RBAC API (authenticated + OPA authorizer)
+        if (kumaDomain) {
           rules.push({
-            id: 'kuma',
+            id: 'kuma-api',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
+              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'remote_json' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
+        // 5. kuma-settings — Kratos settings flow proxied through login UI
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-settings',
+            upstream: { url: loginUiUrl },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/<(settings)(.*)>`,
+              methods: ['GET', 'POST', 'OPTIONS'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
+        // 6. kuma-app — Admin UI (authenticated, all methods)
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-app',
             upstream: { url: adminUiUrl },
-            match: { url: `<https?://${esc(appDomain)}/(?!api/).*>`, methods: ['GET', 'POST', 'OPTIONS'] },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/<.*>`,
+              methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+            },
             authenticators: [{ handler: 'cookie_session' }],
             authorizer: { handler: 'allow' },
             mutators: [{ handler: 'noop' }],
           })
         }
 
+        // 7. jinbe-preflight — OPTIONS passthrough for CORS on jinbe subdomain
+        if (jinbeDomain) {
+          rules.push({
+            id: 'jinbe-preflight',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${jinbeDomain}/<.*>`,
+              methods: ['OPTIONS'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
+
+        // 8. jinbe-api — Jinbe direct API (authenticated, allow authorizer — not OPA)
+        if (jinbeDomain) {
+          rules.push({
+            id: 'jinbe-api',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${jinbeDomain}/<.*>`,
+              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
         await redisRbacRepository.setAccessRules(rules)
-        fastify.log.info({ ruleCount: rules.length, authDomain, appDomain }, 'Access rules synced to Redis')
+        fastify.log.info({ ruleCount: rules.length, authDomain, appDomain, apiDomain }, 'Access rules synced to Redis')
       }
 
       // Ensure jinbe's own route_map is current — runs every startup (idempotent)
