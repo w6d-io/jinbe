@@ -238,6 +238,19 @@ async function start() {
           authorizer: { handler: 'allow' },
           mutators: [{ handler: 'noop' }],
         })
+        if (apiDomain) {
+          rules.push({
+            id: 'jinbe-preflight',
+            upstream: { url: `http://auth-w6d-jinbe:8080`, preserve_host: false },
+            match: {
+              url: `<https://jinbe.${esc(apiDomain)}/<.*>>`,
+              methods: ['OPTIONS'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
         rules.push({
           id: 'jinbe',
           upstream: { url: jinbeInternal },
