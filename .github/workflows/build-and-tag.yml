@@ -29,6 +29,8 @@ jobs:
     if: >
       (github.event_name == 'workflow_dispatch') ||
       (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release'))
+    env:
+      HAS_CHARTS_TOKEN: ${{ secrets.CHARTS_TOKEN != '' }}
     outputs:
       version: ${{ steps.version.outputs.tag }}
     steps:
@@ -100,7 +102,7 @@ jobs:
           git push origin ${{ steps.version.outputs.tag }}
 
       - name: Update Helm chart image tag
-        if: ${{ secrets.CHARTS_TOKEN != '' }}
+        if: env.HAS_CHARTS_TOKEN == 'true'
         env:
           GH_TOKEN: ${{ secrets.CHARTS_TOKEN }}
         run: |
