@@ -200,7 +200,7 @@ export class KratosService {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ email, method: 'code' }),
+        body: JSON.stringify({ email, method: 'link' }),
       }
     )
     if (!submitResp.ok && submitResp.status !== 422) {
