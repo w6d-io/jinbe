@@ -87,6 +87,9 @@ const envSchema = z.object({
   AUTH_DOMAIN: z.string().optional(),   // e.g. auth.example.com — Kratos + Login UI
   APP_DOMAIN: z.string().optional(),    // e.g. app.example.com  — Kuma admin UI
   API_DOMAIN: z.string().optional(),    // e.g. api.example.com  — Jinbe API (defaults to APP_DOMAIN)
+
+  // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
+  OPA_AUTHZ_REMOTE: z.string().url().default('http://auth-w6d-opa-authz-proxy:8080/v1/data/rbac/allow'),
 })
 
 // Parse and validate environment variables

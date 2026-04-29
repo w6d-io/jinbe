@@ -73,6 +73,7 @@ export function getServiceNameFromRouteMapPath(filePath: string): string | null 
  * - viewers (T4): Read-only access
  */
 export const DEFAULT_GROUP_SERVICE_ROLES: Record<string, string[]> = {
+  super_admins: ['admin'],
   admins: ['admin'],
   infra: ['operator'],
   devs: ['editor'],
