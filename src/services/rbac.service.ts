@@ -228,7 +228,10 @@ export class RbacService {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
-    await redisRbacRepository.setGroup(name, services)
+    // Merge incoming services into existing — prevents wiping other service roles
+    const existing = await redisRbacRepository.getGroup(name) ?? {}
+    const merged = { ...existing, ...services }
+    await redisRbacRepository.setGroup(name, merged)
     await this.invalidateBundle('rbac.group_updated', { type: 'group', id: name }, actor)
     return this.result(`Group '${name}' updated`)
   }
