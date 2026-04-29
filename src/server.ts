@@ -328,9 +328,9 @@ async function start() {
         fastify.log.info({ ruleCount: rules.length, authDomain, appDomain, apiDomain }, 'Access rules synced to Redis')
       }
 
-      // Route_map always reseeded on startup — idempotent, picks up new endpoints
+      // Route_map: merge built-in routes into existing — preserves user additions, picks up new endpoints
       {
-        await redisRbacRepository.setRouteMap('jinbe', { rules: [
+        const builtInRoutes = [
           { method: 'GET',    path: '/api/health' },
           { method: 'GET',    path: '/api/whoami' },
           { method: 'GET',    path: '/docs/:any*' },
@@ -395,8 +395,15 @@ async function start() {
           { method: 'POST',   path: '/api/admin/rbac/simulate',             permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
-        ]})
-        fastify.log.info('Jinbe route_map seeded in Redis')
+        ]
+        const existing = await redisRbacRepository.getRouteMap('jinbe')
+        const existingKeys = new Set((existing?.rules ?? []).map((r: { method: string; path: string }) => `${r.method}:${r.path}`))
+        const toAdd = builtInRoutes.filter(r => !existingKeys.has(`${r.method}:${r.path}`))
+        if (toAdd.length > 0) {
+          const merged = [...(existing?.rules ?? []), ...toAdd]
+          await redisRbacRepository.setRouteMap('jinbe', { rules: merged })
+          fastify.log.info({ added: toAdd.length }, 'Jinbe route_map updated with new built-in routes')
+        }
       }
 
       // Seed kuma (admin dashboard) service + route_map if APP_DOMAIN is configured
