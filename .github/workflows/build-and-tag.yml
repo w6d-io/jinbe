@@ -98,8 +98,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.tag }}
-          git push origin ${{ steps.version.outputs.tag }}
+          git tag ${{ steps.version.outputs.tag }} 2>/dev/null || echo "Tag already exists, skipping"
+          git push origin ${{ steps.version.outputs.tag }} 2>/dev/null || echo "Tag already pushed, skipping"
 
       - name: Update Helm chart image tag
         if: env.HAS_CHARTS_TOKEN == 'true'
