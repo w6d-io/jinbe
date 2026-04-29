@@ -129,6 +129,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           upstreamUrl: { type: 'string', format: 'uri' },
           matchUrl: { type: 'string' },
           matchMethods: { type: 'array', items: { type: 'string' } },
+          stripPath: { type: 'string' },
         },
       },
       response: {
@@ -154,6 +155,43 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.deleteService.bind(rbacController))
+
+  fastify.patch('/services/:name', {
+    schema: {
+      description: 'Update oathkeeper rule config for a service (upstream URL, match URL/methods, strip_path).',
+      tags: ['rbac'],
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+      body: {
+        type: 'object',
+        properties: {
+          upstreamUrl: { type: 'string', format: 'uri' },
+          matchUrl: { type: 'string' },
+          matchMethods: { type: 'array', items: { type: 'string' } },
+          stripPath: { type: ['string', 'null'] },
+        },
+      },
+      response: {
+        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        404: notFoundResponseSchema,
+      },
+    },
+  }, rbacController.updateServiceConfig.bind(rbacController))
+
+  fastify.get('/services/:name/permissions', {
+    schema: {
+      description: 'List all unique permissions for a service (from roles + routes).',
+      tags: ['rbac'],
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+      response: {
+        200: { type: 'object', properties: { service: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } } } },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        404: notFoundResponseSchema,
+      },
+    },
+  }, rbacController.getServicePermissions.bind(rbacController))
 
   fastify.get('/services/:name/roles', {
     schema: {

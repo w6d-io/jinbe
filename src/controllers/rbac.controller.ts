@@ -81,7 +81,7 @@ export class RbacController {
   }
 
   async createService(
-    request: FastifyRequest<{ Body: { name: string; displayName?: string; upstreamUrl?: string; matchUrl?: string; matchMethods?: string[] } }>,
+    request: FastifyRequest<{ Body: { name: string; displayName?: string; upstreamUrl?: string; matchUrl?: string; matchMethods?: string[]; stripPath?: string } }>,
     reply: FastifyReply
   ) {
     const options = z
@@ -91,11 +91,36 @@ export class RbacController {
         upstreamUrl: z.string().url().optional(),
         matchUrl: z.string().optional(),
         matchMethods: z.array(z.string()).optional(),
+        stripPath: z.string().optional(),
       })
       .parse(request.body)
 
     const result = await rbacService.createService(options, this.actor(request))
     return reply.status(201).send(result)
+  }
+
+  async updateServiceConfig(
+    request: FastifyRequest<{ Params: { name: string }; Body: { upstreamUrl?: string; matchUrl?: string; matchMethods?: string[]; stripPath?: string | null } }>,
+    reply: FastifyReply
+  ) {
+    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
+    const options = z.object({
+      upstreamUrl: z.string().url().optional(),
+      matchUrl: z.string().optional(),
+      matchMethods: z.array(z.string()).optional(),
+      stripPath: z.string().nullable().optional(),
+    }).parse(request.body)
+    const result = await rbacService.updateServiceConfig(name, options, this.actor(request))
+    return reply.send(result)
+  }
+
+  async getServicePermissions(
+    request: FastifyRequest<{ Params: { name: string } }>,
+    reply: FastifyReply
+  ) {
+    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
+    const result = await rbacService.getServicePermissions(name)
+    return reply.send(result)
   }
 
   async deleteService(
