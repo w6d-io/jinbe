@@ -183,7 +183,7 @@ export const userCreateJsonSchema = {
   type: 'object',
   required: ['traits'],
   properties: {
-    schema_id: { type: 'string', default: 'default' },
+    schema_id: { type: 'string' },
     traits: {
       type: 'object',
       required: ['email'],
@@ -198,7 +198,7 @@ export const userCreateJsonSchema = {
         },
       },
     },
-    state: { type: 'string', enum: ['active', 'inactive'], default: 'active' },
+    state: { type: 'string', enum: ['active', 'inactive'] },
     credentials: {
       type: 'object',
       properties: {
