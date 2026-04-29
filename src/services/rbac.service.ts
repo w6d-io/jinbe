@@ -321,12 +321,22 @@ export class RbacService {
     }
 
     // 3. Create Oathkeeper rules
+    // Per-rule authorizer config overrides the global one — sets app to this service name
+    // so OPA evaluates RBAC against this service's roles/routes, not the global jinbe config
+    const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
+    const opaPayload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits \\"email\\" }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${name}"}}`
     const mainRule: OathkeeperRule = {
       id: name,
       upstream: { url: upstreamUrl },
       match: { url: matchUrl, methods: matchMethods },
       authenticators: [{ handler: 'cookie_session' }],
-      authorizer: { handler: 'remote_json' },
+      authorizer: {
+        handler: 'remote_json',
+        config: {
+          remote: env.OPA_AUTHZ_REMOTE,
+          payload: opaPayload,
+        },
+      },
       mutators: [{ handler: 'header' }],
     }
 
