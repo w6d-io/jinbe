@@ -303,10 +303,8 @@ export class RbacService {
     const port = env.SERVICE_DEFAULT_PORT
 
     const upstreamUrl = options.upstreamUrl || `http://${name}.${namespace}:${port}`
+    const isDefaultPath = !options.matchUrl
     const matchUrl = options.matchUrl || `https://${domain}/api/${name}/<**>`
-    const healthMatchUrl = options.matchUrl
-      ? options.matchUrl.replace(/<\*\*>$/, 'health')
-      : `https://${domain}/api/${name}/health`
     const matchMethods = options.matchMethods || ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 
     // 1. Create default roles
@@ -332,14 +330,16 @@ export class RbacService {
       mutators: [{ handler: 'header' }],
     }
 
-    const healthRule: OathkeeperRule = {
+    // Health rule only for default path-prefix services — custom matchUrl domains
+    // can't have a non-conflicting health sub-rule without negative lookahead
+    const healthRule: OathkeeperRule | null = isDefaultPath ? {
       id: `${name}-health`,
-      upstream: { url: `${upstreamUrl}health` },
-      match: { url: healthMatchUrl, methods: ['GET', 'OPTIONS'] },
+      upstream: { url: `${upstreamUrl.replace(/\/?$/, '/')}health` },
+      match: { url: `https://${domain}/api/${name}/health`, methods: ['GET', 'OPTIONS'] },
       authenticators: [{ handler: 'noop' }],
       authorizer: { handler: 'allow' },
       mutators: [{ handler: 'noop' }],
-    }
+    } : null
 
     // 4. Write all to Redis
     await redisRbacRepository.addService(name)
@@ -348,7 +348,9 @@ export class RbacService {
 
     // Add oathkeeper rules
     try { await redisRbacRepository.addAccessRule(mainRule) } catch { /* already exists */ }
-    try { await redisRbacRepository.addAccessRule(healthRule) } catch { /* already exists */ }
+    if (healthRule) {
+      try { await redisRbacRepository.addAccessRule(healthRule) } catch { /* already exists */ }
+    }
 
     // 5. Auto-populate standard groups with default roles
     const groups = await redisRbacRepository.getGroups()
