@@ -324,7 +324,9 @@ export class RbacService {
     // Per-rule authorizer config overrides the global one — sets app to this service name
     // so OPA evaluates RBAC against this service's roles/routes, not the global jinbe config
     const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
-    const opaPayload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits \\"email\\" }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${name}"}}`
+    // Build OPA payload — Go templates need literal "email" (unescaped), JSON.stringify handles escaping when stored
+    const q = '"'
+    const opaPayload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${name}"}}`
     const mainRule: OathkeeperRule = {
       id: name,
       upstream: { url: upstreamUrl },
