@@ -178,6 +178,36 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.setUserState.bind(adminController) as never
   )
 
+  // Set user organization
+  fastify.patch(
+    '/users/:id/organization',
+    {
+      schema: {
+        description: 'Set or remove the organization_id on a user (Kratos JSON Patch)',
+        tags: ['admin'],
+        params: zodToJsonSchema(userIdParamSchema),
+        body: {
+          type: 'object',
+          required: ['organization_id'],
+          properties: {
+            organization_id: {
+              type: 'string',
+              format: 'uuid',
+              nullable: true,
+              description: 'Organization UUID to assign, or null to remove',
+            },
+          },
+        },
+        response: {
+          200: kratosIdentityJsonSchema,
+          401: unauthorizedResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.setUserOrganization.bind(adminController) as never
+  )
+
   // Delete user by ID
   fastify.delete(
     '/users/:id',
