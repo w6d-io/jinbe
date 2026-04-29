@@ -39,11 +39,16 @@ const INTERNAL_HOSTS = new Set([
 ])
 
 /**
- * Check if request is from internal cluster (exact host match only)
+ * Check if request is from internal cluster (exact host match only).
+ * Rejects if X-Forwarded-For is present — oathkeeper always sets it
+ * when proxying, so proxied external requests are never treated as internal.
  */
 export function isInternalRequest(request: FastifyRequest): boolean {
   const host = request.headers.host || ''
-  return INTERNAL_HOSTS.has(host)
+  if (!INTERNAL_HOSTS.has(host)) return false
+  // If proxied through oathkeeper/ingress, reject — not a true internal call
+  if (request.headers['x-forwarded-for'] || request.headers['x-forwarded-host']) return false
+  return true
 }
 
 /**
