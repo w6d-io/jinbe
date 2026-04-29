@@ -79,6 +79,10 @@ const envSchema = z.object({
   SERVICE_DEFAULT_DOMAIN: z.string().default('kuma.dev.w6d.io'),
   SERVICE_DEFAULT_PORT: z.string().transform(Number).pipe(z.number().positive()).default('8080'),
 
+  // Internal service URLs for bootstrap (Oathkeeper upstream rules)
+  LOGIN_UI_URL: z.string().url().optional(),   // e.g. http://auth-w6d-kratos-login-ui:80
+  ADMIN_UI_URL: z.string().url().optional(),   // e.g. http://auth-w6d-admin-ui:80
+
   // Domain configuration (for Oathkeeper rule generation)
   AUTH_DOMAIN: z.string().optional(),   // e.g. auth.example.com — Kratos + Login UI
   APP_DOMAIN: z.string().optional(),    // e.g. app.example.com  — Kuma admin UI

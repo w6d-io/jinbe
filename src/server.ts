@@ -195,55 +195,52 @@ async function start() {
       {
         const kratosPublic = env.KRATOS_PUBLIC_URL || 'http://kratos-public:80'
         const jinbeInternal = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-        const authDomain = env.AUTH_DOMAIN
-        const appDomain = env.APP_DOMAIN
+        const authDomain = env.AUTH_DOMAIN || ''
+        const appDomain = env.APP_DOMAIN || ''
         const apiDomain = env.API_DOMAIN || appDomain
-        const loginUiUrl = kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
-        const adminUiUrl = jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
+        const loginUiUrl = env.LOGIN_UI_URL || kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
+        const adminUiUrl = env.ADMIN_UI_URL || jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
+        const kumaDomain = appDomain ? `kuma.${appDomain}` : ''
+        const jinbeDomain = apiDomain ? `jinbe.${apiDomain}` : ''
         const rules: OathkeeperRule[] = []
-        const esc = (d: string) => d.replace(/\./g, '\\.')
 
-        const kratosMatch = authDomain
-          ? `<https?://${esc(authDomain)}/(self-service|sessions|schemas|\\.well-known)(/.*)?$>`
-          : '<https?://[^/]+/(self-service|sessions|schemas|\\.well-known)(/.*)?$>'
-        rules.push({
-          id: 'kratos-public',
-          upstream: { url: kratosPublic },
-          match: { url: kratosMatch, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] },
-          authenticators: [{ handler: 'noop' }],
-          authorizer: { handler: 'allow' },
-          mutators: [{ handler: 'noop' }],
-        })
-
+        // 1. selfservice-ui — login UI static assets + kratos flow pages (no auth required)
         if (authDomain) {
           rules.push({
-            id: 'auth-all',
+            id: 'selfservice-ui',
             upstream: { url: loginUiUrl, preserve_host: true },
-            match: { url: `<https?://${esc(authDomain)}/(?!self-service|sessions|schemas|\\.well-known).*>`, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] },
+            match: {
+              url: `http<(s?)>://${authDomain}/<(app|error|register|settings|_next|static|assets|logos|login|recovery|verify|verification|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
+              methods: ['GET', 'POST', 'OPTIONS'],
+            },
             authenticators: [{ handler: 'noop' }],
             authorizer: { handler: 'allow' },
             mutators: [{ handler: 'noop' }],
           })
         }
 
-        const apiDomains = [apiDomain, appDomain].filter(Boolean).map(d => esc(d!))
-        const apiMatch = apiDomains.length > 0
-          ? `<https?://(${apiDomains.join('|')})/api/.*>`
-          : '<https?://[^/]+/api/.*>'
-        rules.push({
-          id: 'api-cors',
-          upstream: { url: jinbeInternal },
-          match: { url: apiMatch, methods: ['OPTIONS'] },
-          authenticators: [{ handler: 'noop' }],
-          authorizer: { handler: 'allow' },
-          mutators: [{ handler: 'noop' }],
-        })
-        if (apiDomain) {
+        // 2. kratos-public — Kratos API endpoints (no auth required)
+        if (authDomain) {
           rules.push({
-            id: 'jinbe-preflight',
-            upstream: { url: `http://auth-w6d-jinbe:8080`, preserve_host: false },
+            id: 'kratos-public',
+            upstream: { url: kratosPublic, preserve_host: true },
             match: {
-              url: `<https://jinbe.${esc(apiDomain)}/<.*>>`,
+              url: `http<(s?)>://${authDomain}/<(\\.well-known|self-service|sessions|schemas)(.*)>`,
+              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
+
+        // 3. kuma-api-preflight — OPTIONS passthrough for CORS (no auth required)
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-api-preflight',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
               methods: ['OPTIONS'],
             },
             authenticators: [{ handler: 'noop' }],
@@ -251,34 +248,94 @@ async function start() {
             mutators: [{ handler: 'noop' }],
           })
         }
-        rules.push({
-          id: 'jinbe',
-          upstream: { url: jinbeInternal },
-          match: { url: apiMatch, methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
-          authenticators: [{ handler: 'cookie_session' }],
-          authorizer: { handler: 'remote_json' },
-          mutators: [{ handler: 'header' }],
-        })
 
-        if (appDomain) {
+        // 4. kuma-api — Jinbe RBAC API (authenticated + OPA authorizer)
+        if (kumaDomain) {
           rules.push({
-            id: 'kuma',
+            id: 'kuma-api',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
+              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'remote_json' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
+        // 5. kuma-settings — Kratos settings flow proxied through login UI
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-settings',
+            upstream: { url: loginUiUrl },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/<(settings)(.*)>`,
+              methods: ['GET', 'POST', 'OPTIONS'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
+        // 6. kuma-app — Admin UI (authenticated, all methods)
+        if (kumaDomain) {
+          rules.push({
+            id: 'kuma-app',
             upstream: { url: adminUiUrl },
-            match: { url: `<https?://${esc(appDomain)}/(?!api/).*>`, methods: ['GET', 'POST', 'OPTIONS'] },
+            match: {
+              url: `http<(s?)>://${kumaDomain}/<.*>`,
+              methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+            },
             authenticators: [{ handler: 'cookie_session' }],
             authorizer: { handler: 'allow' },
             mutators: [{ handler: 'noop' }],
           })
         }
 
-        await redisRbacRepository.setAccessRules(rules)
-        fastify.log.info({ ruleCount: rules.length, authDomain, appDomain }, 'Access rules synced to Redis')
+        // 7. jinbe-preflight — OPTIONS passthrough for CORS on jinbe subdomain
+        if (jinbeDomain) {
+          rules.push({
+            id: 'jinbe-preflight',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${jinbeDomain}/<.*>`,
+              methods: ['OPTIONS'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
+
+        // 8. jinbe-api — Jinbe direct API (authenticated, allow authorizer — not OPA)
+        if (jinbeDomain) {
+          rules.push({
+            id: 'jinbe-api',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${jinbeDomain}/<.*>`,
+              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            },
+            authenticators: [{ handler: 'cookie_session' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'header' }],
+          })
+        }
+
+        // Upsert by rule ID: built-in rules reflect current env vars, custom rules preserved
+        const existingRules = await redisRbacRepository.getAccessRules() ?? []
+        const builtInIds = new Set(rules.map(r => r.id))
+        const customRules = existingRules.filter((r: OathkeeperRule) => !builtInIds.has(r.id))
+        const merged = [...rules, ...customRules]
+        await redisRbacRepository.setAccessRules(merged)
+        fastify.log.info({ builtIn: rules.length, custom: customRules.length }, 'Access rules upserted in Redis')
       }
 
-      // Ensure jinbe's own route_map is current — runs every startup (idempotent)
-      const jinbeRouteMap = await redisRbacRepository.getRouteMap('jinbe')
-      if (!jinbeRouteMap || jinbeRouteMap.rules.length <= 1) {
-        await redisRbacRepository.setRouteMap('jinbe', { rules: [
+      // Route_map: merge built-in routes into existing — preserves user additions, picks up new endpoints
+      {
+        const builtInRoutes = [
           { method: 'GET',    path: '/api/health' },
           { method: 'GET',    path: '/api/whoami' },
           { method: 'GET',    path: '/docs/:any*' },
@@ -313,6 +370,18 @@ async function start() {
           { method: 'GET',    path: '/api/database-apis/:id',               permission: 'databases:read' },
           { method: 'PUT',    path: '/api/database-apis/:id',               permission: 'databases:update' },
           { method: 'DELETE', path: '/api/database-apis/:id',               permission: 'databases:delete' },
+          { method: 'GET',    path: '/api/admin/users',                     permission: 'admin:read' },
+          { method: 'POST',   path: '/api/admin/users',                     permission: 'admin:create' },
+          { method: 'GET',    path: '/api/admin/users/:id',                 permission: 'admin:read' },
+          { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'admin:update' },
+          { method: 'DELETE', path: '/api/admin/users/:id',                 permission: 'admin:delete' },
+          { method: 'PATCH',  path: '/api/admin/users/:id/state',           permission: 'admin:update' },
+          { method: 'PATCH',  path: '/api/admin/users/:id/metadata',        permission: 'admin:update' },
+          { method: 'GET',    path: '/api/admin/users/:id/sessions',        permission: 'admin:read' },
+          { method: 'DELETE', path: '/api/admin/users/:id/sessions',        permission: 'admin:delete' },
+          { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'admin:delete' },
+          { method: 'GET',    path: '/api/admin/users/:email/groups',       permission: 'admin:read' },
+          { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
           { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/groups',               permission: 'admin:read' },
           { method: 'POST',   path: '/api/admin/rbac/groups',               permission: 'admin:create' },
@@ -331,8 +400,15 @@ async function start() {
           { method: 'POST',   path: '/api/admin/rbac/simulate',             permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
-        ]})
-        fastify.log.info('Jinbe route_map seeded in Redis')
+        ]
+        const existing = await redisRbacRepository.getRouteMap('jinbe')
+        const existingKeys = new Set((existing?.rules ?? []).map((r: { method: string; path: string }) => `${r.method}:${r.path}`))
+        const toAdd = builtInRoutes.filter(r => !existingKeys.has(`${r.method}:${r.path}`))
+        if (toAdd.length > 0) {
+          const merged = [...(existing?.rules ?? []), ...toAdd]
+          await redisRbacRepository.setRouteMap('jinbe', { rules: merged })
+          fastify.log.info({ added: toAdd.length }, 'Jinbe route_map updated with new built-in routes')
+        }
       }
 
       // Seed kuma (admin dashboard) service + route_map if APP_DOMAIN is configured

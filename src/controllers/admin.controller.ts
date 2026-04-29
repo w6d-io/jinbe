@@ -93,20 +93,113 @@ export class AdminController {
   /**
    * Create new user
    * POST /api/admin/users
+   * Accepts simplified body: { email, name?, groups?, sendInvite? }
+   * or full Kratos body: { traits: { email, ... }, ... }
    */
   async createUser(
-    request: FastifyRequest<{ Body: KratosIdentityCreate }>,
+    request: FastifyRequest<{ Body: KratosIdentityCreate & { email?: string; name?: string; groups?: string[]; sendInvite?: boolean } }>,
     reply: FastifyReply
   ) {
-    const identity = await kratosService.createIdentity(request.body)
+    const body = request.body as Record<string, unknown>
+
+    // Normalize simplified { email, name, groups, sendInvite } → Kratos format
+    let kratosBody: KratosIdentityCreate
+    let groups: string[] | undefined
+    let sendInvite = false
+
+    if (body.email && !body.traits) {
+      groups = body.groups as string[] | undefined
+      sendInvite = Boolean(body.sendInvite)
+      kratosBody = {
+        schema_id: 'default',
+        state: 'active',
+        traits: { email: body.email as string, ...(body.name ? { name: body.name as string } : {}) },
+      } as KratosIdentityCreate
+    } else {
+      kratosBody = body as KratosIdentityCreate
+    }
+
+    const identity = await kratosService.createIdentity(kratosBody)
+
+    // Set groups if provided
+    if (groups && groups.length > 0) {
+      try {
+        await kratosService.updateUserGroups(identity.traits?.email as string, groups)
+      } catch (err) {
+        request.log.warn({ err, id: identity.id }, 'Created user but failed to set groups')
+      }
+    }
+
+    // Send invite (recovery link) if requested
+    if (sendInvite) {
+      try {
+        await kratosService.createRecoveryLink(identity.id)
+      } catch (err) {
+        request.log.warn({ err, id: identity.id }, 'Created user but failed to send invite')
+      }
+    }
+
     auditEventService.emit({
       type: 'user.created',
       actor: { email: request.userContext?.email, ip: request.ip },
       target: { type: 'user', id: identity.id },
-      details: { email: identity.traits?.email },
+      details: { email: identity.traits?.email, groups, sendInvite },
       source: 'jinbe-api',
     }).catch(() => {})
     return reply.status(201).send(identity)
+  }
+
+  /**
+   * Patch user metadata_public or metadata_admin
+   * PATCH /api/admin/users/:id/metadata
+   */
+  async setUserMetadata(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { metadata_public?: Record<string, unknown>; metadata_admin?: Record<string, unknown> }
+    }>,
+    reply: FastifyReply
+  ) {
+    const { id } = request.params
+    const { metadata_public, metadata_admin } = request.body
+    const current = await kratosService.getIdentity(id)
+    const identity = await kratosService.updateIdentity(id, {
+      metadata_public: metadata_public !== undefined
+        ? { ...(current.metadata_public as Record<string, unknown> ?? {}), ...metadata_public }
+        : current.metadata_public,
+      metadata_admin: metadata_admin !== undefined
+        ? { ...(current.metadata_admin as Record<string, unknown> ?? {}), ...metadata_admin }
+        : current.metadata_admin,
+    } as KratosIdentityUpdate)
+    auditEventService.emit({
+      type: 'user.updated',
+      actor: { email: request.userContext?.email, ip: request.ip },
+      target: { type: 'user', id },
+      details: { metadata_public, metadata_admin },
+      source: 'jinbe-api',
+    }).catch(() => {})
+    return reply.send(identity)
+  }
+
+  /**
+   * Set user state (active/inactive)
+   * PATCH /api/admin/users/:id/state
+   */
+  async setUserState(
+    request: FastifyRequest<{ Params: { id: string }; Body: { state: 'active' | 'inactive' } }>,
+    reply: FastifyReply
+  ) {
+    const { id } = request.params
+    const { state } = request.body
+    const identity = await kratosService.updateIdentity(id, { state } as KratosIdentityUpdate)
+    auditEventService.emit({
+      type: 'user.updated',
+      actor: { email: request.userContext?.email, ip: request.ip },
+      target: { type: 'user', id },
+      details: { state },
+      source: 'jinbe-api',
+    }).catch(() => {})
+    return reply.send(identity)
   }
 
   /**
