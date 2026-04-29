@@ -173,13 +173,22 @@ export class KratosService {
   }
 
   /**
-   * Create a recovery link for an identity (invite / password reset flow)
+   * Send a recovery code to the identity's email via Kratos courier.
+   * Falls back to generating a link if the code endpoint is unavailable.
    */
-  async createRecoveryLink(identityId: string): Promise<{ recovery_link: string; expires_at: string }> {
-    return this.request<{ recovery_link: string; expires_at: string }>('/admin/recovery/link', {
-      method: 'POST',
-      body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
-    })
+  async createRecoveryLink(identityId: string): Promise<{ recovery_link?: string; expires_at?: string }> {
+    try {
+      await this.request<unknown>('/admin/recovery/code', {
+        method: 'POST',
+        body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
+      })
+      return {}
+    } catch {
+      return this.request<{ recovery_link: string; expires_at: string }>('/admin/recovery/link', {
+        method: 'POST',
+        body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
+      })
+    }
   }
 
   /**
