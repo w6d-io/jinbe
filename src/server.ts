@@ -200,8 +200,8 @@ async function start() {
         const apiDomain = env.API_DOMAIN || appDomain
         const loginUiUrl = env.LOGIN_UI_URL || kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
         const adminUiUrl = env.ADMIN_UI_URL || jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
-        const kumaDomain = appDomain ? `kuma.${appDomain}` : ''
-        const jinbeDomain = apiDomain ? `jinbe.${apiDomain}` : ''
+        const kumaDomain = appDomain
+        const jinbeDomain = apiDomain
         const rules: OathkeeperRule[] = []
 
         // 1. selfservice-ui — login UI static assets + kratos flow pages (no auth required)
