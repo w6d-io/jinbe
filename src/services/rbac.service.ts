@@ -85,6 +85,14 @@ export interface CreateServiceOptions {
   upstreamUrl?: string
   matchUrl?: string
   matchMethods?: string[]
+  stripPath?: string
+}
+
+export interface UpdateServiceOptions {
+  upstreamUrl?: string
+  matchUrl?: string
+  matchMethods?: string[]
+  stripPath?: string | null  // null = remove strip_path
 }
 
 export interface AccessRulesResponse {
@@ -309,6 +317,7 @@ export class RbacService {
     const isDefaultPath = !options.matchUrl
     const matchUrl = options.matchUrl || `https://${domain}/api/${name}/<**>`
     const matchMethods = options.matchMethods || ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+    const stripPath = options.stripPath
 
     // 1. Create default roles
     const defaultRoles: FlatRolesMap = {
@@ -332,7 +341,7 @@ export class RbacService {
     const opaPayload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${name}"}}`
     const mainRule: OathkeeperRule = {
       id: name,
-      upstream: { url: upstreamUrl },
+      upstream: stripPath ? { url: upstreamUrl, strip_path: stripPath } : { url: upstreamUrl },
       match: { url: matchUrl, methods: matchMethods },
       authenticators: [{ handler: 'cookie_session' }],
       authorizer: {
@@ -405,6 +414,65 @@ export class RbacService {
 
     await this.invalidateBundle('rbac.service_deleted', { type: 'service', id: name }, actor)
     return this.result(`Service '${name}' deleted`)
+  }
+
+  async getServicePermissions(serviceName: string): Promise<{ service: string; permissions: string[] }> {
+    if (!(await redisRbacRepository.serviceExists(serviceName))) {
+      throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
+    }
+    const permSet = new Set<string>()
+    // Collect from roles
+    const roles = await redisRbacRepository.getRoles(serviceName)
+    if (roles) {
+      for (const perms of Object.values(roles)) {
+        for (const p of perms) permSet.add(p)
+      }
+    }
+    // Collect from route map
+    const routeMap = await redisRbacRepository.getRouteMap(serviceName)
+    if (routeMap?.rules) {
+      for (const rule of routeMap.rules) {
+        if (rule.permission) permSet.add(rule.permission)
+      }
+    }
+    return { service: serviceName, permissions: [...permSet].sort() }
+  }
+
+  async updateServiceConfig(name: string, options: UpdateServiceOptions, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+    if (!(await redisRbacRepository.serviceExists(name))) {
+      throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
+    }
+
+    const rules = await redisRbacRepository.getAccessRules() ?? []
+    const ruleIdx = rules.findIndex((r: OathkeeperRule) => r.id === name)
+    if (ruleIdx === -1) {
+      throw Object.assign(new Error(`Oathkeeper rule not found for service: ${name}`), { statusCode: 404 })
+    }
+
+    const existing = rules[ruleIdx]
+    const updated: OathkeeperRule = {
+      ...existing,
+      upstream: {
+        url: options.upstreamUrl ?? existing.upstream.url,
+        ...(options.stripPath !== undefined
+          ? options.stripPath === null
+            ? {}  // remove strip_path
+            : { strip_path: options.stripPath }
+          : existing.upstream.strip_path !== undefined
+            ? { strip_path: existing.upstream.strip_path }
+            : {}),
+        ...(existing.upstream.preserve_host !== undefined ? { preserve_host: existing.upstream.preserve_host } : {}),
+      },
+      match: {
+        url: options.matchUrl ?? existing.match.url,
+        methods: (options.matchMethods ?? existing.match.methods) as OathkeeperRule['match']['methods'],
+      },
+    }
+
+    rules[ruleIdx] = updated
+    await redisRbacRepository.setAccessRules(rules)
+    await this.invalidateBundle('rbac.service_config_updated', { type: 'service', id: name }, actor)
+    return this.result(`Service '${name}' config updated`)
   }
 
   async updateServiceRoutes(serviceName: string, rules: RouteMap['rules'], actor?: { email?: string; ip?: string }): Promise<MutationResult> {
