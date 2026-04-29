@@ -328,9 +328,8 @@ async function start() {
         fastify.log.info({ ruleCount: rules.length, authDomain, appDomain, apiDomain }, 'Access rules synced to Redis')
       }
 
-      // Ensure jinbe's own route_map is current — runs every startup (idempotent)
-      const jinbeRouteMap = await redisRbacRepository.getRouteMap('jinbe')
-      if (!jinbeRouteMap || jinbeRouteMap.rules.length <= 1) {
+      // Route_map always reseeded on startup — idempotent, picks up new endpoints
+      {
         await redisRbacRepository.setRouteMap('jinbe', { rules: [
           { method: 'GET',    path: '/api/health' },
           { method: 'GET',    path: '/api/whoami' },
@@ -366,6 +365,18 @@ async function start() {
           { method: 'GET',    path: '/api/database-apis/:id',               permission: 'databases:read' },
           { method: 'PUT',    path: '/api/database-apis/:id',               permission: 'databases:update' },
           { method: 'DELETE', path: '/api/database-apis/:id',               permission: 'databases:delete' },
+          { method: 'GET',    path: '/api/admin/users',                     permission: 'admin:read' },
+          { method: 'POST',   path: '/api/admin/users',                     permission: 'admin:create' },
+          { method: 'GET',    path: '/api/admin/users/:id',                 permission: 'admin:read' },
+          { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'admin:update' },
+          { method: 'DELETE', path: '/api/admin/users/:id',                 permission: 'admin:delete' },
+          { method: 'PATCH',  path: '/api/admin/users/:id/state',           permission: 'admin:update' },
+          { method: 'PATCH',  path: '/api/admin/users/:id/metadata',        permission: 'admin:update' },
+          { method: 'GET',    path: '/api/admin/users/:id/sessions',        permission: 'admin:read' },
+          { method: 'DELETE', path: '/api/admin/users/:id/sessions',        permission: 'admin:delete' },
+          { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'admin:delete' },
+          { method: 'GET',    path: '/api/admin/users/:email/groups',       permission: 'admin:read' },
+          { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
           { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/groups',               permission: 'admin:read' },
           { method: 'POST',   path: '/api/admin/rbac/groups',               permission: 'admin:create' },
