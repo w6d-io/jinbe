@@ -84,7 +84,24 @@ export async function adminRoutes(fastify: FastifyInstance) {
       schema: {
         description: 'Create new user in Kratos identity service',
         tags: ['admin'],
-        body: userCreateJsonSchema,
+        body: {
+          oneOf: [
+            // Simplified flat format from kuma UI
+            {
+              type: 'object',
+              required: ['email'],
+              properties: {
+                email: { type: 'string', format: 'email' },
+                name: { type: 'string' },
+                groups: { type: 'array', items: { type: 'string' } },
+                sendInvite: { type: 'boolean' },
+              },
+              additionalProperties: false,
+            },
+            // Full Kratos format
+            userCreateJsonSchema,
+          ],
+        },
         response: {
           201: kratosIdentityJsonSchema,
           401: unauthorizedResponseSchema,
@@ -111,6 +128,54 @@ export async function adminRoutes(fastify: FastifyInstance) {
       },
     },
     adminController.updateUser.bind(adminController)
+  )
+
+  // Patch user metadata (merge into metadata_public / metadata_admin)
+  fastify.patch(
+    '/users/:id/metadata',
+    {
+      schema: {
+        description: 'Merge-patch user metadata_public or metadata_admin',
+        tags: ['admin'],
+        params: zodToJsonSchema(userIdParamSchema),
+        body: {
+          type: 'object',
+          properties: {
+            metadata_public: { type: 'object', additionalProperties: true },
+            metadata_admin: { type: 'object', additionalProperties: true },
+          },
+        },
+        response: {
+          200: kratosIdentityJsonSchema,
+          401: unauthorizedResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.setUserMetadata.bind(adminController) as never
+  )
+
+  // Set user state (active/inactive)
+  fastify.patch(
+    '/users/:id/state',
+    {
+      schema: {
+        description: 'Set user state to active or inactive',
+        tags: ['admin'],
+        params: zodToJsonSchema(userIdParamSchema),
+        body: {
+          type: 'object',
+          required: ['state'],
+          properties: { state: { type: 'string', enum: ['active', 'inactive'] } },
+        },
+        response: {
+          200: kratosIdentityJsonSchema,
+          401: unauthorizedResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.setUserState.bind(adminController) as never
   )
 
   // Delete user by ID
