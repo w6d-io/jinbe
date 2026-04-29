@@ -198,8 +198,8 @@ async function start() {
         const authDomain = env.AUTH_DOMAIN || ''
         const appDomain = env.APP_DOMAIN || ''
         const apiDomain = env.API_DOMAIN || appDomain
-        const loginUiUrl = kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
-        const adminUiUrl = jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
+        const loginUiUrl = env.LOGIN_UI_URL || kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
+        const adminUiUrl = env.ADMIN_UI_URL || jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
         const kumaDomain = appDomain ? `kuma.${appDomain}` : ''
         const jinbeDomain = apiDomain ? `jinbe.${apiDomain}` : ''
         const rules: OathkeeperRule[] = []
