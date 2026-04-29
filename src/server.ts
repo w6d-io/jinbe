@@ -324,8 +324,13 @@ async function start() {
           })
         }
 
-        await redisRbacRepository.setAccessRules(rules)
-        fastify.log.info({ ruleCount: rules.length, authDomain, appDomain, apiDomain }, 'Access rules synced to Redis')
+        // Upsert by rule ID: built-in rules reflect current env vars, custom rules preserved
+        const existingRules = await redisRbacRepository.getAccessRules() ?? []
+        const builtInIds = new Set(rules.map(r => r.id))
+        const customRules = existingRules.filter((r: OathkeeperRule) => !builtInIds.has(r.id))
+        const merged = [...rules, ...customRules]
+        await redisRbacRepository.setAccessRules(merged)
+        fastify.log.info({ builtIn: rules.length, custom: customRules.length }, 'Access rules upserted in Redis')
       }
 
       // Route_map: merge built-in routes into existing — preserves user additions, picks up new endpoints
