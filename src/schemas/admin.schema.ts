@@ -40,6 +40,7 @@ export const kratosIdentitySchema = z.object({
     .optional(),
   metadata_public: z.record(z.unknown()).nullable().optional(),
   metadata_admin: z.record(z.unknown()).nullable().optional(),
+  organization_id: z.string().uuid().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -49,6 +50,7 @@ export const kratosIdentityCreateSchema = z.object({
   schema_id: z.string().default('default'),
   traits: kratosTraitsSchema,
   state: z.enum(['active', 'inactive']).default('active'),
+  organization_id: z.string().uuid().optional(),
   metadata_public: z.record(z.unknown()).optional(),
   metadata_admin: z.record(z.unknown()).optional(),
   credentials: z
