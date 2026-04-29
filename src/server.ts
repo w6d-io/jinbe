@@ -26,6 +26,7 @@ import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
+import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import type { OathkeeperRule } from './services/redis-rbac.repository.js'
 
@@ -125,6 +126,7 @@ export async function buildServer() {
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(auditRoutes, { prefix: '/admin/audit' })
+      await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(jobRoutes)
@@ -377,6 +379,7 @@ async function start() {
           { method: 'DELETE', path: '/api/admin/users/:id',                 permission: 'admin:delete' },
           { method: 'PATCH',  path: '/api/admin/users/:id/state',           permission: 'admin:update' },
           { method: 'PATCH',  path: '/api/admin/users/:id/metadata',        permission: 'admin:update' },
+          { method: 'PATCH',  path: '/api/admin/users/:id/organization',    permission: 'admin:update' },
           { method: 'GET',    path: '/api/admin/users/:id/sessions',        permission: 'admin:read' },
           { method: 'DELETE', path: '/api/admin/users/:id/sessions',        permission: 'admin:delete' },
           { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'admin:delete' },
@@ -400,6 +403,11 @@ async function start() {
           { method: 'POST',   path: '/api/admin/rbac/simulate',             permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
+          { method: 'GET',    path: '/api/organizations/:organizationId/users',     permission: 'admin:read' },
+          { method: 'POST',   path: '/api/organizations/:organizationId/users',     permission: 'admin:create' },
+          { method: 'GET',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:read' },
+          { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:update' },
+          { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id', permission: 'admin:delete' },
         ]
         const existing = await redisRbacRepository.getRouteMap('jinbe')
         const existingKeys = new Set((existing?.rules ?? []).map((r: { method: string; path: string }) => `${r.method}:${r.path}`))

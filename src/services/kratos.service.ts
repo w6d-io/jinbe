@@ -164,6 +164,20 @@ export class KratosService {
   }
 
   /**
+   * Patch identity via JSON Patch (RFC 6902)
+   * Required for fields like organization_id that Kratos ignores on PUT
+   */
+  async patchIdentity(
+    id: string,
+    patches: Array<{ op: string; path: string; value: unknown }>
+  ): Promise<KratosIdentity> {
+    return this.request<KratosIdentity>(`/admin/identities/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patches),
+    })
+  }
+
+  /**
    * Delete identity by ID
    */
   async deleteIdentity(id: string): Promise<void> {
@@ -346,6 +360,26 @@ export class KratosService {
     this.invalidateGroupsCache()
 
     return result
+  }
+
+  /**
+   * List identities filtered by Kratos organization_id (native server-side filtering)
+   */
+  async listIdentitiesByOrganization(
+    organizationId: string,
+    pageSize?: number,
+    pageToken?: string
+  ): Promise<ListIdentitiesResponse> {
+    const params = new URLSearchParams()
+    params.append('organization_id', organizationId)
+    if (pageSize) params.append('page_size', pageSize.toString())
+    if (pageToken) params.append('page_token', pageToken)
+
+    const identities = await this.request<KratosIdentity[]>(
+      `/admin/identities?${params.toString()}`
+    )
+
+    return { identities, nextPageToken: undefined }
   }
 
   /**

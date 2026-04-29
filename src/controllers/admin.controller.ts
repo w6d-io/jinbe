@@ -346,6 +346,35 @@ export class AdminController {
       throw error
     }
   }
+  /**
+   * Set organization_id on an existing user via JSON Patch
+   * PATCH /api/admin/users/:id/organization
+   */
+  async setUserOrganization(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { organization_id: string | null }
+    }>,
+    reply: FastifyReply
+  ) {
+    const { id } = request.params
+    const { organization_id } = request.body
+
+    const identity = await kratosService.patchIdentity(id, [
+      { op: 'replace', path: '/organization_id', value: organization_id },
+    ])
+
+    auditEventService.emit({
+      type: 'user.organization_changed',
+      actor: { email: request.userContext?.email, ip: request.ip },
+      target: { type: 'user', id },
+      details: { organization_id },
+      source: 'jinbe-api',
+    }).catch(() => {})
+
+    return reply.send(identity)
+  }
+
   async listUserSessions(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply
