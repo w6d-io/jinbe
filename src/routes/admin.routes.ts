@@ -84,7 +84,24 @@ export async function adminRoutes(fastify: FastifyInstance) {
       schema: {
         description: 'Create new user in Kratos identity service',
         tags: ['admin'],
-        body: userCreateJsonSchema,
+        body: {
+          oneOf: [
+            // Simplified flat format from kuma UI
+            {
+              type: 'object',
+              required: ['email'],
+              properties: {
+                email: { type: 'string', format: 'email' },
+                name: { type: 'string' },
+                groups: { type: 'array', items: { type: 'string' } },
+                sendInvite: { type: 'boolean' },
+              },
+              additionalProperties: false,
+            },
+            // Full Kratos format
+            userCreateJsonSchema,
+          ],
+        },
         response: {
           201: kratosIdentityJsonSchema,
           401: unauthorizedResponseSchema,
