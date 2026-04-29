@@ -173,22 +173,48 @@ export class KratosService {
   }
 
   /**
-   * Send a recovery code to the identity's email via Kratos courier.
-   * Falls back to generating a link if the code endpoint is unavailable.
+   * Send a recovery email to the identity's email address via the Kratos
+   * self-service recovery flow (triggers courier). Only /admin/recovery/code
+   * and /admin/recovery/link do NOT send email — they return codes for admin
+   * to share manually. To actually dispatch an email we must use the public API.
    */
-  async createRecoveryLink(identityId: string): Promise<{ recovery_link?: string; expires_at?: string }> {
-    try {
-      await this.request<unknown>('/admin/recovery/code', {
+  async sendRecoveryEmail(identityId: string): Promise<void> {
+    // Resolve the identity's email first
+    const identity = await this.request<KratosIdentity>(`/admin/identities/${identityId}`)
+    const email = identity.traits?.email as string | undefined
+    if (!email) throw new Error(`Identity ${identityId} has no email trait`)
+
+    const publicUrl = env.KRATOS_PUBLIC_URL
+
+    // 1. Initiate a recovery flow via the public API
+    const flowResp = await fetch(`${publicUrl}/self-service/recovery/api`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+    if (!flowResp.ok) throw new Error(`Failed to init recovery flow: ${flowResp.status}`)
+    const flow = await flowResp.json() as { id: string }
+
+    // 2. Submit the email — Kratos queues the courier message
+    const submitResp = await fetch(
+      `${publicUrl}/self-service/recovery?flow=${flow.id}`,
+      {
         method: 'POST',
-        body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
-      })
-      return {}
-    } catch {
-      return this.request<{ recovery_link: string; expires_at: string }>('/admin/recovery/link', {
-        method: 'POST',
-        body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
-      })
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email, method: 'code' }),
+      }
+    )
+    if (!submitResp.ok && submitResp.status !== 422) {
+      throw new Error(`Recovery email submit failed: ${submitResp.status}`)
     }
+    // 422 = "sent to email" state (expected for code method)
+  }
+
+  /** @deprecated Use sendRecoveryEmail. Returns admin link without sending email. */
+  async createRecoveryLink(identityId: string): Promise<{ recovery_link: string; expires_at: string }> {
+    return this.request<{ recovery_link: string; expires_at: string }>('/admin/recovery/link', {
+      method: 'POST',
+      body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
+    })
   }
 
   /**

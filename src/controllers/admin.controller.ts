@@ -130,12 +130,13 @@ export class AdminController {
       }
     }
 
-    // Send invite (recovery link) if requested
+    // Send invite email via Kratos self-service recovery flow
     if (sendInvite) {
       try {
-        await kratosService.createRecoveryLink(identity.id)
+        await kratosService.sendRecoveryEmail(identity.id)
+        request.log.info({ id: identity.id, email: identity.traits?.email }, 'Recovery email dispatched')
       } catch (err) {
-        request.log.warn({ err, id: identity.id }, 'Created user but failed to send invite')
+        request.log.warn({ err, id: identity.id }, 'Created user but failed to send invite email')
       }
     }
 
