@@ -173,6 +173,16 @@ export class KratosService {
   }
 
   /**
+   * Create a recovery link for an identity (invite / password reset flow)
+   */
+  async createRecoveryLink(identityId: string): Promise<{ recovery_link: string; expires_at: string }> {
+    return this.request<{ recovery_link: string; expires_at: string }>('/admin/recovery/link', {
+      method: 'POST',
+      body: JSON.stringify({ identity_id: identityId, expires_in: '24h' }),
+    })
+  }
+
+  /**
    * List active sessions for an identity
    */
   async listIdentitySessions(identityId: string): Promise<unknown[]> {
