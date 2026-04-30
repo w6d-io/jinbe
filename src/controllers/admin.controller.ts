@@ -125,6 +125,7 @@ export class AdminController {
     if (groups && groups.length > 0) {
       try {
         await kratosService.updateUserGroups(identity.traits?.email as string, groups)
+        rbacService.notifyBindingsChanged('user_created', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
       } catch (err) {
         request.log.warn({ err, id: identity.id }, 'Created user but failed to set groups')
       }
@@ -243,7 +244,9 @@ export class AdminController {
     reply: FastifyReply
   ) {
     const { id } = request.params
+    kratosService.invalidateGroupsCache()
     await kratosService.deleteIdentity(id)
+    rbacService.notifyBindingsChanged('user_deleted', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
     auditEventService.emit({
       type: 'user.deleted',
       actor: { email: request.userContext?.email, ip: request.ip },

@@ -49,6 +49,7 @@ vi.mock('../../../services/kratos.service.js', () => ({
       return { ...identity, ...(data as object) }
     }),
     deleteIdentity: vi.fn().mockResolvedValue(undefined),
+    invalidateGroupsCache: vi.fn(),
   },
 }))
 
@@ -64,6 +65,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
     getAvailableGroups: vi.fn().mockResolvedValue([]),
     validateGroups: vi.fn().mockResolvedValue(undefined),
+    notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
