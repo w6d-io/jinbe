@@ -40,6 +40,16 @@ export interface BootstrapConfig {
 export interface RunBootstrapOptions {
   logger: BootstrapLogger
   config: BootstrapConfig
+  /** Image git SHA — recorded in the marker for forensic audit. */
+  gitSha: string
+  /** Application version (e.g. v0.3.0) — informational, recorded in marker. */
+  version: string
+  /**
+   * Reset path. When true, clears the existing marker and re-runs full
+   * bootstrap. Caller is responsible for enforcing the
+   * JINBE_BOOTSTRAP_DANGEROUS_RESET + JINBE_BOOTSTRAP_RESET_CONFIRM guards.
+   */
+  force?: boolean
 }
 
 export type { OathkeeperRule, RouteRule }

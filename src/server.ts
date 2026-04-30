@@ -173,6 +173,8 @@ async function start() {
 
       await runBootstrap({
         logger: fastify.log,
+        gitSha: env.COMMIT_SHA || 'unknown',
+        version: env.APP_VERSION || 'unknown',
         config: {
           domains: {
             auth: env.AUTH_DOMAIN || '',
