@@ -20,7 +20,7 @@ const corsPlugin: FastifyPluginAsync = fp(async (fastify) => {
       reply.header('Access-Control-Allow-Origin', origin)
       reply.header('Access-Control-Allow-Credentials', 'true')
       reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
-      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cookie, X-User-Email, X-User-ID, X-User-Name')
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cookie')
       reply.header('Access-Control-Expose-Headers', 'X-Request-ID, Set-Cookie')
     })
 
@@ -31,7 +31,7 @@ const corsPlugin: FastifyPluginAsync = fp(async (fastify) => {
         reply.header('Access-Control-Allow-Origin', origin)
         reply.header('Access-Control-Allow-Credentials', 'true')
         reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
-        reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cookie, X-User-Email, X-User-ID, X-User-Name')
+        reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Cookie')
         reply.header('Access-Control-Max-Age', '86400')
         reply.status(204).send()
       }
@@ -53,9 +53,6 @@ const corsPlugin: FastifyPluginAsync = fp(async (fastify) => {
         'Authorization',
         'X-Request-ID',
         'Cookie',
-        'X-User-Email',
-        'X-User-ID',
-        'X-User-Name',
       ],
       exposedHeaders: ['X-Request-ID', 'Set-Cookie'],
     })

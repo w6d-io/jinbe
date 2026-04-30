@@ -90,6 +90,7 @@ describe('bootstrap/build-rules', () => {
       const r = buildJinbeApiRule('jinbe.dev.w6d.io', URLS.jinbeInternal)
       expect(r.id).toBe('jinbe-api')
       expect(r.authenticators[0].handler).toBe('cookie_session')
+      expect(r.authenticators[1].handler).toBe('noop')
       expect(r.authorizer.handler).toBe('remote_json')
       expect(r.match.methods).not.toContain('OPTIONS')
     })
@@ -104,6 +105,7 @@ describe('bootstrap/build-rules', () => {
       expect(rules).toHaveLength(9)
       const ids = rules.map((r) => r.id)
       expect(ids).toEqual([
+        'selfservice-root',
         'selfservice-ui',
         'kratos-public',
         'kuma-api-preflight',
@@ -111,7 +113,6 @@ describe('bootstrap/build-rules', () => {
         'kuma-settings',
         'kuma-app',
         'jinbe-preflight',
-        'jinbe-public',
         'jinbe-api',
       ])
     })
