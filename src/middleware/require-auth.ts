@@ -25,33 +25,6 @@ const PUBLIC_ROUTE_PATTERNS = [
 ]
 
 /**
- * Exact internal hostnames trusted for auth bypass.
- * SECURITY: Uses exact match — NOT substring. Host header spoofing mitigated.
- * Extend via INTERNAL_TRUSTED_HOSTS env var (comma-separated).
- */
-const INTERNAL_HOSTS = new Set([
-  'jinbe.w6d-ops',
-  'jinbe.w6d-ops:8080',
-  'jinbe.w6d-ops.svc.cluster.local',
-  'jinbe.w6d-ops.svc.cluster.local:8080',
-  // Inject from env: INTERNAL_TRUSTED_HOSTS=auth-w6d-jinbe:8080,auth-w6d-jinbe
-  ...(process.env.INTERNAL_TRUSTED_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean),
-])
-
-/**
- * Check if request is from internal cluster (exact host match only).
- * Rejects if X-Forwarded-For is present — oathkeeper always sets it
- * when proxying, so proxied external requests are never treated as internal.
- */
-export function isInternalRequest(request: FastifyRequest): boolean {
-  const host = request.headers.host || ''
-  if (!INTERNAL_HOSTS.has(host)) return false
-  // If proxied through oathkeeper/ingress, reject — not a true internal call
-  if (request.headers['x-forwarded-for'] || request.headers['x-forwarded-host']) return false
-  return true
-}
-
-/**
  * Check if a path matches any public route
  */
 function isPublicRoute(path: string): boolean {
@@ -69,16 +42,14 @@ function isPublicRoute(path: string): boolean {
  */
 export async function requireAuth(
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   const path = (request.url || '').split('?')[0]
 
-  // Skip auth for public routes
   if (isPublicRoute(path)) {
     return
   }
 
-  // Check if user is authenticated
   if (!request.userContext || request.userContext.email === 'unknown') {
     auditEventService.emit({
       category: 'access',
