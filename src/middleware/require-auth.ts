@@ -71,11 +71,6 @@ export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  // Bypass auth for internal cluster requests (exact host match)
-  if (isInternalRequest(request)) {
-    return
-  }
-
   const path = (request.url || '').split('?')[0]
 
   // Skip auth for public routes

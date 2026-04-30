@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { opaService } from '../services/opa.service.js'
 import { env } from '../config/index.js'
-import { isInternalRequest } from './require-auth.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
 const ADMIN_ROLES = ['admin', 'super_admin']
@@ -19,17 +18,6 @@ const ADMIN_ROLES = ['admin', 'super_admin']
  */
 export function requireServiceAdmin(paramName = 'organizationId') {
   return async function (request: FastifyRequest, reply: FastifyReply) {
-    // Bypass for internal cluster requests
-    if (isInternalRequest(request)) {
-      request.rbacInfo = {
-        email: 'internal-service',
-        groups: ['internal'],
-        roles: ['internal'],
-        permissions: ['*'],
-      }
-      return
-    }
-
     const email = request.userContext?.email
     if (!email || email === 'unknown') {
       return reply.status(401).send({
