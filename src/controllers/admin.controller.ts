@@ -415,6 +415,28 @@ export class AdminController {
     await kratosService.revokeAllIdentitySessions(id)
     return reply.status(204).send()
   }
+
+  async sendRecoveryEmail(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ) {
+    const { id } = request.params
+    try {
+      await kratosService.sendRecoveryEmail(id)
+      auditEventService.emit({
+        type: 'user.recovery_email_sent',
+        actor: { email: request.userContext?.email, ip: request.ip },
+        target: { type: 'user', id },
+        source: 'jinbe-api',
+      }).catch(() => {})
+      return reply.status(204).send()
+    } catch (error) {
+      if (error instanceof KratosApiError && error.statusCode === 404) {
+        return reply.status(404).send({ error: 'Not Found', message: 'User not found' })
+      }
+      throw error
+    }
+  }
 }
 
 export const adminController = new AdminController()
