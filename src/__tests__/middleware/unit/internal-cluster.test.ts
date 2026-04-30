@@ -109,25 +109,25 @@ describe('internal cluster detection', () => {
   })
 
   // ===========================================================================
-  // requireAuth with internal bypass
+  // requireAuth — no internal bypass (removed as security risk)
   // ===========================================================================
-  describe('requireAuth internal bypass', () => {
-    it('should bypass auth for internal Host header (w6d-ops)', async () => {
+  describe('requireAuth', () => {
+    it('should require auth for internal Host (bypass removed)', async () => {
       const request = createMockRequest({
-        url: '/api/admin/rbac/users',
+        url: '/api/clusters',
         headers: { host: 'jinbe.w6d-ops:8080' },
-        userContext: undefined, // No auth
+        userContext: undefined,
       })
       const reply = createMockReply()
 
       await requireAuth(request, reply)
 
-      expect(reply.status).not.toHaveBeenCalled() // No 401 — internal bypass worked
+      expect(reply._statusCode).toBe(401)
     })
 
-    it('should require auth for external Host header on protected routes', async () => {
+    it('should require auth for external Host on protected routes', async () => {
       const request = createMockRequest({
-        url: '/api/clusters', // Use a protected route, not a public one
+        url: '/api/clusters',
         headers: { host: 'jinbe.example.com' },
         userContext: undefined,
       })
@@ -138,20 +138,7 @@ describe('internal cluster detection', () => {
       expect(reply._statusCode).toBe(401)
     })
 
-    it('should bypass auth for any protected route with exact internal Host', async () => {
-      const request = createMockRequest({
-        url: '/api/clusters',
-        headers: { host: 'jinbe.w6d-ops:8080' },
-        userContext: undefined,
-      })
-      const reply = createMockReply()
-
-      await requireAuth(request, reply)
-
-      expect(reply.status).not.toHaveBeenCalled()
-    })
-
-    it('should still allow authenticated external requests', async () => {
+    it('should allow authenticated requests', async () => {
       const request = createMockRequest({
         url: '/api/clusters',
         headers: { host: 'jinbe.example.com' },
@@ -166,44 +153,10 @@ describe('internal cluster detection', () => {
   })
 
   // ===========================================================================
-  // requireAdmin with internal bypass
+  // requireAdmin — all requests require real auth
   // ===========================================================================
-  describe('requireAdmin internal bypass', () => {
-    it('should bypass admin check for internal requests', async () => {
-      const request = createMockRequest({
-        url: '/api/admin/rbac/users',
-        headers: { host: 'jinbe.w6d-ops:8080' },
-        userContext: { email: 'internal' },
-      })
-      const reply = createMockReply()
-
-      await requireAdmin(request, reply)
-
-      expect(reply.status).not.toHaveBeenCalled()
-      expect(request.rbacInfo).toEqual({
-        email: 'internal-service',
-        groups: ['internal'],
-        roles: ['internal'],
-        permissions: ['*'],
-      })
-    })
-
-    it('should set internal rbacInfo for internal requests', async () => {
-      const request = createMockRequest({
-        url: '/api/admin/rbac/groups',
-        headers: { host: 'jinbe.w6d-ops:8080' },
-        userContext: { email: 'some-service' },
-      })
-      const reply = createMockReply()
-
-      await requireAdmin(request, reply)
-
-      expect(request.rbacInfo?.email).toBe('internal-service')
-      expect(request.rbacInfo?.groups).toContain('internal')
-      expect(request.rbacInfo?.permissions).toContain('*')
-    })
-
-    it('should require admin check for external requests', async () => {
+  describe('requireAdmin', () => {
+    it('should require admin check for all requests (no internal bypass)', async () => {
       // Mock OPAL to return non-admin user
       mockGetUserInfo.mockResolvedValueOnce({
         email: 'user@example.com',

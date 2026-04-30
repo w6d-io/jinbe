@@ -382,7 +382,7 @@ describe('requireAuth middleware', () => {
   // Internal Cluster Bypass
   // ===========================================================================
   describe('internal cluster bypass', () => {
-    it('should bypass auth for Host containing w6d-ops', async () => {
+    it('should require auth for internal Host (bypass removed)', async () => {
       const request = createMockRequest({
         url: '/api/clusters',
         headers: { host: 'jinbe.w6d-ops:8080' },
@@ -392,7 +392,7 @@ describe('requireAuth middleware', () => {
 
       await requireAuth(request, reply)
 
-      expect(reply.status).not.toHaveBeenCalled()
+      expect(reply._statusCode).toBe(401)
     })
 
     it('should require auth for external Host', async () => {

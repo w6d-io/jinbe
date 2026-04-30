@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { opaService as opalService, type UserRbacInfo } from '../services/opa.service.js'
 import { env } from '../config/env.js'
-import { isInternalRequest } from './require-auth.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
 /**
@@ -46,21 +45,6 @@ export async function requireAdmin(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  // Bypass admin check for internal cluster requests
-  if (isInternalRequest(request)) {
-    request.log.debug(
-      { host: request.headers.host },
-      'Internal request - admin check bypassed'
-    )
-    request.rbacInfo = {
-      email: 'internal-service',
-      groups: ['internal'],
-      roles: ['internal'],
-      permissions: ['*'],
-    }
-    return
-  }
-
   const email = request.userContext?.email
 
   if (!email || email === 'unknown') {
@@ -222,21 +206,6 @@ export async function requireSuperAdmin(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  // Bypass for internal cluster requests
-  if (isInternalRequest(request)) {
-    request.log.debug(
-      { host: request.headers.host },
-      'Internal request - super admin check bypassed'
-    )
-    request.rbacInfo = {
-      email: 'internal-service',
-      groups: ['internal'],
-      roles: ['internal'],
-      permissions: ['*'],
-    }
-    return
-  }
-
   const email = request.userContext?.email
 
   if (!email || email === 'unknown') {
