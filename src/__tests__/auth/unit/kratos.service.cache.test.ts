@@ -88,8 +88,8 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await service.getAllIdentitiesWithGroups()
     expect(mockFetch).toHaveBeenCalledTimes(1)
 
-    // Third call still within TTL
-    vi.advanceTimersByTime(15_000) // 15 seconds
+    // Third call still within TTL (4s < 5s TTL)
+    vi.advanceTimersByTime(4_000)
     await service.getAllIdentitiesWithGroups()
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
@@ -105,8 +105,8 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await service.getAllIdentitiesWithGroups()
     expect(mockFetch).toHaveBeenCalledTimes(1)
 
-    // Advance time past TTL (30 seconds)
-    vi.advanceTimersByTime(31_000)
+    // Advance time past TTL (5 seconds)
+    vi.advanceTimersByTime(6_000)
 
     // Fourth call (after TTL) - should fetch again
     await service.getAllIdentitiesWithGroups()

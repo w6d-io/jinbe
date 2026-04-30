@@ -21,6 +21,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
     getAvailableGroups: vi.fn(),
     validateGroups: vi.fn(),
+    notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
   },
 }))
 

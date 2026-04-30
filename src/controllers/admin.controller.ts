@@ -172,6 +172,10 @@ export class AdminController {
         ? { ...(current.metadata_admin as Record<string, unknown> ?? {}), ...metadata_admin }
         : current.metadata_admin,
     } as KratosIdentityUpdate)
+    if (metadata_admin !== undefined) {
+      kratosService.invalidateGroupsCache()
+      rbacService.notifyBindingsChanged('metadata_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    }
     auditEventService.emit({
       type: 'user.updated',
       actor: { email: request.userContext?.email, ip: request.ip },
@@ -216,6 +220,10 @@ export class AdminController {
   ) {
     const { id } = request.params
     const identity = await kratosService.updateIdentity(id, request.body)
+    if ((request.body as Record<string, unknown>).metadata_admin !== undefined) {
+      kratosService.invalidateGroupsCache()
+      rbacService.notifyBindingsChanged('metadata_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    }
     auditEventService.emit({
       type: 'user.updated',
       actor: { email: request.userContext?.email, ip: request.ip },
@@ -314,8 +322,11 @@ export class AdminController {
       // Ensure user always has at least ['users'] if empty
       const finalGroups = groups.length > 0 ? groups : ['users']
 
-      // Update in Kratos
+      // Update in Kratos (also invalidates in-memory cache)
       await kratosService.updateUserGroups(email, finalGroups)
+
+      // Notify OPAL immediately so OPA doesn't wait up to 30s for next poll
+      rbacService.notifyBindingsChanged('groups_changed', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
 
       auditEventService.emit({
         type: 'user.groups_changed',
