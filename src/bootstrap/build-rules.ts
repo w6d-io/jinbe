@@ -23,6 +23,7 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
   const rules: OathkeeperRule[] = []
 
   if (domains.auth) {
+    rules.push(buildSelfserviceRootRule(domains.auth, urls.loginUi))
     rules.push(buildSelfserviceUiRule(domains.auth, urls.loginUi))
     rules.push(buildKratosPublicRule(domains.auth, urls.kratosPublic))
   }
@@ -36,7 +37,6 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
 
   if (domains.api) {
     rules.push(buildJinbePreflightRule(domains.api, urls.jinbeInternal))
-    rules.push(buildJinbePublicRule(domains.api, urls.jinbeInternal))
     rules.push(buildJinbeApiRule(domains.api, urls.jinbeInternal))
   }
 
@@ -48,8 +48,24 @@ export function buildSelfserviceUiRule(authDomain: string, loginUiUrl: string): 
     id: 'selfservice-ui',
     upstream: { url: loginUiUrl, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|_next|static|assets|logos|login|recovery|verify|verification|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
+      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|logout|_next|static|assets|logos|login|recovery|verify|verification|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
       methods: ['GET', 'POST', 'OPTIONS'],
+    },
+    authenticators: [{ handler: 'noop' }],
+    authorizer: { handler: 'allow' },
+    mutators: [{ handler: 'noop' }],
+  }
+}
+
+export function buildSelfserviceRootRule(authDomain: string, loginUiUrl: string): OathkeeperRule {
+  return {
+    id: 'selfservice-root',
+    upstream: { url: loginUiUrl, preserve_host: true },
+    match: {
+      // Bare authDomain root — login UI's index page (typically redirects to /login).
+      // Anchored to `/` only, so it doesn't overlap with kratos-public or selfservice-ui.
+      url: `http<(s?)>://${authDomain}/`,
+      methods: ['GET'],
     },
     authenticators: [{ handler: 'noop' }],
     authorizer: { handler: 'allow' },
@@ -163,7 +179,12 @@ export function buildJinbeApiRule(jinbeDomain: string, jinbeInternalUrl: string)
       url: `http<(s?)>://${jinbeDomain}/<.*>`,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     },
-    authenticators: [{ handler: 'cookie_session' }],
+    // cookie_session validates the session if present; noop is a fallback so
+    // requests without a session still flow to the OPA authorizer with an
+    // anonymous subject. OPA's policy (rbac.rego) allows route_map entries
+    // that have no `permission` field for any caller — that's how /api/health,
+    // /api/whoami, /docs stay public.
+    authenticators: [{ handler: 'cookie_session' }, { handler: 'noop' }],
     authorizer: { handler: 'remote_json' },
     mutators: [{ handler: 'header' }],
   }
