@@ -28,7 +28,12 @@ import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
-import { runBootstrap } from './bootstrap/index.js'
+import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
+import { MarkerCorruptError } from './bootstrap/marker.js'
+
+// Set true after waitForBootstrap resolves. Health endpoint returns 503
+// until then so the Deployment startupProbe absorbs the wait window.
+let bootstrapReady = false
 
 /**
  * Build Fastify server instance
@@ -83,28 +88,21 @@ export async function buildServer() {
   // Audit logger - log all actions after response (after routes)
   fastify.addHook('onResponse', auditLogger)
 
-  // Health check endpoint
+  // Health check endpoint. Returns 503 until the bootstrap marker has been
+  // observed, so Kubernetes startupProbe stays unsatisfied until ready.
   fastify.get('/api/health', {
     schema: {
       description: 'Health check endpoint',
       tags: ['health'],
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            status: { type: 'string' },
-            uptime: { type: 'number' },
-            timestamp: { type: 'string' },
-            commitSha: { type: 'string' },
-          },
-        },
-      },
     },
     handler: async (_request, reply) => {
       const { redisClientService } = await import('./services/redis-client.service.js')
       const redisHealthy = await redisClientService.isHealthy().catch(() => false)
-      return reply.send({
-        status: redisHealthy ? 'ok' : 'degraded',
+      const status = bootstrapReady && redisHealthy ? 'ok' : bootstrapReady ? 'degraded' : 'starting'
+      const code = bootstrapReady ? 200 : 503
+      return reply.status(code).send({
+        status,
+        bootstrapReady,
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         commitSha: env.COMMIT_SHA || 'unknown',
@@ -137,11 +135,14 @@ export async function buildServer() {
 }
 
 /**
- * Start the server
+ * Start the server.
+ *
+ * The bootstrap CLI seeds RBAC config and writes a marker; this process only
+ * starts serving traffic once the marker is observed. Until then, /api/health
+ * returns 503 so Kubernetes startupProbe holds the pod off readiness.
  */
 async function start() {
   try {
-    // Test database connection before starting the server (optional — skipped if DATABASE_URL not set)
     if (env.DATABASE_URL) {
       await testDatabaseConnection()
       await applyMongoValidation()
@@ -151,73 +152,36 @@ async function start() {
 
     const fastify = await buildServer()
 
+    // Listen first so startupProbe can hit /api/health (which returns 503 until ready).
     await fastify.listen({
       port: env.PORT,
       host: env.HOST,
     })
-
     fastify.log.info(`Server listening on http://${env.HOST}:${env.PORT}`)
     if (env.ENABLE_SWAGGER) {
-      fastify.log.info(
-        `API docs available at http://${env.HOST}:${env.PORT}/docs`
-      )
+      fastify.log.info(`API docs available at http://${env.HOST}:${env.PORT}/docs`)
     }
 
-    // Auto-bootstrap with retry — Redis/Kratos may not be ready on first boot
-    const bootstrapWithRetry = async (): Promise<void> => {
-      const kratosPublic = env.KRATOS_PUBLIC_URL || 'http://kratos-public:80'
-      const jinbeInternal = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-      const adminEmail = process.env.ADMIN_EMAIL
-      const adminPassword = process.env.ADMIN_PASSWORD || 'changeme123!'
-      const adminName = process.env.ADMIN_NAME || 'Admin'
-
-      await runBootstrap({
-        logger: fastify.log,
-        gitSha: env.COMMIT_SHA || 'unknown',
-        version: env.APP_VERSION || 'unknown',
-        config: {
-          domains: {
-            auth: env.AUTH_DOMAIN || '',
-            app: env.APP_DOMAIN || '',
-            api: env.API_DOMAIN || env.APP_DOMAIN || '',
-          },
-          urls: {
-            kratosPublic,
-            kratosAdmin: env.KRATOS_ADMIN_URL,
-            loginUi: env.LOGIN_UI_URL || kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80'),
-            adminUi: env.ADMIN_UI_URL || jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80'),
-            jinbeInternal,
-          },
-          admin: adminEmail ? { email: adminEmail, password: adminPassword, name: adminName } : null,
-        },
-      })
-    }
-    // Wrap bootstrap in retry
+    // Block until the bootstrap Job has written the marker. Default budget
+    // 6 minutes — matches the chart's startupProbe (failureThreshold: 72,
+    // periodSeconds: 5).
     try {
-      await bootstrapWithRetry()
+      const marker = await waitForBootstrap({ logger: fastify.log })
+      bootstrapReady = true
+      fastify.log.info(
+        { schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
+        'Bootstrap ready — serving traffic',
+      )
     } catch (err) {
-      const errMsg = (err as Error)?.message || ''
-      const errName = (err as Error)?.name || ''
-      if (errMsg.includes('ECONNREFUSED') || errMsg.includes('max retries') || errName.includes('MaxRetries')) {
-        fastify.log.info('Redis not ready — scheduling bootstrap retry in background')
-        const retry = async (attempt: number): Promise<void> => {
-          try {
-            await bootstrapWithRetry()
-          } catch (retryErr) {
-            if (attempt < 15) {
-              const d = Math.min(attempt * 3000, 15000)
-              fastify.log.info({ attempt }, `Bootstrap retry ${attempt} — next in ${d}ms`)
-              await new Promise(r => setTimeout(r, d))
-              return retry(attempt + 1)
-            }
-            fastify.log.error({ err: retryErr }, 'Bootstrap failed after 15 retries')
-          }
-        }
-        // Run in background — don't block server startup
-        retry(1).catch(() => {})
-      } else {
-        fastify.log.warn({ err }, 'Bootstrap failed')
+      if (err instanceof BootstrapTimeoutError) {
+        fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')
+        process.exit(2)
       }
+      if (err instanceof MarkerCorruptError) {
+        fastify.log.error({ raw: err.raw }, 'Bootstrap marker corrupt — exiting')
+        process.exit(5)
+      }
+      throw err
     }
   } catch (err) {
     console.error('Failed to start server:', err)
