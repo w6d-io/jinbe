@@ -28,7 +28,12 @@ import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
-import type { OathkeeperRule } from './services/redis-rbac.repository.js'
+import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
+import { MarkerCorruptError } from './bootstrap/marker.js'
+
+// Set true after waitForBootstrap resolves. Health endpoint returns 503
+// until then so the Deployment startupProbe absorbs the wait window.
+let bootstrapReady = false
 
 /**
  * Build Fastify server instance
@@ -83,28 +88,21 @@ export async function buildServer() {
   // Audit logger - log all actions after response (after routes)
   fastify.addHook('onResponse', auditLogger)
 
-  // Health check endpoint
+  // Health check endpoint. Returns 503 until the bootstrap marker has been
+  // observed, so Kubernetes startupProbe stays unsatisfied until ready.
   fastify.get('/api/health', {
     schema: {
       description: 'Health check endpoint',
       tags: ['health'],
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            status: { type: 'string' },
-            uptime: { type: 'number' },
-            timestamp: { type: 'string' },
-            commitSha: { type: 'string' },
-          },
-        },
-      },
     },
     handler: async (_request, reply) => {
       const { redisClientService } = await import('./services/redis-client.service.js')
       const redisHealthy = await redisClientService.isHealthy().catch(() => false)
-      return reply.send({
-        status: redisHealthy ? 'ok' : 'degraded',
+      const status = bootstrapReady && redisHealthy ? 'ok' : bootstrapReady ? 'degraded' : 'starting'
+      const code = bootstrapReady ? 200 : 503
+      return reply.status(code).send({
+        status,
+        bootstrapReady,
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         commitSha: env.COMMIT_SHA || 'unknown',
@@ -137,11 +135,14 @@ export async function buildServer() {
 }
 
 /**
- * Start the server
+ * Start the server.
+ *
+ * The bootstrap CLI seeds RBAC config and writes a marker; this process only
+ * starts serving traffic once the marker is observed. Until then, /api/health
+ * returns 503 so Kubernetes startupProbe holds the pod off readiness.
  */
 async function start() {
   try {
-    // Test database connection before starting the server (optional — skipped if DATABASE_URL not set)
     if (env.DATABASE_URL) {
       await testDatabaseConnection()
       await applyMongoValidation()
@@ -151,378 +152,36 @@ async function start() {
 
     const fastify = await buildServer()
 
+    // Listen first so startupProbe can hit /api/health (which returns 503 until ready).
     await fastify.listen({
       port: env.PORT,
       host: env.HOST,
     })
-
     fastify.log.info(`Server listening on http://${env.HOST}:${env.PORT}`)
     if (env.ENABLE_SWAGGER) {
-      fastify.log.info(
-        `API docs available at http://${env.HOST}:${env.PORT}/docs`
-      )
+      fastify.log.info(`API docs available at http://${env.HOST}:${env.PORT}/docs`)
     }
 
-    // Auto-bootstrap with retry — Redis/Kratos may not be ready on first boot
-    const bootstrapWithRetry = async (): Promise<void> => {
-      const { redisRbacRepository } = await import('./services/redis-rbac.repository.js')
-      const groups = await redisRbacRepository.getGroups()
-      if (Object.keys(groups).length === 0) {
-        fastify.log.info('Redis empty — seeding default RBAC configuration...')
-        await redisRbacRepository.setGroup('super_admins', { global: ['super_admin'] })
-        await redisRbacRepository.setGroup('admins', { jinbe: ['admin'] })
-        await redisRbacRepository.setGroup('devs', { jinbe: ['editor'] })
-        await redisRbacRepository.setGroup('viewers', { jinbe: ['viewer'] })
-        await redisRbacRepository.setGroup('users', {})
-        await redisRbacRepository.setRoles('global', { super_admin: ['*'] })
-        await redisRbacRepository.setRoles('jinbe', {
-          admin: ['*'],
-          operator: ['clusters:list', 'clusters:read', 'clusters:create', 'clusters:update', 'clusters:delete', 'databases:list', 'databases:read', 'databases:create', 'databases:update', 'databases:delete'],
-          editor: ['databases:list', 'databases:read', 'databases:create', 'databases:update', 'databases:delete'],
-          viewer: ['databases:list', 'databases:read'],
-        })
-        await redisRbacRepository.addService('jinbe')
-        await redisRbacRepository.addService('global')
-
-        // Rego policy is managed by OPAL (pulled from git policy repo)
-        // Jinbe only seeds RBAC data (groups, roles, rules), not policy
-
-        await redisRbacRepository.invalidateBundleEtag()
-        fastify.log.info('Default RBAC data seeded successfully (groups, roles, access rules)')
-      } else {
-        fastify.log.info(`Redis has ${Object.keys(groups).length} groups — skipping RBAC seed`)
-      }
-
-      // Access rules always reseeded on startup — domain-aware, idempotent
-      {
-        const kratosPublic = env.KRATOS_PUBLIC_URL || 'http://kratos-public:80'
-        const jinbeInternal = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-        const authDomain = env.AUTH_DOMAIN || ''
-        const appDomain = env.APP_DOMAIN || ''
-        const apiDomain = env.API_DOMAIN || appDomain
-        const loginUiUrl = env.LOGIN_UI_URL || kratosPublic.replace(/kratos-public(:\d+)?$/, 'kratos-login-ui:80')
-        const adminUiUrl = env.ADMIN_UI_URL || jinbeInternal.replace(/jinbe(:\d+)?$/, 'admin-ui:80')
-        const kumaDomain = appDomain
-        const jinbeDomain = apiDomain
-        const rules: OathkeeperRule[] = []
-
-        // 1. selfservice-ui — login UI static assets + kratos flow pages (no auth required)
-        if (authDomain) {
-          rules.push({
-            id: 'selfservice-ui',
-            upstream: { url: loginUiUrl, preserve_host: true },
-            match: {
-              url: `http<(s?)>://${authDomain}/<(app|error|register|settings|_next|static|assets|logos|login|recovery|verify|verification|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
-              methods: ['GET', 'POST', 'OPTIONS'],
-            },
-            authenticators: [{ handler: 'noop' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 2. kratos-public — Kratos API endpoints (no auth required)
-        if (authDomain) {
-          rules.push({
-            id: 'kratos-public',
-            upstream: { url: kratosPublic, preserve_host: true },
-            match: {
-              url: `http<(s?)>://${authDomain}/<(\\.well-known|self-service|sessions|schemas)(.*)>`,
-              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-            },
-            authenticators: [{ handler: 'noop' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 3. kuma-api-preflight — OPTIONS passthrough for CORS (no auth required)
-        if (kumaDomain) {
-          rules.push({
-            id: 'kuma-api-preflight',
-            upstream: { url: jinbeInternal },
-            match: {
-              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
-              methods: ['OPTIONS'],
-            },
-            authenticators: [{ handler: 'noop' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 4. kuma-api — Jinbe RBAC API (authenticated + OPA authorizer)
-        if (kumaDomain) {
-          rules.push({
-            id: 'kuma-api',
-            upstream: { url: jinbeInternal },
-            match: {
-              url: `http<(s?)>://${kumaDomain}/api/<.*>`,
-              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-            },
-            authenticators: [{ handler: 'cookie_session' }],
-            authorizer: { handler: 'remote_json' },
-            mutators: [{ handler: 'header' }],
-          })
-        }
-
-        // 5. kuma-settings — Kratos settings flow proxied through login UI
-        if (kumaDomain) {
-          rules.push({
-            id: 'kuma-settings',
-            upstream: { url: loginUiUrl },
-            match: {
-              url: `http<(s?)>://${kumaDomain}/<(settings)(.*)>`,
-              methods: ['GET', 'POST', 'OPTIONS'],
-            },
-            authenticators: [{ handler: 'cookie_session' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'header' }],
-          })
-        }
-
-        // 6. kuma-app — Admin UI (authenticated, all methods)
-        if (kumaDomain) {
-          rules.push({
-            id: 'kuma-app',
-            upstream: { url: adminUiUrl },
-            match: {
-              url: `http<(s?)>://${kumaDomain}/<.*>`,
-              methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
-            },
-            authenticators: [{ handler: 'cookie_session' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 7. jinbe-preflight — OPTIONS passthrough for CORS on jinbe subdomain
-        if (jinbeDomain) {
-          rules.push({
-            id: 'jinbe-preflight',
-            upstream: { url: jinbeInternal },
-            match: {
-              url: `http<(s?)>://${jinbeDomain}/<.*>`,
-              methods: ['OPTIONS'],
-            },
-            authenticators: [{ handler: 'noop' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 8. jinbe-public — Public routes on jinbe subdomain (health, whoami, docs — no auth)
-        if (jinbeDomain) {
-          rules.push({
-            id: 'jinbe-public',
-            upstream: { url: jinbeInternal },
-            match: {
-              url: `http<(s?)>://${jinbeDomain}/<(api/health|api/whoami|docs)(.*)>`,
-              methods: ['GET'],
-            },
-            authenticators: [{ handler: 'noop' }],
-            authorizer: { handler: 'allow' },
-            mutators: [{ handler: 'noop' }],
-          })
-        }
-
-        // 9. jinbe-api — Jinbe direct API (authenticated, OPA authorizer — enforces route_map)
-        // Routes not in route_map are denied by OPA → 403 / redirect to login
-        if (jinbeDomain) {
-          rules.push({
-            id: 'jinbe-api',
-            upstream: { url: jinbeInternal },
-            match: {
-              url: `http<(s?)>://${jinbeDomain}/<.*>`,
-              methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-            },
-            authenticators: [{ handler: 'cookie_session' }],
-            authorizer: { handler: 'remote_json' },
-            mutators: [{ handler: 'header' }],
-          })
-        }
-
-        // Upsert by rule ID: built-in rules reflect current env vars, custom rules preserved
-        const existingRules = await redisRbacRepository.getAccessRules() ?? []
-        const builtInIds = new Set(rules.map(r => r.id))
-        const customRules = existingRules.filter((r: OathkeeperRule) => !builtInIds.has(r.id))
-        const merged = [...rules, ...customRules]
-        await redisRbacRepository.setAccessRules(merged)
-        fastify.log.info({ builtIn: rules.length, custom: customRules.length }, 'Access rules upserted in Redis')
-      }
-
-      // Route_map: merge built-in routes into existing — preserves user additions, picks up new endpoints
-      {
-        const builtInRoutes = [
-          { method: 'GET',    path: '/api/health' },
-          { method: 'GET',    path: '/api/whoami' },
-          { method: 'GET',    path: '/docs/:any*' },
-          { method: 'GET',    path: '/api/clusters',                        permission: 'clusters:list' },
-          { method: 'POST',   path: '/api/clusters',                        permission: 'clusters:create' },
-          { method: 'GET',    path: '/api/clusters/:id',                    permission: 'clusters:read' },
-          { method: 'PUT',    path: '/api/clusters/:id',                    permission: 'clusters:update' },
-          { method: 'DELETE', path: '/api/clusters/:id',                    permission: 'clusters:delete' },
-          { method: 'POST',   path: '/api/clusters/verify',                 permission: 'clusters:create' },
-          { method: 'POST',   path: '/api/clusters/:id/verify',             permission: 'clusters:update' },
-          { method: 'POST',   path: '/api/clusters/:id/databases',          permission: 'databases:create' },
-          { method: 'POST',   path: '/api/clusters/:id/backups',            permission: 'backups:create' },
-          { method: 'POST',   path: '/api/clusters/:clusterId/jobs',        permission: 'jobs:create' },
-          { method: 'GET',    path: '/api/clusters/:clusterId/jobs',        permission: 'jobs:list' },
-          { method: 'GET',    path: '/api/clusters/:clusterId/jobs/pods',   permission: 'jobs:read' },
-          { method: 'GET',    path: '/api/databases',                       permission: 'databases:list' },
-          { method: 'GET',    path: '/api/databases/:id',                   permission: 'databases:read' },
-          { method: 'GET',    path: '/api/databases/:id/list',              permission: 'databases:read' },
-          { method: 'PUT',    path: '/api/databases/:id',                   permission: 'databases:update' },
-          { method: 'DELETE', path: '/api/databases/:id',                   permission: 'databases:delete' },
-          { method: 'GET',    path: '/api/databases/:id/api',               permission: 'databases:read' },
-          { method: 'POST',   path: '/api/databases/:id/api',               permission: 'databases:create' },
-          { method: 'GET',    path: '/api/backups',                         permission: 'backups:list' },
-          { method: 'GET',    path: '/api/backups/:id',                     permission: 'backups:read' },
-          { method: 'DELETE', path: '/api/backups/:id',                     permission: 'backups:delete' },
-          { method: 'POST',   path: '/api/backups/:id/items',               permission: 'backups:create' },
-          { method: 'GET',    path: '/api/backup-items',                    permission: 'backups:list' },
-          { method: 'GET',    path: '/api/backup-items/:id',                permission: 'backups:read' },
-          { method: 'PUT',    path: '/api/backup-items/:id',                permission: 'backups:update' },
-          { method: 'DELETE', path: '/api/backup-items/:id',                permission: 'backups:delete' },
-          { method: 'GET',    path: '/api/database-apis',                   permission: 'databases:list' },
-          { method: 'GET',    path: '/api/database-apis/:id',               permission: 'databases:read' },
-          { method: 'PUT',    path: '/api/database-apis/:id',               permission: 'databases:update' },
-          { method: 'DELETE', path: '/api/database-apis/:id',               permission: 'databases:delete' },
-          { method: 'GET',    path: '/api/admin/users',                     permission: 'admin:read' },
-          { method: 'POST',   path: '/api/admin/users',                     permission: 'admin:create' },
-          { method: 'GET',    path: '/api/admin/users/:id',                 permission: 'admin:read' },
-          { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'admin:update' },
-          { method: 'DELETE', path: '/api/admin/users/:id',                 permission: 'admin:delete' },
-          { method: 'PATCH',  path: '/api/admin/users/:id/state',           permission: 'admin:update' },
-          { method: 'PATCH',  path: '/api/admin/users/:id/metadata',        permission: 'admin:update' },
-          { method: 'PATCH',  path: '/api/admin/users/:id/organization',    permission: 'admin:update' },
-          { method: 'GET',    path: '/api/admin/users/:id/sessions',        permission: 'admin:read' },
-          { method: 'DELETE', path: '/api/admin/users/:id/sessions',        permission: 'admin:delete' },
-          { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'admin:delete' },
-          { method: 'GET',    path: '/api/admin/users/:email/groups',       permission: 'admin:read' },
-          { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
-          { method: 'POST',   path: '/api/admin/users/:id/recovery-email', permission: 'admin:update' },
-          { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
-          { method: 'GET',    path: '/api/admin/rbac/groups',               permission: 'admin:read' },
-          { method: 'POST',   path: '/api/admin/rbac/groups',               permission: 'admin:create' },
-          { method: 'PUT',    path: '/api/admin/rbac/groups/:name',         permission: 'admin:update' },
-          { method: 'DELETE', path: '/api/admin/rbac/groups/:name',         permission: 'admin:delete' },
-          { method: 'GET',    path: '/api/admin/rbac/services',             permission: 'admin:read' },
-          { method: 'POST',   path: '/api/admin/rbac/services',             permission: 'admin:create' },
-          { method: 'DELETE', path: '/api/admin/rbac/services/:name',       permission: 'admin:delete' },
-          { method: 'GET',    path: '/api/admin/rbac/services/:name/roles', permission: 'admin:read' },
-          { method: 'PUT',    path: '/api/admin/rbac/services/:name/routes',permission: 'admin:update' },
-          { method: 'GET',    path: '/api/admin/rbac/access-rules',         permission: 'admin:read' },
-          { method: 'GET',    path: '/api/admin/rbac/access-rules/:id',     permission: 'admin:read' },
-          { method: 'POST',   path: '/api/admin/rbac/access-rules',         permission: 'admin:create' },
-          { method: 'PUT',    path: '/api/admin/rbac/access-rules/:id',     permission: 'admin:update' },
-          { method: 'DELETE', path: '/api/admin/rbac/access-rules/:id',     permission: 'admin:delete' },
-          { method: 'POST',   path: '/api/admin/rbac/simulate',             permission: 'admin:read' },
-          { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
-          { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
-          { method: 'GET',    path: '/api/organizations/:organizationId/users',     permission: 'admin:read' },
-          { method: 'POST',   path: '/api/organizations/:organizationId/users',     permission: 'admin:create' },
-          { method: 'GET',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:read' },
-          { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:update' },
-          { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id', permission: 'admin:delete' },
-        ]
-        const existing = await redisRbacRepository.getRouteMap('jinbe')
-        const existingKeys = new Set((existing?.rules ?? []).map((r: { method: string; path: string }) => `${r.method}:${r.path}`))
-        const toAdd = builtInRoutes.filter(r => !existingKeys.has(`${r.method}:${r.path}`))
-        if (toAdd.length > 0) {
-          const merged = [...(existing?.rules ?? []), ...toAdd]
-          await redisRbacRepository.setRouteMap('jinbe', { rules: merged })
-          fastify.log.info({ added: toAdd.length }, 'Jinbe route_map updated with new built-in routes')
-        }
-      }
-
-      // Seed kuma (admin dashboard) service + route_map if APP_DOMAIN is configured
-      if (env.APP_DOMAIN) {
-        const kumaExists = await redisRbacRepository.serviceExists('kuma')
-        if (!kumaExists) {
-          await redisRbacRepository.addService('kuma')
-          await redisRbacRepository.setRoles('kuma', {
-            admin: ['*'],
-            viewer: ['read'],
-          })
-          // Propagate kuma roles to existing groups
-          const groups = await redisRbacRepository.getGroups()
-          if (groups['super_admins']) {
-            groups['super_admins']['kuma'] = ['admin']
-            await redisRbacRepository.setGroup('super_admins', groups['super_admins'])
-          }
-          if (groups['admins']) {
-            groups['admins']['kuma'] = ['admin']
-            await redisRbacRepository.setGroup('admins', groups['admins'])
-          }
-          if (groups['viewers']) {
-            groups['viewers']['kuma'] = ['viewer']
-            await redisRbacRepository.setGroup('viewers', groups['viewers'])
-          }
-          fastify.log.info('Kuma service seeded in Redis')
-        }
-        const kumaRouteMap = await redisRbacRepository.getRouteMap('kuma')
-        if (!kumaRouteMap) {
-          // Kuma is a pure frontend SPA — no own API backend.
-          // All /api/... calls from kuma are proxied to jinbe and protected by jinbe's route_map.
-          // Broad wildcards (/:any*) must NOT be here — they would make all jinbe routes "public".
-          await redisRbacRepository.setRouteMap('kuma', { rules: [] })
-          fastify.log.info('Kuma route_map seeded in Redis')
-        }
-      }
-
-      // Create default admin user in Kratos if ADMIN_EMAIL is set (runs every startup, idempotent)
-      const adminEmail = process.env.ADMIN_EMAIL
-      const adminPassword = process.env.ADMIN_PASSWORD || 'changeme123!'
-      const adminName = process.env.ADMIN_NAME || 'Admin'
-      if (adminEmail) {
-        try {
-          const { kratosService } = await import('./services/kratos.service.js')
-          const { identities } = await kratosService.listIdentities(1, undefined, adminEmail)
-          if (identities.length === 0) {
-            const identity = await kratosService.createIdentity({
-              schema_id: 'default',
-              state: 'active',
-              traits: { email: adminEmail, name: adminName },
-              credentials: { password: { config: { password: adminPassword } } },
-              metadata_admin: { groups: ['super_admins'] },
-              verifiable_addresses: [{ value: adminEmail, verified: true, via: 'email', status: 'completed' }],
-            })
-            fastify.log.info({ email: adminEmail, id: identity.id }, 'Default admin user created')
-          } else {
-            fastify.log.debug({ email: adminEmail }, 'Admin user already exists')
-          }
-        } catch (err) {
-          fastify.log.warn({ err, email: adminEmail }, 'Failed to create default admin user — Kratos may not be ready yet')
-        }
-      }
-    }
-    // Wrap bootstrap in retry
+    // Block until the bootstrap Job has written the marker. Default budget
+    // 6 minutes — matches the chart's startupProbe (failureThreshold: 72,
+    // periodSeconds: 5).
     try {
-      await bootstrapWithRetry()
+      const marker = await waitForBootstrap({ logger: fastify.log })
+      bootstrapReady = true
+      fastify.log.info(
+        { schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
+        'Bootstrap ready — serving traffic',
+      )
     } catch (err) {
-      const errMsg = (err as Error)?.message || ''
-      const errName = (err as Error)?.name || ''
-      if (errMsg.includes('ECONNREFUSED') || errMsg.includes('max retries') || errName.includes('MaxRetries')) {
-        fastify.log.info('Redis not ready — scheduling bootstrap retry in background')
-        const retry = async (attempt: number): Promise<void> => {
-          try {
-            await bootstrapWithRetry()
-          } catch (retryErr) {
-            if (attempt < 15) {
-              const d = Math.min(attempt * 3000, 15000)
-              fastify.log.info({ attempt }, `Bootstrap retry ${attempt} — next in ${d}ms`)
-              await new Promise(r => setTimeout(r, d))
-              return retry(attempt + 1)
-            }
-            fastify.log.error({ err: retryErr }, 'Bootstrap failed after 15 retries')
-          }
-        }
-        // Run in background — don't block server startup
-        retry(1).catch(() => {})
-      } else {
-        fastify.log.warn({ err }, 'Bootstrap failed')
+      if (err instanceof BootstrapTimeoutError) {
+        fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')
+        process.exit(2)
       }
+      if (err instanceof MarkerCorruptError) {
+        fastify.log.error({ raw: err.raw }, 'Bootstrap marker corrupt — exiting')
+        process.exit(5)
+      }
+      throw err
     }
   } catch (err) {
     console.error('Failed to start server:', err)

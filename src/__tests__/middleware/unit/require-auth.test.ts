@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { requireAuth, isInternalRequest } from '../../../middleware/require-auth.js'
+import { requireAuth } from '../../../middleware/require-auth.js'
 
 // Helper to create mock request
 function createMockRequest(
@@ -378,50 +378,4 @@ describe('requireAuth middleware', () => {
     })
   })
 
-  // ===========================================================================
-  // Internal Cluster Bypass
-  // ===========================================================================
-  describe('internal cluster bypass', () => {
-    it('should require auth for internal Host (bypass removed)', async () => {
-      const request = createMockRequest({
-        url: '/api/clusters',
-        headers: { host: 'jinbe.w6d-ops:8080' },
-        userContext: undefined,
-      } as unknown as Parameters<typeof createMockRequest>[0])
-      const reply = createMockReply()
-
-      await requireAuth(request, reply)
-
-      expect(reply._statusCode).toBe(401)
-    })
-
-    it('should require auth for external Host', async () => {
-      const request = createMockRequest({
-        url: '/api/clusters',
-        headers: { host: 'jinbe.example.com' },
-        userContext: undefined,
-      } as unknown as Parameters<typeof createMockRequest>[0])
-      const reply = createMockReply()
-
-      await requireAuth(request, reply)
-
-      expect(reply._statusCode).toBe(401)
-    })
-
-    it('should detect internal request via exact host match only', () => {
-      const internalRequest = createMockRequest({
-        headers: { host: 'jinbe.w6d-ops:8080' },
-      } as unknown as Parameters<typeof createMockRequest>[0])
-      const subdomainRequest = createMockRequest({
-        headers: { host: 'api.w6d-ops.local:8080' },
-      } as unknown as Parameters<typeof createMockRequest>[0])
-      const externalRequest = createMockRequest({
-        headers: { host: 'api.example.com' },
-      } as unknown as Parameters<typeof createMockRequest>[0])
-
-      expect(isInternalRequest(internalRequest)).toBe(true)
-      expect(isInternalRequest(subdomainRequest)).toBe(false) // substring no longer matches
-      expect(isInternalRequest(externalRequest)).toBe(false)
-    })
-  })
 })

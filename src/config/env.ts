@@ -4,6 +4,14 @@ import dotenv from 'dotenv'
 // Load environment variables
 dotenv.config()
 
+// FQDN regex: at least one dot, alphanumeric + hyphens, no scheme/path/port.
+// Catches mistakes like "http://app.example.com" and "app.example.com:8080".
+const fqdnSchema = z
+  .string()
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i, {
+    message: 'must be a bare FQDN (no scheme, no port, no path)',
+  })
+
 // Environment schema with validation
 const envSchema = z.object({
   // Server
@@ -42,6 +50,8 @@ const envSchema = z.object({
 
   // Optional
   COMMIT_SHA: z.string().optional(),
+  RELEASE_NAME: z.string().optional(),
+  APP_VERSION: z.string().optional(),
 
   // Development only - bypass authentication (NEVER use in production!)
   DEV_BYPASS_AUTH: z
@@ -61,7 +71,7 @@ const envSchema = z.object({
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
 
-  // OPAL Server (for real-time RBAC update triggers — legacy, being replaced by OPA direct push)
+  // OPAL Server (for real-time RBAC update triggers)
   OPAL_SERVER_URL: z.string().url().default('http://auth-w6d-opal-server:7002'),
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe.w6d-ops:8080'),
 
@@ -80,16 +90,28 @@ const envSchema = z.object({
   SERVICE_DEFAULT_PORT: z.string().transform(Number).pipe(z.number().positive()).default('8080'),
 
   // Internal service URLs for bootstrap (Oathkeeper upstream rules)
-  LOGIN_UI_URL: z.string().url().optional(),   // e.g. http://auth-w6d-kratos-login-ui:80
-  ADMIN_UI_URL: z.string().url().optional(),   // e.g. http://auth-w6d-admin-ui:80
+  LOGIN_UI_URL: z.string().url().optional(),
+  ADMIN_UI_URL: z.string().url().optional(),
 
   // Domain configuration (for Oathkeeper rule generation)
-  AUTH_DOMAIN: z.string().optional(),   // e.g. auth.example.com — Kratos + Login UI
-  APP_DOMAIN: z.string().optional(),    // e.g. app.example.com  — Kuma admin UI
-  API_DOMAIN: z.string().optional(),    // e.g. api.example.com  — Jinbe API (defaults to APP_DOMAIN)
+  AUTH_DOMAIN: fqdnSchema.optional(),
+  APP_DOMAIN: fqdnSchema.optional(),
+  API_DOMAIN: fqdnSchema.optional(),
 
   // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
   OPA_AUTHZ_REMOTE: z.string().url().default('http://auth-w6d-opa-authz-proxy:8080/v1/data/rbac/allow'),
+
+  // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts)
+  ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_PASSWORD: z.string().min(12).optional(),
+  ADMIN_NAME: z.string().min(1).default('Admin'),
+
+  // Reset path guards (CLI only). Both must be set; reset only if RESET_CONFIRM matches the running image SHA.
+  JINBE_BOOTSTRAP_DANGEROUS_RESET: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('false'),
+  JINBE_BOOTSTRAP_RESET_CONFIRM: z.string().optional(),
 })
 
 // Parse and validate environment variables
