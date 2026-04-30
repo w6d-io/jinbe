@@ -275,6 +275,25 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.updateUserGroups.bind(adminController) as never
   )
 
+  // Send recovery email to user (one-click password reset)
+  fastify.post(
+    '/users/:id/recovery-email',
+    {
+      schema: {
+        description: 'Send a recovery email to the user. Triggers Kratos self-service recovery flow.',
+        tags: ['admin'],
+        params: zodToJsonSchema(userIdParamSchema),
+        response: {
+          204: { type: 'null', description: 'Recovery email sent' },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.sendRecoveryEmail.bind(adminController) as never
+  )
+
   // List sessions for an identity (proxied from Kratos admin — never exposed directly to browser)
   fastify.get(
     '/users/:id/sessions',
