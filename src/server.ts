@@ -311,7 +311,23 @@ async function start() {
           })
         }
 
-        // 8. jinbe-api — Jinbe direct API (authenticated, allow authorizer — not OPA)
+        // 8. jinbe-public — Public routes on jinbe subdomain (health, whoami, docs — no auth)
+        if (jinbeDomain) {
+          rules.push({
+            id: 'jinbe-public',
+            upstream: { url: jinbeInternal },
+            match: {
+              url: `http<(s?)>://${jinbeDomain}/<(api/health|api/whoami|docs)(.*)>`,
+              methods: ['GET'],
+            },
+            authenticators: [{ handler: 'noop' }],
+            authorizer: { handler: 'allow' },
+            mutators: [{ handler: 'noop' }],
+          })
+        }
+
+        // 9. jinbe-api — Jinbe direct API (authenticated, OPA authorizer — enforces route_map)
+        // Routes not in route_map are denied by OPA → 403 / redirect to login
         if (jinbeDomain) {
           rules.push({
             id: 'jinbe-api',
@@ -321,7 +337,7 @@ async function start() {
               methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
             },
             authenticators: [{ handler: 'cookie_session' }],
-            authorizer: { handler: 'allow' },
+            authorizer: { handler: 'remote_json' },
             mutators: [{ handler: 'header' }],
           })
         }
@@ -385,6 +401,7 @@ async function start() {
           { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'admin:delete' },
           { method: 'GET',    path: '/api/admin/users/:email/groups',       permission: 'admin:read' },
           { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
+          { method: 'POST',   path: '/api/admin/users/:id/recovery-email', permission: 'admin:update' },
           { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
           { method: 'GET',    path: '/api/admin/rbac/groups',               permission: 'admin:read' },
           { method: 'POST',   path: '/api/admin/rbac/groups',               permission: 'admin:create' },
