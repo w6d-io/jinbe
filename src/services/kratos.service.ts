@@ -36,7 +36,7 @@ interface IdentityGroupsCache {
 export class KratosService {
   private adminUrl: string
   private identityGroupsCache: IdentityGroupsCache | null = null
-  private readonly CACHE_TTL_MS = 30_000 // 30 seconds
+  private readonly CACHE_TTL_MS = 5_000 // 5 seconds — short TTL as fallback; explicit invalidation handles mutations
 
   constructor() {
     this.adminUrl = env.KRATOS_ADMIN_URL

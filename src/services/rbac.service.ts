@@ -126,6 +126,11 @@ export class RbacService {
     return { success: true, message, timestamp: new Date().toISOString() }
   }
 
+  // Public: call after any user-group mutation that bypasses rbacService methods
+  async notifyBindingsChanged(reason: string, actor?: { email?: string; ip?: string }): Promise<void> {
+    await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
+  }
+
   private async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string }, actor?: { email?: string; ip?: string }): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
