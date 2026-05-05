@@ -3,7 +3,13 @@ import { opaService } from '../services/opa.service.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
-const ADMIN_ROLES = ['admin', 'super_admin','jinbe:admin']
+const ADMIN_GROUPS = ['admins', 'super_admins', 'admin', 'superadmin']
+
+function hasAnyGroup(userGroups: string[], requiredGroups: string[]): boolean {
+  return requiredGroups.some((group) =>
+    userGroups.some((userGroup) => userGroup.toLowerCase() === group.toLowerCase())
+  )
+}
 
 /**
  * Middleware factory: requires the caller to have admin role for the
@@ -57,11 +63,11 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     const isAdmin =
       rbacInfo.permissions.includes('*') ||
-      rbacInfo.roles.some((r) => ADMIN_ROLES.includes(r))
+      hasAnyGroup(rbacInfo.groups, ADMIN_GROUPS)
 
     if (!isAdmin) {
       request.log.warn(
-        { email, organizationId, roles: rbacInfo.roles },
+        { email, organizationId, groups: rbacInfo.groups },
         'Access denied - user not admin for service'
       )
       auditEventService
@@ -89,7 +95,7 @@ export function requireServiceAdmin(paramName = 'organizationId') {
     }
 
     request.log.debug(
-      { email, organizationId, roles: rbacInfo.roles },
+      { email, organizationId, groups: rbacInfo.groups },
       'Service admin access granted'
     )
   }
