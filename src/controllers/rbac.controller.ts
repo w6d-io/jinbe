@@ -1,7 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
-import { rbacResolverService } from '../services/rbac-resolver.service.js'
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { opaService } from '../services/opa.service.js'
 import {
   createGroupBodySchema,
   updateGroupBodySchema,
@@ -249,98 +248,38 @@ export class RbacController {
       })
       .parse(request.body)
 
-    // 1. Resolve user RBAC
-    const userRbac = await rbacResolverService.resolveUserRbac(body.email, body.service)
-
-    // 2. Get route_map for the service
-    const routeMap = await redisRbacRepository.getRouteMap(body.service)
-    const rules = routeMap?.rules ?? []
-
-    // 3. Find matching rule
-    const matchedRule = rules.find((rule) =>
-      matchesMethod(rule.method, body.method) && matchesPath(rule.path, body.path)
+    // Single round-trip to OPA — same code path as oathkeeper request-time
+    // authorization, so the simulator can never drift from production decisions.
+    const result = await opaService.simulate(
+      body.email,
+      body.service,
+      body.method.toUpperCase(),
+      body.path,
     )
 
-    // 4. Determine authorization
-    let allowed: boolean
-    let requiredPermission: string | undefined
-
-    if (!matchedRule) {
-      // No matching rule — treated as public (no route_map entry)
-      allowed = true
-    } else if (!matchedRule.permission) {
-      // Matching rule but no permission required — public endpoint
-      allowed = true
-    } else {
-      // Permission required — check user has it (including wildcard *)
-      requiredPermission = matchedRule.permission
-      allowed =
-        userRbac.permissions.includes('*') ||
-        userRbac.permissions.includes(requiredPermission)
+    if (!result) {
+      return reply.code(503).send({
+        error: 'opa_unreachable',
+        message: 'Could not query OPA for live decision',
+      })
     }
 
+    const matchedRule = result.matching_rules[0]
+    const requiredPermission = matchedRule?.permission
+
     return reply.send({
-      allowed,
+      allowed: result.allow,
       matchedRule: matchedRule ?? undefined,
       requiredPermission,
+      superAdmin: result.super_admin,
       userInfo: {
-        email: userRbac.email,
-        groups: userRbac.groups,
-        roles: userRbac.roles,
-        permissions: userRbac.permissions,
+        email: body.email,
+        groups: result.groups,
+        roles: result.roles,
+        permissions: result.permissions,
       },
     })
   }
-}
-
-// =============================================================================
-// Path matching helpers (mirrors rbac.rego logic)
-// =============================================================================
-
-/**
- * Match HTTP method: exact match or wildcard '*'
- */
-function matchesMethod(ruleMethod: string, requestMethod: string): boolean {
-  if (ruleMethod === '*') return true
-  return ruleMethod.toUpperCase() === requestMethod.toUpperCase()
-}
-
-/**
- * Match request path against a route_map pattern.
- *
- * Supports the same patterns as the Rego policy:
- *   - exact match:  /api/users
- *   - :param        matches a single segment  (/api/users/:id -> /api/users/123)
- *   - :any*         matches one or more trailing segments (/api/:any* -> /api/foo/bar)
- */
-function matchesPath(pattern: string, requestPath: string): boolean {
-  const patternParts = pattern.split('/').filter(Boolean)
-  const requestParts = requestPath.split('/').filter(Boolean)
-
-  for (let i = 0; i < patternParts.length; i++) {
-    const pp = patternParts[i]
-
-    // Glob-style trailing wildcard: matches rest of path
-    if (pp.endsWith('*')) {
-      // Everything from this segment onward is accepted as long as there is
-      // at least one more segment in the request
-      return requestParts.length >= i + 1
-    }
-
-    // Single-segment parameter placeholder
-    if (pp.startsWith(':')) {
-      if (i >= requestParts.length) return false
-      continue // any single segment matches
-    }
-
-    // Exact segment match
-    if (i >= requestParts.length || pp !== requestParts[i]) {
-      return false
-    }
-  }
-
-  // All pattern parts consumed — lengths must match (no wildcard)
-  return patternParts.length === requestParts.length
 }
 
 export const rbacController = new RbacController()

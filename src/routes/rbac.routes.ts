@@ -372,6 +372,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           type: 'object',
           properties: {
             allowed: { type: 'boolean' },
+            superAdmin: { type: 'boolean' },
             matchedRule: {
               type: 'object',
               properties: {
@@ -394,6 +395,13 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         },
         401: unauthorizedResponseSchema,
         403: forbiddenResponseSchema,
+        503: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' },
+          },
+        },
       },
     },
   }, rbacController.simulate.bind(rbacController))
