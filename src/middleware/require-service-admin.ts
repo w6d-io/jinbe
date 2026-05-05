@@ -3,7 +3,7 @@ import { opaService } from '../services/opa.service.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
-const ADMIN_ROLES = ['admin', 'super_admin']
+const ADMIN_ROLES = ['admin', 'super_admin','jinbe:admin']
 
 /**
  * Middleware factory: requires the caller to have admin role for the
