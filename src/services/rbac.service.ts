@@ -55,6 +55,10 @@ export interface UserWithGroups {
   email: string
   name?: string
   groupMembership: Record<string, boolean>
+  /** Identity has at least one second factor (TOTP, WebAuthn, lookup_secret). */
+  mfa?: boolean
+  /** Underlying Kratos identity id — needed for client-side MFA enrollment links. */
+  identityId?: string
 }
 
 export interface GroupInfo {
@@ -186,6 +190,70 @@ export class RbacService {
     return meta?.system === true
   }
 
+  /**
+   * Returns true when membership of `groupName` grants either the global
+   * super_admin role or a service-scoped admin role (i.e. holds the
+   * wildcard "*"). Such groups are considered "privileged" — adding a
+   * user to one of them is a privilege-escalation operation, so we
+   * gate it on the target identity having a second factor configured.
+   */
+  private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
+    const def = await redisRbacRepository.getGroup(groupName)
+    if (!def) return false
+
+    // Global super_admin is the absolute trigger.
+    if ((def.global ?? []).includes('super_admin')) return true
+
+    // For each service the group binds, check whether any of its roles
+    // resolves to a wildcard permission (admin role typically has "*").
+    for (const [svc, roles] of Object.entries(def)) {
+      if (svc === 'global' || !roles?.length) continue
+      const allRoles = await redisRbacRepository.getRoles(svc)
+      if (!allRoles) continue
+      for (const role of roles) {
+        const perms = allRoles[role] ?? []
+        if (perms.includes('*')) return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Iterates `candidateGroups`; for each one that grants admin power AND
+   * is system-protected, returns the first group name that the target
+   * identity cannot currently join because they have no second factor.
+   * Returns null if no such gate trips.
+   *
+   * Used by the user-group assignment endpoint to refuse one-click
+   * elevation of a user without MFA — required for SOC2-style controls.
+   */
+  async findPrivilegedGroupRequiringMFA(
+    candidateGroups: string[],
+    targetIdentityId: string,
+  ): Promise<string | null> {
+    let mfaCheckResult: boolean | null = null
+
+    for (const groupName of candidateGroups) {
+      const isSystem = await this.isSystemGroup(groupName)
+      if (!isSystem) continue
+      const grantsAdmin = await this.groupGrantsAdminPower(groupName)
+      if (!grantsAdmin) continue
+
+      // Lazy-load MFA check — only pay the Kratos round-trip if at least
+      // one candidate group qualifies as privileged.
+      if (mfaCheckResult === null) {
+        try {
+          mfaCheckResult = await kratosService.hasMFA(targetIdentityId)
+        } catch {
+          // Treat lookup failure as "no MFA" — fail closed for safety.
+          mfaCheckResult = false
+        }
+      }
+      if (!mfaCheckResult) return groupName
+    }
+    return null
+  }
+
   // Public: call after any user-group mutation that bypasses rbacService methods
   async notifyBindingsChanged(reason: string, actor?: { email?: string; ip?: string }): Promise<void> {
     await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
@@ -301,17 +369,28 @@ export class RbacService {
       users.push({ email, groupMembership })
     }
 
-    // Enrich with names from Kratos
+    // Enrich with names + identity ids from Kratos. The credentials
+    // payload (TOTP / WebAuthn / lookup_secret) is only present if the
+    // request includes ?include_credential=…; we still surface mfa when
+    // it is, so kuma can disable admin-group assignment on un-enrolled
+    // users without an extra round trip per user.
     try {
-      const kratosResponse = await kratosService.listIdentities()
-      const emailToName = new Map<string, string | undefined>(
-        kratosResponse.identities.map((u) => {
-          const displayName = u.traits.name || undefined
-          return [u.traits.email as string, displayName]
-        })
-      )
+      const kratosResponse = await kratosService.listIdentities(250, undefined, undefined, ['totp', 'webauthn', 'lookup_secret'])
+      const byEmail = new Map(kratosResponse.identities.map((u) => [u.traits.email as string, u]))
       for (const user of users) {
-        user.name = emailToName.get(user.email)
+        const ident = byEmail.get(user.email)
+        if (!ident) continue
+        user.name = ident.traits.name || undefined
+        user.identityId = ident.id
+        const creds = (ident.credentials ?? {}) as Record<string, unknown>
+        // mfa = true only when at least one factor is reported. Absence
+        // of `credentials` on the identity (i.e. listIdentities was
+        // called without include_credential) leaves mfa unset rather
+        // than defaulting to false — the UI can decide whether to fail
+        // closed.
+        if (Object.keys(creds).length > 0) {
+          user.mfa = Boolean(creds.totp || creds.webauthn || creds.lookup_secret)
+        }
       }
     } catch { /* Kratos unavailable */ }
 

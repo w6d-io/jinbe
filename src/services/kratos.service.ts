@@ -89,7 +89,8 @@ export class KratosService {
   async listIdentities(
     pageSize?: number,
     pageToken?: string,
-    credentialsIdentifier?: string
+    credentialsIdentifier?: string,
+    includeCredential?: ('password' | 'totp' | 'webauthn' | 'lookup_secret' | 'oidc')[],
   ): Promise<ListIdentitiesResponse> {
     const params = new URLSearchParams()
 
@@ -101,6 +102,15 @@ export class KratosService {
     }
     if (credentialsIdentifier) {
       params.append('credentials_identifier', credentialsIdentifier)
+    }
+    // include_credential pulls each named credential into the
+    // identity.credentials map. Without it Kratos hides the field
+    // entirely, even on /admin/identities, so MFA enrichment requires
+    // an explicit opt-in.
+    if (includeCredential?.length) {
+      for (const c of includeCredential) {
+        params.append('include_credential', c)
+      }
     }
 
     const queryString = params.toString()
@@ -121,6 +131,28 @@ export class KratosService {
    */
   async getIdentity(id: string): Promise<KratosIdentity> {
     return this.request<KratosIdentity>(`/admin/identities/${id}`)
+  }
+
+  /**
+   * Returns true if the identity has at least one second-factor credential
+   * configured: TOTP, WebAuthn (security key), or backup codes (lookup_secret).
+   *
+   * Kratos must be queried with include_credential to expose them in the
+   * response — without it the credentials map is hidden and we'd always
+   * see "no MFA". The endpoint accepts repeated query params per type.
+   */
+  async hasMFA(id: string): Promise<boolean> {
+    const params = new URLSearchParams()
+    params.append('include_credential', 'totp')
+    params.append('include_credential', 'webauthn')
+    params.append('include_credential', 'lookup_secret')
+    const identity = await this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
+    const creds = identity.credentials || {}
+    return Boolean(
+      (creds as Record<string, unknown>).totp ||
+      (creds as Record<string, unknown>).webauthn ||
+      (creds as Record<string, unknown>).lookup_secret,
+    )
   }
 
   /**
@@ -321,6 +353,15 @@ export class KratosService {
       | null
       | undefined
     return metadataAdmin?.groups || ['users']
+  }
+
+  /**
+   * Look up an identity by email. Returns null if not found instead of
+   * throwing, so callers can branch on absence without try/catch noise.
+   */
+  async findByEmail(email: string): Promise<KratosIdentity | null> {
+    const response = await this.listIdentities(1, undefined, email)
+    return response.identities[0] ?? null
   }
 
   /**

@@ -6,6 +6,12 @@ vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     getUserGroups: vi.fn(),
     updateUserGroups: vi.fn(),
+    // MFA gate path queries findByEmail before assignment. Default to
+    // null (no identity) so the gate is skipped — individual tests can
+    // override when they specifically exercise the privileged-group
+    // refusal flow.
+    findByEmail: vi.fn().mockResolvedValue(null),
+    hasMFA: vi.fn().mockResolvedValue(false),
   },
   KratosApiError: class KratosApiError extends Error {
     statusCode: number
@@ -22,6 +28,9 @@ vi.mock('../../../services/rbac.service.js', () => ({
     getAvailableGroups: vi.fn(),
     validateGroups: vi.fn(),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
+    // MFA-gate helper. Default returns null (no privileged group blocked);
+    // individual tests override to simulate refusal.
+    findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
   },
 }))
 

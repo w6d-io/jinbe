@@ -316,14 +316,43 @@ export class AdminController {
       // Validate groups exist in groups.json
       await rbacService.validateGroups(groups)
 
-      // Get old groups for audit trail
+      // Get old groups for audit trail. Default empty so the diff
+      // computation below can't choke on undefined when Kratos returns
+      // nothing or the call short-circuits.
       let oldGroups: string[] = []
       try {
-        oldGroups = await kratosService.getUserGroups(email)
+        const fetched = await kratosService.getUserGroups(email)
+        if (Array.isArray(fetched)) oldGroups = fetched
       } catch { /* ignore — user may not have groups yet */ }
 
       // Ensure user always has at least ['users'] if empty
       const finalGroups = groups.length > 0 ? groups : ['users']
+
+      // MFA gate: block assignment to a privileged group (one whose
+      // metadata is system: true AND that grants admin/super_admin) when
+      // the target identity has no second factor configured. Prevents
+      // an operator from one-clicking a fresh user into super_admins
+      // without SOC2-grade auth.
+      const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
+      if (newlyAdded.length > 0) {
+        let identityId: string | null = null
+        try {
+          const ident = await kratosService.findByEmail(email)
+          identityId = ident?.id ?? null
+        } catch { /* identity lookup failed — fall through, MFA gate skipped */ }
+        if (identityId) {
+          const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identityId)
+          if (blocker) {
+            return reply.status(403).send({
+              error: 'mfa_required',
+              message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
+              targetEmail: email,
+              targetGroups: newlyAdded,
+              hint: 'Have the user complete /settings → Authenticator app, then retry.',
+            })
+          }
+        }
+      }
 
       // Update in Kratos (also invalidates in-memory cache)
       await kratosService.updateUserGroups(email, finalGroups)
