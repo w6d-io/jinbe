@@ -142,6 +142,46 @@ export class RbacService {
     }
   }
 
+  /**
+   * Push a full datasource refresh to opal-server, covering bindings,
+   * groups, plus per-service roles + route_map. Mirrors the entries returned
+   * by GET /api/admin/rbac/opal-datasource so opal-server has no excuse for
+   * a stale dataset.
+   *
+   * Called from server.ts post-waitForBootstrap so that even if opal-server
+   * booted first and got a 503 on its initial fetch, this push refills OPA's
+   * dataset within seconds — without requiring an opal-server pod restart.
+   */
+  async refreshAllDataSources(reason: string = 'jinbe-startup'): Promise<void> {
+    try {
+      const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
+      const services = await redisRbacRepository.getServices()
+
+      const entries = [
+        { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
+        { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
+      ]
+      for (const svc of services) {
+        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
+        const routeMap = await redisRbacRepository.getRouteMap(svc)
+        if (routeMap) {
+          entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
+        }
+      }
+
+      const res = await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries, reason }),
+      })
+      if (!res.ok) throw new Error(`opal-server ${res.status}`)
+      console.log(`[opal-refresh] ${entries.length} entries pushed (${reason})`)
+    } catch (err) {
+      console.error('[opal-refresh] Failed:', err)
+      throw err
+    }
+  }
+
   private async notifyOpal(reason?: string): Promise<void> {
     try {
       const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
