@@ -1,6 +1,7 @@
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
+import { opaService } from './opa.service.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -54,11 +55,18 @@ export interface UserWithGroups {
   email: string
   name?: string
   groupMembership: Record<string, boolean>
+  /** Identity has at least one second factor (TOTP, WebAuthn, lookup_secret). */
+  mfa?: boolean
+  /** Underlying Kratos identity id — needed for client-side MFA enrollment links. */
+  identityId?: string
 }
 
 export interface GroupInfo {
   name: string
   services: GroupDefinition
+  /** True when this group is bootstrap-protected (cannot be deleted, may need super_admin to mutate). */
+  system?: boolean
+  description?: string
 }
 
 export interface UsersResponse {
@@ -73,6 +81,9 @@ export interface ServiceInfo {
   name: string
   rolesCount: number
   routesCount: number
+  /** True when this service is bootstrap-protected (cannot be deleted). */
+  system?: boolean
+  description?: string
 }
 
 export interface ServicesResponse {
@@ -114,6 +125,26 @@ export interface KratosBindingsResponse {
 export type { GroupDefinition, FlatRolesMap, RouteMap, OathkeeperRule }
 
 // =============================================================================
+// System-protected resources — gated by RBAC, not hardcoded
+// =============================================================================
+
+/**
+ * Thrown when a regular admin tries to mutate a `system: true` group/service
+ * without holding the global super_admin role. The check is *data-driven*:
+ * group/service metadata stored in Redis (`rbac:groups:meta`,
+ * `rbac:services:meta`) flags resources as system, and the actor's effective
+ * role is queried via OPA — same code path as request-time authorization, so
+ * there is no hardcoded list inside this service file.
+ */
+export class SystemResourceImmutable extends Error {
+  statusCode = 403
+  constructor(kind: string, name: string) {
+    super(`Refusing to mutate system ${kind} '${name}' — only super_admins may modify system resources`)
+    this.name = 'SystemResourceImmutable'
+  }
+}
+
+// =============================================================================
 // RBAC Service — Redis-backed
 // =============================================================================
 
@@ -124,6 +155,120 @@ export class RbacService {
 
   private result(message: string): MutationResult {
     return { success: true, message, timestamp: new Date().toISOString() }
+  }
+
+  /**
+   * Privilege escalation guard: refuses the mutation unless the actor holds
+   * a global wildcard role (super_admin). Lookup goes through OPA so the
+   * decision matches request-time authorization exactly.
+   */
+  private async requireSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+    if (!actor?.email) {
+      throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
+    }
+    const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
+    if (!result?.super_admin) {
+      throw Object.assign(
+        new Error(`Only super_admins may ${reason}`),
+        { statusCode: 403 },
+      )
+    }
+  }
+
+  /**
+   * Returns true when the resource is flagged `system: true` in its
+   * metadata. Used by mutation methods to decide whether the operation
+   * needs super_admin authority instead of plain rbac:write.
+   */
+  private async isSystemGroup(name: string): Promise<boolean> {
+    const meta = await redisRbacRepository.getGroupMetadata(name)
+    return meta?.system === true
+  }
+
+  private async isSystemService(name: string): Promise<boolean> {
+    const meta = await redisRbacRepository.getServiceMetadata(name)
+    return meta?.system === true
+  }
+
+  /**
+   * Returns true when membership of `groupName` grants either the global
+   * super_admin role or a service-scoped admin role (i.e. holds the
+   * wildcard "*"). Such groups are considered "privileged" — adding a
+   * user to one of them is a privilege-escalation operation, so we
+   * gate it on the target identity having a second factor configured.
+   */
+  /**
+   * Public wrapper for the admin-power check — used by the user-group
+   * assignment endpoint to refuse privilege escalation by non-super_admin
+   * actors. Mirrors the private helper used by the MFA gate.
+   */
+  async isAdminPowerGroup(groupName: string): Promise<boolean> {
+    return this.groupGrantsAdminPower(groupName)
+  }
+
+  /**
+   * Public wrapper exposing the super_admin authority check used internally
+   * by mutation guards. Throws 403 if the actor is not a super_admin.
+   */
+  async assertSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+    return this.requireSuperAdmin(reason, actor)
+  }
+
+  private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
+    const def = await redisRbacRepository.getGroup(groupName)
+    if (!def) return false
+
+    // Global super_admin is the absolute trigger.
+    if ((def.global ?? []).includes('super_admin')) return true
+
+    // For each service the group binds, check whether any of its roles
+    // resolves to a wildcard permission (admin role typically has "*").
+    for (const [svc, roles] of Object.entries(def)) {
+      if (svc === 'global' || !roles?.length) continue
+      const allRoles = await redisRbacRepository.getRoles(svc)
+      if (!allRoles) continue
+      for (const role of roles) {
+        const perms = allRoles[role] ?? []
+        if (perms.includes('*')) return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Iterates `candidateGroups`; for each one that grants admin power AND
+   * is system-protected, returns the first group name that the target
+   * identity cannot currently join because they have no second factor.
+   * Returns null if no such gate trips.
+   *
+   * Used by the user-group assignment endpoint to refuse one-click
+   * elevation of a user without MFA — required for SOC2-style controls.
+   */
+  async findPrivilegedGroupRequiringMFA(
+    candidateGroups: string[],
+    targetIdentityId: string,
+  ): Promise<string | null> {
+    let mfaCheckResult: boolean | null = null
+
+    for (const groupName of candidateGroups) {
+      const isSystem = await this.isSystemGroup(groupName)
+      if (!isSystem) continue
+      const grantsAdmin = await this.groupGrantsAdminPower(groupName)
+      if (!grantsAdmin) continue
+
+      // Lazy-load MFA check — only pay the Kratos round-trip if at least
+      // one candidate group qualifies as privileged.
+      if (mfaCheckResult === null) {
+        try {
+          mfaCheckResult = await kratosService.hasMFA(targetIdentityId)
+        } catch {
+          // Treat lookup failure as "no MFA" — fail closed for safety.
+          mfaCheckResult = false
+        }
+      }
+      if (!mfaCheckResult) return groupName
+    }
+    return null
   }
 
   // Public: call after any user-group mutation that bypasses rbacService methods
@@ -139,6 +284,46 @@ export class RbacService {
 
     if (eventType) {
       auditEventService.emit({ type: eventType, target, actor, source: 'jinbe-api' }).catch(() => {})
+    }
+  }
+
+  /**
+   * Push a full datasource refresh to opal-server, covering bindings,
+   * groups, plus per-service roles + route_map. Mirrors the entries returned
+   * by GET /api/admin/rbac/opal-datasource so opal-server has no excuse for
+   * a stale dataset.
+   *
+   * Called from server.ts post-waitForBootstrap so that even if opal-server
+   * booted first and got a 503 on its initial fetch, this push refills OPA's
+   * dataset within seconds — without requiring an opal-server pod restart.
+   */
+  async refreshAllDataSources(reason: string = 'jinbe-startup'): Promise<void> {
+    try {
+      const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
+      const services = await redisRbacRepository.getServices()
+
+      const entries = [
+        { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
+        { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
+      ]
+      for (const svc of services) {
+        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
+        const routeMap = await redisRbacRepository.getRouteMap(svc)
+        if (routeMap) {
+          entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
+        }
+      }
+
+      const res = await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries, reason }),
+      })
+      if (!res.ok) throw new Error(`opal-server ${res.status}`)
+      console.log(`[opal-refresh] ${entries.length} entries pushed (${reason})`)
+    } catch (err) {
+      console.error('[opal-refresh] Failed:', err)
+      throw err
     }
   }
 
@@ -201,17 +386,28 @@ export class RbacService {
       users.push({ email, groupMembership })
     }
 
-    // Enrich with names from Kratos
+    // Enrich with names + identity ids from Kratos. The credentials
+    // payload (TOTP / WebAuthn / lookup_secret) is only present if the
+    // request includes ?include_credential=…; we still surface mfa when
+    // it is, so kuma can disable admin-group assignment on un-enrolled
+    // users without an extra round trip per user.
     try {
-      const kratosResponse = await kratosService.listIdentities()
-      const emailToName = new Map<string, string | undefined>(
-        kratosResponse.identities.map((u) => {
-          const displayName = u.traits.name || undefined
-          return [u.traits.email as string, displayName]
-        })
-      )
+      const kratosResponse = await kratosService.listIdentities(250, undefined, undefined, ['totp', 'webauthn', 'lookup_secret'])
+      const byEmail = new Map(kratosResponse.identities.map((u) => [u.traits.email as string, u]))
       for (const user of users) {
-        user.name = emailToName.get(user.email)
+        const ident = byEmail.get(user.email)
+        if (!ident) continue
+        user.name = ident.traits.name || undefined
+        user.identityId = ident.id
+        const creds = (ident.credentials ?? {}) as Record<string, unknown>
+        // mfa = true only when at least one factor is reported. Absence
+        // of `credentials` on the identity (i.e. listIdentities was
+        // called without include_credential) leaves mfa unset rather
+        // than defaulting to false — the UI can decide whether to fail
+        // closed.
+        if (Object.keys(creds).length > 0) {
+          user.mfa = Boolean(creds.totp || creds.webauthn || creds.lookup_secret)
+        }
       }
     } catch { /* Kratos unavailable */ }
 
@@ -223,14 +419,31 @@ export class RbacService {
   // ===========================================================================
 
   async getGroups(): Promise<GroupsResponse> {
-    const groups = await redisRbacRepository.getGroups()
-    const groupsInfo: GroupInfo[] = Object.entries(groups).map(([name, services]) => ({ name, services }))
+    const [groups, allMeta] = await Promise.all([
+      redisRbacRepository.getGroups(),
+      redisRbacRepository.getAllGroupMetadata(),
+    ])
+    const groupsInfo: GroupInfo[] = Object.entries(groups).map(([name, services]) => {
+      const meta = allMeta[name]
+      return {
+        name,
+        services,
+        ...(meta?.system ? { system: true } : {}),
+        ...(meta?.description ? { description: meta.description } : {}),
+      }
+    })
     return { groups: groupsInfo }
   }
 
   async createGroup(name: string, services: GroupDefinition, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
+    }
+    // Block creating a group that grants the global super_admin role unless
+    // the actor is themselves a super_admin.
+    const grantsSuperAdmin = (services.global ?? []).includes('super_admin')
+    if (grantsSuperAdmin) {
+      await this.requireSuperAdmin('create a group with the super_admin role', actor)
     }
     await redisRbacRepository.setGroup(name, services)
     await this.invalidateBundle('rbac.group_created', { type: 'group', id: name }, actor)
@@ -241,10 +454,17 @@ export class RbacService {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
-    // Merge incoming services into existing — prevents wiping other service roles
-    const existing = await redisRbacRepository.getGroup(name) ?? {}
-    const merged = { ...existing, ...services }
-    await redisRbacRepository.setGroup(name, merged)
+    // Privilege escalation guard: editing super_admins (the wildcard group)
+    // requires the caller to already be a super_admin themselves.
+    if (name === 'super_admins') {
+      await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
+    }
+    // PUT semantics: full replace. Earlier behavior merged the incoming
+    // services map with the existing one, which silently dropped the
+    // operator's intent when they unchecked every role for a service —
+    // the API returned 200 but nothing changed in Redis. Replacing
+    // matches the REST PUT contract and what kuma's UI implies.
+    await redisRbacRepository.setGroup(name, services)
     await this.invalidateBundle('rbac.group_updated', { type: 'group', id: name }, actor)
     return this.result(`Group '${name}' updated`)
   }
@@ -253,7 +473,13 @@ export class RbacService {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
+    if (await this.isSystemGroup(name)) {
+      // System groups are never deletable — even by super_admins. Removing
+      // super_admins leaves the cluster with no path back to global admin.
+      throw new SystemResourceImmutable('group', name)
+    }
     await redisRbacRepository.deleteGroup(name)
+    await redisRbacRepository.deleteGroupMetadata(name)
 
     // Cascade: remove group from all Kratos users
     try {
@@ -291,16 +517,22 @@ export class RbacService {
   // ===========================================================================
 
   async getServices(): Promise<ServicesResponse> {
-    const serviceNames = await redisRbacRepository.getServices()
+    const [serviceNames, allMeta] = await Promise.all([
+      redisRbacRepository.getServices(),
+      redisRbacRepository.getAllServiceMetadata(),
+    ])
     const services: ServiceInfo[] = []
 
     for (const name of serviceNames) {
       const roles = await redisRbacRepository.getRoles(name)
       const routeMap = await redisRbacRepository.getRouteMap(name)
+      const meta = allMeta[name]
       services.push({
         name,
         rolesCount: roles ? Object.keys(roles).length : 0,
         routesCount: routeMap?.rules?.length || 0,
+        ...(meta?.system ? { system: true } : {}),
+        ...(meta?.description ? { description: meta.description } : {}),
       })
     }
 
@@ -398,6 +630,9 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(name))) {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
     }
+    if (await this.isSystemService(name)) {
+      throw new SystemResourceImmutable('service', name)
+    }
 
     // Remove from all groups
     const groups = await redisRbacRepository.getGroups()
@@ -416,6 +651,7 @@ export class RbacService {
     await redisRbacRepository.deleteRoles(name)
     await redisRbacRepository.deleteRouteMap(name)
     await redisRbacRepository.removeService(name)
+    await redisRbacRepository.deleteServiceMetadata(name)
 
     await this.invalidateBundle('rbac.service_deleted', { type: 'service', id: name }, actor)
     return this.result(`Service '${name}' deleted`)

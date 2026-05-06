@@ -30,6 +30,7 @@ import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
+import { rbacService } from './services/rbac.service.js'
 
 // Set true after waitForBootstrap resolves. Health endpoint returns 503
 // until then so the Deployment startupProbe absorbs the wait window.
@@ -172,6 +173,14 @@ async function start() {
         { schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
         'Bootstrap ready — serving traffic',
       )
+
+      // Push a full datasource refresh to opal-server. Defends against the
+      // race where opal-server booted first, hit a 503 from us, and ended
+      // up with an empty OPA dataset. Non-fatal — opal-server may also be
+      // unreachable here, in which case the next admin mutation re-pushes.
+      rbacService.refreshAllDataSources('jinbe-startup').catch(err => {
+        fastify.log.warn({ err: err.message }, 'OPAL data refresh on startup failed (non-fatal)')
+      })
     } catch (err) {
       if (err instanceof BootstrapTimeoutError) {
         fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')

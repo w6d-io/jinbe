@@ -34,6 +34,10 @@ const envSchema = z.object({
     .string()
     .transform((val) => val === 'true')
     .default('false'),
+  // Set 'true' in production when oathkeeper handles CORS — prevents
+  // duplicate Access-Control-Allow-Origin headers (oathkeeper emits its
+  // own, jinbe layering its own causes browser rejection).
+  DISABLE_CORS: z.string().default('false'),
 
   // Rate Limiting
   RATE_LIMIT_MAX: z.string().transform(Number).pipe(z.number().positive()).default('100'),

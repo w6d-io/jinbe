@@ -372,6 +372,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           type: 'object',
           properties: {
             allowed: { type: 'boolean' },
+            superAdmin: { type: 'boolean' },
             matchedRule: {
               type: 'object',
               properties: {
@@ -394,6 +395,13 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         },
         401: unauthorizedResponseSchema,
         403: forbiddenResponseSchema,
+        503: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' },
+          },
+        },
       },
     },
   }, rbacController.simulate.bind(rbacController))
@@ -477,6 +485,11 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     const entries = [
       { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
       { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
+      // Global roles are always part of OPA's dataset, even though "global"
+      // is not listed in the services registry — they hold the platform-wide
+      // wildcard ("*") used by the super_admin role and the rego super_admin
+      // detector relies on data.roles.global being populated.
+      { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
     ]
 
     for (const svc of services) {

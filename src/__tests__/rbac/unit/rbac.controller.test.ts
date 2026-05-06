@@ -51,10 +51,18 @@ vi.mock('../../../services/rbac-resolver.service.js', () => ({
   },
 }))
 
-// Mock redis-rbac repository (for simulate endpoint)
+// Mock redis-rbac repository (legacy — may still be referenced in other tests)
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getRouteMap: vi.fn().mockResolvedValue({ rules: [] }),
+  },
+}))
+
+// Mock OPA service (drives the simulate endpoint)
+vi.mock('../../../services/opa.service.js', () => ({
+  opaService: {
+    simulate: vi.fn(),
+    getUserInfo: vi.fn(),
   },
 }))
 
@@ -72,6 +80,7 @@ vi.mock('../../../services/redis-client.service.js', () => ({
 // Import after mocking
 import { RbacController } from '../../../controllers/rbac.controller.js'
 import { rbacService } from '../../../services/rbac.service.js'
+import { opaService } from '../../../services/opa.service.js'
 
 // Helper to create mock request
 function createMockRequest<T extends object = object>(
@@ -97,6 +106,10 @@ function createMockReply(): FastifyReply & { _statusCode?: number; _body?: unkno
     _statusCode: 200 as number | undefined,
     _body: undefined as unknown,
     status: vi.fn().mockImplementation(function (this: typeof reply, code: number) {
+      this._statusCode = code
+      return this
+    }),
+    code: vi.fn().mockImplementation(function (this: typeof reply, code: number) {
       this._statusCode = code
       return this
     }),
@@ -420,6 +433,112 @@ describe('RbacController', () => {
         'rule-1',
         expect.objectContaining({ email: 'admin@example.com' }),
       )
+    })
+  })
+
+  // ===========================================================================
+  // Simulate (OPA-backed)
+  // ===========================================================================
+  describe('simulate', () => {
+    type SimulateBody = { email: string; service: string; method: string; path: string }
+
+    it('forwards normalized input to OPA and returns the live decision', async () => {
+      vi.mocked(opaService.simulate).mockResolvedValueOnce({
+        allow: true,
+        matching_rules: [
+          { method: 'GET', path: '/api/admin/users', permission: 'admin:read' },
+        ],
+        groups: ['super_admins'],
+        roles: ['admin', 'super_admin'],
+        permissions: ['*'],
+        super_admin: true,
+      })
+
+      const request = createMockRequest<{ Body: SimulateBody }>({
+        body: {
+          email: 'admin@w6d.io',
+          service: 'jinbe',
+          method: 'get',
+          path: '/api/admin/users',
+        },
+      })
+      const reply = createMockReply()
+
+      await controller.simulate(request as FastifyRequest<{ Body: SimulateBody }>, reply)
+
+      expect(opaService.simulate).toHaveBeenCalledWith(
+        'admin@w6d.io',
+        'jinbe',
+        'GET',
+        '/api/admin/users',
+      )
+      expect(reply._body).toEqual({
+        allowed: true,
+        superAdmin: true,
+        matchedRule: {
+          method: 'GET',
+          path: '/api/admin/users',
+          permission: 'admin:read',
+        },
+        requiredPermission: 'admin:read',
+        userInfo: {
+          email: 'admin@w6d.io',
+          groups: ['super_admins'],
+          roles: ['admin', 'super_admin'],
+          permissions: ['*'],
+        },
+      })
+    })
+
+    it('returns 503 when OPA is unreachable', async () => {
+      vi.mocked(opaService.simulate).mockResolvedValueOnce(null)
+
+      const request = createMockRequest<{ Body: SimulateBody }>({
+        body: {
+          email: 'admin@w6d.io',
+          service: 'jinbe',
+          method: 'GET',
+          path: '/api/admin/users',
+        },
+      })
+      const reply = createMockReply()
+
+      await controller.simulate(request as FastifyRequest<{ Body: SimulateBody }>, reply)
+
+      expect(reply._statusCode).toBe(503)
+      expect((reply._body as { error: string }).error).toBe('opa_unreachable')
+    })
+
+    it('omits requiredPermission and matchedRule for routes with no match', async () => {
+      vi.mocked(opaService.simulate).mockResolvedValueOnce({
+        allow: false,
+        matching_rules: [],
+        groups: [],
+        roles: [],
+        permissions: [],
+        super_admin: false,
+      })
+
+      const request = createMockRequest<{ Body: SimulateBody }>({
+        body: {
+          email: 'nobody@nowhere.io',
+          service: 'jinbe',
+          method: 'GET',
+          path: '/api/missing',
+        },
+      })
+      const reply = createMockReply()
+
+      await controller.simulate(request as FastifyRequest<{ Body: SimulateBody }>, reply)
+
+      const body = reply._body as {
+        allowed: boolean
+        matchedRule?: unknown
+        requiredPermission?: string
+      }
+      expect(body.allowed).toBe(false)
+      expect(body.matchedRule).toBeUndefined()
+      expect(body.requiredPermission).toBeUndefined()
     })
   })
 })
