@@ -346,10 +346,12 @@ export class RbacService {
     if (name === 'super_admins') {
       await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
-    // Merge incoming services into existing — prevents wiping other service roles
-    const existing = await redisRbacRepository.getGroup(name) ?? {}
-    const merged = { ...existing, ...services }
-    await redisRbacRepository.setGroup(name, merged)
+    // PUT semantics: full replace. Earlier behavior merged the incoming
+    // services map with the existing one, which silently dropped the
+    // operator's intent when they unchecked every role for a service —
+    // the API returned 200 but nothing changed in Redis. Replacing
+    // matches the REST PUT contract and what kuma's UI implies.
+    await redisRbacRepository.setGroup(name, services)
     await this.invalidateBundle('rbac.group_updated', { type: 'group', id: name }, actor)
     return this.result(`Group '${name}' updated`)
   }
