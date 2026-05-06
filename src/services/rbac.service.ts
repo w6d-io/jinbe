@@ -60,6 +60,9 @@ export interface UserWithGroups {
 export interface GroupInfo {
   name: string
   services: GroupDefinition
+  /** True when this group is bootstrap-protected (cannot be deleted, may need super_admin to mutate). */
+  system?: boolean
+  description?: string
 }
 
 export interface UsersResponse {
@@ -74,6 +77,9 @@ export interface ServiceInfo {
   name: string
   rolesCount: number
   routesCount: number
+  /** True when this service is bootstrap-protected (cannot be deleted). */
+  system?: boolean
+  description?: string
 }
 
 export interface ServicesResponse {
@@ -317,8 +323,19 @@ export class RbacService {
   // ===========================================================================
 
   async getGroups(): Promise<GroupsResponse> {
-    const groups = await redisRbacRepository.getGroups()
-    const groupsInfo: GroupInfo[] = Object.entries(groups).map(([name, services]) => ({ name, services }))
+    const [groups, allMeta] = await Promise.all([
+      redisRbacRepository.getGroups(),
+      redisRbacRepository.getAllGroupMetadata(),
+    ])
+    const groupsInfo: GroupInfo[] = Object.entries(groups).map(([name, services]) => {
+      const meta = allMeta[name]
+      return {
+        name,
+        services,
+        ...(meta?.system ? { system: true } : {}),
+        ...(meta?.description ? { description: meta.description } : {}),
+      }
+    })
     return { groups: groupsInfo }
   }
 
@@ -404,16 +421,22 @@ export class RbacService {
   // ===========================================================================
 
   async getServices(): Promise<ServicesResponse> {
-    const serviceNames = await redisRbacRepository.getServices()
+    const [serviceNames, allMeta] = await Promise.all([
+      redisRbacRepository.getServices(),
+      redisRbacRepository.getAllServiceMetadata(),
+    ])
     const services: ServiceInfo[] = []
 
     for (const name of serviceNames) {
       const roles = await redisRbacRepository.getRoles(name)
       const routeMap = await redisRbacRepository.getRouteMap(name)
+      const meta = allMeta[name]
       services.push({
         name,
         rolesCount: roles ? Object.keys(roles).length : 0,
         routesCount: routeMap?.rules?.length || 0,
+        ...(meta?.system ? { system: true } : {}),
+        ...(meta?.description ? { description: meta.description } : {}),
       })
     }
 
