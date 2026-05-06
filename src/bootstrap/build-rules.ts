@@ -130,11 +130,28 @@ export function buildKumaSettingsRule(kumaDomain: string, loginUiUrl: string): O
 }
 
 export function buildKumaAppRule(kumaDomain: string, adminUiUrl: string): OathkeeperRule {
+  // Explicit non-`/api` enumeration. Oathkeeper requires a unique rule
+  // match, and a generic `/<.*>` overlaps `kuma-api` (`/api/<.*>`) →
+  // "multiple rules" 500. Kuma is a HashRouter SPA, so all client-side
+  // routes live after `#` and the server only ever sees these top-level
+  // paths. RE2 (Go regexp) doesn't support negative lookahead, so we
+  // enumerate. Nested `<...>` is not supported inside the oathkeeper
+  // url syntax; use raw regex like `assets/.*` without inner brackets.
+  const allowed = [
+    'index\\.html',
+    'assets/.*',
+    'logos/.*',
+    'favicon\\.ico',
+    'manifest\\.json',
+    'robots\\.txt',
+    'w6d_.*\\.(svg|png|ico)',
+  ].join('|')
   return {
     id: 'kuma-app',
     upstream: { url: adminUiUrl },
     match: {
-      url: `http<(s?)>://${kumaDomain}/<.*>`,
+      // Optional group `?` matches the bare `/` (index.html serving) too.
+      url: `http<(s?)>://${kumaDomain}/<(${allowed})?>`,
       methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
     },
     authenticators: [{ handler: 'cookie_session' }],

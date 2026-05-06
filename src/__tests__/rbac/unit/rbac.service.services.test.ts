@@ -113,9 +113,16 @@ describe('RbacService - Services', () => {
 
   describe('deleteService', () => {
     it('should delete service and cascade from groups', async () => {
-      const result = await service.deleteService('jinbe')
+      // Use a non-system service; SYSTEM_SERVICES (jinbe, kuma) are now protected.
+      await service.createService({ name: 'qa-svc' })
+      const result = await service.deleteService('qa-svc')
       expect(result.success).toBe(true)
-      expect(result.message).toContain('jinbe')
+      expect(result.message).toContain('qa-svc')
+    })
+
+    it('should refuse to delete a protected system service', async () => {
+      await expect(service.deleteService('jinbe')).rejects.toThrow(/system service/)
+      await expect(service.deleteService('kuma')).rejects.toThrow(/system service/)
     })
 
     it('should throw 404 when service not found', async () => {

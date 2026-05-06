@@ -1,6 +1,7 @@
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
+import { opaService } from './opa.service.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -114,6 +115,31 @@ export interface KratosBindingsResponse {
 export type { GroupDefinition, FlatRolesMap, RouteMap, OathkeeperRule }
 
 // =============================================================================
+// System resources — protected against deletion
+// =============================================================================
+
+/**
+ * Groups seeded by the bootstrap CLI. Deletion of these would leave the
+ * cluster without any path to admin perms.
+ */
+export const SYSTEM_GROUPS = new Set(['super_admins', 'admins', 'users', 'viewers', 'devs'])
+
+/**
+ * Services seeded at bootstrap. Removing these wipes their roles +
+ * route_map + oathkeeper rules.
+ */
+export const SYSTEM_SERVICES = new Set(['jinbe', 'kuma'])
+
+/** HTTP-style error throwable from service methods. */
+export class SystemResourceImmutable extends Error {
+  statusCode = 409
+  constructor(kind: string, name: string) {
+    super(`Refusing to delete system ${kind} '${name}' — protected from removal`)
+    this.name = 'SystemResourceImmutable'
+  }
+}
+
+// =============================================================================
 // RBAC Service — Redis-backed
 // =============================================================================
 
@@ -124,6 +150,28 @@ export class RbacService {
 
   private result(message: string): MutationResult {
     return { success: true, message, timestamp: new Date().toISOString() }
+  }
+
+  /**
+   * Privilege escalation guard: refuses the mutation unless the actor holds
+   * the super_admin wildcard. Used to protect the super_admins group from
+   * being modified by regular admins (who could otherwise grant themselves
+   * super_admin) and similar privileged operations.
+   *
+   * Lookup goes through OPA so it always reflects live RBAC state — same
+   * code path as request-time authorization, no drift possible.
+   */
+  private async requireSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+    if (!actor?.email) {
+      throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
+    }
+    const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
+    if (!result?.super_admin) {
+      throw Object.assign(
+        new Error(`Only super_admins may ${reason}`),
+        { statusCode: 403 },
+      )
+    }
   }
 
   // Public: call after any user-group mutation that bypasses rbacService methods
@@ -272,6 +320,12 @@ export class RbacService {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
     }
+    // Block creating a group that grants the global super_admin role unless
+    // the actor is themselves a super_admin.
+    const grantsSuperAdmin = (services.global ?? []).includes('super_admin')
+    if (grantsSuperAdmin) {
+      await this.requireSuperAdmin('create a group with the super_admin role', actor)
+    }
     await redisRbacRepository.setGroup(name, services)
     await this.invalidateBundle('rbac.group_created', { type: 'group', id: name }, actor)
     return this.result(`Group '${name}' created`)
@@ -280,6 +334,11 @@ export class RbacService {
   async updateGroup(name: string, services: GroupDefinition, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
+    }
+    // Privilege escalation guard: editing super_admins (the wildcard group)
+    // requires the caller to already be a super_admin themselves.
+    if (name === 'super_admins') {
+      await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
     // Merge incoming services into existing — prevents wiping other service roles
     const existing = await redisRbacRepository.getGroup(name) ?? {}
@@ -290,6 +349,9 @@ export class RbacService {
   }
 
   async deleteGroup(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+    if (SYSTEM_GROUPS.has(name)) {
+      throw new SystemResourceImmutable('group', name)
+    }
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
@@ -435,6 +497,9 @@ export class RbacService {
   }
 
   async deleteService(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+    if (SYSTEM_SERVICES.has(name)) {
+      throw new SystemResourceImmutable('service', name)
+    }
     if (!(await redisRbacRepository.serviceExists(name))) {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
     }

@@ -110,10 +110,19 @@ describe('RbacService - Groups', () => {
   })
 
   describe('deleteGroup', () => {
-    it('should remove group', async () => {
-      const result = await service.deleteGroup('viewers')
+    it('should remove a non-system group', async () => {
+      // Seed a non-system group; SYSTEM_GROUPS (super_admins, admins, users,
+      // viewers, devs) are now protected from deletion.
+      await redisMock.hset('rbac:groups', 'qa', JSON.stringify({ jinbe: ['viewer'] }))
+      const result = await service.deleteGroup('qa')
       expect(result.success).toBe(true)
-      expect(result.message).toContain('viewers')
+      expect(result.message).toContain('qa')
+    })
+
+    it('should refuse to delete a protected system group', async () => {
+      await expect(service.deleteGroup('super_admins')).rejects.toThrow(/system group/)
+      await expect(service.deleteGroup('admins')).rejects.toThrow(/system group/)
+      await expect(service.deleteGroup('viewers')).rejects.toThrow(/system group/)
     })
 
     it('should throw 404 when group not found', async () => {
