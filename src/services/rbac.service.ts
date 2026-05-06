@@ -115,26 +115,21 @@ export interface KratosBindingsResponse {
 export type { GroupDefinition, FlatRolesMap, RouteMap, OathkeeperRule }
 
 // =============================================================================
-// System resources — protected against deletion
+// System-protected resources — gated by RBAC, not hardcoded
 // =============================================================================
 
 /**
- * Groups seeded by the bootstrap CLI. Deletion of these would leave the
- * cluster without any path to admin perms.
+ * Thrown when a regular admin tries to mutate a `system: true` group/service
+ * without holding the global super_admin role. The check is *data-driven*:
+ * group/service metadata stored in Redis (`rbac:groups:meta`,
+ * `rbac:services:meta`) flags resources as system, and the actor's effective
+ * role is queried via OPA — same code path as request-time authorization, so
+ * there is no hardcoded list inside this service file.
  */
-export const SYSTEM_GROUPS = new Set(['super_admins', 'admins', 'users', 'viewers', 'devs'])
-
-/**
- * Services seeded at bootstrap. Removing these wipes their roles +
- * route_map + oathkeeper rules.
- */
-export const SYSTEM_SERVICES = new Set(['jinbe', 'kuma'])
-
-/** HTTP-style error throwable from service methods. */
 export class SystemResourceImmutable extends Error {
-  statusCode = 409
+  statusCode = 403
   constructor(kind: string, name: string) {
-    super(`Refusing to delete system ${kind} '${name}' — protected from removal`)
+    super(`Refusing to mutate system ${kind} '${name}' — only super_admins may modify system resources`)
     this.name = 'SystemResourceImmutable'
   }
 }
@@ -154,12 +149,8 @@ export class RbacService {
 
   /**
    * Privilege escalation guard: refuses the mutation unless the actor holds
-   * the super_admin wildcard. Used to protect the super_admins group from
-   * being modified by regular admins (who could otherwise grant themselves
-   * super_admin) and similar privileged operations.
-   *
-   * Lookup goes through OPA so it always reflects live RBAC state — same
-   * code path as request-time authorization, no drift possible.
+   * a global wildcard role (super_admin). Lookup goes through OPA so the
+   * decision matches request-time authorization exactly.
    */
   private async requireSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
     if (!actor?.email) {
@@ -172,6 +163,21 @@ export class RbacService {
         { statusCode: 403 },
       )
     }
+  }
+
+  /**
+   * Returns true when the resource is flagged `system: true` in its
+   * metadata. Used by mutation methods to decide whether the operation
+   * needs super_admin authority instead of plain rbac:write.
+   */
+  private async isSystemGroup(name: string): Promise<boolean> {
+    const meta = await redisRbacRepository.getGroupMetadata(name)
+    return meta?.system === true
+  }
+
+  private async isSystemService(name: string): Promise<boolean> {
+    const meta = await redisRbacRepository.getServiceMetadata(name)
+    return meta?.system === true
   }
 
   // Public: call after any user-group mutation that bypasses rbacService methods
@@ -349,13 +355,16 @@ export class RbacService {
   }
 
   async deleteGroup(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
-    if (SYSTEM_GROUPS.has(name)) {
-      throw new SystemResourceImmutable('group', name)
-    }
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
+    if (await this.isSystemGroup(name)) {
+      // System groups are never deletable — even by super_admins. Removing
+      // super_admins leaves the cluster with no path back to global admin.
+      throw new SystemResourceImmutable('group', name)
+    }
     await redisRbacRepository.deleteGroup(name)
+    await redisRbacRepository.deleteGroupMetadata(name)
 
     // Cascade: remove group from all Kratos users
     try {
@@ -497,11 +506,11 @@ export class RbacService {
   }
 
   async deleteService(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
-    if (SYSTEM_SERVICES.has(name)) {
-      throw new SystemResourceImmutable('service', name)
-    }
     if (!(await redisRbacRepository.serviceExists(name))) {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
+    }
+    if (await this.isSystemService(name)) {
+      throw new SystemResourceImmutable('service', name)
     }
 
     // Remove from all groups
@@ -521,6 +530,7 @@ export class RbacService {
     await redisRbacRepository.deleteRoles(name)
     await redisRbacRepository.deleteRouteMap(name)
     await redisRbacRepository.removeService(name)
+    await redisRbacRepository.deleteServiceMetadata(name)
 
     await this.invalidateBundle('rbac.service_deleted', { type: 'service', id: name }, actor)
     return this.result(`Service '${name}' deleted`)

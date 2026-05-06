@@ -25,6 +25,20 @@ export type GroupDefinition = Record<string, string[]> // { service: roles[] }
 export type FlatRolesMap = Record<string, string[]>    // { roleName: permissions[] }
 export interface RouteRule { method: string; path: string; permission?: string }
 export interface RouteMap { rules: RouteRule[] }
+
+/**
+ * Per-resource metadata for groups and services. Drives RBAC-driven
+ * protection: `system: true` means deletion / structural mutation requires
+ * the `rbac:write_system` permission (held only by super_admin), as opposed
+ * to `rbac:write` (held by regular admins).
+ */
+export interface ResourceMetadata {
+  system?: boolean
+  description?: string
+  createdBy?: string
+  createdAt?: string
+  updatedAt?: string
+}
 export interface OathkeeperRule {
   id: string
   upstream: { url: string; preserve_host?: boolean; strip_path?: string }
@@ -72,6 +86,58 @@ class RedisRbacRepository {
   async groupExists(name: string): Promise<boolean> {
     const raw = await this.redis.hget('rbac:groups', name)
     return raw !== null
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // GROUP METADATA (system flag, description, audit)
+  // ═══════════════════════════════════════════════════════════
+
+  async getGroupMetadata(name: string): Promise<ResourceMetadata | null> {
+    const raw = await this.redis.hget('rbac:groups:meta', name)
+    return raw ? JSON.parse(raw) : null
+  }
+
+  async setGroupMetadata(name: string, meta: ResourceMetadata): Promise<void> {
+    await this.redis.hset('rbac:groups:meta', name, JSON.stringify(meta))
+  }
+
+  async deleteGroupMetadata(name: string): Promise<void> {
+    await this.redis.hdel('rbac:groups:meta', name)
+  }
+
+  async getAllGroupMetadata(): Promise<Record<string, ResourceMetadata>> {
+    const raw = await this.redis.hgetall('rbac:groups:meta')
+    const out: Record<string, ResourceMetadata> = {}
+    for (const [name, json] of Object.entries(raw)) {
+      out[name] = JSON.parse(json)
+    }
+    return out
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // SERVICE METADATA (system flag, description)
+  // ═══════════════════════════════════════════════════════════
+
+  async getServiceMetadata(name: string): Promise<ResourceMetadata | null> {
+    const raw = await this.redis.hget('rbac:services:meta', name)
+    return raw ? JSON.parse(raw) : null
+  }
+
+  async setServiceMetadata(name: string, meta: ResourceMetadata): Promise<void> {
+    await this.redis.hset('rbac:services:meta', name, JSON.stringify(meta))
+  }
+
+  async deleteServiceMetadata(name: string): Promise<void> {
+    await this.redis.hdel('rbac:services:meta', name)
+  }
+
+  async getAllServiceMetadata(): Promise<Record<string, ResourceMetadata>> {
+    const raw = await this.redis.hgetall('rbac:services:meta')
+    const out: Record<string, ResourceMetadata> = {}
+    for (const [name, json] of Object.entries(raw)) {
+      out[name] = JSON.parse(json)
+    }
+    return out
   }
 
   // ═══════════════════════════════════════════════════════════

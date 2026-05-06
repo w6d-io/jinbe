@@ -112,17 +112,21 @@ describe('RbacService - Services', () => {
   })
 
   describe('deleteService', () => {
-    it('should delete service and cascade from groups', async () => {
-      // Use a non-system service; SYSTEM_SERVICES (jinbe, kuma) are now protected.
+    it('should delete a service that is NOT flagged system in metadata', async () => {
       await service.createService({ name: 'qa-svc' })
+      // No metadata entry → treated as non-system
       const result = await service.deleteService('qa-svc')
       expect(result.success).toBe(true)
       expect(result.message).toContain('qa-svc')
     })
 
-    it('should refuse to delete a protected system service', async () => {
-      await expect(service.deleteService('jinbe')).rejects.toThrow(/system service/)
-      await expect(service.deleteService('kuma')).rejects.toThrow(/system service/)
+    it('should refuse to delete a service flagged system: true in metadata', async () => {
+      await service.createService({ name: 'core-svc' })
+      // Manually flag as system via repository — bootstrap CLI does this for jinbe/kuma
+      await import('../../../services/redis-rbac.repository.js').then(m =>
+        m.redisRbacRepository.setServiceMetadata('core-svc', { system: true })
+      )
+      await expect(service.deleteService('core-svc')).rejects.toThrow(/system service/)
     })
 
     it('should throw 404 when service not found', async () => {
