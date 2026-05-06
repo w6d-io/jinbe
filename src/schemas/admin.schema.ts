@@ -177,6 +177,15 @@ export const kratosIdentityJsonSchema = {
       items: { type: 'string' },
       description: 'User permissions from OPAL RBAC',
     },
+    // Credentials map (only populated when listIdentities is called with
+    // include_credential=…). Fastify's response serializer strips
+    // unknown properties, so this must be declared even though we treat
+    // its contents as opaque on the wire — kuma reads presence of
+    // totp/webauthn/lookup_secret keys to drive the 2FA chip.
+    credentials: {
+      type: 'object',
+      additionalProperties: true,
+    },
   },
 }
 

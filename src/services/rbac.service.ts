@@ -197,6 +197,23 @@ export class RbacService {
    * user to one of them is a privilege-escalation operation, so we
    * gate it on the target identity having a second factor configured.
    */
+  /**
+   * Public wrapper for the admin-power check — used by the user-group
+   * assignment endpoint to refuse privilege escalation by non-super_admin
+   * actors. Mirrors the private helper used by the MFA gate.
+   */
+  async isAdminPowerGroup(groupName: string): Promise<boolean> {
+    return this.groupGrantsAdminPower(groupName)
+  }
+
+  /**
+   * Public wrapper exposing the super_admin authority check used internally
+   * by mutation guards. Throws 403 if the actor is not a super_admin.
+   */
+  async assertSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+    return this.requireSuperAdmin(reason, actor)
+  }
+
   private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
     const def = await redisRbacRepository.getGroup(groupName)
     if (!def) return false
