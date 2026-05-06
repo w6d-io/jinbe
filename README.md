@@ -130,8 +130,17 @@ ADMIN_NAME=Admin
 ### Users
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/admin/users` | List Kratos identities |
-| `GET/PUT` | `/api/admin/users/:email/groups` | Get or set user groups |
+| `GET` | `/api/admin/users` | List Kratos identities (includes `credentials.{totp,webauthn,lookup_secret}` so admin UIs can show 2FA state) |
+| `GET/PUT` | `/api/admin/users/:email/groups` | Get or set user groups — see security gates below |
+
+**Security gates on `PUT /api/admin/users/:email/groups`:**
+
+| Status | `error` body | Trigger |
+|---|---|---|
+| `422` | `privilege_escalation_blocked` | Actor lacks `super_admin` and tries to add a group whose mapping confers admin power (global `super_admin` role or any service role with `*` permission). |
+| `422` | `mfa_required` | Adding a privileged (system + admin-power) group to an identity that has no second factor configured (TOTP / WebAuthn / lookup_secret). |
+
+422 is used (not 403) so the JSON body and CORS headers survive ingress-nginx `custom-http-errors` rewriting; clients can rely on `error.code` to render targeted toasts.
 
 ### Audit
 | Method | Path | Description |
