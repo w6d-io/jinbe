@@ -70,6 +70,18 @@ describe('bootstrap/build-rules', () => {
       expect(r.authorizer.handler).toBe('allow')
     })
 
+    it('kuma-app does NOT match /api/* (would overlap kuma-api)', () => {
+      const r = buildKumaAppRule('kuma.dev.w6d.io', URLS.adminUi)
+      // Must NOT contain a generic catch-all `/<.*>` — that overlaps kuma-api
+      expect(r.match.url).not.toMatch(/\/<\.\*>$/)
+      // Must explicitly enumerate non-/api paths
+      expect(r.match.url).toContain('assets')
+      expect(r.match.url).toContain('index')
+      // Sanity: regex shouldn't have 'api' in the allowed alternation
+      const inside = r.match.url.match(/\/<\(([^)]+)\)>$/)?.[1] ?? ''
+      expect(inside.split('|')).not.toContain('api/<.*>')
+    })
+
     it('jinbe-preflight only OPTIONS, noop+allow', () => {
       const r = buildJinbePreflightRule('jinbe.dev.w6d.io', URLS.jinbeInternal)
       expect(r.id).toBe('jinbe-preflight')

@@ -59,10 +59,14 @@ export class AdminController {
     const { page_size, page_token, credentials_identifier } =
       usersQuerySchema.parse(request.query)
 
+    // Pull TOTP / WebAuthn / lookup_secret credentials so the admin UI
+    // can show the per-user 2FA column and gate privileged-group
+    // assignment without an extra round trip per identity.
     const { identities, nextPageToken } = await kratosService.listIdentities(
       page_size,
       page_token,
-      credentials_identifier
+      credentials_identifier,
+      ['totp', 'webauthn', 'lookup_secret'],
     )
 
     // Enrich all identities with RBAC info in parallel
@@ -316,14 +320,81 @@ export class AdminController {
       // Validate groups exist in groups.json
       await rbacService.validateGroups(groups)
 
-      // Get old groups for audit trail
+      // Get old groups for audit trail. Default empty so the diff
+      // computation below can't choke on undefined when Kratos returns
+      // nothing or the call short-circuits.
       let oldGroups: string[] = []
       try {
-        oldGroups = await kratosService.getUserGroups(email)
+        const fetched = await kratosService.getUserGroups(email)
+        if (Array.isArray(fetched)) oldGroups = fetched
       } catch { /* ignore — user may not have groups yet */ }
 
       // Ensure user always has at least ['users'] if empty
       const finalGroups = groups.length > 0 ? groups : ['users']
+
+      const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
+
+      // Privilege-escalation guard: an actor with rbac:write permission
+      // (admin) must NOT be able to grant a group that confers admin or
+      // super_admin power to someone else (or themselves). Only a
+      // super_admin can grant such a group. Run BEFORE the MFA gate so
+      // the failure mode is "you can't" rather than "the target needs
+      // MFA" — the latter would hint at a workaround that doesn't exist.
+      if (newlyAdded.length > 0) {
+        for (const g of newlyAdded) {
+          if (await rbacService.isAdminPowerGroup(g)) {
+            try {
+              await rbacService.assertSuperAdmin(
+                `assign group '${g}' (grants admin privileges)`,
+                { email: request.userContext?.email },
+              )
+            } catch (e) {
+              const err = e as Error & { statusCode?: number }
+              // Map to 422 (not 403) for the same ingress-nginx body/CORS
+              // reason as the MFA gate below.
+              return reply.status(err.statusCode === 401 ? 401 : 422).send({
+                error: 'privilege_escalation_blocked',
+                message: err.message,
+                targetEmail: email,
+                blockingGroup: g,
+                hint: 'Only an existing super_admin can grant admin or super_admin groups.',
+              })
+            }
+          }
+        }
+      }
+
+      // MFA gate: block assignment to a privileged group (one whose
+      // metadata is system: true AND that grants admin/super_admin) when
+      // the target identity has no second factor configured. Prevents
+      // an operator from one-clicking a fresh user into super_admins
+      // without SOC2-grade auth.
+      if (newlyAdded.length > 0) {
+        let identityId: string | null = null
+        try {
+          const ident = await kratosService.findByEmail(email)
+          identityId = ident?.id ?? null
+        } catch { /* identity lookup failed — fall through, MFA gate skipped */ }
+        if (identityId) {
+          const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identityId)
+          if (blocker) {
+            // 422 Unprocessable Entity: request well-formed but a business
+            // rule (privileged-group MFA requirement) refuses it. We cannot
+            // use 403 because the cluster ingress-nginx ConfigMap reroutes
+            // 4xx/5xx through a custom default-backend that strips the JSON
+            // body and CORS headers, leaving the browser with "Failed to
+            // fetch". 422 is not in that intercepted list, so the body and
+            // ACAO header reach the kuma client and the toast can fire.
+            return reply.status(422).send({
+              error: 'mfa_required',
+              message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
+              targetEmail: email,
+              targetGroups: newlyAdded,
+              hint: 'Have the user complete /settings → Authenticator app, then retry.',
+            })
+          }
+        }
+      }
 
       // Update in Kratos (also invalidates in-memory cache)
       await kratosService.updateUserGroups(email, finalGroups)

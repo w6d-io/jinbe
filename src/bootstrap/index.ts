@@ -1,5 +1,6 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { seedRbacDefaults } from './seed-rbac.js'
+import { applySystemMetadataMigration } from './migrate-system-metadata.js'
 import { buildBuiltInRules } from './build-rules.js'
 import { upsertBuiltInRules } from './upsert-rules.js'
 import { JINBE_BUILT_IN_ROUTES } from './build-route-map.js'
@@ -21,8 +22,12 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  * re-run that goes beyond the natural idempotency of upsert/merge operations.
  *
  * v1: extracted bootstrap from server.ts inline. Behavior matches pre-extraction.
+ * v2: system-resource metadata migration. Tags built-in groups (super_admins,
+ *     admins, users, viewers, devs) and services (jinbe, kuma) with
+ *     `system: true` in `rbac:groups:meta` / `rbac:services:meta` so RBAC
+ *     mutation guards no longer rely on a hardcoded list inside jinbe code.
  */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export type BootstrapOutcome =
   | 'first-run'
@@ -138,6 +143,9 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls })
   await upsertBuiltInRules(rules, logger)
   await mergeJinbeRouteMap(JINBE_BUILT_IN_ROUTES, logger)
+  // Always run the metadata migration: idempotent, ensures system-protection
+  // tags are present even on pre-existing installs that predate this feature.
+  await applySystemMetadataMigration(logger)
 }
 
 function buildMarker(input: {

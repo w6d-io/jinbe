@@ -110,10 +110,18 @@ describe('RbacService - Groups', () => {
   })
 
   describe('deleteGroup', () => {
-    it('should remove group', async () => {
-      const result = await service.deleteGroup('viewers')
+    it('should remove a group that is NOT flagged system in metadata', async () => {
+      await redisMock.hset('rbac:groups', 'qa', JSON.stringify({ jinbe: ['viewer'] }))
+      // No metadata entry → treated as non-system
+      const result = await service.deleteGroup('qa')
       expect(result.success).toBe(true)
-      expect(result.message).toContain('viewers')
+      expect(result.message).toContain('qa')
+    })
+
+    it('should refuse to delete a group flagged system: true in metadata', async () => {
+      await redisMock.hset('rbac:groups', 'platform', JSON.stringify({ global: ['super_admin'] }))
+      await redisMock.hset('rbac:groups:meta', 'platform', JSON.stringify({ system: true, description: 'platform owners' }))
+      await expect(service.deleteGroup('platform')).rejects.toThrow(/system group/)
     })
 
     it('should throw 404 when group not found', async () => {

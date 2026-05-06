@@ -12,6 +12,18 @@ const corsPlugin: FastifyPluginAsync = fp(async (fastify) => {
   // In production, use configured origins or wildcard
   const isDev = env.NODE_ENV === 'development'
 
+  // In production behind oathkeeper, the gateway emits CORS headers via
+  // serve.proxy.cors. Letting jinbe ALSO emit them produces duplicate
+  // Access-Control-Allow-Origin values, which browsers reject:
+  //   "header contains multiple values 'https://x, https://x',
+  //    but only one is allowed."
+  // Set DISABLE_CORS=true in production so oathkeeper is the single source
+  // of truth. Dev mode keeps the manual hooks for local Vite/Next setups.
+  if (env.DISABLE_CORS === 'true') {
+    fastify.log.info('CORS plugin skipped — DISABLE_CORS=true (oathkeeper handles)')
+    return
+  }
+
   if (isDev) {
     // In dev mode, manually add CORS headers to ALL responses
     // This fixes Swagger UI which has issues with same-origin fetch requests

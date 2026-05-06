@@ -175,7 +175,42 @@ describe('AdminController', () => {
 
       await controller.listUsers(request as FastifyRequest<{ Querystring: object }>, reply)
 
-      expect(kratosService.listIdentities).toHaveBeenCalledWith(10, 'token123', undefined)
+      // listUsers requests the totp / webauthn / lookup_secret credential
+      // facets so the admin UI can render the per-user MFA chip without an
+      // extra round-trip — see src/controllers/admin.controller.ts:65-70.
+      expect(kratosService.listIdentities).toHaveBeenCalledWith(
+        10,
+        'token123',
+        undefined,
+        ['totp', 'webauthn', 'lookup_secret'],
+      )
+    })
+
+    it('should preserve identity.credentials in response payload (admin.controller.ts:65-77, schemas/admin.schema.ts:185-188)', async () => {
+      // Stamp credentials on the test identities — kuma reads the presence
+      // of totp/webauthn/lookup_secret keys to drive the 2FA chip, so the
+      // controller must not strip them.
+      mockState.identities = [
+        createKratosIdentity({
+          id: '550e8400-e29b-41d4-a716-446655440099',
+          traits: { email: 'mfa-user@example.com' },
+          credentials: {
+            password: { type: 'password' },
+            totp: { type: 'totp' },
+          } as Record<string, unknown>,
+        }),
+      ]
+
+      const request = createMockRequest({ query: {} })
+      const reply = createMockReply()
+
+      await controller.listUsers(request as FastifyRequest<{ Querystring: object }>, reply)
+
+      const body = reply._body as { data: Array<{ credentials?: Record<string, unknown> }> }
+      expect(body.data).toHaveLength(1)
+      expect(body.data[0].credentials).toBeDefined()
+      expect(body.data[0].credentials).toHaveProperty('totp')
+      expect(body.data[0].credentials).toHaveProperty('password')
     })
 
     it('should handle empty RBAC info gracefully', async () => {
