@@ -37,10 +37,6 @@ const swaggerPlugin: FastifyPluginAsync = fp(async (fastify) => {
           url: env.BASE_URL || `http://localhost:${env.PORT}`,
           description: 'Local Development',
         },
-        {
-          url: 'https://jinbe.dev.w6d.io',
-          description: 'Jinbe API - Development Environment',
-        },
       ],
       tags: [
         { name: 'auth', description: 'Authentication and identity' },

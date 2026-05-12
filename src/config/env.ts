@@ -76,21 +76,25 @@ const envSchema = z.object({
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
 
   // OPAL Server (for real-time RBAC update triggers)
-  OPAL_SERVER_URL: z.string().url().default('http://auth-w6d-opal-server:7002'),
-  JINBE_INTERNAL_URL: z.string().url().default('http://jinbe.w6d-ops:8080'),
+  OPAL_SERVER_URL: z.string().url().default('http://opal-server:7002'),
+  // Internal URL that opal-server uses to fetch data from this jinbe instance.
+  // Set to the in-cluster service URL in production.
+  JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),
 
   // OPA Data API (direct push — replaces OPAL data sync)
-  OPA_DATA_URL: z.string().url().default('http://auth-w6d-opal-client.auth-w6d.svc.cluster.local:8181'),
+  OPA_DATA_URL: z.string().url().default('http://opal-client:8181'),
 
   // Redis (RBAC data store + audit streams)
-  REDIS_URL: z.string().default('redis://auth-w6d-redis-master.auth-w6d.svc.cluster.local:6379'),
+  REDIS_URL: z.string().default('redis://redis:6379'),
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().transform(Number).pipe(z.number().min(0)).default('0'),
   REDIS_AUDIT_STREAM: z.string().default('auth:audit:events'),
 
-  // Service Creation Defaults (for Oathkeeper rules and kustomization)
-  SERVICE_DEFAULT_NAMESPACE: z.string().default('w6d-ops'),
-  SERVICE_DEFAULT_DOMAIN: z.string().default('kuma.dev.w6d.io'),
+  // Service Creation Defaults (for Oathkeeper rules and kustomization).
+  // The defaults are placeholders — every production deployment must set
+  // these explicitly to the deployer's namespace/domain.
+  SERVICE_DEFAULT_NAMESPACE: z.string().default('default'),
+  SERVICE_DEFAULT_DOMAIN: z.string().default('example.com'),
   SERVICE_DEFAULT_PORT: z.string().transform(Number).pipe(z.number().positive()).default('8080'),
 
   // Internal service URLs for bootstrap (Oathkeeper upstream rules)
@@ -103,7 +107,7 @@ const envSchema = z.object({
   API_DOMAIN: fqdnSchema.optional(),
 
   // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
-  OPA_AUTHZ_REMOTE: z.string().url().default('http://auth-w6d-opa-authz-proxy:8080/v1/data/rbac/allow'),
+  OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
   // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts)
   ADMIN_EMAIL: z.string().email().optional(),
@@ -116,6 +120,16 @@ const envSchema = z.object({
     .transform((val) => val === 'true')
     .default('false'),
   JINBE_BOOTSTRAP_RESET_CONFIRM: z.string().optional(),
+
+  // Backup tool images (deployer-private registry). Required if the
+  // /backups feature is used; left unset, attempts to render a backup
+  // job will fail with a clear "image not configured" error.
+  BACKUP_IMAGE_MONGO: z.string().optional(),
+  BACKUP_IMAGE_POSTGRES: z.string().optional(),
+
+  // GCP project ID injected into backup job env. Required for the GCS
+  // output of the backup tool.
+  BACKUP_GCP_PROJECT_ID: z.string().optional(),
 })
 
 // Parse and validate environment variables

@@ -1,4 +1,7 @@
 import * as k8s from '@kubernetes/client-node'
+import { env } from '../config/env.js'
+
+const GCP_PROJECT_ID = env.BACKUP_GCP_PROJECT_ID ?? ''
 
 const jobRestoreMongoTemplate: k8s.V1Job = {
     metadata: {
@@ -35,7 +38,7 @@ const jobRestoreMongoTemplate: k8s.V1Job = {
                             },
                             {
                                 name: 'GCP_PROJECT_ID',
-                                value: 'k8s-w6d-qa',
+                                value: GCP_PROJECT_ID,
                             },
                             {
                                 name: 'yamlFile',
@@ -99,7 +102,7 @@ const jobBackupMongoTemplate: k8s.V1Job = {
                             },
                             {
                                 name: 'GCP_PROJECT_ID',
-                                value: 'k8s-w6d-qa',
+                                value: GCP_PROJECT_ID,
                             },
                             {
                                 name: 'yamlFile',
@@ -163,7 +166,7 @@ const jobRestorePostgresTemplate: k8s.V1Job = {
                             },
                             {
                                 name: 'GCP_PROJECT_ID',
-                                value: 'k8s-w6d-qa',
+                                value: GCP_PROJECT_ID,
                             },
                             {
                                 name: 'yamlFile',
@@ -246,7 +249,7 @@ const jobBackupPostgresTemplate: k8s.V1Job = {
                             },
                             {
                                 name: 'GCP_PROJECT_ID',
-                                value: 'k8s-w6d-qa',
+                                value: GCP_PROJECT_ID,
                             },
                             {
                                 name: 'yamlFile',

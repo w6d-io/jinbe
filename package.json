@@ -27,7 +27,7 @@
     "fastify",
     "kubernetes"
   ],
-  "author": "W6D <https://w6d.io>",
+  "author": "Jinbe contributors",
   "license": "MIT",
   "dependencies": {
     "@fastify/cors": "^9.0.1",
