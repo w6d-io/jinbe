@@ -64,43 +64,25 @@ class OpaService {
   }
 
   async getUserInfo(email: string, app: string): Promise<UserRbacInfo | null> {
-    const opaUrl = `${this.baseUrl}/v1/data/rbac/user_info`
-    console.debug(`[opa] getUserInfo → POST ${opaUrl}`, { email, app })
     try {
-      const response = await fetch(opaUrl, {
+      const response = await fetch(`${this.baseUrl}/v1/data/rbac/user_info`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: { email, app } }),
       })
 
-      if (!response.ok) {
-        console.debug(`[opa] getUserInfo ← HTTP ${response.status} ${response.statusText}`, { email, app })
-        return null
-      }
+      if (!response.ok) return null
 
       const data = (await response.json()) as OpaUserInfoResponse
 
-      if (!data.result) {
-        console.debug(`[opa] getUserInfo ← no result in response`, { email, app })
-        return null
-      }
+      if (!data.result) return null
 
-      const rbacInfo = {
+      return {
         email: data.result.email,
         groups: data.result.groups || [],
         roles: data.result.roles || [],
         permissions: data.result.permissions || [],
       }
-
-      console.debug(`[opa] getUserInfo ← resolved`, {
-        email,
-        app,
-        groups: rbacInfo.groups,
-        roles: rbacInfo.roles,
-        permissions: rbacInfo.permissions,
-      })
-
-      return rbacInfo
     } catch (error) {
       console.error(`[opa] user_info query failed:`, error)
       return null
