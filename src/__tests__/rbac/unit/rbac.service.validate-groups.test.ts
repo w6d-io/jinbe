@@ -46,8 +46,8 @@ vi.mock('../../../config/env.js', () => ({
     RBAC_GIT_REPO_URL: 'http://git-server/rbac-repo.git',
     RBAC_GIT_BRANCH: 'main',
     APP_NAME: 'jinbe',
-    SERVICE_DEFAULT_NAMESPACE: 'w6d-ops',
-    SERVICE_DEFAULT_DOMAIN: 'kuma.dev.w6d.io',
+    SERVICE_DEFAULT_NAMESPACE: 'default',
+    SERVICE_DEFAULT_DOMAIN: 'example.com',
     SERVICE_DEFAULT_PORT: '8080',
   },
 }))

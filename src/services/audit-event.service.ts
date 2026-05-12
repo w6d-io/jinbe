@@ -29,7 +29,7 @@ export interface AuditActor {
 export interface AuditEvent {
   category:  AuditCategory
   verb:      string           // allow, deny, login, logout, create, update, delete, assign, sync, expire, mfa, commit
-  target:    string           // human-readable: "GET /api/clusters", "group:finance", "user:omar@w6d.io"
+  target:    string           // human-readable: "GET /api/clusters", "group:finance", "user:alice@example.com"
   result:    AuditResult
   actor:     AuditActor
   service?:  string           // RBAC service name if applicable

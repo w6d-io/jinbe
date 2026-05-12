@@ -144,7 +144,10 @@ export function buildKumaAppRule(kumaDomain: string, adminUiUrl: string): Oathke
     'favicon\\.ico',
     'manifest\\.json',
     'robots\\.txt',
-    'w6d_.*\\.(svg|png|ico)',
+    // Branded static assets at the web root, prefixed with letters/digits/underscore
+    // (e.g. `acme_logo.svg`). Branding files belong under `logos/` for new projects;
+    // this entry exists for compatibility with apps that ship loose root-level images.
+    '[a-z0-9_-]+\\.(svg|png|ico)',
   ].join('|')
   return {
     id: 'kuma-app',

@@ -456,7 +456,7 @@ describe('RbacController', () => {
 
       const request = createMockRequest<{ Body: SimulateBody }>({
         body: {
-          email: 'admin@w6d.io',
+          email: 'admin@example.com',
           service: 'jinbe',
           method: 'get',
           path: '/api/admin/users',
@@ -467,7 +467,7 @@ describe('RbacController', () => {
       await controller.simulate(request as FastifyRequest<{ Body: SimulateBody }>, reply)
 
       expect(opaService.simulate).toHaveBeenCalledWith(
-        'admin@w6d.io',
+        'admin@example.com',
         'jinbe',
         'GET',
         '/api/admin/users',
@@ -482,7 +482,7 @@ describe('RbacController', () => {
         },
         requiredPermission: 'admin:read',
         userInfo: {
-          email: 'admin@w6d.io',
+          email: 'admin@example.com',
           groups: ['super_admins'],
           roles: ['admin', 'super_admin'],
           permissions: ['*'],
@@ -495,7 +495,7 @@ describe('RbacController', () => {
 
       const request = createMockRequest<{ Body: SimulateBody }>({
         body: {
-          email: 'admin@w6d.io',
+          email: 'admin@example.com',
           service: 'jinbe',
           method: 'GET',
           path: '/api/admin/users',

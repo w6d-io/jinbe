@@ -10,10 +10,10 @@ export function createOathkeeperRule(
   return {
     id,
     upstream: {
-      url: `http://${id}.w6d-ops:8080`,
+      url: `http://${id}.default:8080`,
     },
     match: {
-      url: `https://kuma.dev.w6d.io/api/${id}/<**>`,
+      url: `https://app.example.com/api/${id}/<**>`,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     },
     authenticators: [{ handler: 'cookie_session' }],
@@ -30,10 +30,10 @@ export function createHealthRule(serviceName: string): OathkeeperRule {
   return {
     id: `${serviceName}-health`,
     upstream: {
-      url: `http://${serviceName}.w6d-ops:8080/health`,
+      url: `http://${serviceName}.default:8080/health`,
     },
     match: {
-      url: `https://kuma.dev.w6d.io/api/${serviceName}/health`,
+      url: `https://app.example.com/api/${serviceName}/health`,
       methods: ['GET', 'OPTIONS'],
     },
     authenticators: [{ handler: 'noop' }],
@@ -68,10 +68,10 @@ export function createJwtAuthRule(id: string): OathkeeperRule {
   return {
     id,
     upstream: {
-      url: `http://${id}.w6d-ops:8080`,
+      url: `http://${id}.default:8080`,
     },
     match: {
-      url: `https://kuma.dev.w6d.io/api/${id}/<**>`,
+      url: `https://app.example.com/api/${id}/<**>`,
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
     },
     authenticators: [

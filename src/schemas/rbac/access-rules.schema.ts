@@ -88,9 +88,9 @@ export const matchSchema = z.object({
  * Example:
  * {
  *   "id": "jinbe-api",
- *   "upstream": { "url": "http://jinbe.w6d-ops:8080" },
+ *   "upstream": { "url": "http://jinbe.default:8080" },
  *   "match": {
- *     "url": "https://kuma.dev.w6d.io/api/<**>",
+ *     "url": "https://app.example.com/api/<**>",
  *     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
  *   },
  *   "authenticators": [{ "handler": "cookie_session" }],

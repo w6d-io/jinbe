@@ -299,7 +299,7 @@ export class RbacService {
    */
   async refreshAllDataSources(reason: string = 'jinbe-startup'): Promise<void> {
     try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
+      const jinbeUrl = env.JINBE_INTERNAL_URL
       const services = await redisRbacRepository.getServices()
 
       const entries = [
@@ -329,7 +329,7 @@ export class RbacService {
 
   private async notifyOpal(reason?: string): Promise<void> {
     try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
+      const jinbeUrl = env.JINBE_INTERNAL_URL
 
       await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
         method: 'POST',
@@ -350,7 +350,7 @@ export class RbacService {
 
   private async notifyOpalRoles(serviceName: string): Promise<void> {
     try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe.w6d-ops:8080'
+      const jinbeUrl = env.JINBE_INTERNAL_URL
       await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

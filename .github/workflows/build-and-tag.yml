@@ -102,13 +102,13 @@ jobs:
           git push origin ${{ steps.version.outputs.tag }} 2>/dev/null || echo "Tag already pushed, skipping"
 
       - name: Update Helm chart image tag
-        if: env.HAS_CHARTS_TOKEN == 'true'
+        if: env.HAS_CHARTS_TOKEN == 'true' && vars.CHARTS_REPO != ''
         env:
           GH_TOKEN: ${{ secrets.CHARTS_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.tag }}"
-          REPO="w6d-io/charts"
-          FILE="charts/auth/values.yaml"
+          REPO="${{ vars.CHARTS_REPO }}"
+          FILE="${{ vars.CHARTS_VALUES_PATH || 'charts/auth/values.yaml' }}"
 
           SHA=$(gh api repos/$REPO/contents/$FILE --jq '.sha')
           CONTENT=$(gh api repos/$REPO/contents/$FILE --jq '.content' | base64 -d)

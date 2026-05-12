@@ -10,8 +10,8 @@ import { z } from 'zod'
  * {
  *   "emails": {},                          // Reserved for future use
  *   "group_membership": {                  // User → groups assignment
- *     "user@w6d.io": ["super_admins"],
- *     "other@w6d.io": ["admins", "devs"]
+ *     "alice@example.com": ["super_admins"],
+ *     "bob@example.com": ["admins", "devs"]
  *   }
  * }
  */
