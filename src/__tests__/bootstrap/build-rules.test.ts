@@ -13,42 +13,42 @@ import {
 } from '../../bootstrap/build-rules.js'
 
 const URLS = {
-  kratosPublic: 'http://auth-w6d-kratos-public:80',
-  kratosAdmin: 'http://auth-w6d-kratos-admin:80',
-  loginUi: 'http://auth-w6d-kratos-login-ui:80',
-  adminUi: 'http://auth-w6d-admin-ui:80',
-  jinbeInternal: 'http://auth-w6d-jinbe:8080',
+  kratosPublic: 'http://kratos-public:80',
+  kratosAdmin: 'http://kratos-admin:80',
+  loginUi: 'http://kratos-login-ui:80',
+  adminUi: 'http://admin-ui:80',
+  jinbeInternal: 'http://jinbe:8080',
 }
 
 describe('bootstrap/build-rules', () => {
   describe('individual rule builders', () => {
     it('selfservice-ui matches login UI on auth domain with noop+allow', () => {
-      const r = buildSelfserviceUiRule('auth.dev.w6d.io', URLS.loginUi)
+      const r = buildSelfserviceUiRule('auth.example.com', URLS.loginUi)
       expect(r.id).toBe('selfservice-ui')
       expect(r.upstream.url).toBe(URLS.loginUi)
       expect(r.upstream.preserve_host).toBe(true)
-      expect(r.match.url).toContain('auth.dev.w6d.io')
+      expect(r.match.url).toContain('auth.example.com')
       expect(r.authenticators[0].handler).toBe('noop')
       expect(r.authorizer.handler).toBe('allow')
       expect(r.match.methods).toContain('OPTIONS')
     })
 
     it('kratos-public targets kratos public service', () => {
-      const r = buildKratosPublicRule('auth.dev.w6d.io', URLS.kratosPublic)
+      const r = buildKratosPublicRule('auth.example.com', URLS.kratosPublic)
       expect(r.id).toBe('kratos-public')
       expect(r.upstream.url).toBe(URLS.kratosPublic)
       expect(r.match.url).toContain('self-service')
     })
 
     it('kuma-api-preflight only matches OPTIONS', () => {
-      const r = buildKumaApiPreflightRule('kuma.dev.w6d.io', URLS.jinbeInternal)
+      const r = buildKumaApiPreflightRule('app.example.com', URLS.jinbeInternal)
       expect(r.id).toBe('kuma-api-preflight')
       expect(r.match.methods).toEqual(['OPTIONS'])
       expect(r.upstream.url).toBe(URLS.jinbeInternal)
     })
 
     it('kuma-api uses cookie_session + remote_json (OPA enforced)', () => {
-      const r = buildKumaApiRule('kuma.dev.w6d.io', URLS.jinbeInternal)
+      const r = buildKumaApiRule('app.example.com', URLS.jinbeInternal)
       expect(r.id).toBe('kuma-api')
       expect(r.authenticators[0].handler).toBe('cookie_session')
       expect(r.authorizer.handler).toBe('remote_json')
@@ -56,14 +56,14 @@ describe('bootstrap/build-rules', () => {
     })
 
     it('kuma-settings proxies settings to login UI', () => {
-      const r = buildKumaSettingsRule('kuma.dev.w6d.io', URLS.loginUi)
+      const r = buildKumaSettingsRule('app.example.com', URLS.loginUi)
       expect(r.id).toBe('kuma-settings')
       expect(r.upstream.url).toBe(URLS.loginUi)
       expect(r.match.url).toContain('settings')
     })
 
     it('kuma-app routes admin UI SPA on app domain', () => {
-      const r = buildKumaAppRule('kuma.dev.w6d.io', URLS.adminUi)
+      const r = buildKumaAppRule('app.example.com', URLS.adminUi)
       expect(r.id).toBe('kuma-app')
       expect(r.upstream.url).toBe(URLS.adminUi)
       expect(r.authenticators[0].handler).toBe('cookie_session')
@@ -71,7 +71,7 @@ describe('bootstrap/build-rules', () => {
     })
 
     it('kuma-app does NOT match /api/* (would overlap kuma-api)', () => {
-      const r = buildKumaAppRule('kuma.dev.w6d.io', URLS.adminUi)
+      const r = buildKumaAppRule('app.example.com', URLS.adminUi)
       // Must NOT contain a generic catch-all `/<.*>` — that overlaps kuma-api
       expect(r.match.url).not.toMatch(/\/<\.\*>$/)
       // Must explicitly enumerate non-/api paths
@@ -83,14 +83,14 @@ describe('bootstrap/build-rules', () => {
     })
 
     it('jinbe-preflight only OPTIONS, noop+allow', () => {
-      const r = buildJinbePreflightRule('jinbe.dev.w6d.io', URLS.jinbeInternal)
+      const r = buildJinbePreflightRule('api.example.com', URLS.jinbeInternal)
       expect(r.id).toBe('jinbe-preflight')
       expect(r.match.methods).toEqual(['OPTIONS'])
       expect(r.authenticators[0].handler).toBe('noop')
     })
 
     it('jinbe-public matches /api/health, /api/whoami, /docs, no auth', () => {
-      const r = buildJinbePublicRule('jinbe.dev.w6d.io', URLS.jinbeInternal)
+      const r = buildJinbePublicRule('api.example.com', URLS.jinbeInternal)
       expect(r.id).toBe('jinbe-public')
       expect(r.match.url).toContain('api/health')
       expect(r.match.url).toContain('api/whoami')
@@ -99,7 +99,7 @@ describe('bootstrap/build-rules', () => {
     })
 
     it('jinbe-api enforces OPA via remote_json (no allow-all)', () => {
-      const r = buildJinbeApiRule('jinbe.dev.w6d.io', URLS.jinbeInternal)
+      const r = buildJinbeApiRule('api.example.com', URLS.jinbeInternal)
       expect(r.id).toBe('jinbe-api')
       expect(r.authenticators[0].handler).toBe('cookie_session')
       expect(r.authenticators[1].handler).toBe('noop')
@@ -111,7 +111,7 @@ describe('bootstrap/build-rules', () => {
   describe('buildBuiltInRules orchestration', () => {
     it('emits all 9 rules when all domains set', () => {
       const rules = buildBuiltInRules({
-        domains: { auth: 'auth.dev.w6d.io', app: 'kuma.dev.w6d.io', api: 'jinbe.dev.w6d.io' },
+        domains: { auth: 'auth.example.com', app: 'app.example.com', api: 'api.example.com' },
         urls: URLS,
       })
       expect(rules).toHaveLength(9)
@@ -131,7 +131,7 @@ describe('bootstrap/build-rules', () => {
 
     it('skips auth-domain rules when authDomain is empty', () => {
       const rules = buildBuiltInRules({
-        domains: { auth: '', app: 'kuma.dev.w6d.io', api: 'jinbe.dev.w6d.io' },
+        domains: { auth: '', app: 'app.example.com', api: 'api.example.com' },
         urls: URLS,
       })
       const ids = rules.map((r) => r.id)
@@ -141,7 +141,7 @@ describe('bootstrap/build-rules', () => {
 
     it('skips kuma rules when appDomain is empty', () => {
       const rules = buildBuiltInRules({
-        domains: { auth: 'auth.dev.w6d.io', app: '', api: 'jinbe.dev.w6d.io' },
+        domains: { auth: 'auth.example.com', app: '', api: 'api.example.com' },
         urls: URLS,
       })
       const ids = rules.map((r) => r.id)
@@ -151,7 +151,7 @@ describe('bootstrap/build-rules', () => {
 
     it('skips jinbe rules when apiDomain is empty', () => {
       const rules = buildBuiltInRules({
-        domains: { auth: 'auth.dev.w6d.io', app: 'kuma.dev.w6d.io', api: '' },
+        domains: { auth: 'auth.example.com', app: 'app.example.com', api: '' },
         urls: URLS,
       })
       const ids = rules.map((r) => r.id)
@@ -161,7 +161,7 @@ describe('bootstrap/build-rules', () => {
 
     it('builders are pure — same inputs produce identical outputs', () => {
       const inp = {
-        domains: { auth: 'auth.dev.w6d.io', app: 'kuma.dev.w6d.io', api: 'jinbe.dev.w6d.io' },
+        domains: { auth: 'auth.example.com', app: 'app.example.com', api: 'api.example.com' },
         urls: URLS,
       }
       const a = buildBuiltInRules(inp)
