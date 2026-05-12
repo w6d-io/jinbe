@@ -223,21 +223,153 @@ A pre-flight helper for migrating an existing cluster (originally bootstrapped u
 
 ## Helm chart
 
-A Helm chart is published separately. Wire it into your values like so:
+A Helm chart is published separately and bundles the full stack (Kratos, Oathkeeper, OPAL, OPA, Redis, Jinbe) so a fresh cluster can come up with one `helm install`.
+
+### Minimum viable values
 
 ```yaml
+global:
+  domain: example.com   # used to derive auth.<domain>, app.<domain>, api.<domain>
+
+jinbe:
+  enabled: true
+  env:
+    ENCRYPTION_KEY: "" # REQUIRED — ≥ 32 chars
+```
+
+That's it. Every other URL is templated from the Helm release name + namespace + `global.domain` (see [auto-computed below](#auto-computed-by-the-chart)).
+
+### Full env catalog
+
+#### Required
+
+| Variable | Notes |
+|---|---|
+| `ENCRYPTION_KEY` | ≥ 32 chars. Encrypts stored DB credentials at rest. |
+
+#### First-boot bootstrap admin (optional — only consulted with an empty Redis)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ADMIN_EMAIL` | unset | If set, creates a Kratos identity with this email on first boot. |
+| `ADMIN_PASSWORD` | unset | ≥ 12 chars. Required if `ADMIN_EMAIL` is set. |
+| `ADMIN_NAME` | `Admin` | Display name for the bootstrap admin. |
+
+#### Auto-computed by the chart
+
+Every value in this group can be overridden via `jinbe.env.<NAME>` but you almost never need to. The chart templates them from the Helm release.
+
+| Variable | Auto-computed as |
+|---|---|
+| `REDIS_URL` | `redis://<release>-redis-master:6379` |
+| `KRATOS_PUBLIC_URL` | `http://<release>-kratos-public:80` |
+| `KRATOS_ADMIN_URL` | `http://<release>-kratos-admin:80` |
+| `OPA_URL` | `http://<release>-opal-client:8181` |
+| `OPAL_SERVER_URL` | `http://<release>-opal-server:7002` |
+| `OPA_DATA_URL` | `http://<release>-opal-client:8181` |
+| `OPA_AUTHZ_REMOTE` | `http://<release>-opa-authz-proxy:8080/v1/data/rbac/allow` |
+| `JINBE_INTERNAL_URL` | `http://<release>-jinbe:8080` (URL opal-server uses to fetch RBAC data) |
+| `LOGIN_UI_URL` | `http://<release>-kratos-login-ui:80` |
+| `ADMIN_UI_URL` | `http://<release>-admin-ui:80` |
+| `AUTH_DOMAIN` | `global.authDomain` or `auth.<global.domain>` |
+| `APP_DOMAIN` | `global.appDomain` or `app.<global.domain>` |
+| `API_DOMAIN` | same as `APP_DOMAIN` |
+| `SERVICE_DEFAULT_NAMESPACE` | `.Release.Namespace` |
+| `SERVICE_DEFAULT_DOMAIN` | same as `APP_DOMAIN` |
+| `SERVICE_DEFAULT_PORT` | `8080` |
+| `CORS_ORIGIN` | `https://<APP_DOMAIN>,https://<AUTH_DOMAIN>` |
+| `RELEASE_NAME` | `.Release.Name` |
+| `APP_VERSION` | `image.tag` or `Chart.AppVersion` |
+| `COMMIT_SHA` | same as `APP_VERSION` |
+
+#### Server runtime (override only if you need to)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `NODE_ENV` | `production` | |
+| `PORT` | `3000` | Container listens on this port. |
+| `HOST` | `0.0.0.0` | |
+| `BASE_URL` | unset | Absolute external URL of the API. Drives `links` in responses. |
+| `LOG_LEVEL` | `info` | `fatal\|error\|warn\|info\|debug\|trace`. |
+| `ENABLE_SWAGGER` | `false` (chart) / `true` (raw) | Toggles `/docs`. Disabled by default in chart for production. |
+| `APP_NAME` | `jinbe` | Identifier passed to OPA for fine-grained authorization. |
+
+#### CORS
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CORS_ORIGIN` | auto (chart) / `*` (raw) | Comma-separated allow-list. |
+| `CORS_CREDENTIALS` | `false` | Set `true` to enable `Access-Control-Allow-Credentials`. |
+| `DISABLE_CORS` | `true` (chart `extraEnv`) / `false` (raw) | Set `true` when an upstream proxy (ingress-nginx / Oathkeeper) emits its own CORS headers — prevents browsers rejecting duplicate `Access-Control-Allow-Origin`. |
+
+#### Rate limiting
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RATE_LIMIT_MAX` | `100` | Requests per window. |
+| `RATE_LIMIT_TIME_WINDOW` | `60000` | Window in milliseconds. |
+
+#### Redis
+
+| Variable | Default | Notes |
+|---|---|---|
+| `REDIS_URL` | auto | See above. |
+| `REDIS_PASSWORD` | unset | If your Redis requires AUTH. |
+| `REDIS_DB` | `0` | Logical DB index. |
+| `REDIS_AUDIT_STREAM` | `auth:audit:events` | Stream key for audit events. |
+
+#### Database (optional — only for `/clusters`, `/databases`, `/backups` features)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | unset | MongoDB connection string. If unset, those features are inert. |
+
+#### Backup tool (optional — only if the `/backups` feature is exposed)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `BACKUP_IMAGE_MONGO` | unset | Private-registry image for the mongo backup container. |
+| `BACKUP_IMAGE_POSTGRES` | unset | Private-registry image for the postgres backup container. |
+| `BACKUP_GCP_PROJECT_ID` | unset | GCP project ID injected into the backup job env (for GCS output). |
+
+#### Dev / debugging (never enable in production)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `DEV_BYPASS_AUTH` | `false` | Skip Kratos session check; injects a fake user. Only effective when `NODE_ENV=development`. |
+| `DEV_USER_EMAIL` | unset | Email used for the dev fake user. |
+
+#### Bootstrap reset (DANGEROUS — CLI only, never used at runtime)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `JINBE_BOOTSTRAP_DANGEROUS_RESET` | `false` | Set `true` to wipe-and-reseed via the CLI. |
+| `JINBE_BOOTSTRAP_RESET_CONFIRM` | unset | Must equal the running image SHA. Guard against accidental fat-fingered resets. |
+
+### Full example
+
+```yaml
+global:
+  domain: mycorp.com
+
 jinbe:
   enabled: true
   image:
-    repository: ghcr.io/<org>/jinbe
-    tag: ""              # defaults to chart appVersion
+    repository: ghcr.io/<your-org>/jinbe
+    tag: ""                          # defaults to Chart.AppVersion
   env:
-    ENCRYPTION_KEY: ""   # required — ≥ 32 chars
-    ADMIN_EMAIL: ""      # optional — bootstrap admin on first boot
-    ADMIN_PASSWORD: ""
+    ENCRYPTION_KEY: ""               # REQUIRED — ≥ 32 chars
+    ADMIN_EMAIL: admin@mycorp.com    # optional — bootstrap admin
+    ADMIN_PASSWORD: ""               # ≥ 12 chars
+    ADMIN_NAME: Admin
+    DATABASE_URL: ""                 # optional — only for /clusters, /databases, /backups
+    LOG_LEVEL: info
+    ENABLE_SWAGGER: "false"
+  extraEnv:
+    DISABLE_CORS: "true"             # leave CORS to ingress-nginx
 ```
 
-The chart bundles the full stack (Kratos, Oathkeeper, OPAL, OPA, Redis, Jinbe) so a fresh cluster can come up with one `helm install`.
+Everything else is auto-derived. Override any `auto-computed` value via `jinbe.env.<NAME>` if your topology differs.
 
 ---
 
