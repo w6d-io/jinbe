@@ -3,6 +3,7 @@ import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacResolverService } from '../services/rbac-resolver.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { userGroupsService } from '../services/user-groups.service.js'
 import { env } from '../config/env.js'
 import {
   KratosIdentity,
@@ -317,110 +318,35 @@ export class AdminController {
     )
 
     try {
-      // Validate groups exist in groups.json
       await rbacService.validateGroups(groups)
 
-      // Get old groups for audit trail. Default empty so the diff
-      // computation below can't choke on undefined when Kratos returns
-      // nothing or the call short-circuits.
-      let oldGroups: string[] = []
-      try {
-        const fetched = await kratosService.getUserGroups(email)
-        if (Array.isArray(fetched)) oldGroups = fetched
-      } catch { /* ignore — user may not have groups yet */ }
-
-      // Ensure user always has at least ['users'] if empty
-      const finalGroups = groups.length > 0 ? groups : ['users']
-
-      const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
-
-      // Resolve identity for MFA gate + response enrichment
-      let identityId: string | null = null
-      let identityOrgId: string | null = null
-      try {
-        const ident = await kratosService.findByEmail(email)
-        identityId = ident?.id ?? null
-        identityOrgId = (ident as Record<string, unknown> | null)?.organization_id as string | null ?? null
-      } catch { /* identity lookup failed — fall through */ }
-
-      // Privilege-escalation guard: an actor with rbac:write permission
-      // (admin) must NOT be able to grant a group that confers admin or
-      // super_admin power to someone else (or themselves). Only a
-      // super_admin can grant such a group. Run BEFORE the MFA gate so
-      // the failure mode is "you can't" rather than "the target needs
-      // MFA" — the latter would hint at a workaround that doesn't exist.
-      if (newlyAdded.length > 0) {
-        for (const g of newlyAdded) {
-          if (await rbacService.isAdminPowerGroup(g)) {
-            try {
-              await rbacService.assertSuperAdmin(
-                `assign group '${g}' (grants admin privileges)`,
-                { email: request.userContext?.email },
-              )
-            } catch (e) {
-              const err = e as Error & { statusCode?: number }
-              // Map to 422 (not 403) for the same ingress-nginx body/CORS
-              // reason as the MFA gate below.
-              return reply.status(err.statusCode === 401 ? 401 : 422).send({
-                error: 'privilege_escalation_blocked',
-                message: err.message,
-                targetEmail: email,
-                blockingGroup: g,
-                hint: 'Only an existing super_admin can grant admin or super_admin groups.',
-              })
-            }
-          }
-        }
+      // Fail-closed identity resolution. Previously this was wrapped in a
+      // try/catch that silently set identityId=null on failure, which let
+      // the MFA gate fall through (`if (identityId)`) and allowed group
+      // assignment without an MFA check when Kratos was degraded. Now any
+      // resolution failure short-circuits with 404 / propagated error.
+      const ident = await kratosService.findByEmail(email)
+      if (!ident) {
+        return reply.status(404).send({
+          error: 'Not Found',
+          message: `User not found: ${email}`,
+        })
       }
 
-      // MFA gate: block assignment to a privileged group (one whose
-      // metadata is system: true AND that grants admin/super_admin) when
-      // the target identity has no second factor configured. Prevents
-      // an operator from one-clicking a fresh user into super_admins
-      // without SOC2-grade auth.
-      if (newlyAdded.length > 0) {
-        if (identityId) {
-          const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identityId)
-          if (blocker) {
-            // 422 Unprocessable Entity: request well-formed but a business
-            // rule (privileged-group MFA requirement) refuses it. We cannot
-            // use 403 because the cluster ingress-nginx ConfigMap reroutes
-            // 4xx/5xx through a custom default-backend that strips the JSON
-            // body and CORS headers, leaving the browser with "Failed to
-            // fetch". 422 is not in that intercepted list, so the body and
-            // ACAO header reach the kuma client and the toast can fire.
-            return reply.status(422).send({
-              error: 'mfa_required',
-              message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
-              targetEmail: email,
-              targetGroups: newlyAdded,
-              hint: 'Have the user complete /settings → Authenticator app, then retry.',
-            })
-          }
-        }
-      }
-
-      // Update in Kratos (also invalidates in-memory cache)
-      await kratosService.updateUserGroups(email, finalGroups)
-
-      // Notify OPAL immediately so OPA doesn't wait up to 30s for next poll
-      rbacService.notifyBindingsChanged('groups_changed', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
-
-      auditEventService.emit({
-        type: 'user.groups_changed',
+      const result = await userGroupsService.applyGroupUpdate({
+        identity: {
+          id: ident.id,
+          email,
+          organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
+        },
+        newGroups: groups,
         actor: { email: request.userContext?.email, ip: request.ip },
-        target: { type: 'user', id: email },
-        details: { oldGroups, newGroups: finalGroups },
-        source: 'jinbe-api',
-      }).catch(() => {})
-
-      return reply.send({
-        id: identityId,
-        organizationId: identityOrgId,
-        email,
-        groups: finalGroups,
-        updatedAt: new Date().toISOString(),
+        privilegePolicy: { kind: 'super_admin_required' },
+        auditEventType: 'user.groups_changed',
       })
+
+      if (!result.ok) return reply.status(result.status).send(result.body)
+      return reply.send(result.response)
     } catch (error) {
       if (error instanceof Error && error.message.includes('Invalid groups')) {
         return reply.status(400).send({

@@ -2,6 +2,7 @@ import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { userGroupsService } from '../services/user-groups.service.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -193,75 +194,23 @@ export class OrganizationUserController {
 
     const email = identity.traits?.email as string
 
-    // Validate groups exist in groups.json
     await rbacService.validateGroups(groups)
 
-    let oldGroups: string[] = []
-    try {
-      const fetched = await kratosService.getUserGroups(email)
-      if (Array.isArray(fetched)) oldGroups = fetched
-    } catch { /* user may not have groups yet */ }
-
-    const finalGroups = groups.length > 0 ? groups : ['users']
-    const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
-
-    // Privilege-escalation guard: use the OPA-resolved permissions from
-    // requireServiceAdmin (scoped to the organizationId) instead of the
-    // global super_admin check. The actor already passed
-    // requireServicePermission('rbac:write') so we only block if they
-    // lack the wildcard permission for this org.
-    if (newlyAdded.length > 0) {
-      const actorPermissions = request.rbacInfo?.permissions ?? []
-      const hasWildcard = actorPermissions.includes('*')
-      for (const g of newlyAdded) {
-        if (await rbacService.isAdminPowerGroup(g)) {
-          if (!hasWildcard) {
-            return reply.status(422).send({
-              error: 'privilege_escalation_blocked',
-              message: `Cannot assign group '${g}' (grants admin privileges) — wildcard permission required for this organization`,
-              targetEmail: email,
-              blockingGroup: g,
-              hint: 'The actor must hold the wildcard (*) permission for this organization.',
-            })
-          }
-        }
-      }
-    }
-
-    // MFA gate
-    if (newlyAdded.length > 0) {
-      const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, id)
-      if (blocker) {
-        return reply.status(422).send({
-          error: 'mfa_required',
-          message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
-          targetEmail: email,
-          targetGroups: newlyAdded,
-          hint: 'Have the user complete /settings → Authenticator app, then retry.',
-        })
-      }
-    }
-
-    await kratosService.updateUserGroups(email, finalGroups)
-    rbacService.notifyBindingsChanged('groups_changed', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
-
-    auditEventService
-      .emit({
-        type: 'organization_user.groups_changed',
-        actor: { email: request.userContext?.email, ip: request.ip },
-        target: { type: 'user', id },
-        details: { organizationId, oldGroups, newGroups: finalGroups },
-        source: 'jinbe-api',
-      })
-      .catch(() => {})
-
-    return reply.send({
-      id,
-      organizationId,
-      email,
-      groups: finalGroups,
-      updatedAt: new Date().toISOString(),
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: { id, email, organizationId },
+      newGroups: groups,
+      actor: { email: request.userContext?.email, ip: request.ip },
+      privilegePolicy: {
+        kind: 'wildcard_in_org',
+        orgId: organizationId,
+        actorPermissions: request.rbacInfo?.permissions ?? [],
+      },
+      auditEventType: 'organization_user.groups_changed',
+      auditExtraDetails: { organizationId },
     })
+
+    if (!result.ok) return reply.status(result.status).send(result.body)
+    return reply.send(result.response)
   }
 
   /**

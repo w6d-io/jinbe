@@ -1,16 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyRequest, FastifyReply } from 'fastify'
 
+const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
+  DEFAULT_IDENTITY: {
+    id: 'user-123',
+    schema_id: 'default',
+    state: 'active',
+    traits: { email: 'user@example.com' },
+    organization_id: null,
+    metadata_admin: { groups: [] },
+    metadata_public: {},
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  },
+}))
+
 // Mock dependencies
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     getUserGroups: vi.fn(),
     updateUserGroups: vi.fn(),
-    // MFA gate path queries findByEmail before assignment. Default to
-    // null (no identity) so the gate is skipped — individual tests can
-    // override when they specifically exercise the privileged-group
-    // refusal flow.
-    findByEmail: vi.fn().mockResolvedValue(null),
+    // updateUserGroups now resolves the identity up-front (fail-closed)
+    // before delegating to userGroupsService. Default mock returns a
+    // valid identity so the happy paths can flow through; tests can
+    // override to null/throw to exercise 404 / error propagation.
+    findByEmail: vi.fn().mockResolvedValue(DEFAULT_IDENTITY),
     hasMFA: vi.fn().mockResolvedValue(false),
   },
   KratosApiError: class KratosApiError extends Error {
@@ -568,35 +582,22 @@ describe('AdminController - User Groups', () => {
         })
       })
 
-      it('skips MFA gate when identity lookup throws — current behaviour, fail-open (admin.controller.ts:374-377)', async () => {
+      it('returns 404 when identity lookup returns null — fail-closed identity resolution', async () => {
         vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-        // findByEmail throws → identityId stays null → gate is skipped entirely.
-        // findPrivilegedGroupRequiringMFA must NOT be called in this branch.
-        vi.mocked(kratosService.findByEmail).mockRejectedValueOnce(new Error('kratos down'))
-        vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
-          id: 'user-123',
-          schema_id: 'default',
-          state: 'active',
-          traits: { email: 'user@example.com' },
-          metadata_admin: { groups: ['super_admins'] },
-          metadata_public: {},
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z',
-        })
+        vi.mocked(kratosService.findByEmail).mockResolvedValueOnce(null)
 
-        const request = createMockRequest('user@example.com', {
+        const request = createMockRequest('missing@example.com', {
           groups: ['super_admins'],
         })
         const reply = createMockReply()
 
         await controller.updateUserGroups(request, reply)
 
-        // Gate was skipped — mutation proceeded
-        expect(kratosService.updateUserGroups).toHaveBeenCalledWith(
-          'user@example.com',
-          ['super_admins'],
-        )
+        expect(reply._statusCode).toBe(404)
+        expect(reply._body).toMatchObject({ error: 'Not Found' })
+        // Mutation MUST NOT proceed without a resolved identity, otherwise
+        // the MFA gate would be bypassed when Kratos is degraded.
+        expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
         expect(rbacService.findPrivilegedGroupRequiringMFA).not.toHaveBeenCalled()
       })
     })
