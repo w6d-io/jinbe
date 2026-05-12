@@ -69,7 +69,7 @@ export function createKustomizationMock() {
         kind: 'Kustomization',
         configMapGenerator: [
           {
-            name: 'auth-w6d-opal-static-data',
+            name: 'opal-static-data',
             files: [
               'bindings.json=configmaps/bindings.json',
               'groups.json=configmaps/groups.json',

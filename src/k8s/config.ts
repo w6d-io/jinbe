@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma.js'
+import { env } from '../config/env.js'
 
 export interface K8sApiError extends Error {
     response?: {
@@ -6,10 +7,12 @@ export interface K8sApiError extends Error {
     }
 }
 
-// Default backup tool configuration shared across clusters
+// Default backup tool configuration shared across clusters.
+// Image URLs are deployer-specific (private registry) — provide them via
+// BACKUP_IMAGE_MONGO / BACKUP_IMAGE_POSTGRES env vars.
 const defaultConfig = {
     mongodb: {
-        image: 'europe-docker.pkg.dev/k8s-w6d-qa/library/backup-tool/mongo',
+        image: env.BACKUP_IMAGE_MONGO ?? '',
         sourceYamlTemplate: `sources:
   mongo:
     enabled: true
@@ -20,7 +23,7 @@ const defaultConfig = {
 `,
     },
     postgresql: {
-        image: 'europe-docker.pkg.dev/k8s-w6d-qa/library/backup-tool/postgres',
+        image: env.BACKUP_IMAGE_POSTGRES ?? '',
         sourceYamlTemplate: `sources:
   postgres:
     enabled: true

@@ -15,13 +15,20 @@
 #   ./scripts/seed-bootstrap-marker.sh <namespace> [--dry-run] [--force]
 #
 # Examples:
-#   ./scripts/seed-bootstrap-marker.sh auth-w6d --dry-run
-#   ./scripts/seed-bootstrap-marker.sh auth-w6d
+#   ./scripts/seed-bootstrap-marker.sh auth --dry-run
+#   RELEASE=my-release ./scripts/seed-bootstrap-marker.sh auth
 #
 # Flags:
 #   --dry-run   Print the payload that would be written; do not write.
 #   --force     Overwrite an existing marker. Without this flag, the
 #               script aborts if the marker already exists.
+#
+# Env:
+#   RELEASE         Helm release name (default: jinbe). Used to derive the
+#                   jinbe deployment name as ${RELEASE}-jinbe.
+#   JINBE_DEPLOY    Override the deployment name directly (skips RELEASE).
+#   REDIS_LABEL     Selector for the Redis master pod (default targets a
+#                   stock Bitnami chart).
 #
 # Requirements: kubectl, jq
 
@@ -52,7 +59,7 @@ require kubectl
 require jq
 
 SCHEMA_VERSION=1
-RELEASE="${RELEASE:-auth-w6d}"
+RELEASE="${RELEASE:-jinbe}"
 JINBE_DEPLOY="${JINBE_DEPLOY:-${RELEASE}-jinbe}"
 REDIS_LABEL="${REDIS_LABEL:-app.kubernetes.io/component=master,app.kubernetes.io/name=redis}"
 
