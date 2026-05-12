@@ -1,9 +1,12 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
+import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { userGroupsService } from '../services/user-groups.service.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
+  updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
 import {
   OrganizationUserCreateBody,
@@ -150,6 +153,64 @@ export class OrganizationUserController {
       .catch(() => {})
 
     return reply.send(identity)
+  }
+
+  /**
+   * Get a user's groups within an organization
+   * GET /api/organizations/:organizationId/users/:id/groups
+   */
+  async getUserGroups(
+    request: FastifyRequest<{ Params: { organizationId: string; id: string } }>,
+    reply: FastifyReply
+  ) {
+    const { organizationId, id } = request.params
+
+    const identity = await kratosService.getIdentity(id)
+    assertOrganizationMatch(identity, organizationId)
+
+    const email = identity.traits?.email as string
+    const groups = await kratosService.getUserGroups(email)
+    const availableGroups = await rbacService.getAvailableGroups()
+
+    return reply.send({ email, groups, availableGroups })
+  }
+
+  /**
+   * Update a user's groups within an organization
+   * PUT /api/organizations/:organizationId/users/:id/groups
+   */
+  async updateUserGroups(
+    request: FastifyRequest<{
+      Params: { organizationId: string; id: string }
+      Body: { groups: string[] }
+    }>,
+    reply: FastifyReply
+  ) {
+    const { organizationId, id } = request.params
+    const { groups } = updateUserGroupsBodySchema.parse(request.body)
+
+    const identity = await kratosService.getIdentity(id)
+    assertOrganizationMatch(identity, organizationId)
+
+    const email = identity.traits?.email as string
+
+    await rbacService.validateGroups(groups)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: { id, email, organizationId },
+      newGroups: groups,
+      actor: { email: request.userContext?.email, ip: request.ip },
+      privilegePolicy: {
+        kind: 'wildcard_in_org',
+        orgId: organizationId,
+        actorPermissions: request.rbacInfo?.permissions ?? [],
+      },
+      auditEventType: 'organization_user.groups_changed',
+      auditExtraDetails: { organizationId },
+    })
+
+    if (!result.ok) return reply.status(result.status).send(result.body)
+    return reply.send(result.response)
   }
 
   /**

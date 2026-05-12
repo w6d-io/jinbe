@@ -3,23 +3,26 @@ import { opaService } from '../services/opa.service.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
-const ADMIN_ROLES = ['admin', 'super_admin','jinbe:admin']
-
 /**
- * Middleware factory: requires the caller to have admin role for the
+ * Middleware factory: requires the caller to have permissions for the
  * service identified by the route parameter `paramName`.
  *
  * Uses OPA/OPAL to resolve RBAC — passes organizationId as the `app` param
  * so OPA resolves groups → roles → permissions for that specific service.
  *
- * Access is granted when the user has:
- * - `*` permission (super_admin), OR
- * - `admin` role resolved for the target service
+ * Access is granted when OPA returns at least one permission for the user
+ * on the target service. Role/permission definitions live entirely in OPA
+ * policy — no hardcoded role list here.
  */
 export function requireServiceAdmin(paramName = 'organizationId') {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
+    const route = `${request.method} ${(request.url || '').split('?')[0]}`
+
+    request.log.debug({ email, route }, '[requireServiceAdmin] start')
+
     if (!email || email === 'unknown') {
+      request.log.debug('[requireServiceAdmin] no email — 401')
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Authentication required',
@@ -28,6 +31,7 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     // DEV MODE: bypass
     if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
+      request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — skipping OPA')
       request.rbacInfo = {
         email,
         groups: ['super_admins', 'admins'],
@@ -39,13 +43,18 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
+    request.log.debug(
+      { email, organizationId, paramName },
+      '[requireServiceAdmin] querying OPA with organizationId as app'
+    )
+
     // Query OPA with organizationId as the app — resolves RBAC for that service
     const rbacInfo = await opaService.getUserInfo(email, organizationId)
 
     if (!rbacInfo) {
       request.log.warn(
         { email, organizationId },
-        'Failed to fetch RBAC info from OPA - access denied'
+        '[requireServiceAdmin] OPA returned null — service unavailable'
       )
       return reply.status(503).send({
         error: 'Service Unavailable',
@@ -53,22 +62,31 @@ export function requireServiceAdmin(paramName = 'organizationId') {
       })
     }
 
+    request.log.debug(
+      {
+        email,
+        organizationId,
+        groups: rbacInfo.groups,
+        roles: rbacInfo.roles,
+        permissions: rbacInfo.permissions,
+      },
+      '[requireServiceAdmin] OPA resolved RBAC'
+    )
+
     request.rbacInfo = rbacInfo
 
-    const isAdmin =
-      rbacInfo.permissions.includes('*') ||
-      rbacInfo.roles.some((r) => ADMIN_ROLES.includes(r))
-
-    if (!isAdmin) {
+    // OPA resolves permissions for the target service — if the user has
+    // none, they are not authorized for this organization.
+    if (rbacInfo.permissions.length === 0) {
       request.log.warn(
-        { email, organizationId, roles: rbacInfo.roles },
-        'Access denied - user not admin for service'
+        { email, organizationId, groups: rbacInfo.groups, roles: rbacInfo.roles },
+        '[requireServiceAdmin] access denied — no permissions for service'
       )
       auditEventService
         .emit({
           category: 'access',
           verb: 'deny',
-          target: `${request.method} ${(request.url || '').split('?')[0]}`,
+          target: route,
           result: 'denied',
           actor: {
             email,
@@ -89,8 +107,88 @@ export function requireServiceAdmin(paramName = 'organizationId') {
     }
 
     request.log.debug(
-      { email, organizationId, roles: rbacInfo.roles },
-      'Service admin access granted'
+      { email, organizationId, roles: rbacInfo.roles, permissions: rbacInfo.permissions },
+      '[requireServiceAdmin] access granted'
+    )
+  }
+}
+
+/**
+ * Middleware factory: requires a specific OPA-resolved permission on the
+ * rbacInfo already populated by requireServiceAdmin.
+ *
+ * Must run AFTER requireServiceAdmin (which populates request.rbacInfo).
+ * Checks permissions resolved by OPA for the target organization — no
+ * hardcoded group/role list.
+ *
+ * @param requiredPermission - permission string to check (e.g. 'rbac:write').
+ *   The wildcard permission '*' always grants access.
+ */
+export function requireServicePermission(requiredPermission: string) {
+  return async function (request: FastifyRequest, reply: FastifyReply) {
+    const email = request.userContext?.email
+    const route = `${request.method} ${(request.url || '').split('?')[0]}`
+    const rbacInfo = request.rbacInfo
+
+    request.log.debug(
+      { email, route, requiredPermission, rbacInfo },
+      '[requireServicePermission] checking OPA-resolved permissions'
+    )
+
+    if (!rbacInfo) {
+      request.log.warn(
+        { email, route },
+        '[requireServicePermission] no rbacInfo — requireServiceAdmin must run first'
+      )
+      return reply.status(500).send({
+        error: 'Internal Server Error',
+        message: 'Authorization context not initialized',
+      })
+    }
+
+    const hasPermission =
+      rbacInfo.permissions.includes('*') ||
+      rbacInfo.permissions.includes(requiredPermission)
+
+    if (!hasPermission) {
+      request.log.warn(
+        {
+          email,
+          route,
+          requiredPermission,
+          groups: rbacInfo.groups,
+          roles: rbacInfo.roles,
+          permissions: rbacInfo.permissions,
+        },
+        '[requireServicePermission] access denied — missing permission'
+      )
+      auditEventService
+        .emit({
+          category: 'access',
+          verb: 'deny',
+          target: route,
+          result: 'denied',
+          actor: {
+            email: email ?? null,
+            ip: request.ip,
+            ua: (request.headers['user-agent'] as string) || null,
+          },
+          method: request.method,
+          path: (request.url || '').split('?')[0],
+          reason: `missing_permission:${requiredPermission}`,
+          source: 'jinbe-api',
+        })
+        .catch(() => {})
+
+      return reply.status(403).send({
+        error: 'Forbidden',
+        message: `Permission '${requiredPermission}' required`,
+      })
+    }
+
+    request.log.debug(
+      { email, requiredPermission, permissions: rbacInfo.permissions },
+      '[requireServicePermission] access granted'
     )
   }
 }
