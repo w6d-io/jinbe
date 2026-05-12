@@ -334,6 +334,15 @@ export class AdminController {
 
       const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
 
+      // Resolve identity for MFA gate + response enrichment
+      let identityId: string | null = null
+      let identityOrgId: string | null = null
+      try {
+        const ident = await kratosService.findByEmail(email)
+        identityId = ident?.id ?? null
+        identityOrgId = (ident as Record<string, unknown> | null)?.organization_id as string | null ?? null
+      } catch { /* identity lookup failed — fall through */ }
+
       // Privilege-escalation guard: an actor with rbac:write permission
       // (admin) must NOT be able to grant a group that confers admin or
       // super_admin power to someone else (or themselves). Only a
@@ -370,11 +379,6 @@ export class AdminController {
       // an operator from one-clicking a fresh user into super_admins
       // without SOC2-grade auth.
       if (newlyAdded.length > 0) {
-        let identityId: string | null = null
-        try {
-          const ident = await kratosService.findByEmail(email)
-          identityId = ident?.id ?? null
-        } catch { /* identity lookup failed — fall through, MFA gate skipped */ }
         if (identityId) {
           const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identityId)
           if (blocker) {
@@ -411,6 +415,8 @@ export class AdminController {
       }).catch(() => {})
 
       return reply.send({
+        id: identityId,
+        organizationId: identityOrgId,
         email,
         groups: finalGroups,
         updatedAt: new Date().toISOString(),
