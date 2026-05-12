@@ -288,6 +288,8 @@ export const userGroupsResponseJsonSchema = {
 export const userGroupsUpdateResponseJsonSchema = {
   type: 'object',
   properties: {
+    id: { type: 'string', format: 'uuid', description: 'User ID' },
+    organizationId: { type: 'string', format: 'uuid', description: 'Organization ID' },
     email: { type: 'string', format: 'email' },
     groups: {
       type: 'array',

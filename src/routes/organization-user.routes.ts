@@ -1,14 +1,20 @@
 import { FastifyInstance } from 'fastify'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
-import { requireServiceAdmin } from '../middleware/require-service-admin.js'
+import { requireServiceAdmin, requireServicePermission } from '../middleware/require-service-admin.js'
 import {
   organizationIdParamJsonSchema,
   organizationUserIdParamJsonSchema,
   organizationUserCreateBodyJsonSchema,
   organizationUserUpdateBodyJsonSchema,
 } from '../schemas/organization-user.schema.js'
-import { kratosIdentityJsonSchema } from '../schemas/admin.schema.js'
 import {
+  kratosIdentityJsonSchema,
+  updateUserGroupsBodyJsonSchema,
+  userGroupsResponseJsonSchema,
+  userGroupsUpdateResponseJsonSchema,
+} from '../schemas/admin.schema.js'
+import {
+  badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
   unauthorizedResponseSchema,
@@ -130,5 +136,49 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
       },
     },
     organizationUserController.deleteUser.bind(organizationUserController)
+  )
+
+  // ===========================================================================
+  // User Group Management (scoped to organization)
+  // ===========================================================================
+
+  fastify.get(
+    '/users/:id/groups',
+    {
+      schema: {
+        description: "Get a user's groups within this organization",
+        tags: ['organization-users'],
+        params: organizationUserIdParamJsonSchema,
+        response: {
+          200: userGroupsResponseJsonSchema,
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    organizationUserController.getUserGroups.bind(organizationUserController)
+  )
+
+  fastify.put(
+    '/users/:id/groups',
+    {
+      preHandler: requireServicePermission('rbac:write'),
+      schema: {
+        description:
+          "Update a user's group memberships within this organization. Requires rbac:write permission.",
+        tags: ['organization-users'],
+        params: organizationUserIdParamJsonSchema,
+        body: updateUserGroupsBodyJsonSchema,
+        response: {
+          200: userGroupsUpdateResponseJsonSchema,
+          400: badRequestResponseSchema,
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    organizationUserController.updateUserGroups.bind(organizationUserController) as never
   )
 }
