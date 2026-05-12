@@ -328,39 +328,29 @@ export class RbacService {
   }
 
   private async notifyOpal(reason?: string): Promise<void> {
+    // Delegate to refreshAllDataSources so every mutation re-publishes
+    // the full entries list (/bindings, /bindings/groups, /roles/{svc}
+    // AND /route_map/{svc} for every service). The slim previous
+    // payload pushed only /bindings + /bindings/groups, which meant
+    // adding or editing a route_map entry never propagated to OPA —
+    // OPA only picked it up after an opal-client restart pulled all
+    // sources at boot. Over-publishing is cheap (OPAL clients
+    // re-fetch the same URLs they already know) and the alternative
+    // (per-mutation entry mapping) is brittle: every new RBAC path
+    // would need a matching publish call somewhere.
     try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL
-
-      await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entries: [
-            { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-            { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-          ],
-          reason: reason || 'rbac-mutation',
-        }),
-      })
-      console.log(`[opal-notify] Triggered: ${reason || 'rbac-mutation'}`)
+      await this.refreshAllDataSources(reason || 'rbac-mutation')
     } catch (err) {
       console.error('[opal-notify] Failed:', err)
     }
   }
 
   private async notifyOpalRoles(serviceName: string): Promise<void> {
+    // Same reasoning as notifyOpal — full refresh keeps OPA's view in
+    // sync without per-path bookkeeping. serviceName is preserved in
+    // the reason string for traceability in OPAL server logs.
     try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL
-      await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entries: [
-            { url: `${jinbeUrl}/api/admin/rbac/opal/roles/${serviceName}`, topics: ['policy_data'], dst_path: `/roles/${serviceName}` },
-          ],
-          reason: `roles.updated.${serviceName}`,
-        }),
-      })
+      await this.refreshAllDataSources(`roles.updated.${serviceName}`)
     } catch (err) {
       console.error('[opal-notify-roles] Failed:', err)
     }
