@@ -119,6 +119,12 @@ export interface MutationResult {
 export interface KratosBindingsResponse {
   emails: Record<string, unknown>
   group_membership: Record<string, string[]>
+  // Path 3 hybrid multi-org bindings. Both keys are flat (email →
+  // value) to match `group_membership`. The rego policy reads:
+  //   data.bindings.user_organizations[email]            → array
+  //   data.bindings.user_organization_primary[email]     → string
+  user_organizations: Record<string, string[]>
+  user_organization_primary: Record<string, string>
 }
 
 // Re-export types from repository for convenience
@@ -798,12 +804,31 @@ export class RbacService {
   // ===========================================================================
 
   async getBindingsFromKratos(): Promise<KratosBindingsResponse> {
-    const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
+    // Single call into Kratos: the metadata aggregate carries
+    // group + multi-org + legacy single-org pointer per email.
+    const identitiesMetadata = await kratosService.getAllIdentitiesMetadata()
     const group_membership: Record<string, string[]> = {}
-    for (const [email, groups] of identitiesWithGroups) {
-      group_membership[email] = groups
+    const user_organizations: Record<string, string[]> = {}
+    const user_organization_primary: Record<string, string> = {}
+    for (const [email, meta] of identitiesMetadata) {
+      group_membership[email] = meta.groups
+      // Only emit the multi-org array when it's non-empty — rego
+      // handles missing keys safely with `object.get`, and an empty
+      // array on every email bloats the OPAL payload for tenants who
+      // haven't migrated yet.
+      if (meta.organizations.length > 0) {
+        user_organizations[email] = meta.organizations
+      }
+      if (meta.organizationPrimary) {
+        user_organization_primary[email] = meta.organizationPrimary
+      }
     }
-    return { emails: {}, group_membership }
+    return {
+      emails: {},
+      group_membership,
+      user_organizations,
+      user_organization_primary,
+    }
   }
 }
 
