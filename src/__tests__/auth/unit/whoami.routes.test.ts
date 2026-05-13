@@ -7,6 +7,14 @@ const mockState = vi.hoisted(() => ({
     APP_NAME: 'jinbe',
   },
   rbacInfo: null as { email: string; groups: string[]; roles: string[]; permissions: string[] } | null,
+  // Path 3 hybrid: per-identity organization context returned by
+  // kratosService.getOrganizationContext. Default is an identity with
+  // no orgs and no legacy pointer; tests override per-case.
+  orgContext: {
+    primary: null as string | null,
+    organizations: [] as string[],
+  },
+  orgContextError: null as Error | null,
 }))
 
 // Mock env
@@ -21,9 +29,22 @@ vi.mock('../../../services/rbac-resolver.service.js', () => ({
   },
 }))
 
+// Mock kratosService — whoami calls getOrganizationContext to populate
+// the multi-org payload, since /sessions/whoami does NOT expose
+// metadata_admin.
+vi.mock('../../../services/kratos.service.js', () => ({
+  kratosService: {
+    getOrganizationContext: vi.fn().mockImplementation(async () => {
+      if (mockState.orgContextError) throw mockState.orgContextError
+      return mockState.orgContext
+    }),
+  },
+}))
+
 // Import after mocking
 import { whoamiRoutes } from '../../../routes/whoami.routes.js'
 import { rbacResolverService } from '../../../services/rbac-resolver.service.js'
+import { kratosService } from '../../../services/kratos.service.js'
 
 // Helper types
 interface WhoamiResponse {
@@ -37,6 +58,8 @@ interface WhoamiResponse {
   groups: string[]
   roles: string[]
   permissions: string[]
+  organization_id: string | null
+  organizations: string[]
 }
 
 // Helper to create mock request
@@ -105,6 +128,8 @@ describe('whoamiRoutes', () => {
       roles: ['viewer'],
       permissions: ['read'],
     }
+    mockState.orgContext = { primary: null, organizations: [] }
+    mockState.orgContextError = null
 
     // Register routes
     fastify = createMockFastify()
@@ -281,6 +306,140 @@ describe('whoamiRoutes', () => {
       await handler(request, reply)
 
       expect(reply._body?.name).toBe('Context Name')
+    })
+
+    // ──────────────────────────────────────────────────────────────────
+    // Path 3 hybrid: organization_id + organizations payload
+    // ──────────────────────────────────────────────────────────────────
+
+    it('returns organizations:[] and organization_id:null for a legacy identity with no orgs', async () => {
+      mockState.orgContext = { primary: null, organizations: [] }
+
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'legacy@example.org',
+          sessionId: 'session-1',
+          identityId: 'identity-1',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.organizations).toEqual([])
+      expect(reply._body?.organization_id).toBeNull()
+      expect(kratosService.getOrganizationContext).toHaveBeenCalledWith('identity-1')
+    })
+
+    it('returns populated organizations array when metadata_admin.organizations is set', async () => {
+      mockState.orgContext = {
+        primary: null,
+        organizations: [
+          '11111111-1111-1111-1111-111111111111',
+          '22222222-2222-2222-2222-222222222222',
+        ],
+      }
+
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'multi@example.org',
+          sessionId: 's',
+          identityId: 'identity-multi',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.organizations).toEqual([
+        '11111111-1111-1111-1111-111111111111',
+        '22222222-2222-2222-2222-222222222222',
+      ])
+      expect(reply._body?.organization_id).toBeNull()
+    })
+
+    it('returns legacy organization_id alongside multi-org array (hybrid path)', async () => {
+      mockState.orgContext = {
+        primary: '33333333-3333-3333-3333-333333333333',
+        organizations: ['11111111-1111-1111-1111-111111111111'],
+      }
+
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'hybrid@example.org',
+          sessionId: 's',
+          identityId: 'identity-hybrid',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.organization_id).toBe('33333333-3333-3333-3333-333333333333')
+      expect(reply._body?.organizations).toEqual([
+        '11111111-1111-1111-1111-111111111111',
+      ])
+    })
+
+    it('returns picture:null when no avatar trait is set', async () => {
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'nopic@example.org',
+          sessionId: 's',
+          identityId: 'identity-nopic',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.picture).toBeNull()
+    })
+
+    it('returns picture URL when set on the session traits', async () => {
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'avatar@example.org',
+          sessionId: 's',
+          identityId: 'identity-avatar',
+          picture: 'https://example.org/u/avatar.png',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.picture).toBe('https://example.org/u/avatar.png')
+    })
+
+    it('fails soft when Kratos org-context lookup throws — returns empty orgs, not 500', async () => {
+      mockState.orgContextError = new Error('kratos admin api unreachable')
+
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'transient@example.org',
+          sessionId: 's',
+          identityId: 'identity-transient',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(reply._body?.authenticated).toBe(true)
+      expect(reply._body?.organizations).toEqual([])
+      expect(reply._body?.organization_id).toBeNull()
+    })
+
+    it('does not call Kratos when there is no identity_id (unauthenticated request)', async () => {
+      const request = createMockRequest({})
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(kratosService.getOrganizationContext).not.toHaveBeenCalled()
+      expect(reply._body?.organizations).toEqual([])
+      expect(reply._body?.organization_id).toBeNull()
     })
   })
 })

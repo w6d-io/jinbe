@@ -49,6 +49,16 @@ vi.mock('../../../services/kratos.service.js', () => ({
         ['viewer@example.com', ['viewers']],
       ])
     ),
+    // Path 3 hybrid: getUsers/getBindingsFromKratos now read the
+    // richer aggregate. Empty multi-org fields match the previous
+    // semantics (users belong to no orgs).
+    getAllIdentitiesMetadata: vi.fn().mockResolvedValue(
+      new Map([
+        ['admin@example.com', { groups: ['admins', 'devs'], organizations: [], organizationPrimary: null }],
+        ['dev@example.com', { groups: ['devs'], organizations: [], organizationPrimary: null }],
+        ['viewer@example.com', { groups: ['viewers'], organizations: [], organizationPrimary: null }],
+      ]),
+    ),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
   },
 }))
@@ -117,13 +127,13 @@ describe('RbacService - Users', () => {
     })
 
     it('should return empty users array when Kratos returns no users', async () => {
-      vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+      vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(new Map())
       const result = await service.getUsers()
       expect(result.users).toHaveLength(0)
     })
 
     it('should return empty users when Kratos has no identities', async () => {
-      vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+      vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(new Map())
       const result = await service.getUsers()
       expect(result.users).toHaveLength(0)
     })

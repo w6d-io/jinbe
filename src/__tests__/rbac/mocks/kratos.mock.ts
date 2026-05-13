@@ -9,7 +9,12 @@ export interface MockKratosIdentity {
   state: string
   metadata_admin?: {
     groups?: string[]
+    // Path 3 hybrid: multi-org array sourced from
+    // metadata_admin.organizations. Mirrors the live schema.
+    organizations?: string[]
   }
+  // Legacy single-org pointer at the identity root.
+  organization_id?: string | null
 }
 
 /**
@@ -37,6 +42,21 @@ export function createKratosMock(users: MockKratosIdentity[] = []) {
       for (const user of users) {
         const groups = user.metadata_admin?.groups || ['users']
         result.set(user.traits.email, groups)
+      }
+      return result
+    }),
+
+    // Path 3 hybrid: identical source data, richer return shape.
+    getAllIdentitiesMetadata: vi.fn().mockImplementation(async () => {
+      const result = new Map<
+        string,
+        { groups: string[]; organizations: string[]; organizationPrimary: string | null }
+      >()
+      for (const user of users) {
+        const groups = user.metadata_admin?.groups || ['users']
+        const organizations = user.metadata_admin?.organizations ?? []
+        const organizationPrimary = user.organization_id ?? null
+        result.set(user.traits.email, { groups, organizations, organizationPrimary })
       }
       return result
     }),

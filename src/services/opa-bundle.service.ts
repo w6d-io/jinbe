@@ -77,19 +77,40 @@ class OpaBundleService {
   }
 
   /**
-   * Get bindings from Kratos
+   * Get bindings from Kratos: groups + multi-org memberships + legacy
+   * single-org pointer. Shape matches the runtime `/bindings` endpoint
+   * so OPA clients pulling the bundle and OPAL pushing the same path
+   * see identical structures.
    */
-  private async getBindings(): Promise<{ group_membership: Record<string, string[]>; emails: Record<string, unknown> }> {
+  private async getBindings(): Promise<{
+    group_membership: Record<string, string[]>
+    user_organizations: Record<string, string[]>
+    user_organization_primary: Record<string, string>
+    emails: Record<string, unknown>
+  }> {
     try {
-      const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
+      const identitiesMetadata = await kratosService.getAllIdentitiesMetadata()
       const group_membership: Record<string, string[]> = {}
-      for (const [email, groups] of identitiesWithGroups) {
-        group_membership[email] = groups
+      const user_organizations: Record<string, string[]> = {}
+      const user_organization_primary: Record<string, string> = {}
+      for (const [email, meta] of identitiesMetadata) {
+        group_membership[email] = meta.groups
+        if (meta.organizations.length > 0) {
+          user_organizations[email] = meta.organizations
+        }
+        if (meta.organizationPrimary) {
+          user_organization_primary[email] = meta.organizationPrimary
+        }
       }
-      return { group_membership, emails: {} }
+      return { group_membership, user_organizations, user_organization_primary, emails: {} }
     } catch (err) {
       console.error('[opa-bundle] Failed to fetch Kratos bindings:', err)
-      return { group_membership: {}, emails: {} }
+      return {
+        group_membership: {},
+        user_organizations: {},
+        user_organization_primary: {},
+        emails: {},
+      }
     }
   }
 

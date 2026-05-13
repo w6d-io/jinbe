@@ -12,6 +12,9 @@ import {
   updateUserGroupsBodyJsonSchema,
   userGroupsResponseJsonSchema,
   userGroupsUpdateResponseJsonSchema,
+  updateUserOrganizationsBodyJsonSchema,
+  userOrganizationsResponseJsonSchema,
+  userOrganizationsUpdateResponseJsonSchema,
 } from '../schemas/admin.schema.js'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import {
@@ -273,6 +276,53 @@ export async function adminRoutes(fastify: FastifyInstance) {
       },
     },
     adminController.updateUserGroups.bind(adminController) as never
+  )
+
+  // ===========================================================================
+  // Multi-org memberships (Path 3 hybrid)
+  // ===========================================================================
+
+  // Get user's organizations (multi-org array + legacy single-org pointer)
+  fastify.get(
+    '/users/:email/organizations',
+    {
+      schema: {
+        description:
+          "Get a user's multi-org memberships (metadata_admin.organizations) and legacy single-org pointer.",
+        tags: ['admin'],
+        params: zodToJsonSchema(userEmailParamSchema),
+        response: {
+          200: userOrganizationsResponseJsonSchema,
+          401: unauthorizedResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.getUserOrganizations.bind(adminController)
+  )
+
+  // Replace user's organizations (requires super_admin — same authority
+  // as the groups endpoint, since this can move a user across tenants).
+  fastify.put(
+    '/users/:email/organizations',
+    {
+      preHandler: requireSuperAdmin,
+      schema: {
+        description:
+          "Replace a user's multi-org memberships. Requires super_admin. The array of UUIDs is stored in metadata_admin.organizations and mirrored to OPA via the bindings refresh.",
+        tags: ['admin'],
+        params: zodToJsonSchema(userEmailParamSchema),
+        body: updateUserOrganizationsBodyJsonSchema,
+        response: {
+          200: userOrganizationsUpdateResponseJsonSchema,
+          400: badRequestResponseSchema,
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: notFoundResponseSchema,
+        },
+      },
+    },
+    adminController.updateUserOrganizations.bind(adminController) as never
   )
 
   // Send recovery email to user (one-click password reset)

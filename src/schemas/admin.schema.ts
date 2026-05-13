@@ -4,10 +4,14 @@ import { z } from 'zod'
  * Admin schemas for Kratos user management
  */
 
-// Kratos Identity traits schema
+// Kratos Identity traits schema. `picture` is permitted by the default
+// identity schema in the chart (chart values.yaml — kratos.kratos.identitySchemas)
+// so it must be allowed at the zod boundary too; otherwise admin-side
+// updates that round-trip picture would strip it.
 export const kratosTraitsSchema = z.object({
   email: z.string().email(),
   name: z.string().optional(),
+  picture: z.string().url().optional(),
 })
 
 // Kratos Identity response schema
@@ -41,6 +45,12 @@ export const kratosIdentitySchema = z.object({
   metadata_public: z.record(z.unknown()).nullable().optional(),
   metadata_admin: z.record(z.unknown()).nullable().optional(),
   organization_id: z.string().uuid().nullable().optional(),
+  // Path 3 hybrid: additive multi-organization field. Source of truth
+  // is `metadata_admin.organizations`; admin endpoints lift it to a
+  // top-level property here for ergonomic consumption. `organization_id`
+  // above stays as the primary single-org pointer for billing /
+  // employment semantics.
+  organization_ids: z.array(z.string().uuid()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
   // Surfaced when the listIdentities call sets include_credential. Each
@@ -117,6 +127,14 @@ export const updateUserGroupsBodySchema = z.object({
   groups: z.array(z.string().min(1, 'Group name cannot be empty')),
 })
 
+// User organizations update request schema (Path 3 hybrid).
+// `organizations` must be an array of UUIDs; an empty array is valid
+// (removes all multi-org memberships). Duplicates are tolerated at
+// the wire boundary; the service de-dupes before persisting.
+export const updateUserOrganizationsBodySchema = z.object({
+  organizations: z.array(z.string().uuid('Invalid organization UUID')),
+})
+
 // Type exports
 export type KratosTraits = z.infer<typeof kratosTraitsSchema>
 export type KratosIdentity = z.infer<typeof kratosIdentitySchema>
@@ -126,6 +144,7 @@ export type UserIdParam = z.infer<typeof userIdParamSchema>
 export type UsersQueryParams = z.infer<typeof usersQuerySchema>
 export type UserEmailParam = z.infer<typeof userEmailParamSchema>
 export type UpdateUserGroupsBody = z.infer<typeof updateUserGroupsBodySchema>
+export type UpdateUserOrganizationsBody = z.infer<typeof updateUserOrganizationsBodySchema>
 
 // JSON Schema exports for OpenAPI
 export const kratosIdentityJsonSchema = {
@@ -159,6 +178,11 @@ export const kratosIdentityJsonSchema = {
     metadata_public: { type: 'object', nullable: true, additionalProperties: true },
     metadata_admin: { type: 'object', nullable: true, additionalProperties: true },
     organization_id: { type: 'string', nullable: true },
+    organization_ids: {
+      type: 'array',
+      items: { type: 'string', format: 'uuid' },
+      description: 'Path 3 hybrid: organizations the user belongs to (mirror of metadata_admin.organizations).',
+    },
     created_at: { type: 'string', format: 'date-time' },
     updated_at: { type: 'string', format: 'date-time' },
     // RBAC fields from OPAL
@@ -295,6 +319,56 @@ export const userGroupsUpdateResponseJsonSchema = {
       type: 'array',
       items: { type: 'string' },
       description: "User's updated group memberships",
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      description: 'Timestamp of the update',
+    },
+  },
+}
+
+// PUT /api/admin/users/:email/organizations request body
+export const updateUserOrganizationsBodyJsonSchema = {
+  type: 'object',
+  required: ['organizations'],
+  properties: {
+    organizations: {
+      type: 'array',
+      items: { type: 'string', format: 'uuid' },
+      description: 'Organization UUIDs the user belongs to (replaces the existing list).',
+    },
+  },
+}
+
+// Response for GET /api/admin/users/:email/organizations
+export const userOrganizationsResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    email: { type: 'string', format: 'email' },
+    organizations: {
+      type: 'array',
+      items: { type: 'string', format: 'uuid' },
+      description: "User's current multi-org memberships (metadata_admin.organizations).",
+    },
+    organization_id: {
+      type: ['string', 'null'],
+      format: 'uuid',
+      description: 'Legacy single-org pointer (traits.organization_id). May be null.',
+    },
+  },
+}
+
+// Response for PUT /api/admin/users/:email/organizations
+export const userOrganizationsUpdateResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', format: 'uuid', description: 'User ID' },
+    email: { type: 'string', format: 'email' },
+    organizations: {
+      type: 'array',
+      items: { type: 'string', format: 'uuid' },
+      description: "User's updated multi-org memberships.",
     },
     updatedAt: {
       type: 'string',

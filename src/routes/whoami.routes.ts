@@ -1,6 +1,7 @@
 // routes/whoami.routes.ts
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { rbacResolverService } from '../services/rbac-resolver.service.js'
+import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
 
 /**
@@ -38,6 +39,21 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
               groups: { type: 'array', items: { type: 'string' } },
               roles: { type: 'array', items: { type: 'string' } },
               permissions: { type: 'array', items: { type: 'string' } },
+              // Path 3 hybrid multi-org. `organization_id` is the
+              // legacy single-org pointer (billing / employment);
+              // `organizations` is the authoritative list driving authz
+              // and the SPA's org switcher. Always emitted as a JSON
+              // array (empty when the user has no orgs); the SPA can
+              // disable the switcher when count <= 1.
+              organization_id: {
+                type: ['string', 'null'],
+                description: 'Legacy single-org pointer (traits.organization_id).',
+              },
+              organizations: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Multi-org memberships from metadata_admin.organizations.',
+              },
             },
           },
         },
@@ -71,6 +87,8 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
       let groups: string[] = []
       let roles: string[] = []
       let permissions: string[] = []
+      let organizationId: string | null = null
+      let organizations: string[] = []
 
       // DEV MODE: Return admin RBAC info matching requireAdmin bypass
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
@@ -90,6 +108,21 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Path 3 hybrid multi-org. `metadata_admin` is admin-only and
+      // therefore NOT exposed via /sessions/whoami — fetch via the
+      // admin API. Fail-soft: a Kratos hiccup leaves the user with an
+      // empty org list rather than blocking the whoami response, since
+      // the rego tenant gate then deny-by-default (rego sees []).
+      if (identityId && !(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
+        try {
+          const ctx = await kratosService.getOrganizationContext(identityId)
+          organizationId = ctx.primary
+          organizations = ctx.organizations
+        } catch (error) {
+          request.log.error({ error, identityId }, 'Failed to fetch organization context')
+        }
+      }
+
       return reply.send({
         authenticated,
         email,
@@ -101,6 +134,8 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
         groups,
         roles,
         permissions,
+        organization_id: organizationId,
+        organizations,
       })
     }
   )

@@ -30,12 +30,33 @@ interface IdentityGroupsCache {
 }
 
 /**
+ * Path 3 hybrid: aggregate of the identity metadata jinbe exposes to OPA.
+ * Sourced from a single Kratos listIdentities call so OPAL pushes stay
+ * cheap (one Kratos round-trip per refresh).
+ *
+ * - groups               — from `metadata_admin.groups`, defaults to `['users']`
+ * - organizations        — from `metadata_admin.organizations`, defaults to `[]`
+ * - organizationPrimary  — from the top-level `organization_id`, may be null
+ */
+export interface IdentityMetadataAggregate {
+  groups: string[]
+  organizations: string[]
+  organizationPrimary: string | null
+}
+
+interface IdentityMetadataCache {
+  data: Map<string, IdentityMetadataAggregate> // email → aggregate
+  expiresAt: number
+}
+
+/**
  * Kratos Admin API Service
  * Manages user identities via Ory Kratos Admin API
  */
 export class KratosService {
   private adminUrl: string
   private identityGroupsCache: IdentityGroupsCache | null = null
+  private identityMetadataCache: IdentityMetadataCache | null = null
   private readonly CACHE_TTL_MS = 5_000 // 5 seconds — short TTL as fallback; explicit invalidation handles mutations
 
   constructor() {
@@ -348,6 +369,156 @@ export class KratosService {
    */
   invalidateGroupsCache(): void {
     this.identityGroupsCache = null
+    // The richer metadata cache shares the same source (Kratos
+    // listIdentities) so it must be invalidated alongside the groups
+    // cache — otherwise an OPAL refresh could see fresh groups but
+    // stale organizations (or vice versa).
+    this.identityMetadataCache = null
+  }
+
+  /**
+   * Path 3 hybrid: get the full metadata aggregate (groups + orgs +
+   * legacy single-org pointer) for every identity, keyed by email.
+   *
+   * Sourced from a single `listIdentities(250)` call — same backing
+   * store as `getAllIdentitiesWithGroups`, but exposes the multi-org
+   * fields too. Cached for 5 seconds; explicit invalidation via
+   * `invalidateGroupsCache()` covers mutations.
+   */
+  async getAllIdentitiesMetadata(): Promise<Map<string, IdentityMetadataAggregate>> {
+    if (
+      this.identityMetadataCache &&
+      Date.now() < this.identityMetadataCache.expiresAt
+    ) {
+      return this.identityMetadataCache.data
+    }
+
+    const result = new Map<string, IdentityMetadataAggregate>()
+    const response = await this.listIdentities(250)
+
+    for (const identity of response.identities) {
+      const email = identity.traits?.email as string
+      if (!email) continue
+      const metadataAdmin = identity.metadata_admin as
+        | { groups?: string[]; organizations?: string[] }
+        | null
+        | undefined
+      const groups = metadataAdmin?.groups || ['users']
+      // De-dupe defensively: external tooling may have populated the
+      // field with duplicates; OPA does not de-dupe array contains.
+      const organizations = Array.from(
+        new Set((metadataAdmin?.organizations ?? []).filter((s) => typeof s === 'string')),
+      )
+      const organizationPrimary =
+        ((identity as Record<string, unknown>).organization_id as string | null | undefined) ?? null
+
+      result.set(email, { groups, organizations, organizationPrimary })
+    }
+
+    this.identityMetadataCache = {
+      data: result,
+      expiresAt: Date.now() + this.CACHE_TTL_MS,
+    }
+
+    return result
+  }
+
+  /**
+   * Single-identity convenience accessor: returns the multi-org array
+   * from `metadata_admin.organizations`, or `[]` if absent. Used by
+   * the whoami route and by `assertOrganizationMatch`.
+   */
+  async getOrganizationMemberships(identityId: string): Promise<string[]> {
+    const identity = await this.getIdentity(identityId)
+    const metadataAdmin = identity.metadata_admin as
+      | { organizations?: unknown }
+      | null
+      | undefined
+    if (!Array.isArray(metadataAdmin?.organizations)) return []
+    return Array.from(
+      new Set(
+        (metadataAdmin!.organizations as unknown[]).filter(
+          (s): s is string => typeof s === 'string',
+        ),
+      ),
+    )
+  }
+
+  /**
+   * One-shot accessor returning BOTH the legacy single-org pointer
+   * and the multi-org array, so whoami can populate the SPA org
+   * switcher in a single round-trip. `/sessions/whoami` does NOT
+   * expose `metadata_admin`, so this hop through the admin API is
+   * unavoidable when the SPA needs the live list.
+   */
+  async getOrganizationContext(
+    identityId: string,
+  ): Promise<{ primary: string | null; organizations: string[] }> {
+    const identity = await this.getIdentity(identityId)
+    const metadataAdmin = identity.metadata_admin as
+      | { organizations?: unknown }
+      | null
+      | undefined
+    const organizations = Array.isArray(metadataAdmin?.organizations)
+      ? Array.from(
+          new Set(
+            (metadataAdmin!.organizations as unknown[]).filter(
+              (s): s is string => typeof s === 'string',
+            ),
+          ),
+        )
+      : []
+    const primary =
+      ((identity as Record<string, unknown>).organization_id as string | null | undefined) ?? null
+    return { primary, organizations }
+  }
+
+  /**
+   * Replace the user's multi-org membership array
+   * (`metadata_admin.organizations`). Preserves all other
+   * `metadata_admin` keys (groups, etc.) — destructive merge would
+   * lose group bindings on every org update.
+   *
+   * Throws `KratosApiError(404)` if no identity is found for the
+   * given email. Caller is responsible for the actor authorization
+   * check (super_admin etc.) and the audit/OPAL refresh trail.
+   */
+  async updateUserOrganizations(
+    email: string,
+    organizations: string[],
+  ): Promise<KratosIdentity> {
+    const response = await this.listIdentities(1, undefined, email)
+    if (response.identities.length === 0) {
+      throw new KratosApiError(404, `User not found: ${email}`)
+    }
+    const identity = response.identities[0]
+
+    const currentMetadataAdmin = (identity.metadata_admin || {}) as Record<
+      string,
+      unknown
+    >
+    // De-dupe inside the service: callers may pass arrays with
+    // duplicates without it being an error. Preserve insertion order
+    // for stable test fixtures.
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const org of organizations) {
+      if (!seen.has(org)) {
+        seen.add(org)
+        deduped.push(org)
+      }
+    }
+    const updatedMetadataAdmin = {
+      ...currentMetadataAdmin,
+      organizations: deduped,
+    }
+
+    const result = await this.updateIdentity(identity.id, {
+      metadata_admin: updatedMetadataAdmin,
+    })
+
+    this.invalidateGroupsCache()
+    return result
   }
 
   /**
