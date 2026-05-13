@@ -21,6 +21,7 @@ import { redisClientService } from '../services/redis-client.service.js'
 import { runBootstrap, SchemaDowngradeError } from '../bootstrap/index.js'
 import { readMarker, MarkerCorruptError } from '../bootstrap/marker.js'
 import { waitForRedis, waitForKratos, DependencyTimeoutError } from '../bootstrap/wait-deps.js'
+import { checkAdminPasswordHardening } from './bootstrap-guards.js'
 
 const EXIT = {
   SUCCESS: 0,
@@ -89,6 +90,20 @@ async function main(): Promise<number> {
     logger.error(
       'First bootstrap requires ADMIN_EMAIL and ADMIN_PASSWORD. ' +
         'Provide both via the Helm values (Vault-injected for ADMIN_PASSWORD recommended).',
+    )
+    return EXIT.INVALID_ENV
+  }
+
+  // Defence-in-depth: even if the zod schema is ever loosened in a hot patch,
+  // refuse to seed an admin identity whose password is either too short or
+  // starts with a well-known weak prefix. Kept in sync with the schema rules
+  // in src/config/env.ts via the shared helper above.
+  const weakness = checkAdminPasswordHardening(env.ADMIN_PASSWORD)
+  if (weakness) {
+    logger.error(
+      weakness,
+      'ADMIN_PASSWORD failed runtime hardening checks ' +
+        '(min 16 chars, no changeme/password/admin/123 prefix). Refusing to bootstrap.',
     )
     return EXIT.INVALID_ENV
   }
