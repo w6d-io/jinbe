@@ -38,6 +38,7 @@ vi.mock('../../../services/kratos.service.js', () => ({
     invalidateGroupsCache: vi.fn(),
     listIdentities: vi.fn().mockResolvedValue({ identities: [] }),
     getAllIdentitiesWithGroups: vi.fn().mockResolvedValue(new Map()),
+    getAllIdentitiesMetadata: vi.fn().mockResolvedValue(new Map()),
   },
 }))
 
