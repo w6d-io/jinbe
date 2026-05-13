@@ -147,12 +147,27 @@ export class KratosService {
     params.append('include_credential', 'webauthn')
     params.append('include_credential', 'lookup_secret')
     const identity = await this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
-    const creds = identity.credentials || {}
-    return Boolean(
-      (creds as Record<string, unknown>).totp ||
-      (creds as Record<string, unknown>).webauthn ||
-      (creds as Record<string, unknown>).lookup_secret,
-    )
+    const creds = (identity.credentials || {}) as Record<
+      string,
+      { config?: Record<string, unknown> } | undefined
+    >
+    // Kratos auto-creates credentials.webauthn with just a `user_handle`
+    // for every identity whose schema declares webauthn as an identifier
+    // — even before any security key is registered. Checking credential
+    // *key presence* therefore returns true for users who have never
+    // enrolled a factor, defeating the privilege-escalation MFA gate.
+    // Inspect each credential's config for the real enrolment artefact:
+    //   totp:          config.totp_url            (set on enrol)
+    //   webauthn:      config.credentials[]       (registered keys; the
+    //                                              user_handle alone does
+    //                                              not count)
+    //   lookup_secret: config.recovery_codes[]    (generated codes)
+    const totpReg = !!creds.totp?.config?.totp_url
+    const webauthnReg = Array.isArray((creds.webauthn?.config as any)?.credentials) &&
+      ((creds.webauthn?.config as any).credentials.length > 0)
+    const lookupReg = Array.isArray((creds.lookup_secret?.config as any)?.recovery_codes) &&
+      ((creds.lookup_secret?.config as any).recovery_codes.length > 0)
+    return totpReg || webauthnReg || lookupReg
   }
 
   /**
