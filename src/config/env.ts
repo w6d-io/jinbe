@@ -121,6 +121,9 @@ const envSchema = z.object({
     .default('false'),
   JINBE_BOOTSTRAP_RESET_CONFIRM: z.string().optional(),
 
+  // Sidecar notification service (jinbe-service)
+  JINBE_SERVICE_URL: z.string().url().optional(),
+
   // Backup tool images (deployer-private registry). Required if the
   // /backups feature is used; left unset, attempts to render a backup
   // job will fail with a clear "image not configured" error.

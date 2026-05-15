@@ -8,6 +8,7 @@ import {
   KratosIdentityCreate,
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
+import { notificationService } from '../server.js'
 import {
   OrganizationUserCreateBody,
   OrganizationUserUpdateBody,
@@ -120,6 +121,10 @@ export class OrganizationUserController {
       })
       .catch(() => {})
 
+    notificationService.emit({
+      action: 'created', entity_type: 'user',
+      payload: { id: identity.id, organization_id: organizationId, email, display_name: name, status: identity.state },
+    })
     return reply.status(201).send(identity)
   }
 
@@ -152,6 +157,10 @@ export class OrganizationUserController {
       })
       .catch(() => {})
 
+    notificationService.emit({
+      action: 'updated', entity_type: 'user',
+      payload: { id, organization_id: organizationId, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+    })
     return reply.send(identity)
   }
 
@@ -238,6 +247,7 @@ export class OrganizationUserController {
       })
       .catch(() => {})
 
+    notificationService.emit({ action: 'deleted', entity_type: 'user', payload: { id, organization_id: organizationId } })
     return reply.status(204).send()
   }
 }
