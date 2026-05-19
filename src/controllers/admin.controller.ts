@@ -5,6 +5,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
 import { env } from '../config/env.js'
+import { notificationService } from '../server.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -153,6 +154,10 @@ export class AdminController {
       details: { email: identity.traits?.email, groups, sendInvite },
       source: 'jinbe-api',
     }).catch(() => {})
+    notificationService.emit({
+      action: 'created', entity_type: 'user',
+      payload: { id: identity.id, organization_id: (identity as any).organization_id ?? null, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state, created_at: identity.created_at, updated_at: identity.updated_at },
+    })
     return reply.status(201).send(identity)
   }
 
@@ -189,6 +194,10 @@ export class AdminController {
       details: { metadata_public, metadata_admin },
       source: 'jinbe-api',
     }).catch(() => {})
+    notificationService.emit({
+      action: 'updated', entity_type: 'user',
+      payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+    })
     return reply.send(identity)
   }
 
@@ -210,6 +219,10 @@ export class AdminController {
       details: { state },
       source: 'jinbe-api',
     }).catch(() => {})
+    notificationService.emit({
+      action: 'updated', entity_type: 'user',
+      payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+    })
     return reply.send(identity)
   }
 
@@ -237,6 +250,10 @@ export class AdminController {
       details: { email: identity.traits?.email },
       source: 'jinbe-api',
     }).catch(() => {})
+    notificationService.emit({
+      action: 'updated', entity_type: 'user',
+      payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+    })
     return reply.send(identity)
   }
 
@@ -258,6 +275,7 @@ export class AdminController {
       target: { type: 'user', id },
       source: 'jinbe-api',
     }).catch(() => {})
+    notificationService.emit({ action: 'deleted', entity_type: 'user', payload: { id } })
     return reply.status(204).send()
   }
 
