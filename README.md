@@ -76,6 +76,83 @@ Where the others are protocol servers, Jinbe is the **API + audit + policy autho
 
 ---
 
+## Notification System (Sidecar)
+
+Jinbe ships a **pluggable notification system** that pushes entity events (user/org/role CRUD) to external services. Events are written to a Redis Stream (`notifications:outbox`) for durable, at-least-once delivery with automatic retry.
+
+```
+Controller mutation
+        │
+        ▼
+  notificationService.emit()  →  Redis Stream (XADD)
+                                       │
+                                  Consumer loop (XREADGROUP)
+                                       │
+                                  ┌────┴────┐
+                                  │Notifier │  (pluggable transport)
+                                  └────┬────┘
+                                       │
+                             HTTP POST /ingest
+                                       │
+                                  jinbe-service  →  PG + Kafka
+```
+
+### Enabling
+
+Set `JINBE_SERVICE_URL` to activate the HTTP notifier:
+
+```yaml
+JINBE_SERVICE_URL: http://jinbe-service:8080
+```
+
+When set, every user/org/role mutation in the admin and organization-user controllers emits an event to the sidecar. The sidecar materializes the event to PostgreSQL and publishes it to Kafka via the transactional outbox.
+
+### Delivery guarantees
+
+- **Durable**: events are persisted in a Redis Stream before the HTTP response is sent
+- **Retry**: failed deliveries are retried with exponential backoff (1s → 30s max)
+- **Reclaim**: unacknowledged events are reclaimed after 30s of idle time
+- **Dismiss**: events older than 1 hour are dismissed (acknowledged without delivery)
+- **Non-blocking**: `emit()` returns immediately; the consumer loop runs in the background
+
+### Adding a new transport
+
+Implement the `Notifier` interface and register it in `server.ts`:
+
+```ts
+import type { Notifier, EntityEvent, NotifyResult } from './services/notifications/index.js'
+
+class KafkaNotifier implements Notifier {
+  readonly name = 'kafka'
+  async notify(event: EntityEvent): Promise<NotifyResult> {
+    // publish to Kafka topic
+    return { acknowledged: true }
+  }
+}
+
+// In server.ts after bootstrap:
+notificationService.register(new KafkaNotifier())
+```
+
+### Event shape
+
+```json
+{
+  "action": "created",
+  "entity_type": "user",
+  "payload": {
+    "id": "...",
+    "email": "alice@example.com",
+    "display_name": "Alice",
+    "organization_id": "...",
+    "status": "active"
+  },
+  "timestamp": "2026-05-15T22:00:00.000Z"
+}
+```
+
+---
+
 ## Stack requirements
 
 | Component | Role | Min version |
@@ -331,6 +408,12 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 | `BACKUP_IMAGE_MONGO` | unset | Private-registry image for the mongo backup container. |
 | `BACKUP_IMAGE_POSTGRES` | unset | Private-registry image for the postgres backup container. |
 | `BACKUP_GCP_PROJECT_ID` | unset | GCP project ID injected into the backup job env (for GCS output). |
+
+#### Sidecar notification
+
+| Variable | Default | Notes |
+|---|---|---|
+| `JINBE_SERVICE_URL` | unset | When set, enables the notification system. Events are pushed to `<url>/ingest`. Example: `http://jinbe-service:8080`. |
 
 #### Dev / debugging (never enable in production)
 
