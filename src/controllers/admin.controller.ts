@@ -156,7 +156,7 @@ export class AdminController {
     }).catch(() => {})
     notificationService.emit({
       action: 'created', entity_type: 'user',
-      payload: { id: identity.id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+      payload: { id: identity.id, organization_id: (identity as any).organization_id ?? null, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state, created_at: identity.created_at, updated_at: identity.updated_at },
     })
     return reply.status(201).send(identity)
   }

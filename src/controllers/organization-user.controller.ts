@@ -123,7 +123,7 @@ export class OrganizationUserController {
 
     notificationService.emit({
       action: 'created', entity_type: 'user',
-      payload: { id: identity.id, organization_id: organizationId, email, display_name: name, status: identity.state },
+      payload: { id: identity.id, organization_id: organizationId, email, display_name: name, status: identity.state, created_at: identity.created_at, updated_at: identity.updated_at },
     })
     return reply.status(201).send(identity)
   }
@@ -159,7 +159,7 @@ export class OrganizationUserController {
 
     notificationService.emit({
       action: 'updated', entity_type: 'user',
-      payload: { id, organization_id: organizationId, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
+      payload: { id, organization_id: organizationId, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state, created_at: identity.created_at, updated_at: identity.updated_at },
     })
     return reply.send(identity)
   }
