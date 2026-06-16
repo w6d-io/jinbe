@@ -27,6 +27,7 @@ import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
+import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
@@ -132,6 +133,8 @@ export async function buildServer() {
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(auditRoutes, { prefix: '/admin/audit' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
+      await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
+      await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(jobRoutes)
