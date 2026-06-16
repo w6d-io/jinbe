@@ -69,6 +69,16 @@ const envSchema = z.object({
   KRATOS_PUBLIC_URL: z.string().url().default('http://kratos-public:80'),
   KRATOS_ADMIN_URL: z.string().url().default('http://kratos-admin:80'),
 
+  // Hydra Admin API (private — never expose publicly). Used to manage
+  // OAuth2 clients that back per-organization M2M API keys.
+  HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
+  // Allowed API-key scopes catalog (comma-separated). Requested scopes are
+  // validated against this set server-side before a client is created.
+  API_KEY_ALLOWED_SCOPES: z
+    .string()
+    .default('api:read,api:write')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+
   // OPAL/OPA Client
   OPA_URL: z.string().url().default('http://opal-client:8181'),
 
