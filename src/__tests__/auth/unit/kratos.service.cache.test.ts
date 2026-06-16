@@ -206,7 +206,7 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await expect(service.getAllIdentitiesWithGroups()).rejects.toThrow('Kratos API error')
   })
 
-  it('should use page_size of 250 for efficiency', async () => {
+  it('should use page_size of 500 per page', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -216,7 +216,7 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await service.getAllIdentitiesWithGroups()
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('page_size=250'),
+      expect.stringContaining('page_size=500'),
       expect.any(Object)
     )
   })
@@ -231,7 +231,7 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await service.getAllIdentitiesWithGroups()
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://kratos-admin:4434/admin/identities?page_size=250',
+      'http://kratos-admin:4434/admin/identities?page_size=500',
       expect.any(Object)
     )
   })
