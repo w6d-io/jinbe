@@ -14,11 +14,12 @@ vi.mock('../../../config/index.js', () => ({
 }))
 
 // Helper to create mock fetch response
-function createMockResponse(status: number, body: unknown) {
+function createMockResponse(status: number, body: unknown, linkHeader: string | null = null) {
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: status === 200 ? 'OK' : status === 404 ? 'Not Found' : 'Error',
+    headers: { get: (name: string) => (name.toLowerCase() === 'link' ? linkHeader : null) },
     json: async () => body,
     text: async () => JSON.stringify(body),
   }
@@ -57,6 +58,16 @@ describe('KratosService', () => {
 
       expect(result.identities).toHaveLength(3)
       expect(result.identities[0].traits.email).toBe('admin@example.com')
+    })
+
+    it('parses the next page_token from the Link header (rel=next, not rel=first)', async () => {
+      const link =
+        '</admin/identities?page_size=500&page_token=00000000-0000-0000-0000-000000000000>; rel="first",' +
+        '</admin/identities?page_size=500&page_token=abc-123-next>; rel="next"'
+      mockFetch.mockResolvedValueOnce(createMockResponse(200, [], link))
+
+      const result = await service.listIdentities(500)
+      expect(result.nextPageToken).toBe('abc-123-next')
     })
 
     it('should pass pagination parameters', async () => {
@@ -284,6 +295,35 @@ describe('KratosService', () => {
         expect(e).toBeInstanceOf(KratosApiError)
         expect((e as KratosApiError).details).toBe('Plain text error message')
       }
+    })
+  })
+
+  describe('getAllIdentitiesWithGroups (pagination)', () => {
+    it('follows the Link header across pages so members past page 1 are included', async () => {
+      const nextLink =
+        '</admin/identities?page_size=500&page_token=page2>; rel="next"'
+      // Page 1: a regular user + a "next" link
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse(
+          200,
+          [{ id: '1', traits: { email: 'user1@example.com' }, metadata_admin: { groups: ['users'] } }],
+          nextLink
+        )
+      )
+      // Page 2: the admin — must NOT be dropped — and no further link
+      mockFetch.mockResolvedValueOnce(
+        createMockResponse(
+          200,
+          [{ id: '2', traits: { email: 'david@stairling.com' }, metadata_admin: { groups: ['super_admins'] } }],
+          null
+        )
+      )
+
+      const map = await service.getAllIdentitiesWithGroups()
+
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(map.get('david@stairling.com')).toEqual(['super_admins'])
+      expect(map.get('user1@example.com')).toEqual(['users'])
     })
   })
 })
