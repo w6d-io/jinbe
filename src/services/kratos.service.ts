@@ -116,14 +116,46 @@ export class KratosService {
     const queryString = params.toString()
     const path = `/admin/identities${queryString ? `?${queryString}` : ''}`
 
-    const identities = await this.request<KratosIdentity[]>(path)
-
-    // Extract next page token from Link header if available
-    // For simplicity, we return the identities array directly
+    // Direct fetch (not the shared request helper) so we can read the Link
+    // header Kratos uses to paginate — callers need the next page token.
+    const response = await fetch(`${this.adminUrl}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!response.ok) {
+      let details: unknown
+      try {
+        details = await response.json()
+      } catch {
+        details = await response.text()
+      }
+      throw new KratosApiError(
+        response.status,
+        `Kratos API error: ${response.statusText}`,
+        details
+      )
+    }
+    const identities = (await response.json()) as KratosIdentity[]
     return {
       identities,
-      nextPageToken: undefined, // Kratos uses Link headers for pagination
+      nextPageToken: this.parseNextPageToken(response.headers?.get('link') ?? null),
     }
+  }
+
+  /**
+   * Extract the `page_token` of the rel="next" entry from a Kratos Link header
+   * (RFC 5988), e.g. `</admin/identities?page_size=250&page_token=ABC>; rel="next"`.
+   * Returns undefined when there is no next page.
+   */
+  private parseNextPageToken(linkHeader: string | null): string | undefined {
+    if (!linkHeader) return undefined
+    for (const part of linkHeader.split(',')) {
+      const rel = part.match(/<([^>]+)>\s*;\s*rel="next"/)
+      if (rel) {
+        const tok = rel[1].match(/[?&]page_token=([^&>]+)/)
+        if (tok) return decodeURIComponent(tok[1])
+      }
+    }
+    return undefined
   }
 
   /**
@@ -316,21 +348,31 @@ export class KratosService {
 
     const result = new Map<string, string[]>()
 
-    // Fetch all identities (no pagination token handling since Kratos uses Link headers)
-    const response = await this.listIdentities(250)
+    // Paginate through ALL identities by following Kratos's Link header.
+    // Capping at a single page silently drops every member past it (e.g.
+    // admins beyond the first page) from the RBAC bindings OPA consumes,
+    // causing spurious 403s once the directory grows past one page.
+    let pageToken: string | undefined
+    for (let page = 0; page < 1000; page++) {
+      const response = await this.listIdentities(500, pageToken)
 
-    for (const identity of response.identities) {
-      const email = identity.traits?.email as string
-      // Extract groups from metadata_admin, default to ['users'] if not set
-      const metadataAdmin = identity.metadata_admin as
-        | { groups?: string[] }
-        | null
-        | undefined
-      const groups = metadataAdmin?.groups || ['users']
+      for (const identity of response.identities) {
+        const email = identity.traits?.email as string
+        // Extract groups from metadata_admin, default to ['users'] if not set
+        const metadataAdmin = identity.metadata_admin as
+          | { groups?: string[] }
+          | null
+          | undefined
+        const groups = metadataAdmin?.groups || ['users']
 
-      if (email) {
-        result.set(email, groups)
+        if (email) {
+          result.set(email, groups)
+        }
       }
+
+      const next = response.nextPageToken
+      if (!next || next === pageToken || response.identities.length === 0) break
+      pageToken = next
     }
 
     // Update cache
