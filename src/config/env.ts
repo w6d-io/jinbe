@@ -12,8 +12,10 @@ const fqdnSchema = z
     message: 'must be a bare FQDN (no scheme, no port, no path)',
   })
 
-// Environment schema with validation
-const envSchema = z.object({
+// Environment schema with validation. Exported so unit tests can call
+// `.safeParse()` without invoking the module-level side-effects (process.exit
+// on parse failure, dotenv.config()).
+export const envSchema = z.object({
   // Server
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
@@ -120,8 +122,19 @@ const envSchema = z.object({
   OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
   // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts)
+  // The password must be at least 16 chars and may not start with a well-known
+  // weak prefix (`changeme`, `password`, `admin`, `123`, case-insensitive).
+  // The same check is duplicated at runtime in src/cli/bootstrap.ts as
+  // defence-in-depth in case this schema is ever loosened in a hot patch.
   ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(12).optional(),
+  ADMIN_PASSWORD: z
+    .string()
+    .min(16, 'ADMIN_PASSWORD must be at least 16 characters')
+    .refine((v) => !/^(changeme|password|admin|123)/i.test(v), {
+      message:
+        'ADMIN_PASSWORD starts with a well-known weak prefix (changeme/password/admin/123)',
+    })
+    .optional(),
   ADMIN_NAME: z.string().min(1).default('Admin'),
 
   // Reset path guards (CLI only). Both must be set; reset only if RESET_CONFIRM matches the running image SHA.

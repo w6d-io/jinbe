@@ -18,11 +18,36 @@ import {
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
 
-function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
-  const orgId = (identity as Record<string, unknown>).organization_id as string | null | undefined
-  if (orgId !== organizationId) {
-    throw new KratosApiError(404, 'User not found in this organization')
-  }
+/**
+ * Path 3 hybrid: an identity matches an organization when EITHER
+ *  (a) the new `metadata_admin.organizations` array includes the
+ *      requested org UUID (authoritative), OR
+ *  (b) the legacy `organization_id` traits pointer equals it
+ *      (backward compat for identities that haven't been migrated
+ *      to the multi-org array yet).
+ *
+ * Both checks are kept in sync with the rego `user_in_org` helper
+ * (rbac.rego) and the `bindings.user_organizations[email]` /
+ * `bindings.user_organization_primary[email]` Redis-mirrored datasets.
+ *
+ * Exported so jinbe-side unit tests can exercise the predicate
+ * without spinning up Fastify; the controllers continue to call it
+ * the same way as before.
+ */
+export function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
+  const legacy = (identity as Record<string, unknown>).organization_id as string | null | undefined
+  if (legacy === organizationId) return
+
+  const metadataAdmin = identity.metadata_admin as
+    | { organizations?: unknown }
+    | null
+    | undefined
+  const orgs = Array.isArray(metadataAdmin?.organizations)
+    ? (metadataAdmin!.organizations as unknown[]).filter((s): s is string => typeof s === 'string')
+    : []
+  if (orgs.includes(organizationId)) return
+
+  throw new KratosApiError(404, 'User not found in this organization')
 }
 
 export class OrganizationUserController {
