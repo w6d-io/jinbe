@@ -111,6 +111,9 @@ export class OrganizationUserController {
       }
     }
 
+    kratosService.invalidateGroupsCache()
+    rbacService.notifyBindingsChanged('user_created', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+
     auditEventService
       .emit({
         type: 'organization_user.created',
@@ -146,6 +149,9 @@ export class OrganizationUserController {
     assertOrganizationMatch(current, organizationId)
 
     const identity = await kratosService.updateIdentity(id, body)
+
+    kratosService.invalidateGroupsCache()
+    rbacService.notifyBindingsChanged('user_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
 
     auditEventService
       .emit({
@@ -236,6 +242,9 @@ export class OrganizationUserController {
     assertOrganizationMatch(identity, organizationId)
 
     await kratosService.deleteIdentity(id)
+
+    kratosService.invalidateGroupsCache()
+    rbacService.notifyBindingsChanged('user_deleted', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
 
     auditEventService
       .emit({

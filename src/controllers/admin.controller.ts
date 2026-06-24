@@ -399,6 +399,9 @@ export class AdminController {
       { op: 'replace', path: '/organization_id', value: organization_id },
     ])
 
+    kratosService.invalidateGroupsCache()
+    rbacService.notifyBindingsChanged('organization_changed', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+
     auditEventService.emit({
       type: 'user.organization_changed',
       actor: { email: request.userContext?.email, ip: request.ip },
