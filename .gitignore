@@ -55,3 +55,5 @@ CLAUDE.md
 .serena/
 .mcp.json
 pnpm-lock.yaml
+agentdb.rvf
+agentdb.rvf.lock
