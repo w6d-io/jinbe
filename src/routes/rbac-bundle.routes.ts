@@ -17,7 +17,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
     {
       preHandler: requireSuperAdmin,
       schema: {
-        description: 'Export all RBAC config and identities as a portable JSON bundle.',
+        description: 'Export all RBAC config as a portable JSON bundle.',
         tags: ['rbac', 'backup'],
         response: {
           200: { type: 'object', additionalProperties: true },
@@ -39,7 +39,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
     {
       preHandler: requireSuperAdmin,
       schema: {
-        description: 'Import an auth bundle — restores RBAC config and upserts identities.',
+        description: 'Import an auth bundle — restores RBAC config (full replace).',
         tags: ['rbac', 'backup'],
         body: { type: 'object', additionalProperties: true },
         response: {
