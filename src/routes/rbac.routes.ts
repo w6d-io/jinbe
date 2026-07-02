@@ -350,6 +350,62 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.deleteAccessRule.bind(rbacController))
 
   // ===========================================================================
+  // Org → Service Map
+  // ===========================================================================
+
+  fastify.get('/org-service-map', {
+    schema: {
+      description: 'List all organization → service name mappings.',
+      tags: ['rbac'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            mappings: { type: 'object', additionalProperties: { type: 'string' } },
+          },
+        },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.getOrgServiceMap.bind(rbacController))
+
+  fastify.post('/org-service-map', {
+    schema: {
+      description: 'Create or update an organization → service name mapping.',
+      tags: ['rbac'],
+      body: {
+        type: 'object',
+        required: ['organizationId', 'serviceName'],
+        properties: {
+          organizationId: { type: 'string', format: 'uuid' },
+          serviceName: { type: 'string', pattern: '^[a-z0-9_]+$' },
+        },
+      },
+      response: {
+        201: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
+        400: badRequestResponseSchema,
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.setOrgServiceMapping.bind(rbacController))
+
+  fastify.delete('/org-service-map/:organizationId', {
+    schema: {
+      description: 'Delete an organization → service name mapping.',
+      tags: ['rbac'],
+      params: { type: 'object', required: ['organizationId'], properties: { organizationId: { type: 'string', format: 'uuid' } } },
+      response: {
+        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        404: notFoundResponseSchema,
+      },
+    },
+  }, rbacController.deleteOrgServiceMapping.bind(rbacController))
+
+  // ===========================================================================
   // Permission Simulator
   // ===========================================================================
 
