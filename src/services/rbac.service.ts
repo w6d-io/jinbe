@@ -794,6 +794,31 @@ export class RbacService {
   }
 
   // ===========================================================================
+  // Org → Service Map
+  // ===========================================================================
+
+  async getOrgServiceMap(): Promise<Record<string, string>> {
+    return redisRbacRepository.getOrgServiceMap()
+  }
+
+  async setOrgServiceMapping(organizationId: string, serviceName: string, actor?: { email?: string; ip?: string }): Promise<void> {
+    const serviceExists = await redisRbacRepository.serviceExists(serviceName)
+    if (!serviceExists) {
+      throw Object.assign(new Error(`Service '${serviceName}' does not exist`), { statusCode: 400 })
+    }
+    await redisRbacRepository.setOrgServiceMapping(organizationId, serviceName)
+    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, service: serviceName }, actor)
+  }
+
+  async deleteOrgServiceMapping(organizationId: string, actor?: { email?: string; ip?: string }): Promise<void> {
+    const deleted = await redisRbacRepository.deleteOrgServiceMapping(organizationId)
+    if (!deleted) {
+      throw Object.assign(new Error(`No mapping found for organization '${organizationId}'`), { statusCode: 404 })
+    }
+    await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor)
+  }
+
+  // ===========================================================================
   // Kratos Bindings
   // ===========================================================================
 

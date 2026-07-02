@@ -10,6 +10,7 @@ export interface AuthBundle {
     roles: Record<string, FlatRolesMap>
     routeMaps: Record<string, RouteMap>
     oathkeeperRules: OathkeeperRule[]
+    orgServiceMap?: Record<string, string>
   }
 }
 
@@ -25,10 +26,11 @@ export interface ImportResult {
 
 class RbacBundleService {
   async export(): Promise<AuthBundle> {
-    const [services, groups, oathkeeperRules] = await Promise.all([
+    const [services, groups, oathkeeperRules, orgServiceMap] = await Promise.all([
       redisRbacRepository.getServices(),
       redisRbacRepository.getGroups(),
       redisRbacRepository.getAccessRules(),
+      redisRbacRepository.getOrgServiceMap(),
     ])
 
     const allServiceKeys = [...services, 'global']
@@ -49,12 +51,12 @@ class RbacBundleService {
     return {
       version: '1',
       exportedAt: new Date().toISOString(),
-      rbac: { services, groups, roles, routeMaps, oathkeeperRules },
+      rbac: { services, groups, roles, routeMaps, oathkeeperRules, orgServiceMap },
     }
   }
 
   async import(bundle: AuthBundle, actor?: { email?: string; ip?: string }): Promise<ImportResult> {
-    const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
+    const { services, groups, roles, routeMaps, oathkeeperRules, orgServiceMap } = bundle.rbac
 
     const existingServices = await redisRbacRepository.getServices()
     await Promise.all(existingServices.map(svc => redisRbacRepository.removeService(svc)))
@@ -73,6 +75,12 @@ class RbacBundleService {
     }
 
     await redisRbacRepository.setAccessRules(oathkeeperRules)
+
+    if (orgServiceMap && Object.keys(orgServiceMap).length > 0) {
+      for (const [orgId, svcName] of Object.entries(orgServiceMap)) {
+        await redisRbacRepository.setOrgServiceMapping(orgId, svcName)
+      }
+    }
 
     auditEventService.emit({
       category: 'rbac',
