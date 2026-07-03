@@ -230,6 +230,36 @@ export class RbacController {
   }
 
   // ===========================================================================
+  // Org → Service Map
+  // ===========================================================================
+
+  async getOrgServiceMap(_request: FastifyRequest, reply: FastifyReply) {
+    const mappings = await rbacService.getOrgServiceMap()
+    return reply.send({ mappings })
+  }
+
+  async setOrgServiceMapping(
+    request: FastifyRequest<{ Body: { organizationId: string; serviceName: string } }>,
+    reply: FastifyReply,
+  ) {
+    const body = z.object({
+      organizationId: z.string().uuid(),
+      serviceName: z.string().min(1).regex(/^[a-z0-9_]+$/),
+    }).parse(request.body)
+    await rbacService.setOrgServiceMapping(body.organizationId, body.serviceName, this.actor(request))
+    return reply.status(201).send({ success: true, message: `Mapped ${body.organizationId} → ${body.serviceName}` })
+  }
+
+  async deleteOrgServiceMapping(
+    request: FastifyRequest<{ Params: { organizationId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const { organizationId } = z.object({ organizationId: z.string().uuid() }).parse(request.params)
+    await rbacService.deleteOrgServiceMapping(organizationId, this.actor(request))
+    return reply.send({ success: true, message: `Mapping removed for ${organizationId}` })
+  }
+
+  // ===========================================================================
   // Permission Simulator
   // ===========================================================================
 

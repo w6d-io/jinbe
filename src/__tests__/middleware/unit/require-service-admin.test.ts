@@ -25,6 +25,12 @@ vi.mock('../../../services/opa.service.js', () => ({
   },
 }))
 
+vi.mock('../../../services/redis-rbac.repository.js', () => ({
+  redisRbacRepository: {
+    getServiceForOrg: vi.fn().mockResolvedValue(null),
+  },
+}))
+
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: {
     emit: vi.fn().mockResolvedValue(undefined),

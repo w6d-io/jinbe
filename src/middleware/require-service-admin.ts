@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { opaService } from '../services/opa.service.js'
+import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
@@ -43,13 +44,16 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
+    // Resolve org UUID → RBAC service name so OPA gets a registered service
+    // (service names must match ^[a-z0-9_]+$ — UUIDs with hyphens are rejected)
+    const serviceName = await redisRbacRepository.getServiceForOrg(organizationId) ?? organizationId
+
     request.log.debug(
-      { email, organizationId, paramName },
-      '[requireServiceAdmin] querying OPA with organizationId as app'
+      { email, organizationId, serviceName, paramName },
+      '[requireServiceAdmin] querying OPA with resolved service name'
     )
 
-    // Query OPA with organizationId as the app — resolves RBAC for that service
-    const rbacInfo = await opaService.getUserInfo(email, organizationId)
+    const rbacInfo = await opaService.getUserInfo(email, serviceName)
 
     if (!rbacInfo) {
       request.log.warn(
