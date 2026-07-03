@@ -284,6 +284,27 @@ class RedisRbacRepository {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // ORG → SERVICE MAP (organization UUID → RBAC service name)
+  // ═══════════════════════════════════════════════════════════
+
+  async getOrgServiceMap(): Promise<Record<string, string>> {
+    return this.redis.hgetall('rbac:org_service_map')
+  }
+
+  async getServiceForOrg(organizationId: string): Promise<string | null> {
+    return this.redis.hget('rbac:org_service_map', organizationId)
+  }
+
+  async setOrgServiceMapping(organizationId: string, serviceName: string): Promise<void> {
+    await this.redis.hset('rbac:org_service_map', organizationId, serviceName)
+  }
+
+  async deleteOrgServiceMapping(organizationId: string): Promise<boolean> {
+    const deleted = await this.redis.hdel('rbac:org_service_map', organizationId)
+    return deleted > 0
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // BULK: Get all RBAC data for OPA bundle
   // ═══════════════════════════════════════════════════════════
 
