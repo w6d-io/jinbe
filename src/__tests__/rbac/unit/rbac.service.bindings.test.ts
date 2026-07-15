@@ -36,12 +36,22 @@ vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     listIdentities: vi.fn().mockResolvedValue({ identities: [] }),
     getAllIdentitiesWithGroups: vi.fn(),
+    getAllIdentitiesWithBindings: vi.fn(),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
   },
 }))
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
+
+// Helper to build the per-identity binding shape the Kratos scan returns.
+function binding(
+  groups: string[],
+  organizations: string[] = [],
+  primaryOrganization: string | null = null,
+) {
+  return { groups, organizations, primaryOrganization }
+}
 
 describe('RbacService - getBindingsFromKratos', () => {
   let service: RbacService
@@ -52,11 +62,11 @@ describe('RbacService - getBindingsFromKratos', () => {
     service = new RbacService()
   })
 
-  it('should return bindings format with group_membership', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
+  it('should return the full bindings shape with group_membership', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
       new Map([
-        ['admin@example.com', ['admins', 'users']],
-        ['dev@example.com', ['devs', 'users']],
+        ['admin@example.com', binding(['admins', 'users'])],
+        ['dev@example.com', binding(['devs', 'users'])],
       ])
     )
     const result = await service.getBindingsFromKratos()
@@ -66,44 +76,85 @@ describe('RbacService - getBindingsFromKratos', () => {
         'admin@example.com': ['admins', 'users'],
         'dev@example.com': ['devs', 'users'],
       },
+      user_organizations: {},
+      user_organization_primary: {},
     })
   })
 
-  it('should return empty group_membership when no identities', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+  it('should return empty maps when no identities', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(new Map())
     const result = await service.getBindingsFromKratos()
-    expect(result).toEqual({ emails: {}, group_membership: {} })
+    expect(result).toEqual({
+      emails: {},
+      group_membership: {},
+      user_organizations: {},
+      user_organization_primary: {},
+    })
   })
 
-  it('should handle single user correctly', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['solo@example.com', ['users']]])
+  it('should build user_organizations from metadata_admin.organizations', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['multi@example.com', binding(['users'], ['org-a', 'org-b'], 'org-a')],
+      ])
     )
     const result = await service.getBindingsFromKratos()
-    expect(result.group_membership).toHaveProperty('solo@example.com')
-    expect(result.group_membership['solo@example.com']).toEqual(['users'])
+    expect(result.user_organizations).toEqual({ 'multi@example.com': ['org-a', 'org-b'] })
+  })
+
+  it('should build user_organization_primary from the primary organization', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['legacy@example.com', binding(['users'], [], 'org-c')],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.user_organization_primary).toEqual({ 'legacy@example.com': 'org-c' })
+  })
+
+  it('should omit users with no organizations and no primary org', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['orgless@example.com', binding(['users'], [], null)],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.group_membership).toHaveProperty('orgless@example.com')
+    expect(result.user_organizations).toEqual({})
+    expect(result.user_organization_primary).toEqual({})
+  })
+
+  it('should keep group_membership and org maps independent per user', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['multi@example.com', binding(['admins', 'users'], ['org-a'], 'org-a')],
+        ['legacy@example.com', binding(['devs'], [], 'org-c')],
+        ['orgless@example.com', binding(['users'], [], null)],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.group_membership).toEqual({
+      'multi@example.com': ['admins', 'users'],
+      'legacy@example.com': ['devs'],
+      'orgless@example.com': ['users'],
+    })
+    expect(result.user_organizations).toEqual({ 'multi@example.com': ['org-a'] })
+    expect(result.user_organization_primary).toEqual({
+      'multi@example.com': 'org-a',
+      'legacy@example.com': 'org-c',
+    })
   })
 
   it('should propagate Kratos errors', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockRejectedValueOnce(
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockRejectedValueOnce(
       new Error('Kratos unavailable')
     )
     await expect(service.getBindingsFromKratos()).rejects.toThrow('Kratos unavailable')
   })
 
-  it('should handle users with multiple groups', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['superuser@example.com', ['super_admins', 'admins', 'devs', 'users']]])
-    )
-    const result = await service.getBindingsFromKratos()
-    expect(result.group_membership['superuser@example.com']).toEqual([
-      'super_admins', 'admins', 'devs', 'users',
-    ])
-  })
-
-  it('should always include empty emails object', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['user@example.com', ['users']]])
+  it('should always include an empty emails object', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([['user@example.com', binding(['users'])]])
     )
     const result = await service.getBindingsFromKratos()
     expect(result.emails).toEqual({})

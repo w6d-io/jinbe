@@ -5,10 +5,13 @@ export interface MockKratosIdentity {
   traits: {
     email: string
     name?: string
+    organization_id?: string
   }
   state: string
+  organization_id?: string
   metadata_admin?: {
     groups?: string[]
+    organizations?: string[]
   }
 }
 
@@ -37,6 +40,21 @@ export function createKratosMock(users: MockKratosIdentity[] = []) {
       for (const user of users) {
         const groups = user.metadata_admin?.groups || ['users']
         result.set(user.traits.email, groups)
+      }
+      return result
+    }),
+
+    getAllIdentitiesWithBindings: vi.fn().mockImplementation(async () => {
+      const result = new Map<
+        string,
+        { groups: string[]; organizations: string[]; primaryOrganization: string | null }
+      >()
+      for (const user of users) {
+        result.set(user.traits.email, {
+          groups: user.metadata_admin?.groups || ['users'],
+          organizations: user.metadata_admin?.organizations || [],
+          primaryOrganization: user.organization_id || user.traits.organization_id || null,
+        })
       }
       return result
     }),

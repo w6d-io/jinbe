@@ -42,11 +42,11 @@ vi.mock('../../../services/kratos.service.js', () => ({
       ],
       nextPageToken: undefined,
     }),
-    getAllIdentitiesWithGroups: vi.fn().mockResolvedValue(
+    getAllIdentitiesWithBindings: vi.fn().mockResolvedValue(
       new Map([
-        ['admin@example.com', ['admins', 'devs']],
-        ['dev@example.com', ['devs']],
-        ['viewer@example.com', ['viewers']],
+        ['admin@example.com', { groups: ['admins', 'devs'], organizations: [], primaryOrganization: null }],
+        ['dev@example.com', { groups: ['devs'], organizations: [], primaryOrganization: null }],
+        ['viewer@example.com', { groups: ['viewers'], organizations: [], primaryOrganization: null }],
       ])
     ),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
@@ -117,13 +117,13 @@ describe('RbacService - Users', () => {
     })
 
     it('should return empty users array when Kratos returns no users', async () => {
-      vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+      vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(new Map())
       const result = await service.getUsers()
       expect(result.users).toHaveLength(0)
     })
 
     it('should return empty users when Kratos has no identities', async () => {
-      vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+      vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(new Map())
       const result = await service.getUsers()
       expect(result.users).toHaveLength(0)
     })

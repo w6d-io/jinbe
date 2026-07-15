@@ -119,6 +119,10 @@ export interface MutationResult {
 export interface KratosBindingsResponse {
   emails: Record<string, unknown>
   group_membership: Record<string, string[]>
+  /** email → organizations[] (multi-org membership from metadata_admin.organizations). */
+  user_organizations: Record<string, string[]>
+  /** email → primary org id (legacy single-org, from the native organization_id). */
+  user_organization_primary: Record<string, string>
 }
 
 // Re-export types from repository for convenience
@@ -353,6 +357,9 @@ export class RbacService {
       const entries = [
         { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
         { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
+        // Keep in lock-step with GET /opal-datasource so an org_service_map
+        // mutation re-publishes data.org_service_map to OPA (else it goes stale).
+        { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
       ]
       for (const svc of services) {
         entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
@@ -872,12 +879,20 @@ export class RbacService {
   // ===========================================================================
 
   async getBindingsFromKratos(): Promise<KratosBindingsResponse> {
-    const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
+    // Single directory scan → groups + org membership + primary org, so OPA's
+    // group view and its tenant (org) view come from the same snapshot.
+    const bindings = await kratosService.getAllIdentitiesWithBindings()
     const group_membership: Record<string, string[]> = {}
-    for (const [email, groups] of identitiesWithGroups) {
-      group_membership[email] = groups
+    const user_organizations: Record<string, string[]> = {}
+    const user_organization_primary: Record<string, string> = {}
+    for (const [email, b] of bindings) {
+      group_membership[email] = b.groups
+      // Only emit org keys for users who actually have org membership — keep the
+      // payload minimal and don't advertise the full directory as empty entries.
+      if (b.organizations.length > 0) user_organizations[email] = b.organizations
+      if (b.primaryOrganization) user_organization_primary[email] = b.primaryOrganization
     }
-    return { emails: {}, group_membership }
+    return { emails: {}, group_membership, user_organizations, user_organization_primary }
   }
 }
 

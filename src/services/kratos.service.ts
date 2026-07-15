@@ -24,8 +24,23 @@ interface ListIdentitiesResponse {
   nextPageToken?: string
 }
 
-interface IdentityGroupsCache {
-  data: Map<string, string[]> // email → groups
+/**
+ * Per-identity RBAC binding extracted from Kratos, keyed by email.
+ *   groups              → metadata_admin.groups (defaults to ['users'])
+ *   organizations       → metadata_admin.organizations (multi-org membership;
+ *                          defaults to [] — no writer yet, populated by the
+ *                          org-delegation phase)
+ *   primaryOrganization → the native Kratos `organization_id` (falls back to
+ *                          traits.organization_id), or null when unset
+ */
+export interface IdentityBinding {
+  groups: string[]
+  organizations: string[]
+  primaryOrganization: string | null
+}
+
+interface IdentityBindingsCache {
+  data: Map<string, IdentityBinding> // email → binding
   expiresAt: number
 }
 
@@ -35,7 +50,7 @@ interface IdentityGroupsCache {
  */
 export class KratosService {
   private adminUrl: string
-  private identityGroupsCache: IdentityGroupsCache | null = null
+  private identityBindingsCache: IdentityBindingsCache | null = null
   private readonly CACHE_TTL_MS = 5_000 // 5 seconds — short TTL as fallback; explicit invalidation handles mutations
 
   constructor() {
@@ -342,42 +357,64 @@ export class KratosService {
   }
 
   /**
-   * Get all identities with their groups from metadata_admin
-   * Results are cached for 30 seconds to avoid hammering Kratos on every OPAL poll
+   * Get all identities with their full RBAC binding (groups + organizations +
+   * primary organization) from a SINGLE paginated directory scan. Cached for
+   * CACHE_TTL_MS so repeated OPAL polls don't hammer Kratos.
    *
-   * @returns Map of email → groups array
+   * This is the one place the directory is walked; getAllIdentitiesWithGroups
+   * and the OPAL /bindings feed both project from this, so the notion of "who
+   * is in what" cannot drift between the group and organization views.
+   *
+   * Paginate through ALL identities by following Kratos's Link header.
+   * Capping at a single page silently drops every member past it (e.g. admins
+   * beyond the first page) from the RBAC bindings OPA consumes, causing
+   * spurious 403s once the directory grows past one page.
+   *
+   * @returns Map of email → { groups, organizations, primaryOrganization }
    */
-  async getAllIdentitiesWithGroups(): Promise<Map<string, string[]>> {
+  async getAllIdentitiesWithBindings(): Promise<Map<string, IdentityBinding>> {
     // Return cached data if valid
     if (
-      this.identityGroupsCache &&
-      Date.now() < this.identityGroupsCache.expiresAt
+      this.identityBindingsCache &&
+      Date.now() < this.identityBindingsCache.expiresAt
     ) {
-      return this.identityGroupsCache.data
+      return this.identityBindingsCache.data
     }
 
-    const result = new Map<string, string[]>()
+    const result = new Map<string, IdentityBinding>()
 
-    // Paginate through ALL identities by following Kratos's Link header.
-    // Capping at a single page silently drops every member past it (e.g.
-    // admins beyond the first page) from the RBAC bindings OPA consumes,
-    // causing spurious 403s once the directory grows past one page.
     let pageToken: string | undefined
     for (let page = 0; page < 1000; page++) {
       const response = await this.listIdentities(500, pageToken)
 
       for (const identity of response.identities) {
         const email = identity.traits?.email as string
-        // Extract groups from metadata_admin, default to ['users'] if not set
+        if (!email) continue
+
+        // Groups + multi-org membership live in metadata_admin (same place as
+        // groups). organizations has no writer yet — the delegation phase
+        // populates it — so it defaults to [] until then.
         const metadataAdmin = identity.metadata_admin as
-          | { groups?: string[] }
+          | { groups?: string[]; organizations?: string[] }
           | null
           | undefined
         const groups = metadataAdmin?.groups || ['users']
+        const organizations = Array.isArray(metadataAdmin?.organizations)
+          ? (metadataAdmin!.organizations as string[])
+          : []
 
-        if (email) {
-          result.set(email, groups)
-        }
+        // Primary org = the native Kratos `organization_id` (root-level field
+        // set via JSON Patch; the same field organization-user endpoints read).
+        // Fall back to a traits.organization_id if a schema stores it there.
+        const rootOrg = (identity as Record<string, unknown>).organization_id as
+          | string
+          | null
+          | undefined
+        const traitOrg = (identity.traits as Record<string, unknown> | undefined)
+          ?.organization_id as string | null | undefined
+        const primaryOrganization = rootOrg || traitOrg || null
+
+        result.set(email, { groups, organizations, primaryOrganization })
       }
 
       const next = response.nextPageToken
@@ -386,7 +423,7 @@ export class KratosService {
     }
 
     // Update cache
-    this.identityGroupsCache = {
+    this.identityBindingsCache = {
       data: result,
       expiresAt: Date.now() + this.CACHE_TTL_MS,
     }
@@ -395,11 +432,26 @@ export class KratosService {
   }
 
   /**
-   * Invalidate the identity groups cache
-   * Call this after updating user groups to ensure OPAL gets fresh data
+   * Get all identities with their groups from metadata_admin.
+   * Projection over getAllIdentitiesWithBindings (shares its cache + scan).
+   *
+   * @returns Map of email → groups array
+   */
+  async getAllIdentitiesWithGroups(): Promise<Map<string, string[]>> {
+    const bindings = await this.getAllIdentitiesWithBindings()
+    const result = new Map<string, string[]>()
+    for (const [email, binding] of bindings) {
+      result.set(email, binding.groups)
+    }
+    return result
+  }
+
+  /**
+   * Invalidate the identity bindings cache (groups + organizations).
+   * Call this after updating user groups/orgs to ensure OPAL gets fresh data.
    */
   invalidateGroupsCache(): void {
-    this.identityGroupsCache = null
+    this.identityBindingsCache = null
   }
 
   /**
