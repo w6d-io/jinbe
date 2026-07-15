@@ -6,6 +6,7 @@ import { upsertBuiltInRules } from './upsert-rules.js'
 import { JINBE_BUILT_IN_ROUTES } from './build-route-map.js'
 import { mergeJinbeRouteMap } from './merge-route-map.js'
 import { seedKumaService } from './seed-kuma.js'
+import { seedDelegation } from './seed-delegation.js'
 import { seedDefaultAdmin } from './seed-admin.js'
 import {
   readMarker,
@@ -26,8 +27,13 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  *     admins, users, viewers, devs) and services (jinbe, kuma) with
  *     `system: true` in `rbac:groups:meta` / `rbac:services:meta` so RBAC
  *     mutation guards no longer rely on a hardcoded list inside jinbe code.
+ * v3: delegated org-admin model. Seeds the `org_admin` role and the
+ *     `<svc>-org-admins` / `<svc>-viewers` groups for delegated services, and
+ *     adds `org:manage_users` route_map rules for the org-user endpoints so a
+ *     per-service org admin can reach the centralised management API. The bump
+ *     forces the additive seed to run on already-bootstrapped installs.
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export type BootstrapOutcome =
   | 'first-run'
@@ -130,10 +136,12 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
 
 async function runFullBootstrap(config: BootstrapConfig, logger: BootstrapLogger): Promise<void> {
   await seedRbacDefaults(logger)
-  await runUpsertOnly(config, logger)
+  // Seed the kuma service BEFORE runUpsertOnly so seedDelegation (inside it)
+  // sees both jinbe and kuma and can seed org_admin for each.
   if (config.domains.app) {
     await seedKumaService(logger)
   }
+  await runUpsertOnly(config, logger)
   if (config.admin) {
     await seedDefaultAdmin(config.admin, logger)
   }
@@ -146,6 +154,9 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   // Always run the metadata migration: idempotent, ensures system-protection
   // tags are present even on pre-existing installs that predate this feature.
   await applySystemMetadataMigration(logger)
+  // Delegated org-admin model (org_admin role + <svc>-org-admins/-viewers
+  // groups). Idempotent + additive; runs on schema upgrade and builtins-drift.
+  await seedDelegation(logger)
 }
 
 function buildMarker(input: {
