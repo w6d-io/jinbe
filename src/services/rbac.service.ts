@@ -244,6 +244,20 @@ export class RbacService {
   }
 
   /**
+   * True iff the group confers NO roles in any service (an empty definition,
+   * e.g. the reserved base `users` group `{}`). Lets a demotion to the base
+   * group skip the delegation gate WITHOUT trusting the group NAME: if a
+   * privileged actor ever redefined the base group to bind real roles this
+   * returns false, so the grant is re-subjected to can_grant rather than waved
+   * through. A missing group confers nothing → true.
+   */
+  async isEmptyGroup(groupName: string): Promise<boolean> {
+    const def = await redisRbacRepository.getGroup(groupName)
+    if (!def) return true
+    return !Object.values(def).some((roles) => Array.isArray(roles) && roles.length > 0)
+  }
+
+  /**
    * Shared "does this group definition grant GLOBAL power" predicate. Reused
    * by both groupGrantsGlobalPower (the public assignment gate) and
    * groupGrantsAdminPower (the MFA / admin-power gate) so the notion of
