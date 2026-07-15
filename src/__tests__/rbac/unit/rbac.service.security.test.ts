@@ -255,6 +255,40 @@ describe('RbacService - security helpers', () => {
     it('returns false when the group does not exist', async () => {
       await expect(service.groupGrantsGlobalPower('nope')).resolves.toBe(false)
     })
+
+    it('returns FALSE for an empty global array { global: [] }', async () => {
+      await redisMock.hset(
+        'rbac:groups',
+        'empty_global',
+        JSON.stringify({ global: [] }),
+      )
+      await expect(service.groupGrantsGlobalPower('empty_global')).resolves.toBe(false)
+    })
+
+    it('returns FALSE for a named global role that resolves to non-wildcard perms', async () => {
+      await redisMock.hset(
+        'rbac:groups',
+        'global_auditors',
+        JSON.stringify({ global: ['auditor'] }),
+      )
+      await redisMock.set(
+        'rbac:roles:global',
+        JSON.stringify({ auditor: ['read'], platform_admin: ['*'] }),
+      )
+      await expect(service.groupGrantsGlobalPower('global_auditors')).resolves.toBe(false)
+    })
+
+    it('returns FALSE for a non-super_admin global role when getRoles("global") is null', async () => {
+      // No rbac:roles:global stored — a named (non-literal) global role cannot
+      // be resolved, so we must NOT claim global power. (The literal
+      // super_admin still trips earlier, without needing the roles map.)
+      await redisMock.hset(
+        'rbac:groups',
+        'unresolvable_global',
+        JSON.stringify({ global: ['platform_admin'] }),
+      )
+      await expect(service.groupGrantsGlobalPower('unresolvable_global')).resolves.toBe(false)
+    })
   })
 
   // ===========================================================================
