@@ -155,6 +155,48 @@ class OpaService {
       return false
     }
   }
+
+  /**
+   * Orgs the actor administers — `data.rbac.delegation.manageable_orgs`. The
+   * rego resolves membership + org-admin authority from OPAL data by email, so
+   * we send ONLY the email. Returns the org-id set as an array.
+   *
+   * FAIL-CLOSED: returns `[]` on any error / non-2xx / non-array result — an
+   * unreachable OPA must scope the actor to nothing, never grant reach.
+   */
+  async manageableOrgs(email: string): Promise<string[]> {
+    return this.delegationSet('manageable_orgs', email)
+  }
+
+  /**
+   * Groups the actor may assign — `data.rbac.delegation.assignable_groups`
+   * (single-service, containment-bounded, never global). Email-only input;
+   * FAIL-CLOSED to `[]`. Callers scope the result to a specific org's service.
+   */
+  async assignableGroups(email: string): Promise<string[]> {
+    return this.delegationSet('assignable_groups', email)
+  }
+
+  /**
+   * Shared helper for the delegation set-valued rules (manageable_orgs /
+   * assignable_groups). OPA serialises a rego set as a JSON array. Fail-closed:
+   * any error / non-2xx / non-array result yields `[]`.
+   */
+  private async delegationSet(rule: string, email: string): Promise<string[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/data/rbac/delegation/${rule}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: { actor: { email } } }),
+      })
+      if (!response.ok) return []
+      const data = (await response.json()) as { result?: unknown }
+      return Array.isArray(data.result) ? (data.result as string[]) : []
+    } catch (error) {
+      console.error(`[opa] ${rule} query failed (empty):`, error)
+      return []
+    }
+  }
 }
 
 export const opaService = new OpaService()

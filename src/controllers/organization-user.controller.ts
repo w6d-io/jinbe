@@ -1,6 +1,8 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacService } from '../services/rbac.service.js'
+import { opaService } from '../services/opa.service.js'
+import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
 import {
@@ -41,20 +43,14 @@ export class OrganizationUserController {
     const { page_size, credentials_identifier } =
       organizationUsersQuerySchema.parse(request.query)
 
-    const { identities } = await kratosService.listIdentitiesByOrganization(
-      organizationId,
-      page_size
-    )
+    // Paginates across ALL pages (J9) and applies the identifier filter
+    // server-side (exact match, Kratos `credentials_identifier`).
+    const { identities } = await kratosService.listIdentitiesByOrganization(organizationId, {
+      pageSize: page_size,
+      credentialsIdentifier: credentials_identifier,
+    })
 
-    let filtered = identities
-    if (credentials_identifier) {
-      const search = credentials_identifier.toLowerCase()
-      filtered = filtered.filter((i) =>
-        i.traits?.email?.toLowerCase().includes(search)
-      )
-    }
-
-    return reply.send({ data: filtered, total: filtered.length })
+    return reply.send({ data: identities, total: identities.length })
   }
 
   /**
@@ -83,9 +79,20 @@ export class OrganizationUserController {
     reply: FastifyReply
   ) {
     const { organizationId } = request.params
-    const { email, name, sendInvite } = organizationUserCreateBodySchema.parse(
+    const { email, name, sendInvite, groups } = organizationUserCreateBodySchema.parse(
       request.body
     )
+
+    // Omitted / base `users` → no privileged grant, no delegation check. Any
+    // other group is validated + containment-checked through the shared guard.
+    const desiredGroups = groups && groups.length > 0 ? groups : ['users']
+    const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
+
+    // Validate group existence BEFORE creating the identity so a bad request
+    // never leaves an orphaned user.
+    if (needsGrantCheck) {
+      await rbacService.validateGroups(desiredGroups)
+    }
 
     const kratosBody: KratosIdentityCreate = {
       schema_id: 'default',
@@ -95,6 +102,33 @@ export class OrganizationUserController {
     }
 
     const identity = await kratosService.createIdentity(kratosBody)
+
+    // Assign the requested groups through the SAME containment guard as the
+    // group-assign endpoint (delegation can_grant + global backstop + MFA).
+    // A blocked grant rolls the just-created identity back so a refused
+    // privilege escalation can never strand a half-provisioned user.
+    if (needsGrantCheck) {
+      const grant = await userGroupsService.applyGroupUpdate({
+        identity: { id: identity.id, email, organizationId },
+        newGroups: desiredGroups,
+        actor: { email: request.userContext?.email, ip: request.ip },
+        privilegePolicy: {
+          kind: 'wildcard_in_org',
+          orgId: organizationId,
+        },
+        auditEventType: 'organization_user.groups_changed',
+        auditExtraDetails: { organizationId },
+      })
+      if (!grant.ok) {
+        await kratosService.deleteIdentity(identity.id).catch((err) => {
+          request.log.error(
+            { err, id: identity.id },
+            'Failed to roll back user after a blocked group assignment'
+          )
+        })
+        return reply.status(grant.status).send(grant.body)
+      }
+    }
 
     if (sendInvite) {
       try {
@@ -225,6 +259,51 @@ export class OrganizationUserController {
 
     if (!result.ok) return reply.status(result.status).send(result.body)
     return reply.send(result.response)
+  }
+
+  /**
+   * List the groups the caller may assign within this organization —
+   * `assignable_groups` (delegation) scoped to the org's mapped service.
+   * GET /api/organizations/:organizationId/assignable-groups
+   *
+   * The set is resolved by OPA from the caller's email (containment-bounded,
+   * single-service, never global) and then narrowed to groups whose single
+   * service is the one backing this org, so the UI can only ever offer groups
+   * that the mutation guard (can_grant) would also accept. Fail-closed: OPA
+   * error → []; org with no service mapping → [].
+   */
+  async listAssignableGroups(
+    request: FastifyRequest<{ Params: { organizationId: string } }>,
+    reply: FastifyReply
+  ) {
+    const { organizationId } = request.params
+    const email = request.userContext?.email
+    if (!email || email === 'unknown') {
+      return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+    }
+
+    const service = await redisRbacRepository.getServiceForOrg(organizationId)
+    const assignable = await opaService.assignableGroups(email)
+    if (!service || assignable.length === 0) {
+      return reply.send({ groups: [] })
+    }
+
+    // Narrow to groups whose single service is this org's service. Defence in
+    // depth: independently reject any group with a non-empty `global` binding —
+    // OPA's assignable_groups already excludes globals, but this fails the feed
+    // closed under OPA/Redis drift rather than trusting OPA alone.
+    const defs = await redisRbacRepository.getGroups()
+    const groups = assignable.filter((g) => {
+      const def = defs[g]
+      if (!def) return false
+      if (Array.isArray(def.global) && def.global.length > 0) return false
+      const svcs = Object.keys(def).filter(
+        (s) => s !== 'global' && Array.isArray(def[s]) && def[s].length > 0
+      )
+      return svcs.length === 1 && svcs[0] === service
+    })
+
+    return reply.send({ groups })
   }
 
   /**

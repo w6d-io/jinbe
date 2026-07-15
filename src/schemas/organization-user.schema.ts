@@ -16,6 +16,9 @@ export const organizationUserCreateBodySchema = z.object({
   email: z.string().email(),
   name: z.string().optional(),
   sendInvite: z.boolean().optional().default(false),
+  // Optional initial groups. Each is validated against the caller's delegation
+  // grant (containment + scope) via the shared guard; omitted → base `users`.
+  groups: z.array(z.string()).optional(),
 })
 
 // Update user in organization
@@ -71,6 +74,7 @@ export const organizationUserCreateBodyJsonSchema = {
     email: { type: 'string', format: 'email' },
     name: { type: 'string' },
     sendInvite: { type: 'boolean', default: false },
+    groups: { type: 'array', items: { type: 'string' } },
   },
   additionalProperties: false,
 }
