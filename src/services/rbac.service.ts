@@ -390,13 +390,14 @@ export class RbacService {
         user.name = ident.traits.name || undefined
         user.identityId = ident.id
         const creds = (ident.credentials ?? {}) as Record<string, unknown>
-        // mfa = true only when at least one factor is reported. Absence
-        // of `credentials` on the identity (i.e. listIdentities was
-        // called without include_credential) leaves mfa unset rather
-        // than defaulting to false — the UI can decide whether to fail
-        // closed.
+        // mfa = true only when a real factor is ENROLLED. Absence of
+        // `credentials` (listIdentities called without include_credential)
+        // leaves mfa unset rather than defaulting to false — the UI decides
+        // whether to fail closed. Use the shared enrolment-artefact check so
+        // this agrees with the authoritative hasMFA(); key presence alone
+        // (esp. Kratos's auto-created empty webauthn) is a false positive.
         if (Object.keys(creds).length > 0) {
-          user.mfa = Boolean(creds.totp || creds.webauthn || creds.lookup_secret)
+          user.mfa = kratosService.mfaFromCredentials(creds)
         }
       }
     } catch { /* Kratos unavailable */ }
