@@ -46,7 +46,14 @@ export async function seedDelegation(logger: BootstrapLogger): Promise<{ seeded:
     const roles = (await redisRbacRepository.getRoles(svc)) ?? {}
 
     if (!roles['org_admin']) {
-      const viewerPerms = Array.isArray(roles['viewer']) ? roles['viewer'] : []
+      // Union the service's viewer perms so containment lets an org admin grant
+      // <svc>-viewers. Defensively drop any "*" — an org admin must never become
+      // a wildcard even if the viewer role is misconfigured with one (that would
+      // make requireManageableOrg treat them as unrestricted and can_grant tier B
+      // let them grant anything single-service).
+      const viewerPerms = (Array.isArray(roles['viewer']) ? roles['viewer'] : []).filter(
+        (p) => p !== '*',
+      )
       roles['org_admin'] = Array.from(new Set([...ORG_ADMIN_USER_PERMS, ...viewerPerms]))
       await redisRbacRepository.setRoles(svc, roles)
       seeded.push(`role:${svc}.org_admin`)
