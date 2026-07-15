@@ -24,6 +24,9 @@ vi.mock('../../../services/rbac.service.js', () => ({
     validateGroups: vi.fn(),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
     isAdminPowerGroup: vi.fn().mockResolvedValue(false),
+    // Default false: the admin-power groups in these cases are org-scoped, not
+    // global, so the wildcard_in_org gate is exercised as before.
+    groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
     findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
   },
 }))

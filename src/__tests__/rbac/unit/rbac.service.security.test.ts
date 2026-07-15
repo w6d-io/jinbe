@@ -46,13 +46,17 @@ const { redisMock, redisModule } = vi.hoisted(() => {
 vi.mock('../../../services/redis-client.service.js', () => redisModule)
 
 // kratos.service is imported by rbac.service even though these helpers don't
-// touch Kratos directly — keep the mock surface minimal.
+// touch Kratos directly — keep the mock surface minimal. getUserGroups /
+// updateUserGroups are exercised by the J1 end-to-end case below, which drives
+// the real userGroupsService gate through the real rbacService.
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     listIdentities: vi.fn().mockResolvedValue({ identities: [] }),
     getAllIdentitiesWithGroups: vi.fn().mockResolvedValue(new Map()),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
     hasMFA: vi.fn().mockResolvedValue(false),
+    getUserGroups: vi.fn().mockResolvedValue([]),
+    updateUserGroups: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -66,6 +70,8 @@ vi.mock('../../../services/opa.service.js', () => ({
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { opaService } from '../../../services/opa.service.js'
+import { kratosService } from '../../../services/kratos.service.js'
+import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 
 describe('RbacService - security helpers', () => {
   let service: RbacService
@@ -196,6 +202,112 @@ describe('RbacService - security helpers', () => {
         statusCode: 403,
         message: 'Only super_admins may do y',
       })
+    })
+  })
+
+  // ===========================================================================
+  // groupGrantsGlobalPower (rbac.service.ts)
+  // Distinct from groupGrantsAdminPower: TRUE only for GLOBAL power
+  // (global super_admin, or a global role resolving to "*"), FALSE for a
+  // merely service-scoped wildcard role.
+  // ===========================================================================
+  describe('groupGrantsGlobalPower', () => {
+    it('returns true when the group has the global super_admin role', async () => {
+      await redisMock.hset(
+        'rbac:groups',
+        'super_admins',
+        JSON.stringify({ global: ['super_admin'] }),
+      )
+      await expect(service.groupGrantsGlobalPower('super_admins')).resolves.toBe(true)
+    })
+
+    it('returns true when a global role resolves to the wildcard "*"', async () => {
+      await redisMock.hset(
+        'rbac:groups',
+        'global_admins',
+        JSON.stringify({ global: ['platform_admin'] }),
+      )
+      await redisMock.set(
+        'rbac:roles:global',
+        JSON.stringify({ platform_admin: ['*'], auditor: ['read'] }),
+      )
+      await expect(service.groupGrantsGlobalPower('global_admins')).resolves.toBe(true)
+    })
+
+    it('returns FALSE for a service-scoped wildcard role (org-scoped admin, not global)', async () => {
+      // jinbe_admins holds "*" for the jinbe SERVICE only — admin power, but
+      // NOT global. groupGrantsAdminPower would return true here; the global
+      // check must not.
+      await redisMock.hset(
+        'rbac:groups',
+        'jinbe_admins',
+        JSON.stringify({ jinbe: ['admin'] }),
+      )
+      await redisMock.set(
+        'rbac:roles:jinbe',
+        JSON.stringify({ admin: ['*'], viewer: ['read'] }),
+      )
+      await expect(service.groupGrantsGlobalPower('jinbe_admins')).resolves.toBe(false)
+      // sanity: it IS admin-power, just not global
+      await expect(service.isAdminPowerGroup('jinbe_admins')).resolves.toBe(true)
+    })
+
+    it('returns false when the group does not exist', async () => {
+      await expect(service.groupGrantsGlobalPower('nope')).resolves.toBe(false)
+    })
+  })
+
+  // ===========================================================================
+  // J1 — org-scoped ("*"-in-org) admin CANNOT grant a GLOBAL group.
+  // Drives the real userGroupsService gate through the real rbacService so the
+  // cross-tenant escalation backstop cannot be mocked away. A regression here
+  // means an org admin holding org "*" can mint a global super_admin.
+  // ===========================================================================
+  describe('J1 — org-scoped admin cannot assign the global super_admins group', () => {
+    const TARGET: ResolvedIdentity = {
+      id: 'target-1',
+      email: 'target@example.com',
+      organizationId: 'org-1',
+    }
+    // The actor is an org admin holding org "*", but is NOT a global super_admin.
+    const ORG_ADMIN_ACTOR = { email: 'org-admin@example.com', ip: '10.0.0.1' }
+
+    beforeEach(async () => {
+      // super_admins is a GLOBAL group.
+      await redisMock.hset(
+        'rbac:groups',
+        'super_admins',
+        JSON.stringify({ global: ['super_admin'] }),
+      )
+      // OPA reports the org admin is NOT a super_admin (assertSuperAdmin → 403).
+      vi.mocked(opaService.simulate).mockResolvedValue({
+        allow: true,
+        matching_rules: [],
+        groups: ['org_admins'],
+        roles: ['admin'],
+        permissions: ['*'],
+        super_admin: false,
+      })
+    })
+
+    it('blocks with 422 privilege_escalation_blocked despite the actor holding org "*"', async () => {
+      const result = await userGroupsService.applyGroupUpdate({
+        identity: TARGET,
+        newGroups: ['super_admins'],
+        actor: ORG_ADMIN_ACTOR,
+        // Org-scoped policy: actor holds "*" for THIS organization only.
+        privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorPermissions: ['*'] },
+        auditEventType: 'organization_user.groups_changed',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.status).toBe(422)
+        expect(result.body.error).toBe('privilege_escalation_blocked')
+        expect(result.body.blockingGroup).toBe('super_admins')
+      }
+      // The escalation must be refused before Kratos is mutated.
+      expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
     })
   })
 })
