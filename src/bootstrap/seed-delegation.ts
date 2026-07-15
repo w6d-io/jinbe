@@ -5,7 +5,7 @@ import type { BootstrapLogger } from './types.js'
  * Services that get the delegated org-admin model. Org admins are scoped to
  * their own service; add a service here to enable delegation for it.
  */
-const DELEGATED_SERVICES = ['kuma', 'jinbe'] as const
+const DELEGATED_SERVICES = ['kuma', 'jinbe', 'fleet'] as const
 
 /**
  * Fine-grained user-management permissions an org admin holds. Deliberately NOT
