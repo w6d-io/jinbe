@@ -179,21 +179,31 @@ export class KratosService {
     params.append('include_credential', 'webauthn')
     params.append('include_credential', 'lookup_secret')
     const identity = await this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
-    const creds = (identity.credentials || {}) as Record<
+    return this.mfaFromCredentials(identity.credentials)
+  }
+
+  /**
+   * True only when an identity has a REAL enrolled second factor. Shared by
+   * hasMFA() and the user-list MFA column (rbac.service.getUsers) so the two
+   * can't diverge — a divergent copy here was reporting false positives.
+   *
+   * Kratos auto-creates credentials.webauthn (just a `user_handle`) for every
+   * identity whose schema declares webauthn as an identifier — before any key
+   * is registered. Checking credential *key presence* therefore returns true
+   * for users who never enrolled, defeating the privilege-escalation MFA gate.
+   * Inspect each credential's config for the real enrolment artefact instead:
+   *   totp:          config.totp_url            (set on enrol)
+   *   webauthn:      config.credentials[]       (registered keys; a lone user_handle doesn't count)
+   *   lookup_secret: config.recovery_codes[]    (generated codes)
+   *
+   * Requires the identity to have been fetched with include_credential for
+   * these types; otherwise credentials is hidden and this returns false.
+   */
+  mfaFromCredentials(credentials: unknown): boolean {
+    const creds = (credentials || {}) as Record<
       string,
       { config?: Record<string, unknown> } | undefined
     >
-    // Kratos auto-creates credentials.webauthn with just a `user_handle`
-    // for every identity whose schema declares webauthn as an identifier
-    // — even before any security key is registered. Checking credential
-    // *key presence* therefore returns true for users who have never
-    // enrolled a factor, defeating the privilege-escalation MFA gate.
-    // Inspect each credential's config for the real enrolment artefact:
-    //   totp:          config.totp_url            (set on enrol)
-    //   webauthn:      config.credentials[]       (registered keys; the
-    //                                              user_handle alone does
-    //                                              not count)
-    //   lookup_secret: config.recovery_codes[]    (generated codes)
     const totpReg = !!creds.totp?.config?.totp_url
     const webauthnReg = Array.isArray((creds.webauthn?.config as any)?.credentials) &&
       ((creds.webauthn?.config as any).credentials.length > 0)
