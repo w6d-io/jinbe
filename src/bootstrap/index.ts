@@ -32,8 +32,11 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  *     adds `org:manage_users` route_map rules for the org-user endpoints so a
  *     per-service org admin can reach the centralised management API. The bump
  *     forces the additive seed to run on already-bootstrapped installs.
+ * v4: add `fleet` to the delegated services. Re-runs the additive seed so
+ *     fleet gets its org_admin role + fleet-org-admins/-viewers groups
+ *     (idempotent — skips any already present).
  */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export type BootstrapOutcome =
   | 'first-run'
