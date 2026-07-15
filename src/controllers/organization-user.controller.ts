@@ -218,7 +218,6 @@ export class OrganizationUserController {
       privilegePolicy: {
         kind: 'wildcard_in_org',
         orgId: organizationId,
-        actorPermissions: request.rbacInfo?.permissions ?? [],
       },
       auditEventType: 'organization_user.groups_changed',
       auditExtraDetails: { organizationId },
