@@ -58,6 +58,26 @@ export class KratosService {
   }
 
   /**
+   * fetch() with a bounded per-request timeout via AbortController. A hung
+   * upstream (connection open but no response) aborts after
+   * env.KRATOS_REQUEST_TIMEOUT_MS and the promise rejects, so callers fail
+   * closed instead of hanging forever (e.g. the OPAL /bindings directory
+   * walk). The timer is always cleared to avoid leaking handles.
+   */
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit = {}
+  ): Promise<Response> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), env.KRATOS_REQUEST_TIMEOUT_MS)
+    try {
+      return await fetch(url, { ...options, signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
    * Make HTTP request to Kratos Admin API
    */
   private async request<T>(
@@ -133,7 +153,9 @@ export class KratosService {
 
     // Direct fetch (not the shared request helper) so we can read the Link
     // header Kratos uses to paginate — callers need the next page token.
-    const response = await fetch(`${this.adminUrl}${path}`, {
+    // Timeout-bounded so a hung Kratos aborts and the /bindings walk fails
+    // closed rather than hanging the OPAL datasource fetch.
+    const response = await this.fetchWithTimeout(`${this.adminUrl}${path}`, {
       headers: { 'Content-Type': 'application/json' },
     })
     if (!response.ok) {

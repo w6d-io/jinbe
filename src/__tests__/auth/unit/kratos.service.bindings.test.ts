@@ -7,6 +7,7 @@ global.fetch = mockFetch
 vi.mock('../../../config/index.js', () => ({
   env: {
     KRATOS_ADMIN_URL: 'http://kratos-admin:4434',
+    KRATOS_REQUEST_TIMEOUT_MS: 10000,
   },
 }))
 
@@ -173,5 +174,25 @@ describe('KratosService - getAllIdentitiesWithBindings', () => {
     })
 
     await expect(service.getAllIdentitiesWithBindings()).rejects.toThrow('Kratos API error')
+  })
+
+  it('aborts and rejects when Kratos hangs past the request timeout', async () => {
+    // Simulate a hung upstream: the promise only settles if its abort signal
+    // fires. The bounded timeout must abort it so the scan rejects (fail closed)
+    // instead of hanging forever.
+    mockFetch.mockImplementation(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener('abort', () =>
+            reject(new Error('The operation was aborted'))
+          )
+        })
+    )
+
+    const pending = service.getAllIdentitiesWithBindings()
+    const assertion = expect(pending).rejects.toThrow(/aborted/i)
+    // Advance past the 10s timeout so the AbortController fires.
+    await vi.advanceTimersByTimeAsync(10_001)
+    await assertion
   })
 })

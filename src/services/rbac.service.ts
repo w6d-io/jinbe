@@ -887,9 +887,19 @@ export class RbacService {
     const user_organization_primary: Record<string, string> = {}
     for (const [email, b] of bindings) {
       group_membership[email] = b.groups
-      // Only emit org keys for users who actually have org membership — keep the
-      // payload minimal and don't advertise the full directory as empty entries.
-      if (b.organizations.length > 0) user_organizations[email] = b.organizations
+      // user_organizations = ALL orgs the user belongs to = the multi-org
+      // membership (metadata_admin.organizations) UNION the primary org (native
+      // organization_id). The union is required today: metadata_admin.organizations
+      // has no writer yet, so without folding in the primary a rego reading only
+      // user_organizations would deny every org-scoped action for every current
+      // user. Order-stable (membership first, primary appended if new) + deduped.
+      const orgs = [...b.organizations]
+      if (b.primaryOrganization && !orgs.includes(b.primaryOrganization)) {
+        orgs.push(b.primaryOrganization)
+      }
+      // Only emit org keys for users with at least one org — keep the payload
+      // minimal and don't advertise the full directory as empty entries.
+      if (orgs.length > 0) user_organizations[email] = orgs
       if (b.primaryOrganization) user_organization_primary[email] = b.primaryOrganization
     }
     return { emails: {}, group_membership, user_organizations, user_organization_primary }

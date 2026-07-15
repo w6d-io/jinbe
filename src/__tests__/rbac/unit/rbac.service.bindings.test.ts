@@ -95,11 +95,45 @@ describe('RbacService - getBindingsFromKratos', () => {
   it('should build user_organizations from metadata_admin.organizations', async () => {
     vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
       new Map([
-        ['multi@example.com', binding(['users'], ['org-a', 'org-b'], 'org-a')],
+        ['multi@example.com', binding(['users'], ['org-a', 'org-b'], null)],
       ])
     )
     const result = await service.getBindingsFromKratos()
     expect(result.user_organizations).toEqual({ 'multi@example.com': ['org-a', 'org-b'] })
+  })
+
+  it('should union the primary org into user_organizations for legacy users (root organization_id only)', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['legacy@example.com', binding(['users'], [], 'org-c')],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    // No metadata_admin.organizations, but the primary org must still surface
+    // so the tenant gate treats the user as a member of their own org.
+    expect(result.user_organizations).toEqual({ 'legacy@example.com': ['org-c'] })
+    expect(result.user_organization_primary).toEqual({ 'legacy@example.com': 'org-c' })
+  })
+
+  it('should dedupe the primary org when it already appears in metadata_admin.organizations', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['dupe@example.com', binding(['users'], ['org-a', 'org-b'], 'org-a')],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.user_organizations).toEqual({ 'dupe@example.com': ['org-a', 'org-b'] })
+  })
+
+  it('should append the primary org (order-stable) when not already a member', async () => {
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([
+        ['append@example.com', binding(['users'], ['org-a', 'org-b'], 'org-c')],
+      ])
+    )
+    const result = await service.getBindingsFromKratos()
+    // membership order preserved, primary appended last
+    expect(result.user_organizations).toEqual({ 'append@example.com': ['org-a', 'org-b', 'org-c'] })
   })
 
   it('should build user_organization_primary from the primary organization', async () => {
@@ -138,7 +172,12 @@ describe('RbacService - getBindingsFromKratos', () => {
       'legacy@example.com': ['devs'],
       'orgless@example.com': ['users'],
     })
-    expect(result.user_organizations).toEqual({ 'multi@example.com': ['org-a'] })
+    // legacy's primary org is unioned in even though it has no
+    // metadata_admin.organizations; orgless has neither, so it is omitted.
+    expect(result.user_organizations).toEqual({
+      'multi@example.com': ['org-a'],
+      'legacy@example.com': ['org-c'],
+    })
     expect(result.user_organization_primary).toEqual({
       'multi@example.com': 'org-a',
       'legacy@example.com': 'org-c',
