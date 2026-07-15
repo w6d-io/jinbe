@@ -1,5 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
+import { opaService } from './opa.service.js'
 import { auditEventService } from './audit-event.service.js'
 
 /**
@@ -20,13 +21,20 @@ export type ResolvedIdentity = {
  * - `super_admin_required` — global admin endpoint. Refuses unless the
  *   actor holds the global super_admin role (queried via OPA inside
  *   rbacService.assertSuperAdmin).
- * - `wildcard_in_org` — org-scoped endpoint. Refuses unless the actor
- *   holds the `*` wildcard permission for the target organization
- *   (already resolved by requireServiceAdmin middleware).
+ * - `wildcard_in_org` — org-scoped endpoint. The grant decision is
+ *   delegated to OPA (`data.rbac.delegation.can_grant`), which resolves
+ *   the actor's permissions server-side from `email` via the SAME
+ *   `data.rbac.user_permissions` resolver the request authorizer uses, so
+ *   the delegation gate and the live authorizer cannot drift. It enforces
+ *   granular subset-containment (the actor may grant only permissions they
+ *   already hold) + admin-authority over the target org + single-service
+ *   scope — superseding the previous coarse `permissions.includes('*')`
+ *   check. Only the email is carried here; the permission set is never
+ *   passed in (it is always re-resolved by OPA, not trusted from upstream).
  */
 export type ActorPrivilegePolicy =
   | { kind: 'super_admin_required' }
-  | { kind: 'wildcard_in_org'; orgId: string; actorPermissions: string[] }
+  | { kind: 'wildcard_in_org'; orgId: string }
 
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
@@ -151,30 +159,46 @@ class UserGroupsService {
       }
     }
 
-    // J1 backstop: a group that grants GLOBAL power (global super_admin or a
-    // global role resolving to "*") must NEVER be assignable on the strength
-    // of an org-scoped ("*"-in-org) wildcard alone — that would let an org
-    // admin cross the tenant boundary and mint a global super_admin. Regardless
-    // of the actor's org wildcard, force the super_admin authority check by
-    // delegating to the super_admin path. Scoped (non-global) admin groups keep
-    // the org-"*" behaviour below unchanged.
+    // J1 backstop (defense-in-depth): a group that grants GLOBAL admin power
+    // (global super_admin, or a global role resolving to "*") must NEVER be
+    // assignable on the strength of an org-scoped wildcard alone — that would
+    // let an org admin cross the tenant boundary and mint a global super_admin.
+    // Force the super_admin authority check for such groups.
+    //
+    // This local backstop is deliberately NARROWER than OPA's global guard:
+    // OPA's `can_grant` denies ANY group with a non-empty `global` binding
+    // (`not group_has_global`), which is the AUTHORITATIVE global gate. Scoped
+    // (non-global) admin groups fall through to that OPA decision below. Do NOT
+    // treat this backstop as the sole global guard or short-circuit the OPA
+    // call on its result — a global-but-non-wildcard group is caught only by
+    // OPA, not here.
     if (await rbacService.groupGrantsGlobalPower(groupName)) {
       return this.checkPrivilegeEscalation(groupName, targetEmail, actor, { kind: 'super_admin_required' })
     }
 
-    if (!policy.actorPermissions.includes('*')) {
-      return {
-        ok: false,
-        status: 422,
-        body: {
-          error: 'privilege_escalation_blocked',
-          message: `Cannot assign group '${groupName}' (grants admin privileges) — wildcard permission required for this organization`,
-          targetEmail,
-          blockingGroup: groupName,
-          hint: 'The actor must hold the wildcard (*) permission for this organization.',
-        },
-      }
+    // Scoped (non-global) admin group on the org endpoint: defer to the OPA
+    // delegation decision (containment + admin-authority over the target org +
+    // service-scope). The rego resolves the actor's permissions from OPA data by
+    // email, so we pass ONLY the email — never a caller-supplied permission set.
+    // Fail-closed: opaService.canGrant returns false on any OPA error/undefined.
+    const blocked: ApplyGroupUpdateResult = {
+      ok: false,
+      status: 422,
+      body: {
+        error: 'privilege_escalation_blocked',
+        message: `Cannot assign group '${groupName}' — you may only grant groups within an organization you administer whose permissions you already hold`,
+        targetEmail,
+        blockingGroup: groupName,
+        hint: 'Grant a group scoped to your organization’s service whose permissions are a subset of your own; global or cross-service groups require a super_admin.',
+      },
     }
+    if (!actor.email) return blocked
+    const allowed = await opaService.canGrant({
+      actor: { email: actor.email },
+      target_group: groupName,
+      target_org: policy.orgId,
+    })
+    if (!allowed) return blocked
     return null
   }
 }
