@@ -178,14 +178,51 @@ describe('OrganizationUserController.updateUserGroups', () => {
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
-  it('allows OPA-permitted delegation of an admin-power group (MFA gate still applies)', async () => {
+  it('allows OPA-permitted delegation by a non-wildcard org admin (MFA gate still applies)', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
-    // OPA delegation policy allows the grant (containment holds); the MFA gate
-    // is downstream and still blocks until the target enrols a second factor.
+    // Non-wildcard org admin → the decision is the OPA delegation policy, which
+    // allows the grant (containment holds); the MFA gate is downstream and still
+    // blocks until the target enrols a second factor.
     vi.mocked(opaService.canGrant).mockResolvedValue(true)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue('admins')
+
+    const request = {
+      params: { organizationId: ORG, id: USER_ID },
+      body: { groups: ['admins'] },
+      ip: '127.0.0.1',
+      userContext: { email: 'orgadmin@example.com' },
+      rbacInfo: {
+        email: 'orgadmin@example.com',
+        groups: ['org-admins'],
+        roles: ['organization_admin'],
+        permissions: ['org:manage_users', 'users:read'],
+      },
+    } as unknown as FastifyRequest
+
+    const reply = createReply()
+
+    await organizationUserController.updateUserGroups(request as never, reply)
+
+    expect(opaService.canGrant).toHaveBeenCalled()
+    expect(reply._statusCode).toBe(422)
+    expect(reply._body).toMatchObject({
+      error: 'mfa_required',
+      targetEmail: 'user@example.com',
+    })
+  })
+
+  it('service-admin (*) assigns an admin-power group without an OPA delegation query', async () => {
+    // Legacy full authority: a caller with `*` for the service bypasses can_grant
+    // for non-global groups. Prove canGrant is NOT consulted (even left denying)
+    // and the grant still succeeds.
+    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
+    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false) // must be ignored
+    vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -204,11 +241,8 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'mfa_required',
-      targetEmail: 'user@example.com',
-    })
+    expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['admins'])
   })
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {

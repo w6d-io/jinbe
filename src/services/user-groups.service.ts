@@ -21,20 +21,26 @@ export type ResolvedIdentity = {
  * - `super_admin_required` — global admin endpoint. Refuses unless the
  *   actor holds the global super_admin role (queried via OPA inside
  *   rbacService.assertSuperAdmin).
- * - `wildcard_in_org` — org-scoped endpoint. The grant decision is
- *   delegated to OPA (`data.rbac.delegation.can_grant`), which resolves
- *   the actor's permissions server-side from `email` via the SAME
- *   `data.rbac.user_permissions` resolver the request authorizer uses, so
- *   the delegation gate and the live authorizer cannot drift. It enforces
- *   granular subset-containment (the actor may grant only permissions they
- *   already hold) + admin-authority over the target org + single-service
- *   scope — superseding the previous coarse `permissions.includes('*')`
- *   check. Only the email is carried here; the permission set is never
- *   passed in (it is always re-resolved by OPA, not trusted from upstream).
+ * - `wildcard_in_org` — org-scoped endpoint. Two-tier authority, mirroring
+ *   the requireManageableOrg request gate:
+ *     • `actorIsServiceAdmin` (the caller holds `*` for this org's service —
+ *       a global super_admin or a service admin whose role resolves to `*`)
+ *       ⇒ full authority over non-global groups in the service; the
+ *       delegation query is skipped. This is a server-resolved fact
+ *       (`rbacInfo.permissions` from OPA `getUserInfo`, never client input),
+ *       and it is checked only AFTER the global-power backstop, so a `*`
+ *       actor still cannot mint a GLOBAL group.
+ *     • otherwise (a delegated org admin) the decision is delegated to OPA
+ *       (`data.rbac.delegation.can_grant`), which re-resolves the actor's
+ *       permissions from `email` via the SAME `data.rbac.user_permissions`
+ *       resolver the request authorizer uses (so the two cannot drift) and
+ *       enforces granular subset-containment + admin-authority over the
+ *       target org + single-service scope. No permission set is carried
+ *       here; OPA always re-resolves it.
  */
 export type ActorPrivilegePolicy =
   | { kind: 'super_admin_required' }
-  | { kind: 'wildcard_in_org'; orgId: string }
+  | { kind: 'wildcard_in_org'; orgId: string; actorIsServiceAdmin: boolean }
 
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
@@ -175,6 +181,15 @@ class UserGroupsService {
     if (await rbacService.groupGrantsGlobalPower(groupName)) {
       return this.checkPrivilegeEscalation(groupName, targetEmail, actor, { kind: 'super_admin_required' })
     }
+
+    // Legacy full authority: a caller holding `*` for this org's service (global
+    // super_admin, or a service admin whose role resolves to `*`) may assign any
+    // NON-global group in the service — containment is trivially satisfied, and
+    // OPA `can_grant` would otherwise wrongly deny them (it also requires org
+    // MEMBERSHIP, which a super_admin need not have). Checked AFTER the global
+    // backstop so a `*` actor still cannot mint a global group. The flag is
+    // resolved server-side by OPA (rbacInfo), never taken from client input.
+    if (policy.actorIsServiceAdmin) return null
 
     // Scoped (non-global) admin group on the org endpoint: defer to the OPA
     // delegation decision (containment + admin-authority over the target org +
