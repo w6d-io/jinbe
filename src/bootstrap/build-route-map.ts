@@ -100,4 +100,28 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:read' },
   { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:update' },
   { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id', permission: 'admin:delete' },
+
+  // Delegated org-admin reachability. These coexist with the admin:* rules
+  // above — the OPA policy allows a request if the caller satisfies ANY matching
+  // rule, and the org-scoped clause resolves `org:manage_users` in the org's
+  // OWN service (from the :organizationId segment). jinbe then independently
+  // re-enforces the specific org (manageable_orgs) + per-group containment.
+  //
+  // NOTE: org:manage_users gates ALL verbs here (incl. DELETE/PUT user), so an
+  // org admin may create/update/DELETE users in their own org — jinbe does not
+  // gate these per-verb beyond manageable_orgs. That is deliberate ("manage
+  // users" = CRUD within the org); org_admin's finer users:* perms don't
+  // independently restrict the verb.
+  { method: 'GET',    path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users' },
+  { method: 'POST',   path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
+  { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/assignable-groups', permission: 'org:manage_users' },
+
+  // Self-service: any authenticated caller may ask which orgs they administer.
+  // Returns only the caller's own manageable_orgs; jinbe 401s an anonymous call.
+  { method: 'GET',    path: '/api/me/organizations' },
 ] as const

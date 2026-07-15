@@ -35,9 +35,20 @@ describe('bootstrap/build-route-map', () => {
     expect(recovery?.permission).toBe('admin:update')
   })
 
-  it('every route has unique (method, path) tuple', () => {
-    const keys = JINBE_BUILT_IN_ROUTES.map((r) => `${r.method}:${r.path}`)
+  it('every route has a unique (method, path, permission) tuple', () => {
+    // A method+path MAY appear more than once with DIFFERENT permissions (e.g.
+    // the org-user endpoints carry both a legacy admin:* rule and a delegated
+    // org:manage_users rule); OPA allows if the caller satisfies ANY matching
+    // rule. The full tuple must still be unique — no exact-duplicate rules.
+    const keys = JINBE_BUILT_IN_ROUTES.map((r) => `${r.method}:${r.path}:${r.permission ?? ''}`)
     expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('org-user endpoints carry an org:manage_users delegation rule alongside admin:*', () => {
+    const orgManage = JINBE_BUILT_IN_ROUTES.filter((r) => r.permission === 'org:manage_users')
+    // GET/POST/PUT/DELETE users, GET/PUT users/:id/groups, GET assignable-groups
+    expect(orgManage.length).toBeGreaterThanOrEqual(8)
+    expect(orgManage.every((r) => r.path.startsWith('/api/organizations/:organizationId/'))).toBe(true)
   })
 
   it('cluster CRUD routes are gated by clusters:* permissions', () => {
