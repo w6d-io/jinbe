@@ -21,26 +21,24 @@ export type ResolvedIdentity = {
  * - `super_admin_required` — global admin endpoint. Refuses unless the
  *   actor holds the global super_admin role (queried via OPA inside
  *   rbacService.assertSuperAdmin).
- * - `wildcard_in_org` — org-scoped endpoint. Two-tier authority, mirroring
- *   the requireManageableOrg request gate:
- *     • `actorIsServiceAdmin` (the caller holds `*` for this org's service —
- *       a global super_admin or a service admin whose role resolves to `*`)
- *       ⇒ full authority over non-global groups in the service; the
- *       delegation query is skipped. This is a server-resolved fact
- *       (`rbacInfo.permissions` from OPA `getUserInfo`, never client input),
- *       and it is checked only AFTER the global-power backstop, so a `*`
- *       actor still cannot mint a GLOBAL group.
- *     • otherwise (a delegated org admin) the decision is delegated to OPA
- *       (`data.rbac.delegation.can_grant`), which re-resolves the actor's
- *       permissions from `email` via the SAME `data.rbac.user_permissions`
- *       resolver the request authorizer uses (so the two cannot drift) and
- *       enforces granular subset-containment + admin-authority over the
- *       target org + single-service scope. No permission set is carried
- *       here; OPA always re-resolves it.
+ * - `wildcard_in_org` — org-scoped endpoint. EVERY newly-added group (except
+ *   the base `users` group, which confers nothing) is put to OPA
+ *   `data.rbac.delegation.can_grant`, which is the SOLE authority. The rego
+ *   re-resolves the actor's permissions from `email` (via the same
+ *   `data.rbac.user_permissions` resolver the request authorizer uses, so the
+ *   two cannot drift) and enforces the tenant boundary for everyone —
+ *   delegated org admins AND service/super admins alike:
+ *     • the group must be non-global and confined to the target org's single
+ *       service (multi-service and global groups are NEVER grantable here — they
+ *       go through the global admin endpoint), and
+ *     • the actor must either administer the org and contain the group's
+ *       permissions (delegated org admin), or hold `*` for the service
+ *       (service/super admin).
+ *   No permission set is carried in this policy; OPA always re-resolves it.
  */
 export type ActorPrivilegePolicy =
   | { kind: 'super_admin_required' }
-  | { kind: 'wildcard_in_org'; orgId: string; actorIsServiceAdmin: boolean }
+  | { kind: 'wildcard_in_org'; orgId: string }
 
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
@@ -54,6 +52,11 @@ export type ApplyGroupUpdateInput = {
 export type ApplyGroupUpdateResult =
   | { ok: true; response: Record<string, unknown> }
   | { ok: false; status: number; body: Record<string, unknown> }
+
+// The base group every identity implicitly holds. It confers no permissions, so
+// assigning it is never a privilege change and is exempt from the delegation
+// gate (the rego would deny it anyway — it enforces "no vacuous grant").
+const BASE_GROUP = 'users'
 
 /**
  * Shared core of "update a user's groups". Both the global admin endpoint
@@ -80,12 +83,23 @@ class UserGroupsService {
       if (Array.isArray(fetched)) oldGroups = fetched
     } catch { /* user may not have groups yet */ }
 
-    const finalGroups = newGroups.length > 0 ? newGroups : ['users']
+    const finalGroups = newGroups.length > 0 ? newGroups : [BASE_GROUP]
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
 
     if (newlyAdded.length > 0) {
       for (const g of newlyAdded) {
-        if (await rbacService.isAdminPowerGroup(g)) {
+        // Which newly-added groups must clear the privilege gate:
+        //  - org-scoped (`wildcard_in_org`): EVERY group except the base group.
+        //    The rego enforces single-service containment for ALL groups, not
+        //    just `*`-bearing ones, so gating on isAdminPowerGroup here would let
+        //    a multi-service read group (e.g. a cross-service `viewers`) slip the
+        //    tenant boundary.
+        //  - global (`super_admin_required`): only admin-power groups need the
+        //    super_admin authority check; the endpoint is super_admin-gated.
+        const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
+          ? g !== BASE_GROUP
+          : await rbacService.isAdminPowerGroup(g)
+        if (mustCheck) {
           const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy)
           if (denial) return denial
         }
@@ -165,48 +179,33 @@ class UserGroupsService {
       }
     }
 
-    // J1 backstop (defense-in-depth): a group that grants GLOBAL admin power
-    // (global super_admin, or a global role resolving to "*") must NEVER be
-    // assignable on the strength of an org-scoped wildcard alone — that would
-    // let an org admin cross the tenant boundary and mint a global super_admin.
-    // Force the super_admin authority check for such groups.
-    //
-    // This local backstop is deliberately NARROWER than OPA's global guard:
-    // OPA's `can_grant` denies ANY group with a non-empty `global` binding
-    // (`not group_has_global`), which is the AUTHORITATIVE global gate. Scoped
-    // (non-global) admin groups fall through to that OPA decision below. Do NOT
-    // treat this backstop as the sole global guard or short-circuit the OPA
-    // call on its result — a global-but-non-wildcard group is caught only by
-    // OPA, not here.
-    if (await rbacService.groupGrantsGlobalPower(groupName)) {
-      return this.checkPrivilegeEscalation(groupName, targetEmail, actor, { kind: 'super_admin_required' })
-    }
-
-    // Legacy full authority: a caller holding `*` for this org's service (global
-    // super_admin, or a service admin whose role resolves to `*`) may assign any
-    // NON-global group in the service — containment is trivially satisfied, and
-    // OPA `can_grant` would otherwise wrongly deny them (it also requires org
-    // MEMBERSHIP, which a super_admin need not have). Checked AFTER the global
-    // backstop so a `*` actor still cannot mint a global group. The flag is
-    // resolved server-side by OPA (rbacInfo), never taken from client input.
-    if (policy.actorIsServiceAdmin) return null
-
-    // Scoped (non-global) admin group on the org endpoint: defer to the OPA
-    // delegation decision (containment + admin-authority over the target org +
-    // service-scope). The rego resolves the actor's permissions from OPA data by
-    // email, so we pass ONLY the email — never a caller-supplied permission set.
-    // Fail-closed: opaService.canGrant returns false on any OPA error/undefined.
+    // Org-scoped grant. OPA `can_grant` is the SOLE authority: it enforces the
+    // single-service tenant boundary (non-global, confined to the org's service)
+    // and the authority tier (delegated org admin with containment, OR a
+    // service-`*` admin), re-resolving the actor's permissions from `email` — so
+    // we pass ONLY the email, never a caller-supplied permission set. Fail-closed:
+    // canGrant returns false on any OPA error, and we require an actor email.
     const blocked: ApplyGroupUpdateResult = {
       ok: false,
       status: 422,
       body: {
         error: 'privilege_escalation_blocked',
-        message: `Cannot assign group '${groupName}' — you may only grant groups within an organization you administer whose permissions you already hold`,
+        message: `Cannot assign group '${groupName}' — on this endpoint you may only grant a group scoped to your organization's service whose permissions you already hold`,
         targetEmail,
         blockingGroup: groupName,
-        hint: 'Grant a group scoped to your organization’s service whose permissions are a subset of your own; global or cross-service groups require a super_admin.',
+        hint: 'Global or multi-service groups are not grantable here — use the global admin endpoint (super_admin only).',
       },
     }
+
+    // Defense-in-depth: independently refuse a GLOBAL-power group so it is denied
+    // here even if OPA misbehaves (J1 — an org-scoped actor must never mint a
+    // global super_admin). OPA `can_grant` ALSO denies every global-bound group
+    // (`not group_has_global`) and is the authoritative, broader guard — this
+    // local check only catches wildcard globals, so it is NOT the sole global
+    // guard, just a safety net. Global groups go through the global admin
+    // endpoint, never here — for everyone, super_admins included.
+    if (await rbacService.groupGrantsGlobalPower(groupName)) return blocked
+
     if (!actor.email) return blocked
     const allowed = await opaService.canGrant({
       actor: { email: actor.email },

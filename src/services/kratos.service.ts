@@ -566,6 +566,7 @@ export class KratosService {
   ): Promise<ListIdentitiesResponse> {
     const { pageSize = 250, credentialsIdentifier } = opts
     const collected: KratosIdentity[] = []
+    const seenTokens = new Set<string>()
     let pageToken: string | undefined
 
     for (let page = 0; page < 1000; page++) {
@@ -583,7 +584,10 @@ export class KratosService {
       }
 
       const next = response.nextPageToken
-      if (!next || next === pageToken || response.identities.length === 0) break
+      // Terminate on end-of-list, empty page, or ANY previously-seen token (a
+      // cycling A→B→A token sequence, not just an immediate repeat).
+      if (!next || response.identities.length === 0 || seenTokens.has(next)) break
+      seenTokens.add(next)
       pageToken = next
     }
 

@@ -118,7 +118,7 @@ describe('OrganizationUserController.createUser — group assignment', () => {
     expect(userGroupsService.applyGroupUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         newGroups: ['kuma-viewers'],
-        privilegePolicy: { kind: 'wildcard_in_org', orgId: ORG, actorIsServiceAdmin: false },
+        privilegePolicy: { kind: 'wildcard_in_org', orgId: ORG },
       })
     )
     expect(kratosService.deleteIdentity).not.toHaveBeenCalled()
@@ -143,7 +143,9 @@ describe('OrganizationUserController.createUser — group assignment', () => {
     expect(reply._body).toMatchObject({ error: 'privilege_escalation_blocked' })
   })
 
-  it('forwards actorIsServiceAdmin=true for a wildcard caller', async () => {
+  it('routes a wildcard caller through the same guard (no client-derived policy flag)', async () => {
+    // A `*` caller carries no special policy flag — authority is decided by OPA
+    // can_grant (the rego), not by anything the controller passes.
     vi.mocked(userGroupsService.applyGroupUpdate).mockResolvedValue({ ok: true, response: {} } as never)
     const reply = createReply()
 
@@ -154,7 +156,8 @@ describe('OrganizationUserController.createUser — group assignment', () => {
 
     expect(userGroupsService.applyGroupUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        privilegePolicy: expect.objectContaining({ actorIsServiceAdmin: true }),
+        privilegePolicy: { kind: 'wildcard_in_org', orgId: ORG },
+        actor: { email: 'orgadmin@example.com', ip: '127.0.0.1' },
       })
     )
   })
