@@ -151,6 +151,17 @@ class UserGroupsService {
       }
     }
 
+    // J1 backstop: a group that grants GLOBAL power (global super_admin or a
+    // global role resolving to "*") must NEVER be assignable on the strength
+    // of an org-scoped ("*"-in-org) wildcard alone — that would let an org
+    // admin cross the tenant boundary and mint a global super_admin. Regardless
+    // of the actor's org wildcard, force the super_admin authority check by
+    // delegating to the super_admin path. Scoped (non-global) admin groups keep
+    // the org-"*" behaviour below unchanged.
+    if (await rbacService.groupGrantsGlobalPower(groupName)) {
+      return this.checkPrivilegeEscalation(groupName, targetEmail, actor, { kind: 'super_admin_required' })
+    }
+
     if (!policy.actorPermissions.includes('*')) {
       return {
         ok: false,

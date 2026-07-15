@@ -10,6 +10,10 @@ vi.mock('../../../services/kratos.service.js', () => ({
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
     isAdminPowerGroup: vi.fn().mockResolvedValue(false),
+    // Default: the group under test is NOT global (a plain "admins" group), so
+    // the wildcard_in_org path keeps its org-"*" behaviour. Cases exercising a
+    // global group override this per-test.
+    groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
     assertSuperAdmin: vi.fn().mockResolvedValue(undefined),
     findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),

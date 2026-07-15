@@ -214,12 +214,60 @@ export class RbacService {
     return this.requireSuperAdmin(reason, actor)
   }
 
+  /**
+   * Public: returns true iff membership of `groupName` grants GLOBAL admin
+   * power — the literal global `super_admin` role, or a global role that
+   * resolves to the wildcard "*" permission. Strictly narrower than
+   * groupGrantsAdminPower, which ALSO returns true for a merely service-scoped
+   * wildcard role.
+   *
+   * The user-group assignment gate uses this as a hard backstop (finding J1):
+   * a global group must require the actor to BE a super_admin, so an
+   * org-scoped ("*"-in-org) admin cannot cross the tenant boundary and mint a
+   * global super_admin.
+   *
+   * Fail-closed: only affirmative global signals return true. A missing group
+   * returns false — and in the assignment flow that group never reaches the
+   * gate, because it would not have registered as admin-power in the first
+   * place. A Redis failure THROWS (getGroup/getRoles reject) rather than
+   * silently returning false, so it surfaces as a request-level deny, never a
+   * bypass.
+   */
+  async groupGrantsGlobalPower(groupName: string): Promise<boolean> {
+    const def = await redisRbacRepository.getGroup(groupName)
+    if (!def) return false
+    return this.defGrantsGlobalPower(def)
+  }
+
+  /**
+   * Shared "does this group definition grant GLOBAL power" predicate. Reused
+   * by both groupGrantsGlobalPower (the public assignment gate) and
+   * groupGrantsAdminPower (the MFA / admin-power gate) so the notion of
+   * "global" cannot drift between them.
+   */
+  private async defGrantsGlobalPower(def: GroupDefinition): Promise<boolean> {
+    const globalRoles = def.global ?? []
+    if (globalRoles.length === 0) return false
+    // The literal global super_admin role is the absolute trigger.
+    if (globalRoles.includes('super_admin')) return true
+    // Otherwise resolve the named global roles against the global roles map;
+    // any wildcard permission is global admin power.
+    const allGlobalRoles = await redisRbacRepository.getRoles('global')
+    if (!allGlobalRoles) return false
+    for (const role of globalRoles) {
+      if ((allGlobalRoles[role] ?? []).includes('*')) return true
+    }
+    return false
+  }
+
   private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
     const def = await redisRbacRepository.getGroup(groupName)
     if (!def) return false
 
-    // Global super_admin is the absolute trigger.
-    if ((def.global ?? []).includes('super_admin')) return true
+    // Global power (super_admin, or a global role resolving to "*") is the
+    // absolute trigger — reuse the shared predicate so it stays in lock-step
+    // with groupGrantsGlobalPower.
+    if (await this.defGrantsGlobalPower(def)) return true
 
     // For each service the group binds, check whether any of its roles
     // resolves to a wildcard permission (admin role typically has "*").
