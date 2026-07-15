@@ -19,6 +19,7 @@ import { databaseRoutes } from './routes/database.routes.js'
 import { backupItemRoutes } from './routes/backup-item.routes.js'
 import { databaseAPIRoutes } from './routes/database-api.routes.js'
 import { whoamiRoutes } from './routes/whoami.routes.js'
+import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes, rbacOpalRoutes } from './routes/rbac.routes.js'
@@ -122,6 +123,7 @@ export async function buildServer() {
   await fastify.register(
     async function (api) {
       await api.register(whoamiRoutes)
+      await api.register(meRoutes, { prefix: '/me' })
       await api.register(clusterRoutes, { prefix: '/clusters' })
       await api.register(databaseRoutes, { prefix: '/databases' })
       await api.register(backupRoutes, { prefix: '/backups' })

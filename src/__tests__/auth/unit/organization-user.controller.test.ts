@@ -27,6 +27,8 @@ vi.mock('../../../services/rbac.service.js', () => ({
     // Default false: the admin-power groups in these cases are org-scoped, not
     // global, so the wildcard_in_org gate is exercised as before.
     groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
+    // Base group `users` is empty → exempt from the delegation gate.
+    isEmptyGroup: vi.fn().mockResolvedValue(true),
     findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
   },
 }))
@@ -178,18 +180,55 @@ describe('OrganizationUserController.updateUserGroups', () => {
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
-  it('allows OPA-permitted delegation of an admin-power group (MFA gate still applies)', async () => {
+  it('allows OPA-permitted delegation by a non-wildcard org admin (MFA gate still applies)', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
-    // OPA delegation policy allows the grant (containment holds); the MFA gate
-    // is downstream and still blocks until the target enrols a second factor.
+    // Non-wildcard org admin → the decision is the OPA delegation policy, which
+    // allows the grant (containment holds); the MFA gate is downstream and still
+    // blocks until the target enrols a second factor.
     vi.mocked(opaService.canGrant).mockResolvedValue(true)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue('admins')
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['admins'] },
+      ip: '127.0.0.1',
+      userContext: { email: 'orgadmin@example.com' },
+      rbacInfo: {
+        email: 'orgadmin@example.com',
+        groups: ['org-admins'],
+        roles: ['organization_admin'],
+        permissions: ['org:manage_users', 'users:read'],
+      },
+    } as unknown as FastifyRequest
+
+    const reply = createReply()
+
+    await organizationUserController.updateUserGroups(request as never, reply)
+
+    expect(opaService.canGrant).toHaveBeenCalled()
+    expect(reply._statusCode).toBe(422)
+    expect(reply._body).toMatchObject({
+      error: 'mfa_required',
+      targetEmail: 'user@example.com',
+    })
+  })
+
+  it('routes a wildcard (*) caller through can_grant on the org endpoint (rego is authoritative)', async () => {
+    // No client-side bypass: even a `*` caller is subject to OPA can_grant. The
+    // rego decides (its service-admin tier), so a single-service grant it allows
+    // succeeds and canGrant IS consulted.
+    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
+    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+    vi.mocked(opaService.canGrant).mockResolvedValue(true)
+    vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
+
+    const request = {
+      params: { organizationId: ORG, id: USER_ID },
+      body: { groups: ['kuma-viewers'] },
       ip: '127.0.0.1',
       userContext: { email: 'super@example.com' },
       rbacInfo: {
@@ -204,11 +243,12 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'mfa_required',
-      targetEmail: 'user@example.com',
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'super@example.com' },
+      target_group: 'kuma-viewers',
+      target_org: ORG,
     })
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['kuma-viewers'])
   })
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {

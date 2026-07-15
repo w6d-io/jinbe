@@ -126,6 +126,7 @@ export class KratosService {
     pageToken?: string,
     credentialsIdentifier?: string,
     includeCredential?: ('password' | 'totp' | 'webauthn' | 'lookup_secret' | 'oidc')[],
+    organizationId?: string,
   ): Promise<ListIdentitiesResponse> {
     const params = new URLSearchParams()
 
@@ -137,6 +138,9 @@ export class KratosService {
     }
     if (credentialsIdentifier) {
       params.append('credentials_identifier', credentialsIdentifier)
+    }
+    if (organizationId) {
+      params.append('organization_id', organizationId)
     }
     // include_credential pulls each named credential into the
     // identity.credentials map. Without it Kratos hides the field
@@ -545,23 +549,49 @@ export class KratosService {
   }
 
   /**
-   * List identities filtered by Kratos organization_id (native server-side filtering)
+   * List ALL identities in an organization, following Kratos's Link-header
+   * pagination so members past the first page are never silently dropped
+   * (finding J9 — the previous single-page fetch broke both the member list
+   * and any search once the org grew past one page).
+   *
+   * `credentialsIdentifier` is Kratos's exact-match identifier filter (server
+   * side) — not a substring. Both the org and the identifier filter are applied
+   * by Kratos; we additionally re-filter by `organization_id` client-side as a
+   * defence-in-depth guard in case Kratos ignores the org filter when an
+   * identifier filter is also present.
    */
   async listIdentitiesByOrganization(
     organizationId: string,
-    pageSize?: number,
-    pageToken?: string
+    opts: { pageSize?: number; credentialsIdentifier?: string } = {}
   ): Promise<ListIdentitiesResponse> {
-    const params = new URLSearchParams()
-    params.append('organization_id', organizationId)
-    if (pageSize) params.append('page_size', pageSize.toString())
-    if (pageToken) params.append('page_token', pageToken)
+    const { pageSize = 250, credentialsIdentifier } = opts
+    const collected: KratosIdentity[] = []
+    const seenTokens = new Set<string>()
+    let pageToken: string | undefined
 
-    const identities = await this.request<KratosIdentity[]>(
-      `/admin/identities?${params.toString()}`
-    )
+    for (let page = 0; page < 1000; page++) {
+      const response = await this.listIdentities(
+        pageSize,
+        pageToken,
+        credentialsIdentifier,
+        undefined,
+        organizationId
+      )
 
-    return { identities, nextPageToken: undefined }
+      for (const identity of response.identities) {
+        const org = (identity as Record<string, unknown>).organization_id
+        if (org === organizationId) collected.push(identity)
+      }
+
+      const next = response.nextPageToken
+      // Terminate on end-of-list, empty page, or ANY previously-seen token (a
+      // cycling A→B→A token sequence, not just an immediate repeat).
+      if (!next || response.identities.length === 0 || seenTokens.has(next)) break
+      seenTokens.add(next)
+      pageToken = next
+    }
+
+    return { identities: collected, nextPageToken: undefined }
   }
 
   /**

@@ -14,6 +14,8 @@ vi.mock('../../../services/rbac.service.js', () => ({
     // the wildcard_in_org path keeps its org-"*" behaviour. Cases exercising a
     // global group override this per-test.
     groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
+    // Base group `users` is empty by default → exempt from the delegation gate.
+    isEmptyGroup: vi.fn().mockResolvedValue(true),
     assertSuperAdmin: vi.fn().mockResolvedValue(undefined),
     findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
@@ -217,10 +219,16 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
 
 describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => {
   beforeEach(() => {
+    // clearAllMocks resets call history but NOT implementations, so re-assert
+    // the override-prone mocks' defaults here to prevent per-test state leaking
+    // across cases (e.g. a global-group test leaving groupGrantsGlobalPower true).
     vi.clearAllMocks()
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(true)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('returns 422 privilege_escalation_blocked when OPA can_grant denies', async () => {
@@ -303,13 +311,34 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['admins'])
   })
 
-  it('routes a GLOBAL-power group to the super_admin backstop, never to OPA can_grant', async () => {
-    // J1: an org "*" wildcard must not mint a global super_admin. The global
-    // group short-circuits to the super_admin authority check before can_grant.
+  it('checks EVERY non-base group via can_grant, even a non-admin-power group (Finding 1)', async () => {
+    // A multi-service read group (no `*`) is NOT admin-power, but must still be
+    // put to can_grant — otherwise it would slip the single-service boundary.
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['viewers'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'actor@example.com' },
+      target_group: 'viewers',
+      target_org: 'org-1',
+    })
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('denies a GLOBAL-power group directly (defense-in-depth), without can_grant or super_admin routing', async () => {
+    // Global groups are NEVER grantable on the org endpoint — for anyone. The
+    // local groupGrantsGlobalPower check refuses independently of OPA, and does
+    // NOT route to the super_admin path (that belongs to the global endpoint).
     vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(true)
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
-      Object.assign(new Error('Only super_admins may assign group ...'), { statusCode: 403 }),
-    )
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -320,13 +349,12 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
     })
 
     expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
-    expect(rbacService.assertSuperAdmin).toHaveBeenCalled()
     expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
-  it('happy path — non-admin group skips the delegation gate entirely', async () => {
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-
+  it('exempts the base users group from the delegation gate (demotion allowed)', async () => {
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: ['users'],
@@ -337,7 +365,31 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
 
     expect(result.ok).toBe(true)
     expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(rbacService.groupGrantsGlobalPower).not.toHaveBeenCalled()
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
+  })
+
+  it('does NOT exempt a base group that has been redefined to confer roles', async () => {
+    // Hardening: exemption is keyed on the group being empty, not its name. If
+    // `users` were redefined to bind real roles, it is put to can_grant.
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'actor@example.com' },
+      target_group: 'users',
+      target_org: 'org-1',
+    })
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })
 
