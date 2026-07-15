@@ -126,6 +126,35 @@ class OpaService {
       return null
     }
   }
+  /**
+   * Delegation grant decision — "may the actor grant target_group to a user in
+   * target_org?" Queries data.rbac.delegation.can_grant (the containment policy).
+   * The rego resolves the actor's permissions from OPA data by email, so we send
+   * ONLY the email (never a caller-supplied permission set).
+   *
+   * FAIL-CLOSED: unlike getUserInfo/simulate (which return null on infra error),
+   * this returns `false` on any error / non-2xx / missing result — an unreachable
+   * or erroring OPA must never allow a privilege-changing grant.
+   */
+  async canGrant(input: {
+    actor: { email: string }
+    target_group: string
+    target_org: string
+  }): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/data/rbac/delegation/can_grant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input }),
+      })
+      if (!response.ok) return false
+      const data = (await response.json()) as { result?: boolean }
+      return data.result === true
+    } catch (error) {
+      console.error(`[opa] can_grant query failed (deny):`, error)
+      return false
+    }
+  }
 }
 
 export const opaService = new OpaService()
