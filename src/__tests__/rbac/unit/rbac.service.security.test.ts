@@ -330,7 +330,7 @@ describe('RbacService - security helpers', () => {
         newGroups: ['super_admins'],
         actor: ORG_ADMIN_ACTOR,
         // Org-scoped policy: actor holds "*" for THIS organization only.
-        privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
+        privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
         auditEventType: 'organization_user.groups_changed',
       })
 

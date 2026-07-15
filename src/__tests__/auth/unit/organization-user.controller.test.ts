@@ -213,20 +213,20 @@ describe('OrganizationUserController.updateUserGroups', () => {
     })
   })
 
-  it('service-admin (*) assigns an admin-power group without an OPA delegation query', async () => {
-    // Legacy full authority: a caller with `*` for the service bypasses can_grant
-    // for non-global groups. Prove canGrant is NOT consulted (even left denying)
-    // and the grant still succeeds.
+  it('routes a wildcard (*) caller through can_grant on the org endpoint (rego is authoritative)', async () => {
+    // No client-side bypass: even a `*` caller is subject to OPA can_grant. The
+    // rego decides (its service-admin tier), so a single-service grant it allows
+    // succeeds and canGrant IS consulted.
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
-    vi.mocked(opaService.canGrant).mockResolvedValue(false) // must be ignored
+    vi.mocked(opaService.canGrant).mockResolvedValue(true)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
-      body: { groups: ['admins'] },
+      body: { groups: ['kuma-viewers'] },
       ip: '127.0.0.1',
       userContext: { email: 'super@example.com' },
       rbacInfo: {
@@ -241,8 +241,12 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(opaService.canGrant).not.toHaveBeenCalled()
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['admins'])
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'super@example.com' },
+      target_group: 'kuma-viewers',
+      target_org: ORG,
+    })
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['kuma-viewers'])
   })
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {

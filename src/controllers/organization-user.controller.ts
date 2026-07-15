@@ -115,7 +115,6 @@ export class OrganizationUserController {
         privilegePolicy: {
           kind: 'wildcard_in_org',
           orgId: organizationId,
-          actorIsServiceAdmin: request.rbacInfo?.permissions.includes('*') ?? false,
         },
         auditEventType: 'organization_user.groups_changed',
         auditExtraDetails: { organizationId },
@@ -253,9 +252,6 @@ export class OrganizationUserController {
       privilegePolicy: {
         kind: 'wildcard_in_org',
         orgId: organizationId,
-        // Server-resolved by requireServiceAdmin (OPA getUserInfo), never client
-        // input: does the caller hold `*` for this org's service?
-        actorIsServiceAdmin: request.rbacInfo?.permissions.includes('*') ?? false,
       },
       auditEventType: 'organization_user.groups_changed',
       auditExtraDetails: { organizationId },
@@ -292,11 +288,15 @@ export class OrganizationUserController {
       return reply.send({ groups: [] })
     }
 
-    // Narrow to groups whose single (non-global) service is this org's service.
+    // Narrow to groups whose single service is this org's service. Defence in
+    // depth: independently reject any group with a non-empty `global` binding —
+    // OPA's assignable_groups already excludes globals, but this fails the feed
+    // closed under OPA/Redis drift rather than trusting OPA alone.
     const defs = await redisRbacRepository.getGroups()
     const groups = assignable.filter((g) => {
       const def = defs[g]
       if (!def) return false
+      if (Array.isArray(def.global) && def.global.length > 0) return false
       const svcs = Object.keys(def).filter(
         (s) => s !== 'global' && Array.isArray(def[s]) && def[s].length > 0
       )
