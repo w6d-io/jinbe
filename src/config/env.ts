@@ -68,6 +68,14 @@ const envSchema = z.object({
   // Kratos APIs
   KRATOS_PUBLIC_URL: z.string().url().default('http://kratos-public:80'),
   KRATOS_ADMIN_URL: z.string().url().default('http://kratos-admin:80'),
+  // Per-request timeout (ms) for Kratos Admin directory calls. Bounds the
+  // OPAL /bindings directory walk so a HUNG Kratos aborts and the route can
+  // fail closed instead of hanging the datasource fetch.
+  KRATOS_REQUEST_TIMEOUT_MS: z
+    .string()
+    .transform(Number)
+    .pipe(z.number().int().positive())
+    .default('10000'),
 
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.

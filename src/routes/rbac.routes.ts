@@ -496,20 +496,24 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 // =============================================================================
 
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
-import { kratosService } from '../services/kratos.service.js'
+import { rbacService } from '../services/rbac.service.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
-  // Bindings: user → groups (from Kratos)
+  // Bindings: user → groups + org membership (from Kratos). Routed through the
+  // service so the shape can't drift from the tested getBindingsFromKratos().
   fastify.get('/bindings', async (_request, reply) => {
     try {
-      const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
-      const group_membership: Record<string, string[]> = {}
-      for (const [email, groups] of identitiesWithGroups) {
-        group_membership[email] = groups
-      }
-      return reply.send({ emails: {}, group_membership })
+      const bindings = await rbacService.getBindingsFromKratos()
+      return reply.send(bindings)
     } catch {
-      return reply.send({ emails: {}, group_membership: {} })
+      // Fail closed: if Kratos is unreachable, publish an empty (full-shape)
+      // dataset so OPA denies rather than authorizing against stale/partial data.
+      return reply.send({
+        emails: {},
+        group_membership: {},
+        user_organizations: {},
+        user_organization_primary: {},
+      })
     }
   })
 
@@ -517,6 +521,12 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   fastify.get('/opal/groups', async (_request, reply) => {
     const groups = await redisRbacRepository.getGroups()
     return reply.send(groups)
+  })
+
+  // Org → service map: { organizationId: serviceName } (feeds data.org_service_map)
+  fastify.get('/opal/org_service_map', async (_request, reply) => {
+    const map = await redisRbacRepository.getOrgServiceMap()
+    return reply.send(map)
   })
 
   // Roles per service
@@ -546,6 +556,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       // wildcard ("*") used by the super_admin role and the rego super_admin
       // detector relies on data.roles.global being populated.
       { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
+      // Org → service map (data.org_service_map): the delegation rego resolves
+      // which service a target org's RBAC lives under from this.
+      { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
     ]
 
     for (const svc of services) {
