@@ -37,9 +37,18 @@ vi.mock('../../../services/audit-event.service.js', () => ({
   },
 }))
 
+vi.mock('../../../services/opa.service.js', () => ({
+  opaService: {
+    // org-scoped delegation decision; default deny (fail-closed). Admin-power
+    // cases set it explicitly to model an OPA allow/deny.
+    canGrant: vi.fn().mockResolvedValue(false),
+  },
+}))
+
 import { organizationUserController } from '../../../controllers/organization-user.controller.js'
 import { kratosService, KratosApiError } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
+import { opaService } from '../../../services/opa.service.js'
 
 const ORG = '11111111-1111-1111-1111-111111111111'
 const OTHER_ORG = '22222222-2222-2222-2222-222222222222'
@@ -116,6 +125,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('rejects when target identity is in a different org (404)', async () => {
@@ -137,10 +147,11 @@ describe('OrganizationUserController.updateUserGroups', () => {
     ).rejects.toMatchObject({ statusCode: 404 })
   })
 
-  it('blocks privilege escalation (422) when actor lacks wildcard and target group is admin-power', async () => {
+  it('blocks privilege escalation (422) when OPA denies delegation of an admin-power group', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(rbacService.isAdminPowerGroup).mockImplementation(async (g: string) => g === 'admins')
+    // OPA delegation policy refuses (default beforeEach deny); the guard blocks.
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -167,10 +178,13 @@ describe('OrganizationUserController.updateUserGroups', () => {
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
-  it('allows wildcard actor to assign admin-power group (MFA gate still applies)', async () => {
+  it('allows OPA-permitted delegation of an admin-power group (MFA gate still applies)', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    // OPA delegation policy allows the grant (containment holds); the MFA gate
+    // is downstream and still blocks until the target enrols a second factor.
+    vi.mocked(opaService.canGrant).mockResolvedValue(true)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue('admins')
 
     const request = {
