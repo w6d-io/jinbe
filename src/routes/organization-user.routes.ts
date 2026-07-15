@@ -190,10 +190,10 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/users/:id/groups',
     {
-      preHandler: requireServicePermission('rbac:write'),
+      preHandler: requireServicePermission('users:assign_group'),
       schema: {
         description:
-          "Update a user's group memberships within this organization. Requires rbac:write permission.",
+          "Update a user's group memberships within this organization. Requires users:assign_group permission.",
         tags: ['organization-users'],
         params: organizationUserIdParamJsonSchema,
         body: updateUserGroupsBodyJsonSchema,
