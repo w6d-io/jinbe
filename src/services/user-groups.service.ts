@@ -89,15 +89,17 @@ class UserGroupsService {
     if (newlyAdded.length > 0) {
       for (const g of newlyAdded) {
         // Which newly-added groups must clear the privilege gate:
-        //  - org-scoped (`wildcard_in_org`): EVERY group except the base group.
-        //    The rego enforces single-service containment for ALL groups, not
-        //    just `*`-bearing ones, so gating on isAdminPowerGroup here would let
-        //    a multi-service read group (e.g. a cross-service `viewers`) slip the
-        //    tenant boundary.
+        //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely
+        //    empty base group. The rego enforces single-service containment for
+        //    ALL groups, not just `*`-bearing ones, so gating on isAdminPowerGroup
+        //    here would let a multi-service read group (e.g. a cross-service
+        //    `viewers`) slip the tenant boundary. The base-group exemption is
+        //    keyed on the group actually conferring nothing (isEmptyGroup), not
+        //    on its name, so a redefined base group is still put to can_grant.
         //  - global (`super_admin_required`): only admin-power groups need the
         //    super_admin authority check; the endpoint is super_admin-gated.
         const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
-          ? g !== BASE_GROUP
+          ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
           : await rbacService.isAdminPowerGroup(g)
         if (mustCheck) {
           const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy)

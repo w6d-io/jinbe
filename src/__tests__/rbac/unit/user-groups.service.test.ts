@@ -14,6 +14,8 @@ vi.mock('../../../services/rbac.service.js', () => ({
     // the wildcard_in_org path keeps its org-"*" behaviour. Cases exercising a
     // global group override this per-test.
     groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
+    // Base group `users` is empty by default → exempt from the delegation gate.
+    isEmptyGroup: vi.fn().mockResolvedValue(true),
     assertSuperAdmin: vi.fn().mockResolvedValue(undefined),
     findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
@@ -217,10 +219,16 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
 
 describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => {
   beforeEach(() => {
+    // clearAllMocks resets call history but NOT implementations, so re-assert
+    // the override-prone mocks' defaults here to prevent per-test state leaking
+    // across cases (e.g. a global-group test leaving groupGrantsGlobalPower true).
     vi.clearAllMocks()
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(true)
     vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('returns 422 privilege_escalation_blocked when OPA can_grant denies', async () => {
@@ -359,6 +367,29 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
     expect(opaService.canGrant).not.toHaveBeenCalled()
     expect(rbacService.groupGrantsGlobalPower).not.toHaveBeenCalled()
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
+  })
+
+  it('does NOT exempt a base group that has been redefined to confer roles', async () => {
+    // Hardening: exemption is keyed on the group being empty, not its name. If
+    // `users` were redefined to bind real roles, it is put to can_grant.
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'actor@example.com' },
+      target_group: 'users',
+      target_org: 'org-1',
+    })
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })
 
