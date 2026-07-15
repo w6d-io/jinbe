@@ -13,6 +13,7 @@ import {
   UsersQueryParams,
   usersQuerySchema,
   updateUserGroupsBodySchema,
+  updateUserOrganizationsBodySchema,
 } from '../schemas/admin.schema.js'
 
 /**
@@ -457,6 +458,132 @@ export class AdminController {
     } catch (error) {
       if (error instanceof KratosApiError && error.statusCode === 404) {
         return reply.status(404).send({ error: 'Not Found', message: 'User not found' })
+      }
+      throw error
+    }
+  }
+
+  // ===========================================================================
+  // Multi-org memberships (Path 3 hybrid)
+  // ===========================================================================
+
+  /**
+   * Get a user's organization memberships (multi-org array + legacy
+   * single-org pointer).
+   * GET /api/admin/users/:email/organizations
+   */
+  async getUserOrganizations(
+    request: FastifyRequest<{ Params: { email: string } }>,
+    reply: FastifyReply
+  ) {
+    const { email } = request.params
+    try {
+      const ident = await kratosService.findByEmail(email)
+      if (!ident) {
+        return reply.status(404).send({
+          error: 'Not Found',
+          message: `User not found: ${email}`,
+        })
+      }
+      const metadataAdmin = ident.metadata_admin as
+        | { organizations?: unknown }
+        | null
+        | undefined
+      const organizations = Array.isArray(metadataAdmin?.organizations)
+        ? (metadataAdmin!.organizations as unknown[]).filter(
+            (s): s is string => typeof s === 'string',
+          )
+        : []
+      const organization_id =
+        ((ident as Record<string, unknown>).organization_id as string | null | undefined) ?? null
+      return reply.send({ email, organizations, organization_id })
+    } catch (error) {
+      if (error instanceof KratosApiError && error.statusCode === 404) {
+        return reply.status(404).send({ error: 'Not Found', message: `User not found: ${email}` })
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Replace a user's multi-org memberships.
+   * PUT /api/admin/users/:email/organizations
+   *
+   * Mirrors the group-assignment endpoint in spirit (super_admin
+   * required, audit-logged, OPAL refresh triggered) but skips the
+   * MFA gate. Org membership is NOT a privilege escalation: it
+   * scopes WHERE a user can act, not WHAT they can do. The actual
+   * permission scope is still controlled by `metadata_admin.groups`
+   * and the global super_admin role.
+   */
+  async updateUserOrganizations(
+    request: FastifyRequest<{
+      Params: { email: string }
+      Body: { organizations: string[] }
+    }>,
+    reply: FastifyReply
+  ) {
+    const { email } = request.params
+    // Validate the body explicitly. The route schema already
+    // rejects malformed UUIDs at the Fastify layer, but a second
+    // zod pass keeps the contract testable in isolation and
+    // returns a 400 with a structured message rather than
+    // Fastify's terser default.
+    const parsed = updateUserOrganizationsBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: 'Bad Request',
+        message: parsed.error.issues
+          .map((i) => `${i.path.join('.')}: ${i.message}`)
+          .join('; '),
+      })
+    }
+    const { organizations } = parsed.data
+
+    request.log.info(
+      { email, count: organizations.length, adminEmail: request.userContext?.email },
+      'Updating user organizations',
+    )
+
+    try {
+      const updated = await kratosService.updateUserOrganizations(email, organizations)
+
+      // Push the updated bindings shape to OPAL so the rego tenant
+      // gate flips immediately. The refresh is best-effort: failure
+      // is logged but does not propagate to the 200 response — the
+      // change is already durable in Kratos, OPAL will resync on
+      // its next poll regardless.
+      rbacService
+        .notifyBindingsChanged('user_organizations_changed', {
+          email: request.userContext?.email,
+          ip: request.ip,
+        })
+        .catch((err) => {
+          request.log.warn({ err }, 'Failed to notify OPAL of org change')
+        })
+
+      auditEventService
+        .emit({
+          type: 'user.organizations_changed',
+          actor: { email: request.userContext?.email, ip: request.ip },
+          target: { type: 'user', id: updated.id },
+          details: { email, organizations },
+          source: 'jinbe-api',
+        })
+        .catch(() => {})
+
+      return reply.send({
+        id: updated.id,
+        email,
+        organizations,
+        updatedAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      if (error instanceof KratosApiError && error.statusCode === 404) {
+        return reply.status(404).send({
+          error: 'Not Found',
+          message: `User not found: ${email}`,
+        })
       }
       throw error
     }

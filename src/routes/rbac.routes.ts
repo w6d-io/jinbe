@@ -499,17 +499,38 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
-  // Bindings: user → groups (from Kratos)
+  // Bindings: user → groups + organizations (from Kratos metadata_admin)
+  // Fail-soft: a Kratos hiccup returns empty maps so OPAL's deny-by-
+  // default behaviour kicks in rather than a 500. Confirmed safe with
+  // rego: missing keys become `[]` via `object.get`.
   fastify.get('/bindings', async (_request, reply) => {
     try {
-      const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
+      const identitiesMetadata = await kratosService.getAllIdentitiesMetadata()
       const group_membership: Record<string, string[]> = {}
-      for (const [email, groups] of identitiesWithGroups) {
-        group_membership[email] = groups
+      const user_organizations: Record<string, string[]> = {}
+      const user_organization_primary: Record<string, string> = {}
+      for (const [email, meta] of identitiesMetadata) {
+        group_membership[email] = meta.groups
+        if (meta.organizations.length > 0) {
+          user_organizations[email] = meta.organizations
+        }
+        if (meta.organizationPrimary) {
+          user_organization_primary[email] = meta.organizationPrimary
+        }
       }
-      return reply.send({ emails: {}, group_membership })
+      return reply.send({
+        emails: {},
+        group_membership,
+        user_organizations,
+        user_organization_primary,
+      })
     } catch {
-      return reply.send({ emails: {}, group_membership: {} })
+      return reply.send({
+        emails: {},
+        group_membership: {},
+        user_organizations: {},
+        user_organization_primary: {},
+      })
     }
   })
 

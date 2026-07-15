@@ -36,9 +36,34 @@ vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     listIdentities: vi.fn().mockResolvedValue({ identities: [] }),
     getAllIdentitiesWithGroups: vi.fn(),
+    // Path 3 hybrid: getBindingsFromKratos now reads the richer
+    // metadata aggregate so it can publish user_organizations and
+    // user_organization_primary alongside group_membership.
+    getAllIdentitiesMetadata: vi.fn(),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
   },
 }))
+
+/**
+ * Helper: wrap a plain `{ email → groups[] }` map into the richer
+ * IdentityMetadataAggregate shape with empty multi-org fields, so the
+ * group-only tests below stay readable.
+ */
+function asMetadata(
+  groups: Record<string, string[]>,
+  extras: Record<string, { organizations?: string[]; organizationPrimary?: string | null }> = {},
+): Map<string, { groups: string[]; organizations: string[]; organizationPrimary: string | null }> {
+  const m = new Map<string, { groups: string[]; organizations: string[]; organizationPrimary: string | null }>()
+  for (const [email, g] of Object.entries(groups)) {
+    const e = extras[email] ?? {}
+    m.set(email, {
+      groups: g,
+      organizations: e.organizations ?? [],
+      organizationPrimary: e.organizationPrimary ?? null,
+    })
+  }
+  return m
+}
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
@@ -53,11 +78,11 @@ describe('RbacService - getBindingsFromKratos', () => {
   })
 
   it('should return bindings format with group_membership', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([
-        ['admin@example.com', ['admins', 'users']],
-        ['dev@example.com', ['devs', 'users']],
-      ])
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata({
+        'admin@example.com': ['admins', 'users'],
+        'dev@example.com': ['devs', 'users'],
+      }),
     )
     const result = await service.getBindingsFromKratos()
     expect(result).toEqual({
@@ -66,18 +91,25 @@ describe('RbacService - getBindingsFromKratos', () => {
         'admin@example.com': ['admins', 'users'],
         'dev@example.com': ['devs', 'users'],
       },
+      user_organizations: {},
+      user_organization_primary: {},
     })
   })
 
   it('should return empty group_membership when no identities', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(new Map())
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(new Map())
     const result = await service.getBindingsFromKratos()
-    expect(result).toEqual({ emails: {}, group_membership: {} })
+    expect(result).toEqual({
+      emails: {},
+      group_membership: {},
+      user_organizations: {},
+      user_organization_primary: {},
+    })
   })
 
   it('should handle single user correctly', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['solo@example.com', ['users']]])
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata({ 'solo@example.com': ['users'] }),
     )
     const result = await service.getBindingsFromKratos()
     expect(result.group_membership).toHaveProperty('solo@example.com')
@@ -85,15 +117,15 @@ describe('RbacService - getBindingsFromKratos', () => {
   })
 
   it('should propagate Kratos errors', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockRejectedValueOnce(
-      new Error('Kratos unavailable')
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockRejectedValueOnce(
+      new Error('Kratos unavailable'),
     )
     await expect(service.getBindingsFromKratos()).rejects.toThrow('Kratos unavailable')
   })
 
   it('should handle users with multiple groups', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['superuser@example.com', ['super_admins', 'admins', 'devs', 'users']]])
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata({ 'superuser@example.com': ['super_admins', 'admins', 'devs', 'users'] }),
     )
     const result = await service.getBindingsFromKratos()
     expect(result.group_membership['superuser@example.com']).toEqual([
@@ -102,11 +134,54 @@ describe('RbacService - getBindingsFromKratos', () => {
   })
 
   it('should always include empty emails object', async () => {
-    vi.mocked(kratosService.getAllIdentitiesWithGroups).mockResolvedValueOnce(
-      new Map([['user@example.com', ['users']]])
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata({ 'user@example.com': ['users'] }),
     )
     const result = await service.getBindingsFromKratos()
     expect(result.emails).toEqual({})
     expect(Object.keys(result.emails)).toHaveLength(0)
+  })
+
+  // ───── New multi-org coverage ──────────────────────────────────────
+
+  it('emits user_organizations only for emails that have at least one org', async () => {
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata(
+        {
+          'alice@example.com': ['users'],
+          'bob@example.com': ['users'],
+        },
+        {
+          'alice@example.com': {
+            organizations: ['11111111-1111-1111-1111-111111111111'],
+          },
+          // bob has no organizations — must not appear in user_organizations
+        },
+      ),
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.user_organizations).toEqual({
+      'alice@example.com': ['11111111-1111-1111-1111-111111111111'],
+    })
+    expect(result.user_organizations).not.toHaveProperty('bob@example.com')
+  })
+
+  it('emits user_organization_primary only for emails with a legacy pointer', async () => {
+    vi.mocked(kratosService.getAllIdentitiesMetadata).mockResolvedValueOnce(
+      asMetadata(
+        { 'legacy@example.com': ['users'], 'modern@example.com': ['users'] },
+        {
+          'legacy@example.com': { organizationPrimary: '11111111-1111-1111-1111-111111111111' },
+          'modern@example.com': { organizations: ['22222222-2222-2222-2222-222222222222'] },
+        },
+      ),
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.user_organization_primary).toEqual({
+      'legacy@example.com': '11111111-1111-1111-1111-111111111111',
+    })
+    expect(result.user_organizations).toEqual({
+      'modern@example.com': ['22222222-2222-2222-2222-222222222222'],
+    })
   })
 })
