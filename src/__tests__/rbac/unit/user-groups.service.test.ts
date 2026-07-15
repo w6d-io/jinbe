@@ -94,7 +94,7 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
       auditExtraDetails: { organizationId: 'org-1' },
     })
@@ -232,7 +232,7 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
@@ -259,7 +259,7 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['admins'],
       actor: { ip: '127.0.0.1' },
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
@@ -276,7 +276,7 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
@@ -295,12 +295,49 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
     expect(result.ok).toBe(true)
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['admins'])
+  })
+
+  it('service-admin (actorIsServiceAdmin) bypasses OPA can_grant for a non-global admin group', async () => {
+    // A caller holding `*` for the service has full authority; the delegation
+    // query is skipped (canGrant not called), MFA gate still downstream.
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: true },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['admins'])
+  })
+
+  it('service-admin bypass does NOT apply to a GLOBAL group (backstop wins)', async () => {
+    // Even with actorIsServiceAdmin, a global-power group must route to the
+    // super_admin authority check — the J1 boundary.
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(true)
+    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
+      Object.assign(new Error('super_admin required'), { statusCode: 403 }),
+    )
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['super_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: true },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(rbacService.assertSuperAdmin).toHaveBeenCalled()
+    expect(opaService.canGrant).not.toHaveBeenCalled()
   })
 
   it('routes a GLOBAL-power group to the super_admin backstop, never to OPA can_grant', async () => {
@@ -315,7 +352,7 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['super_admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
@@ -331,7 +368,7 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1', actorIsServiceAdmin: false },
       auditEventType: 'organization_user.groups_changed',
     })
 
