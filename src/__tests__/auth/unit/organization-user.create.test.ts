@@ -73,7 +73,11 @@ describe('OrganizationUserController.createUser — group assignment', () => {
     const reply = createReply()
     await organizationUserController.createUser(req({ email: 'new@example.com' }) as never, reply)
 
-    expect(kratosService.createIdentity).toHaveBeenCalled()
+    // The base `users` group is PERSISTED on the identity up front, so an
+    // invited user visibly holds `users` (not null) without a separate write.
+    expect(kratosService.createIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata_admin: { groups: ['users'] } })
+    )
     expect(userGroupsService.applyGroupUpdate).not.toHaveBeenCalled()
     expect(rbacService.validateGroups).not.toHaveBeenCalled()
     expect(reply._statusCode).toBe(201)
