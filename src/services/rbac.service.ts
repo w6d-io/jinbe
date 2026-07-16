@@ -180,6 +180,25 @@ export class RbacService {
   }
 
   /**
+   * Non-throwing global super_admin check (same OPA signal as requireSuperAdmin:
+   * a global role resolving to "*"). Used where super_admin status changes the
+   * RESPONSE rather than gating a mutation — e.g. /me/organizations returns ALL
+   * mapped orgs to a super_admin instead of just their membership.
+   *
+   * FAIL-CLOSED: returns false on missing email or any OPA error, so an
+   * unreachable OPA never widens visibility.
+   */
+  async isSuperAdmin(actor: { email?: string }): Promise<boolean> {
+    if (!actor?.email) return false
+    try {
+      const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
+      return result?.super_admin === true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Returns true when the resource is flagged `system: true` in its
    * metadata. Used by mutation methods to decide whether the operation
    * needs super_admin authority instead of plain rbac:write.
