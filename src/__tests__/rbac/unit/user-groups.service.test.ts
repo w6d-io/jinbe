@@ -215,6 +215,25 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
       }),
     })
   })
+
+  it('does NOT gate REMOVALS on the super_admin endpoint (a super_admin may freely remove)', async () => {
+    // A super_admin drops a privileged group. Removals are not gated here — the
+    // endpoint is super_admin-gated at the route and a super_admin can remove
+    // anything. Only *added* admin-power groups reach assertSuperAdmin.
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['admins', 'users'])
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
+  })
 })
 
 describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => {
@@ -389,6 +408,143 @@ describe('userGroupsService.applyGroupUpdate — wildcard_in_org policy', () => 
       target_org: 'org-1',
     })
     expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  // ── Symmetric containment: removals are gated too ─────────────────────────
+  // A replace PUT that DROPS a group must clear the same can_grant authority as
+  // an add. Otherwise a delegated org admin could strip a more-privileged
+  // co-tenant (e.g. remove super_admins) simply by omitting the group.
+
+  it('BLOCKS removing a group the actor cannot grant — no privilege stripping via replace PUT', async () => {
+    // Target already holds a privileged group; actor submits {groups:["users"]}
+    // to drop it. can_grant denies (actor cannot grant it) → the removal is refused.
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['stairfleet_admin', 'users'])
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'actor@example.com' },
+      target_group: 'stairfleet_admin',
+      target_org: 'org-1',
+    })
+    expect(result).toMatchObject({
+      ok: false,
+      status: 422,
+      body: { error: 'privilege_escalation_blocked', blockingGroup: 'stairfleet_admin', operation: 'remove' },
+    })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('BLOCKS removing a GLOBAL-power group on the org endpoint (defense-in-depth, no can_grant call)', async () => {
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['super_admins', 'users'])
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(true)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked' } })
+    expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('ALLOWS removing a group the actor CAN grant', async () => {
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['fleet-viewers', 'users'])
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(true)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).toHaveBeenCalledWith({
+      actor: { email: 'actor@example.com' },
+      target_group: 'fleet-viewers',
+      target_org: 'org-1',
+    })
+    expect(result.ok).toBe(true)
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
+  })
+
+  it('does NOT gate removal of the empty base users group', async () => {
+    // Target holds fleet-viewers + the empty base group; drop only the base
+    // group. Its removal confers/loses nothing, so it is exempt (isEmptyGroup).
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['fleet-viewers', 'users'])
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(true)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['fleet-viewers'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(opaService.canGrant).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['fleet-viewers'])
+  })
+
+  it('FAILS CLOSED when the pre-image group read errors — no ungated strip (F1)', async () => {
+    // The removal gate is computed from the pre-image (oldGroups). A transient
+    // Kratos read error must NOT degrade into removed=[] followed by a replace
+    // write that strips the target — refuse the update instead. getUserGroups
+    // returns ['users'] for a user with no groups, so a throw is always a real
+    // read failure, never "no groups".
+    vi.mocked(kratosService.getUserGroups).mockRejectedValueOnce(new Error('kratos 503'))
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'groups_precondition_failed' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+    expect(opaService.canGrant).not.toHaveBeenCalled()
+  })
+
+  it('BLOCKS removing a MULTI-SERVICE group via the org endpoint (must be preserved, not stripped — F2)', async () => {
+    // A group spanning services the org admin does not fully control cannot be
+    // removed here: can_grant denies (grant_target_service requires a single
+    // service == the org's). The frontend keeps such groups read-only and
+    // re-submits them; a crafted PUT that drops one is refused (fail-safe).
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['cross-service-grp', 'users'])
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 422,
+      body: { error: 'privilege_escalation_blocked', blockingGroup: 'cross-service-grp', operation: 'remove' },
+    })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })

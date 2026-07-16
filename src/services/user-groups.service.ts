@@ -73,38 +73,74 @@ class UserGroupsService {
   async applyGroupUpdate(input: ApplyGroupUpdateInput): Promise<ApplyGroupUpdateResult> {
     const { identity, newGroups, actor, privilegePolicy, auditEventType, auditExtraDetails } = input
 
-    // Pre-existing race: another request can mutate between fetch and
-    // updateUserGroups below. Kratos has no ETag/CAS on identities — fixing
-    // would require a Kratos schema change. Window is microseconds; the
-    // only consequence is a stale audit `oldGroups` snapshot.
-    let oldGroups: string[] = []
+    // Pre-image: the target's CURRENT groups. This is SECURITY-LOAD-BEARING —
+    // it drives the removal gate (which groups the update drops) and the audit
+    // snapshot. getUserGroups returns ['users'] for a user with no special
+    // groups and only THROWS on 404 / infra error; it never signals "no groups"
+    // by throwing. So a throw means we cannot compute `removed`, and continuing
+    // would run the replace write below with `removed = []` — an UNGATED STRIP
+    // (the exact bug the symmetric gate closes, resurrected on a read blip).
+    // FAIL-CLOSED: refuse the whole update rather than risk stripping groups we
+    // failed to read.
+    //
+    // Pre-existing race: Kratos has no ETag/CAS, so another request can still
+    // mutate between this read and the write below; the window is microseconds
+    // and the only residual effect is a stale audit `oldGroups` snapshot.
+    let oldGroups: string[]
     try {
       const fetched = await kratosService.getUserGroups(identity.email)
-      if (Array.isArray(fetched)) oldGroups = fetched
-    } catch { /* user may not have groups yet */ }
+      oldGroups = Array.isArray(fetched) ? fetched : []
+    } catch {
+      return {
+        ok: false,
+        status: 422,
+        body: {
+          error: 'groups_precondition_failed',
+          message:
+            "Could not read the user's current groups to verify this change is within your authority; no change was made. Please retry.",
+          targetEmail: identity.email,
+        },
+      }
+    }
 
     const finalGroups = newGroups.length > 0 ? newGroups : [BASE_GROUP]
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
+    // Groups this (replace-semantics) update REMOVES. Containment must be
+    // SYMMETRIC — an org admin may only remove a group they could also grant.
+    // Without gating removals, a delegated admin could STRIP a more-privileged
+    // co-tenant: a replace PUT of {groups:["users"]} on a super_admin silently
+    // drops super_admins, because only *added* groups were ever checked. A
+    // removal the actor could not grant is refused (422), which preserves it.
+    const removed = oldGroups.filter(g => !finalGroups.includes(g))
 
-    if (newlyAdded.length > 0) {
-      for (const g of newlyAdded) {
-        // Which newly-added groups must clear the privilege gate:
-        //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely
-        //    empty base group. The rego enforces single-service containment for
-        //    ALL groups, not just `*`-bearing ones, so gating on isAdminPowerGroup
-        //    here would let a multi-service read group (e.g. a cross-service
-        //    `viewers`) slip the tenant boundary. The base-group exemption is
-        //    keyed on the group actually conferring nothing (isEmptyGroup), not
-        //    on its name, so a redefined base group is still put to can_grant.
-        //  - global (`super_admin_required`): only admin-power groups need the
-        //    super_admin authority check; the endpoint is super_admin-gated.
-        const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
-          ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
-          : await rbacService.isAdminPowerGroup(g)
-        if (mustCheck) {
-          const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy)
-          if (denial) return denial
-        }
+    // Per-group privilege gate. Org-scoped (`wildcard_in_org`) is SYMMETRIC —
+    // both adds and removes go through can_grant. Global (`super_admin_required`)
+    // gates only *added* admin-power groups: that endpoint is already
+    // super_admin-gated at the route, and a super_admin may freely remove.
+    const toCheck: Array<{ group: string; op: 'add' | 'remove' }> = [
+      ...newlyAdded.map((group) => ({ group, op: 'add' as const })),
+      ...(privilegePolicy.kind === 'wildcard_in_org'
+        ? removed.map((group) => ({ group, op: 'remove' as const }))
+        : []),
+    ]
+
+    for (const { group: g, op } of toCheck) {
+      // Which changes must clear the privilege gate:
+      //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely empty
+      //    base group. The rego enforces single-service containment for ALL
+      //    groups, not just `*`-bearing ones, so gating on isAdminPowerGroup here
+      //    would let a multi-service read group (e.g. a cross-service `viewers`)
+      //    slip the tenant boundary. The base-group exemption is keyed on the
+      //    group actually conferring nothing (isEmptyGroup), not its name, so a
+      //    redefined base group is still put to can_grant — on add AND remove.
+      //  - global (`super_admin_required`): only admin-power groups need the
+      //    super_admin authority check; the endpoint is super_admin-gated.
+      const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
+        ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
+        : await rbacService.isAdminPowerGroup(g)
+      if (mustCheck) {
+        const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
+        if (denial) return denial
       }
     }
 
@@ -157,6 +193,7 @@ class UserGroupsService {
     targetEmail: string,
     actor: { email?: string; ip?: string },
     policy: ActorPrivilegePolicy,
+    op: 'add' | 'remove' = 'add',
   ): Promise<ApplyGroupUpdateResult | null> {
     if (policy.kind === 'super_admin_required') {
       try {
@@ -192,10 +229,14 @@ class UserGroupsService {
       status: 422,
       body: {
         error: 'privilege_escalation_blocked',
-        message: `Cannot assign group '${groupName}' — on this endpoint you may only grant a group scoped to your organization's service whose permissions you already hold`,
+        message:
+          op === 'remove'
+            ? `Cannot remove group '${groupName}' — removal is bounded by the same authority as granting, so you may only remove a group scoped to your organization's service whose permissions you already hold (an org admin cannot strip a more-privileged user)`
+            : `Cannot assign group '${groupName}' — on this endpoint you may only grant a group scoped to your organization's service whose permissions you already hold`,
         targetEmail,
         blockingGroup: groupName,
-        hint: 'Global or multi-service groups are not grantable here — use the global admin endpoint (super_admin only).',
+        operation: op,
+        hint: 'Global or multi-service groups are not managed here — use the global admin endpoint (super_admin only).',
       },
     }
 
