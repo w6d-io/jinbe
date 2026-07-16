@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 vi.mock('../../../services/opa.service.js', () => ({
-  opaService: { assignableGroups: vi.fn().mockResolvedValue([]) },
+  opaService: {
+    assignableGroups: vi.fn().mockResolvedValue([]),
+    // Default: not a service-`*` actor → the delegated (membership) path is used.
+    getUserInfo: vi.fn().mockResolvedValue(null),
+  },
 }))
 
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
@@ -35,6 +39,10 @@ const GROUPS = {
   'kuma-org-admins': { kuma: ['org_admin'] },
   'jinbe-viewers': { jinbe: ['viewer'] },
   super_admins: { global: ['super_admin'] },
+  // Carries an EMPTY global key alongside a single service. can_grant denies it
+  // (its grant_target_service requires every key == the org service), so the
+  // feed must exclude it too — even for a Tier B service-* actor. (F3)
+  'kuma-with-empty-global': { global: [], kuma: ['viewer'] },
   users: {},
 }
 
@@ -59,6 +67,7 @@ describe('OrganizationUserController.listAssignableGroups', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(redisRbacRepository.getGroups).mockResolvedValue(GROUPS as never)
+    vi.mocked(opaService.getUserInfo).mockResolvedValue(null)
   })
 
   it('returns only single-service groups bound to the org service, excluding multi-service/other-service/global', async () => {
@@ -100,5 +109,42 @@ describe('OrganizationUserController.listAssignableGroups', () => {
 
     expect(reply._statusCode).toBe(401)
     expect(opaService.assignableGroups).not.toHaveBeenCalled()
+  })
+
+  // ── Service-`*` actor (super_admin) — mirrors can_grant Tier B ────────────
+
+  it('offers a service-* actor ALL single-service groups for the org service, even when assignable_groups is empty', async () => {
+    // A super_admin is not an org member, so the membership-based delegated set
+    // is empty — but can_grant Tier B admits them for any non-global single-
+    // service group in the service. The feed must mirror that (else the picker
+    // is empty for super_admins, the "0 assignable groups" symptom).
+    vi.mocked(redisRbacRepository.getServiceForOrg).mockResolvedValue('kuma')
+    vi.mocked(opaService.assignableGroups).mockResolvedValue([])
+    vi.mocked(opaService.getUserInfo).mockResolvedValue({
+      email: 'super@example.com', groups: ['super_admins'], roles: ['super_admin'], permissions: ['*'],
+    })
+
+    const reply = createReply()
+    await organizationUserController.listAssignableGroups(req('super@example.com'), reply)
+
+    expect(reply._body).toEqual({ groups: ['kuma-viewers', 'kuma-org-admins'] })
+    // F3: a group with an (even empty) global key is NOT offered — can_grant denies it.
+    expect((reply._body as { groups: string[] }).groups).not.toContain('kuma-with-empty-global')
+    // Tier B does not consult the membership-based delegated set.
+    expect(opaService.assignableGroups).not.toHaveBeenCalled()
+  })
+
+  it('never offers global or multi-service groups to a service-* actor (defense-in-depth)', async () => {
+    vi.mocked(redisRbacRepository.getServiceForOrg).mockResolvedValue('jinbe')
+    vi.mocked(opaService.getUserInfo).mockResolvedValue({
+      email: 'super@example.com', groups: ['super_admins'], roles: [], permissions: ['*'],
+    })
+
+    const reply = createReply()
+    await organizationUserController.listAssignableGroups(req('super@example.com', 'org-jinbe'), reply)
+
+    // Only jinbe single-service groups; multi-service (`admins`/`viewers`) and
+    // global (`super_admins`) are excluded even for a wildcard actor.
+    expect(reply._body).toEqual({ groups: ['jinbe-viewers'] })
   })
 })
