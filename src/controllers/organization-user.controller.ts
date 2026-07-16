@@ -283,20 +283,46 @@ export class OrganizationUserController {
     }
 
     const service = await redisRbacRepository.getServiceForOrg(organizationId)
-    const assignable = await opaService.assignableGroups(email)
-    if (!service || assignable.length === 0) {
+    if (!service) {
+      return reply.send({ groups: [] })
+    }
+
+    // A service-wildcard actor (a global super_admin, or a service admin whose
+    // role resolves to `*` in this org's service) is admitted by can_grant Tier B
+    // for ANY non-global single-service group in the service — but they are not an
+    // org MEMBER, so the membership-based `assignable_groups` set is empty for
+    // them. Mirror Tier B here so the picker offers exactly what the mutation
+    // guard would accept. We positively confirm `*` in the org's service (the same
+    // condition can_grant Tier B checks); a global `*` from super_admins is
+    // included because user_permissions resolves global ∪ service. FAIL-CLOSED:
+    // an OPA error yields no `*` → the delegated (containment-bounded) path.
+    const actorInfo = await opaService.getUserInfo(email, service)
+    const isServiceWildcard = actorInfo?.permissions?.includes('*') ?? false
+
+    const defs = await redisRbacRepository.getGroups()
+    // Candidate set: Tier B → every group (narrowed below to the org's single
+    // service); Tier A (delegated) → the containment-bounded assignable set.
+    const candidates = isServiceWildcard
+      ? Object.keys(defs)
+      : await opaService.assignableGroups(email)
+    if (candidates.length === 0) {
       return reply.send({ groups: [] })
     }
 
     // Narrow to groups whose single service is this org's service. Defence in
     // depth: independently reject any group with a non-empty `global` binding —
-    // OPA's assignable_groups already excludes globals, but this fails the feed
-    // closed under OPA/Redis drift rather than trusting OPA alone.
-    const defs = await redisRbacRepository.getGroups()
-    const groups = assignable.filter((g) => {
+    // OPA's assignable_groups already excludes globals and can_grant blocks them
+    // for BOTH tiers, but this fails the feed closed under OPA/Redis drift rather
+    // than trusting OPA alone.
+    const groups = candidates.filter((g) => {
       const def = defs[g]
       if (!def) return false
-      if (Array.isArray(def.global) && def.global.length > 0) return false
+      // Reject any group carrying a `global` binding at all — even an empty `[]`.
+      // can_grant's grant_target_service requires EVERY key of the group def to
+      // equal the org's service (`every svc,_ in groups[g] { svc == ts }`), so a
+      // group with a `global` key (empty or not) is denied by the mutation guard;
+      // excluding it here keeps the feed in exact lock-step with can_grant.
+      if (def.global !== undefined) return false
       const svcs = Object.keys(def).filter(
         (s) => s !== 'global' && Array.isArray(def[s]) && def[s].length > 0
       )
