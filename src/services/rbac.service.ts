@@ -17,6 +17,30 @@ export interface GroupsFile {
   emails: Record<string, unknown>
 }
 
+/** Directory counts for the dashboard — see rbacService.getDirectoryStats. */
+export interface DirectoryStats {
+  total: number
+  active: number
+  /** Users holding a group that grants a wildcard ('*') permission. */
+  fullAccess: number
+  /** Users with only the default membership (can't reach anything). */
+  unassigned: number
+  perGroup: Record<string, number>
+  perOrg: Record<string, number>
+  computedAt: string // ISO timestamp of the walk this reflects
+}
+
+// Dynamic freshness: any mutation through jinbe busts rbac:stats immediately
+// (invalidateBundle + the setUserState/create gaps), so console changes are
+// reflected at once. This short window only bounds drift from changes made
+// OUTSIDE jinbe (Kratos self-registration, another service): a read older than
+// STATS_FRESH_MS serves the cached value at once and refreshes in the
+// background, so counts converge within ~15s without ever blocking on the walk.
+// The Redis key also carries a long safety TTL so counts can't go unboundedly
+// stale if the process dies mid-window.
+const STATS_FRESH_MS = 15_000
+const STATS_TTL_S = 3_600
+
 export function parseGroupsFile(raw: unknown): GroupsFile {
   if (!raw || typeof raw !== 'object') return { groups: {}, emails: {} }
   const obj = raw as Record<string, unknown>
@@ -364,6 +388,12 @@ export class RbacService {
   private async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string }, actor?: { email?: string; ip?: string }): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
+    // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
+    // stats cache so the next dashboard read recomputes. Best-effort; covers
+    // every mutation flowing through here (groups/services/org-map + all
+    // notifyBindingsChanged user mutations).
+    redisRbacRepository.invalidateStats().catch(() => {})
+
     // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
     this.notifyOpal(eventType).catch(() => {})
 
@@ -491,6 +521,118 @@ export class RbacService {
     } catch { /* Kratos unavailable */ }
 
     return { users }
+  }
+
+  // ===========================================================================
+  // Directory stats (dashboard counts)
+  // ===========================================================================
+  //
+  // Derived from the LIGHT, no-credential identity walk
+  // (kratosService.getAllIdentitiesWithBindings) — it never pays the per-row
+  // credential + RBAC enrichment that makes the enriched directory scan slow
+  // (~45s at 9k identities). Cached in Redis `rbac:stats` and served
+  // stale-while-revalidate: a request returns the last computed value at once
+  // and refreshes in the background when it's older than STATS_FRESH_MS, so no
+  // request ever blocks on the walk. A single-flight guard collapses concurrent
+  // refreshes into one walk (no thundering herd on a cold cache). MFA is
+  // intentionally excluded — counting it needs credential expansion, which
+  // would tax the shared OPAL bindings feed; add it later behind its own field.
+
+  private statsRefresh: Promise<DirectoryStats> | null = null
+
+  /** Group names that grant a wildcard ('*') permission — a global super_admin
+   *  role, or any (service, role) whose permission set includes '*'. Used to
+   *  count full-access users in the stats walk. */
+  private async wildcardGroupNames(): Promise<Set<string>> {
+    const groups = await redisRbacRepository.getGroups()
+    const services = new Set<string>()
+    for (const def of Object.values(groups)) {
+      for (const svc of Object.keys(def)) services.add(svc)
+    }
+    const rolesByService: Record<string, FlatRolesMap> = {}
+    await Promise.all(
+      [...services].map(async (svc) => {
+        rolesByService[svc] = (await redisRbacRepository.getRoles(svc)) ?? {}
+      }),
+    )
+    const wild = new Set<string>()
+    for (const [name, def] of Object.entries(groups)) {
+      const isWild = Object.entries(def).some(([svc, roles]) =>
+        roles.some(
+          (r) =>
+            (svc === 'global' && r === 'super_admin') ||
+            (rolesByService[svc]?.[r] ?? []).includes('*'),
+        ),
+      )
+      if (isWild) wild.add(name)
+    }
+    return wild
+  }
+
+  async getDirectoryStats(): Promise<DirectoryStats> {
+    let cached: { computedAt: number; stats: DirectoryStats } | null = null
+    try {
+      const raw = await redisRbacRepository.getStats()
+      if (raw) cached = JSON.parse(raw)
+    } catch { /* redis blip — fall through to compute */ }
+
+    if (cached) {
+      if (Date.now() - cached.computedAt >= STATS_FRESH_MS) {
+        // Stale → refresh in the background; serve the stale value now.
+        void this.refreshDirectoryStats().catch(() => {})
+      }
+      return cached.stats
+    }
+    // Cold cache: compute once (single-flight). Only this request waits, and on
+    // the light walk that's seconds, not the ~45s enriched scan.
+    return this.refreshDirectoryStats()
+  }
+
+  private refreshDirectoryStats(): Promise<DirectoryStats> {
+    if (this.statsRefresh) return this.statsRefresh
+    const p = (async (): Promise<DirectoryStats> => {
+      const [bindings, wildGroups] = await Promise.all([
+        kratosService.getAllIdentitiesWithBindings(),
+        this.wildcardGroupNames(),
+      ])
+      let active = 0
+      let fullAccess = 0
+      let unassigned = 0
+      const perGroup: Record<string, number> = {}
+      const perOrg: Record<string, number> = {}
+      for (const b of bindings.values()) {
+        if (b.active) active++
+        // Raw metadata group names (may include orphans not in rbac:groups).
+        // The UI reads only the groups it knows, so reporting raw keys is safe.
+        for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
+        if (b.primaryOrganization) perOrg[b.primaryOrganization] = (perOrg[b.primaryOrganization] ?? 0) + 1
+        // Only the default 'users' membership → can't reach anything.
+        if (b.groups.every((g) => g === 'users')) unassigned++
+        if (b.groups.some((g) => wildGroups.has(g))) fullAccess++
+      }
+      const stats: DirectoryStats = {
+        total: bindings.size,
+        active,
+        fullAccess,
+        unassigned,
+        perGroup,
+        perOrg,
+        computedAt: new Date().toISOString(),
+      }
+      try {
+        await redisRbacRepository.setStats(JSON.stringify({ computedAt: Date.now(), stats }), STATS_TTL_S)
+      } catch { /* best-effort cache write */ }
+      return stats
+    })()
+    this.statsRefresh = p
+    p.finally(() => { if (this.statsRefresh === p) this.statsRefresh = null })
+    return p
+  }
+
+  /** Bust the directory-stats cache (counts changed). Next read recomputes
+   *  from the light walk. Best-effort; safe to call from any mutation path. */
+  async invalidateDirectoryStats(): Promise<void> {
+    await redisRbacRepository.invalidateStats().catch(() => {})
   }
 
   // ===========================================================================
