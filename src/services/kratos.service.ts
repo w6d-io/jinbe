@@ -37,6 +37,8 @@ export interface IdentityBinding {
   groups: string[]
   organizations: string[]
   primaryOrganization: string | null
+  /** identity.state === 'active'. Captured cheaply in the light walk for stats. */
+  active: boolean
 }
 
 interface IdentityBindingsCache {
@@ -445,8 +447,11 @@ export class KratosService {
         const traitOrg = (identity.traits as Record<string, unknown> | undefined)
           ?.organization_id as string | null | undefined
         const primaryOrganization = rootOrg || traitOrg || null
+        // `state` is a core list field (no include_credential needed); treat
+        // only 'active' as active — inactive/undefined are not-active.
+        const active = identity.state === 'active'
 
-        result.set(email, { groups, organizations, primaryOrganization })
+        result.set(email, { groups, organizations, primaryOrganization, active })
       }
 
       const next = response.nextPageToken

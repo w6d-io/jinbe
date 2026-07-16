@@ -83,6 +83,15 @@ export class AdminController {
   }
 
   /**
+   * Directory stats for the dashboard — cached counts, no full directory walk.
+   * GET /api/admin/stats
+   */
+  async getStats(_request: FastifyRequest, reply: FastifyReply) {
+    const stats = await rbacService.getDirectoryStats()
+    return reply.send(stats)
+  }
+
+  /**
    * Get user by ID
    * GET /api/admin/users/:id
    */
@@ -126,6 +135,11 @@ export class AdminController {
     }
 
     const identity = await kratosService.createIdentity(kratosBody)
+
+    // A new identity bumps total/active (and perGroup['users'] via the default)
+    // even when no groups are passed — the groups-gated notify below can miss
+    // it, so bust stats unconditionally.
+    rbacService.invalidateDirectoryStats().catch(() => {})
 
     // Set groups if provided
     if (groups && groups.length > 0) {
@@ -212,6 +226,9 @@ export class AdminController {
     const { id } = request.params
     const { state } = request.body
     const identity = await kratosService.updateIdentity(id, { state } as KratosIdentityUpdate)
+    // active count changed; this path bypasses invalidateBundle, so bust stats
+    // directly (state doesn't affect RBAC bindings — no OPA notify needed).
+    rbacService.invalidateDirectoryStats().catch(() => {})
     auditEventService.emit({
       type: 'user.updated',
       actor: { email: request.userContext?.email, ip: request.ip },
