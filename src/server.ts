@@ -34,6 +34,7 @@ import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bo
 import { MarkerCorruptError } from './bootstrap/marker.js'
 import { rbacService } from './services/rbac.service.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
+import { realtimeService } from './services/realtime.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
 
 // Singleton notification service — exported for controllers.
@@ -192,6 +193,10 @@ async function start() {
         await notificationService.start()
       }
 
+      // Real-time SSE fan-out — pushes a minimal change signal to connected
+      // admin browsers (via Redis pub/sub, so it works across replicas).
+      realtimeService.init(getRedisClient())
+
       // Push a full datasource refresh to opal-server. Defends against the
       // race where opal-server booted first, hit a 503 from us, and ended
       // up with an empty OPA dataset. Non-fatal — opal-server may also be
@@ -223,6 +228,7 @@ signals.forEach((signal) => {
     console.log(`Received ${signal}, shutting down gracefully...`)
     try {
       notificationService.stop()
+      realtimeService.stop()
       const { redisClientService } = await import('./services/redis-client.service.js')
       await redisClientService.disconnect()
     } catch { /* ignore */ }

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { adminController } from '../controllers/admin.controller.js'
 import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
+import { realtimeService } from '../services/realtime.service.js'
 import {
   userIdParamSchema,
   usersQuerySchema,
@@ -35,6 +36,23 @@ import {
 export async function adminRoutes(fastify: FastifyInstance) {
   // Require admin group membership for all routes in this plugin
   fastify.addHook('preHandler', requireAdmin)
+
+  // Real-time change stream (Server-Sent Events). Auth: inherits the plugin's
+  // requireAdmin (Kratos session) — same gate as every other /admin route. It
+  // emits a minimal {type} signal on any RBAC/directory change; the client
+  // reacts by refetching through the normal auth'd endpoints (no data on wire).
+  fastify.get('/events', (request, reply) => {
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    })
+    reply.raw.write(': connected\n\n')
+    realtimeService.addClient(reply)
+    request.raw.on('close', () => realtimeService.removeClient(reply))
+    reply.hijack()
+  })
 
   // List all users
   fastify.get(
