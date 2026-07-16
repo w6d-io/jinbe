@@ -15,6 +15,7 @@ import { getRedisClient } from './redis-client.service.js'
  *   rbac:config                    → Hash: { key: value }
  *   rbac:rego                      → String: raw rego policy text
  *   rbac:bundle:etag               → String: bundle version hash
+ *   rbac:stats                     → String: JSON({computedAt, stats}) — directory counts, SWR (only TTL'd key)
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -281,6 +282,25 @@ class RedisRbacRepository {
     const etag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     await this.setBundleEtag(etag)
     return etag
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // STATS CACHE (directory counts — total/active/perGroup/perOrg)
+  // The only TTL'd key in this repo: a safety net so counts can't go
+  // unboundedly stale if the app dies. Freshness is decided in rbac.service
+  // from the payload's computedAt (stale-while-revalidate).
+  // ═══════════════════════════════════════════════════════════
+
+  async getStats(): Promise<string | null> {
+    return this.redis.get('rbac:stats')
+  }
+
+  async setStats(json: string, ttlSeconds: number): Promise<void> {
+    await this.redis.set('rbac:stats', json, 'EX', ttlSeconds)
+  }
+
+  async invalidateStats(): Promise<void> {
+    await this.redis.del('rbac:stats')
   }
 
   // ═══════════════════════════════════════════════════════════

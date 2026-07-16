@@ -59,6 +59,33 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.listUsers.bind(adminController)
   )
 
+  // Directory stats (cached counts — total/active/perGroup/perOrg)
+  fastify.get(
+    '/stats',
+    {
+      schema: {
+        description: 'Directory statistics (cached; total/active/per-group/per-org counts)',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              total: { type: 'number' },
+              active: { type: 'number' },
+              fullAccess: { type: 'number' },
+              unassigned: { type: 'number' },
+              perGroup: { type: 'object', additionalProperties: { type: 'number' } },
+              perOrg: { type: 'object', additionalProperties: { type: 'number' } },
+              computedAt: { type: 'string' },
+            },
+          },
+          401: unauthorizedResponseSchema,
+        },
+      },
+    },
+    adminController.getStats.bind(adminController)
+  )
+
   // Get user by ID
   fastify.get(
     '/users/:id',
