@@ -94,6 +94,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
               unassigned: { type: 'number' },
               perGroup: { type: 'object', additionalProperties: { type: 'number' } },
               perOrg: { type: 'object', additionalProperties: { type: 'number' } },
+              perService: { type: 'object', additionalProperties: { type: 'number' } },
               computedAt: { type: 'string' },
             },
           },

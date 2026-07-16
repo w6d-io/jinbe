@@ -28,6 +28,8 @@ export interface DirectoryStats {
   unassigned: number
   perGroup: Record<string, number>
   perOrg: Record<string, number>
+  /** Distinct users who can reach each service via their groups. */
+  perService: Record<string, number>
   computedAt: string // ISO timestamp of the walk this reflects
 }
 
@@ -594,15 +596,21 @@ export class RbacService {
   private refreshDirectoryStats(): Promise<DirectoryStats> {
     if (this.statsRefresh) return this.statsRefresh
     const p = (async (): Promise<DirectoryStats> => {
-      const [bindings, wildGroups] = await Promise.all([
+      const [bindings, wildGroups, groupDefs] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings(),
         this.wildcardGroupNames(),
+        redisRbacRepository.getGroups(),
       ])
+      // group → the services it grants roles on (for per-service reach counts)
+      const groupServices: Record<string, string[]> = {}
+      for (const [g, def] of Object.entries(groupDefs)) groupServices[g] = Object.keys(def)
+
       let active = 0
       let fullAccess = 0
       let unassigned = 0
       const perGroup: Record<string, number> = {}
       const perOrg: Record<string, number> = {}
+      const perService: Record<string, number> = {}
       for (const b of bindings.values()) {
         if (b.active) active++
         // Raw metadata group names (may include orphans not in rbac:groups).
@@ -612,6 +620,10 @@ export class RbacService {
         // Only the default 'users' membership → can't reach anything.
         if (b.groups.every((g) => g === 'users')) unassigned++
         if (b.groups.some((g) => wildGroups.has(g))) fullAccess++
+        // Distinct services this user can reach via their groups.
+        const svcs = new Set<string>()
+        for (const g of b.groups) for (const s of groupServices[g] ?? []) svcs.add(s)
+        for (const s of svcs) perService[s] = (perService[s] ?? 0) + 1
       }
       const stats: DirectoryStats = {
         total: bindings.size,
@@ -620,6 +632,7 @@ export class RbacService {
         unassigned,
         perGroup,
         perOrg,
+        perService,
         computedAt: new Date().toISOString(),
       }
       try {
