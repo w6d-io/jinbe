@@ -5,6 +5,7 @@ import { createKratosIdentity, testIdentities, createIdentityRequest } from '../
 const mockState = vi.hoisted(() => ({
   env: {
     KRATOS_ADMIN_URL: 'http://kratos-admin:4434',
+    KRATOS_PUBLIC_URL: 'http://kratos-public:4433',
   },
 }))
 
@@ -324,6 +325,29 @@ describe('KratosService', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2)
       expect(map.get('david@stairling.com')).toEqual(['super_admins'])
       expect(map.get('user1@example.com')).toEqual(['users'])
+    })
+  })
+
+  describe('sendRecoveryEmail', () => {
+    it('submits the `code` recovery method (this cluster does not enable `link`)', async () => {
+      mockFetch
+        // 1. admin identity lookup → email
+        .mockResolvedValueOnce(
+          createMockResponse(200, { id: 'id-1', traits: { email: 'invitee@example.com' } })
+        )
+        // 2. init recovery flow
+        .mockResolvedValueOnce(createMockResponse(200, { id: 'flow-1' }))
+        // 3. submit email → queues the courier message
+        .mockResolvedValueOnce(createMockResponse(200, { state: 'sent_email' }))
+
+      await service.sendRecoveryEmail('id-1')
+
+      const submitCall = mockFetch.mock.calls[2]
+      expect(submitCall[0]).toContain('/self-service/recovery?flow=flow-1')
+      expect(JSON.parse(submitCall[1].body)).toEqual({
+        email: 'invitee@example.com',
+        method: 'code',
+      })
     })
   })
 })
