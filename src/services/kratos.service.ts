@@ -39,6 +39,9 @@ export interface IdentityBinding {
   primaryOrganization: string | null
   /** identity.state === 'active'. Captured cheaply in the light walk for stats. */
   active: boolean
+  /** id + display name, captured for admin substring search (no new PII store). */
+  id: string
+  name: string | null
 }
 
 interface IdentityBindingsCache {
@@ -450,8 +453,9 @@ export class KratosService {
         // `state` is a core list field (no include_credential needed); treat
         // only 'active' as active — inactive/undefined are not-active.
         const active = identity.state === 'active'
+        const name = (identity.traits?.name as string | undefined) ?? null
 
-        result.set(email, { groups, organizations, primaryOrganization, active })
+        result.set(email, { groups, organizations, primaryOrganization, active, id: identity.id, name })
       }
 
       const next = response.nextPageToken
@@ -466,6 +470,29 @@ export class KratosService {
     }
 
     return result
+  }
+
+  /**
+   * Substring search over the in-memory identity map (email + name). Reuses the
+   * light-walk cache (getAllIdentitiesWithBindings) — NO new PII store, no
+   * per-request Kratos call, and it inherits that map's 5s TTL + mutation
+   * invalidation so results stay current. Returns lightweight rows only
+   * (no credentials / MFA). Case-insensitive; capped at `limit`.
+   */
+  async searchIdentities(
+    q: string,
+    limit = 50,
+  ): Promise<Array<{ id: string; email: string; name: string | null; groups: string[]; organizationId: string | null; active: boolean }>> {
+    const bindings = await this.getAllIdentitiesWithBindings()
+    const low = q.trim().toLowerCase()
+    const out: Array<{ id: string; email: string; name: string | null; groups: string[]; organizationId: string | null; active: boolean }> = []
+    for (const [email, b] of bindings) {
+      const match = !low || email.toLowerCase().includes(low) || (b.name?.toLowerCase().includes(low) ?? false)
+      if (!match) continue
+      out.push({ id: b.id, email, name: b.name, groups: b.groups, organizationId: b.primaryOrganization, active: b.active })
+      if (out.length >= limit) break
+    }
+    return out
   }
 
   /**

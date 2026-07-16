@@ -92,6 +92,21 @@ export class AdminController {
   }
 
   /**
+   * Substring search over identities (email + name) for the admin UI, backed by
+   * the cached in-memory identity map — no directory walk per query.
+   * GET /api/admin/users/search?q=&limit=
+   */
+  async searchUsers(
+    request: FastifyRequest<{ Querystring: { q?: string; limit?: string } }>,
+    reply: FastifyReply,
+  ) {
+    const q = (request.query.q ?? '').toString()
+    const limit = Math.min(Math.max(parseInt(request.query.limit ?? '50', 10) || 50, 1), 200)
+    const data = await kratosService.searchIdentities(q, limit)
+    return reply.send({ data })
+  }
+
+  /**
    * Get user by ID
    * GET /api/admin/users/:id
    */

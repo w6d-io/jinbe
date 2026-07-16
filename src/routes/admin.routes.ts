@@ -86,6 +86,30 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.getStats.bind(adminController)
   )
 
+  // Substring search over identities (email + name), cached in-memory.
+  // Declared before /users/:id; Fastify's router prefers the static segment.
+  fastify.get(
+    '/users/search',
+    {
+      schema: {
+        description: 'Search identities by email or name substring (cached; no directory walk)',
+        tags: ['admin'],
+        querystring: {
+          type: 'object',
+          properties: { q: { type: 'string' }, limit: { type: 'string' } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { data: { type: 'array', items: { type: 'object', additionalProperties: true } } },
+          },
+          401: unauthorizedResponseSchema,
+        },
+      },
+    },
+    adminController.searchUsers.bind(adminController)
+  )
+
   // Get user by ID
   fastify.get(
     '/users/:id',
