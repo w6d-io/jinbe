@@ -50,7 +50,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
     })
     reply.raw.write(': connected\n\n')
     realtimeService.addClient(reply)
-    request.raw.on('close', () => realtimeService.removeClient(reply))
+    const cleanup = () => realtimeService.removeClient(reply)
+    request.raw.on('close', cleanup)
+    // A socket can error before 'close' fires; without this listener that
+    // async 'error' would be unhandled and could crash the process under churn.
+    reply.raw.on('error', cleanup)
     reply.hijack()
   })
 

@@ -83,6 +83,7 @@ class RealtimeService {
 
   private broadcast(message: string): void {
     for (const reply of this.clients) {
+      if (reply.raw.destroyed || reply.raw.writableEnded) { this.clients.delete(reply); continue }
       try {
         reply.raw.write(`event: change\ndata: ${message}\n\n`)
       } catch {
@@ -93,6 +94,7 @@ class RealtimeService {
 
   private ping(): void {
     for (const reply of this.clients) {
+      if (reply.raw.destroyed || reply.raw.writableEnded) { this.clients.delete(reply); continue }
       try {
         reply.raw.write(`: ping\n\n`)
       } catch {

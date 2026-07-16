@@ -648,6 +648,10 @@ export class RbacService {
   /** Bust the directory-stats cache (counts changed). Next read recomputes
    *  from the light walk. Best-effort; safe to call from any mutation path. */
   async invalidateDirectoryStats(): Promise<void> {
+    // Also drop the 5s identity-bindings cache so the immediate recompute reads
+    // fresh counts — createUser-without-groups and setUserState reach here but
+    // bypass the binding-cache invalidation their sibling mutation paths get.
+    kratosService.invalidateGroupsCache()
     await redisRbacRepository.invalidateStats().catch(() => {})
     realtimeService.publish('directory')
   }
