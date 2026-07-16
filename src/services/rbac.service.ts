@@ -2,6 +2,7 @@ import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
 import { opaService } from './opa.service.js'
+import { realtimeService } from './realtime.service.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -393,6 +394,8 @@ export class RbacService {
     // every mutation flowing through here (groups/services/org-map + all
     // notifyBindingsChanged user mutations).
     redisRbacRepository.invalidateStats().catch(() => {})
+    // Push a real-time signal so connected admin browsers refetch at once.
+    realtimeService.publish(eventType ?? 'rbac')
 
     // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
     this.notifyOpal(eventType).catch(() => {})
@@ -633,6 +636,7 @@ export class RbacService {
    *  from the light walk. Best-effort; safe to call from any mutation path. */
   async invalidateDirectoryStats(): Promise<void> {
     await redisRbacRepository.invalidateStats().catch(() => {})
+    realtimeService.publish('directory')
   }
 
   // ===========================================================================
