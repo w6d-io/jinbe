@@ -2,6 +2,7 @@ import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
 import { opaService } from './opa.service.js'
+import { realtimeService } from './realtime.service.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -27,6 +28,8 @@ export interface DirectoryStats {
   unassigned: number
   perGroup: Record<string, number>
   perOrg: Record<string, number>
+  /** Distinct users who can reach each service via their groups. */
+  perService: Record<string, number>
   computedAt: string // ISO timestamp of the walk this reflects
 }
 
@@ -393,6 +396,8 @@ export class RbacService {
     // every mutation flowing through here (groups/services/org-map + all
     // notifyBindingsChanged user mutations).
     redisRbacRepository.invalidateStats().catch(() => {})
+    // Push a real-time signal so connected admin browsers refetch at once.
+    realtimeService.publish(eventType ?? 'rbac')
 
     // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
     this.notifyOpal(eventType).catch(() => {})
@@ -591,15 +596,21 @@ export class RbacService {
   private refreshDirectoryStats(): Promise<DirectoryStats> {
     if (this.statsRefresh) return this.statsRefresh
     const p = (async (): Promise<DirectoryStats> => {
-      const [bindings, wildGroups] = await Promise.all([
+      const [bindings, wildGroups, groupDefs] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings(),
         this.wildcardGroupNames(),
+        redisRbacRepository.getGroups(),
       ])
+      // group → the services it grants roles on (for per-service reach counts)
+      const groupServices: Record<string, string[]> = {}
+      for (const [g, def] of Object.entries(groupDefs)) groupServices[g] = Object.keys(def)
+
       let active = 0
       let fullAccess = 0
       let unassigned = 0
       const perGroup: Record<string, number> = {}
       const perOrg: Record<string, number> = {}
+      const perService: Record<string, number> = {}
       for (const b of bindings.values()) {
         if (b.active) active++
         // Raw metadata group names (may include orphans not in rbac:groups).
@@ -609,6 +620,10 @@ export class RbacService {
         // Only the default 'users' membership → can't reach anything.
         if (b.groups.every((g) => g === 'users')) unassigned++
         if (b.groups.some((g) => wildGroups.has(g))) fullAccess++
+        // Distinct services this user can reach via their groups.
+        const svcs = new Set<string>()
+        for (const g of b.groups) for (const s of groupServices[g] ?? []) svcs.add(s)
+        for (const s of svcs) perService[s] = (perService[s] ?? 0) + 1
       }
       const stats: DirectoryStats = {
         total: bindings.size,
@@ -617,6 +632,7 @@ export class RbacService {
         unassigned,
         perGroup,
         perOrg,
+        perService,
         computedAt: new Date().toISOString(),
       }
       try {
@@ -632,7 +648,12 @@ export class RbacService {
   /** Bust the directory-stats cache (counts changed). Next read recomputes
    *  from the light walk. Best-effort; safe to call from any mutation path. */
   async invalidateDirectoryStats(): Promise<void> {
+    // Also drop the 5s identity-bindings cache so the immediate recompute reads
+    // fresh counts — createUser-without-groups and setUserState reach here but
+    // bypass the binding-cache invalidation their sibling mutation paths get.
+    kratosService.invalidateGroupsCache()
     await redisRbacRepository.invalidateStats().catch(() => {})
+    realtimeService.publish('directory')
   }
 
   // ===========================================================================
