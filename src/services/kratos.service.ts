@@ -338,19 +338,25 @@ export class KratosService {
     if (!flowResp.ok) throw new Error(`Failed to init recovery flow: ${flowResp.status}`)
     const flow = await flowResp.json() as { id: string }
 
-    // 2. Submit the email — Kratos queues the courier message
+    // 2. Submit the email — Kratos queues the courier message.
+    // This cluster's Kratos enables ONLY the `code` recovery strategy (the
+    // `link` method is not configured, and password login is disabled →
+    // passwordless/code). Submitting `method: 'link'` is rejected and NO email
+    // is ever queued, which is why invited users received nothing. Request
+    // `code` to match the deployed selfservice.methods config.
     const submitResp = await fetch(
       `${publicUrl}/self-service/recovery?flow=${flow.id}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ email, method: 'link' }),
+        body: JSON.stringify({ email, method: 'code' }),
       }
     )
     if (!submitResp.ok && submitResp.status !== 422) {
       throw new Error(`Recovery email submit failed: ${submitResp.status}`)
     }
-    // 422 = "sent to email" state (expected for code method)
+    // 200 with a "sent_email" UI state means the code mail is queued; Kratos
+    // deliberately does not reveal whether the account exists (422 tolerated).
   }
 
   /** @deprecated Use sendRecoveryEmail. Returns admin link without sending email. */
