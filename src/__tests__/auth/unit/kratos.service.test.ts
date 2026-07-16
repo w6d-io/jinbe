@@ -315,7 +315,7 @@ describe('KratosService', () => {
       mockFetch.mockResolvedValueOnce(
         createMockResponse(
           200,
-          [{ id: '2', traits: { email: 'david@stairling.com' }, metadata_admin: { groups: ['super_admins'] } }],
+          [{ id: '2', traits: { email: 'david@example.com' }, metadata_admin: { groups: ['super_admins'] } }],
           null
         )
       )
@@ -323,7 +323,7 @@ describe('KratosService', () => {
       const map = await service.getAllIdentitiesWithGroups()
 
       expect(mockFetch).toHaveBeenCalledTimes(2)
-      expect(map.get('david@stairling.com')).toEqual(['super_admins'])
+      expect(map.get('david@example.com')).toEqual(['super_admins'])
       expect(map.get('user1@example.com')).toEqual(['users'])
     })
   })
