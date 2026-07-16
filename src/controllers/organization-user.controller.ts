@@ -99,6 +99,11 @@ export class OrganizationUserController {
       state: 'active',
       traits: { email, ...(name ? { name } : {}) },
       organization_id: organizationId,
+      // Persist the base `users` group up front for the no-privileged-group
+      // case, so an invited user visibly holds `users` rather than showing
+      // null/empty in the UI. When groups need a grant check, applyGroupUpdate
+      // below sets them (with rollback), so leave metadata_admin unset here.
+      ...(needsGrantCheck ? {} : { metadata_admin: { groups: desiredGroups } }),
     }
 
     const identity = await kratosService.createIdentity(kratosBody)
