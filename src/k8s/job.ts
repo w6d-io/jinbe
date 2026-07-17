@@ -71,13 +71,20 @@ export async function createJob(
             d.toJSON().slice(0, 19).replace('T', '_').replaceAll(':', '-')
         job.spec.template.spec.containers[0].env[3].value = dateFormat(date)
         job.spec.template.spec.containers[0].env[4].value = dateFormat(date)
-        job.spec.template.metadata.labels = {
+        const identifyingLabels = {
             timestamp: dateFormat(date),
             action: action,
             'database/type': `${database_type}`,
             cluster: `${cluster}`,
             'operator/name': 'kuma',
         }
+        // Label BOTH the Job object and its pod template. getJobs/getJobsInfo
+        // list via a labelSelector on the JOB's metadata.labels (and getJobsInfo
+        // reads database/type + timestamp off it), while getBackupPods selects on
+        // POD labels. Setting only the pod template (as before) left created jobs
+        // invisible to every job listing. See audit finding #11.
+        job.metadata.labels = { ...(job.metadata.labels ?? {}), ...identifyingLabels }
+        job.spec.template.metadata.labels = identifyingLabels
         job.spec.template.spec.containers[0].image = image
 
         // --- Create/replace Job in K8s ---
