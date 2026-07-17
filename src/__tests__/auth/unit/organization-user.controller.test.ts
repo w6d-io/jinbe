@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
+// Redis mutex is infrastructure — passthrough so these units need no Redis.
+vi.mock('../../../services/redis-lock.js', () => ({
+  withRedisLock: (_name: string, fn: () => unknown) => fn(),
+}))
+
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     getIdentity: vi.fn(),

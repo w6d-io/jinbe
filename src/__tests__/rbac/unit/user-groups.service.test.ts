@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+// The Redis mutex is infrastructure; these units validate the gate logic, not
+// locking (the lock has its own test). Passthrough so no Redis is required.
+vi.mock('../../../services/redis-lock.js', () => ({
+  withRedisLock: (_name: string, fn: () => unknown) => fn(),
+}))
+
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     getUserGroups: vi.fn().mockResolvedValue([]),
