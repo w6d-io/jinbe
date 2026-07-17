@@ -1,4 +1,5 @@
 import { env } from '../config/index.js'
+import { withRedisLock } from './redis-lock.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -644,11 +645,22 @@ export class KratosService {
 
     for (const [email, groups] of identitiesWithGroups) {
       if (groups.includes(groupName)) {
-        const newGroups = groups.filter((g) => g !== groupName)
-        // Ensure user always has at least ['users'] group
-        const finalGroups = newGroups.length > 0 ? newGroups : ['users']
-        await this.updateUserGroups(email, finalGroups)
-        updatedCount++
+        // Serialize each user's write under the SAME per-user lock as
+        // userGroupsService.applyGroupUpdate so a group-deletion cleanup can't
+        // interleave with a concurrent group edit on the same user. Re-read the
+        // current groups inside the lock — the bulk snapshot above can be stale
+        // by the time we reach this user, and writing the stale set would clobber
+        // a change committed since. See audit finding #9 (adjacent write path).
+        const updated = await withRedisLock(`user-groups:${email}`, async () => {
+          const current = await this.getUserGroups(email)
+          if (!current.includes(groupName)) return false
+          const newGroups = current.filter((g) => g !== groupName)
+          // Ensure user always has at least ['users'] group
+          const finalGroups = newGroups.length > 0 ? newGroups : ['users']
+          await this.updateUserGroups(email, finalGroups)
+          return true
+        })
+        if (updated) updatedCount++
       }
     }
 

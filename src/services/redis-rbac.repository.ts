@@ -1,4 +1,5 @@
 import { getRedisClient } from './redis-client.service.js'
+import { withRedisLock } from './redis-lock.js'
 
 /**
  * Redis RBAC Repository
@@ -216,30 +217,42 @@ class RedisRbacRepository {
     return rules.find(r => r.id === id) || null
   }
 
+  // All access-rule mutations are a read-modify-write on the single
+  // `rbac:oathkeeper:rules` blob, so they MUST serialize under one lock —
+  // otherwise two concurrent admins each read the same array and the last SET
+  // clobbers the other's rule (a created rule silently vanishes despite a 200,
+  // leaving a service unrouted). See audit finding #7. The service-layer
+  // updateServiceConfig takes the SAME lock name.
   async addAccessRule(rule: OathkeeperRule): Promise<void> {
-    const rules = await this.getAccessRules()
-    if (rules.some(r => r.id === rule.id)) {
-      throw new Error(`Access rule '${rule.id}' already exists`)
-    }
-    rules.push(rule)
-    await this.setAccessRules(rules)
+    return withRedisLock('oathkeeper:rules', async () => {
+      const rules = await this.getAccessRules()
+      if (rules.some(r => r.id === rule.id)) {
+        throw new Error(`Access rule '${rule.id}' already exists`)
+      }
+      rules.push(rule)
+      await this.setAccessRules(rules)
+    })
   }
 
   async updateAccessRule(id: string, rule: OathkeeperRule): Promise<boolean> {
-    const rules = await this.getAccessRules()
-    const idx = rules.findIndex(r => r.id === id)
-    if (idx === -1) return false
-    rules[idx] = rule
-    await this.setAccessRules(rules)
-    return true
+    return withRedisLock('oathkeeper:rules', async () => {
+      const rules = await this.getAccessRules()
+      const idx = rules.findIndex(r => r.id === id)
+      if (idx === -1) return false
+      rules[idx] = rule
+      await this.setAccessRules(rules)
+      return true
+    })
   }
 
   async deleteAccessRule(id: string): Promise<boolean> {
-    const rules = await this.getAccessRules()
-    const filtered = rules.filter(r => r.id !== id)
-    if (filtered.length === rules.length) return false
-    await this.setAccessRules(filtered)
-    return true
+    return withRedisLock('oathkeeper:rules', async () => {
+      const rules = await this.getAccessRules()
+      const filtered = rules.filter(r => r.id !== id)
+      if (filtered.length === rules.length) return false
+      await this.setAccessRules(filtered)
+      return true
+    })
   }
 
   // ═══════════════════════════════════════════════════════════

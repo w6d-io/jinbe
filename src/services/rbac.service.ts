@@ -1,5 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
+import { withRedisLock } from './redis-lock.js'
 import { auditEventService } from './audit-event.service.js'
 import { opaService } from './opa.service.js'
 import { realtimeService } from './realtime.service.js'
@@ -553,6 +554,12 @@ export class RbacService {
   // would tax the shared OPAL bindings feed; add it later behind its own field.
 
   private statsRefresh: Promise<DirectoryStats> | null = null
+  // Monotonic generation counter, bumped by every invalidateDirectoryStats().
+  // A background refresh captures it at the start and only publishes its result
+  // if it's unchanged at the end — otherwise the refresh read its bindings
+  // pre-image BEFORE a mutation invalidated the cache, and writing it would pin
+  // stale counts stamped "fresh" for STATS_FRESH_MS. See audit finding #10.
+  private statsEpoch = 0
 
   /** Group names that grant a wildcard ('*') permission — a global super_admin
    *  role, or any (service, role) whose permission set includes '*'. Used to
@@ -604,6 +611,9 @@ export class RbacService {
 
   private refreshDirectoryStats(): Promise<DirectoryStats> {
     if (this.statsRefresh) return this.statsRefresh
+    // Capture the generation before we start reading. If an invalidation bumps
+    // it while we compute, our bindings pre-image is stale and we must NOT cache.
+    const startEpoch = this.statsEpoch
     const p = (async (): Promise<DirectoryStats> => {
       const [bindings, wildGroups, groupDefs] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings(),
@@ -644,9 +654,16 @@ export class RbacService {
         perService,
         computedAt: new Date().toISOString(),
       }
-      try {
-        await redisRbacRepository.setStats(JSON.stringify({ computedAt: Date.now(), stats }), STATS_TTL_S)
-      } catch { /* best-effort cache write */ }
+      // Only publish if no invalidation happened while we computed. If the epoch
+      // moved, a mutation invalidated the cache after we read our (now stale)
+      // bindings pre-image; caching would pin those stale counts as "fresh".
+      // Skip the write and let the next read recompute from fresh state — the
+      // caller still gets these stats, we just don't persist them.
+      if (this.statsEpoch === startEpoch) {
+        try {
+          await redisRbacRepository.setStats(JSON.stringify({ computedAt: Date.now(), stats }), STATS_TTL_S)
+        } catch { /* best-effort cache write */ }
+      }
       return stats
     })()
     this.statsRefresh = p
@@ -657,6 +674,11 @@ export class RbacService {
   /** Bust the directory-stats cache (counts changed). Next read recomputes
    *  from the light walk. Best-effort; safe to call from any mutation path. */
   async invalidateDirectoryStats(): Promise<void> {
+    // Bump the generation FIRST so any in-flight background refresh that already
+    // read a pre-mutation bindings snapshot will decline to cache its result
+    // (finding #10). Do this before the deletes so there's no window where a
+    // refresh could re-populate the key we're about to clear.
+    this.statsEpoch++
     // Also drop the 5s identity-bindings cache so the immediate recompute reads
     // fresh counts — createUser-without-groups and setUserState reach here but
     // bypass the binding-cache invalidation their sibling mutation paths get.
@@ -864,14 +886,20 @@ export class RbacService {
       try { await redisRbacRepository.addAccessRule(healthRule) } catch { /* already exists */ }
     }
 
-    // 5. Auto-populate standard groups with default roles
-    const groups = await redisRbacRepository.getGroups()
-    for (const [groupName, defaultGroupRoles] of Object.entries(DEFAULT_GROUP_SERVICE_ROLES)) {
-      if (groups[groupName]) {
-        groups[groupName][name] = defaultGroupRoles
-        await redisRbacRepository.setGroup(groupName, groups[groupName])
+    // 5. Auto-populate standard groups with default roles. This reads ALL groups
+    // then writes each back — a read-modify-write on the rbac:groups hash. Two
+    // concurrent service ops (or a concurrent group edit) would each read the
+    // pre-image and the last writer would drop the other's group→service
+    // bindings. Serialize the whole read+write under the `groups` lock (#8).
+    await withRedisLock('groups', async () => {
+      const groups = await redisRbacRepository.getGroups()
+      for (const [groupName, defaultGroupRoles] of Object.entries(DEFAULT_GROUP_SERVICE_ROLES)) {
+        if (groups[groupName]) {
+          groups[groupName][name] = defaultGroupRoles
+          await redisRbacRepository.setGroup(groupName, groups[groupName])
+        }
       }
-    }
+    })
 
     await this.invalidateBundle('rbac.service_created', { type: 'service', id: name }, actor)
     return this.result(`Service '${name}' created with roles, routes, and oathkeeper rules`)
@@ -885,14 +913,18 @@ export class RbacService {
       throw new SystemResourceImmutable('service', name)
     }
 
-    // Remove from all groups
-    const groups = await redisRbacRepository.getGroups()
-    for (const [groupName, services] of Object.entries(groups)) {
-      if (name in services) {
-        delete services[name]
-        await redisRbacRepository.setGroup(groupName, services)
+    // Remove from all groups — same read-modify-write on the rbac:groups hash
+    // as createService, under the same `groups` lock so concurrent service ops
+    // can't drop each other's bindings (#8).
+    await withRedisLock('groups', async () => {
+      const groups = await redisRbacRepository.getGroups()
+      for (const [groupName, services] of Object.entries(groups)) {
+        if (name in services) {
+          delete services[name]
+          await redisRbacRepository.setGroup(groupName, services)
+        }
       }
-    }
+    })
 
     // Remove oathkeeper rules
     await redisRbacRepository.deleteAccessRule(name)
@@ -935,34 +967,39 @@ export class RbacService {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
     }
 
-    const rules = await redisRbacRepository.getAccessRules() ?? []
-    const ruleIdx = rules.findIndex((r: OathkeeperRule) => r.id === name)
-    if (ruleIdx === -1) {
-      throw Object.assign(new Error(`Oathkeeper rule not found for service: ${name}`), { statusCode: 404 })
-    }
+    // Same read-modify-write on rbac:oathkeeper:rules as the repository's
+    // add/update/deleteAccessRule — take the SAME lock so a service-config edit
+    // can't clobber (or be clobbered by) a concurrent rule mutation (#7).
+    await withRedisLock('oathkeeper:rules', async () => {
+      const rules = await redisRbacRepository.getAccessRules() ?? []
+      const ruleIdx = rules.findIndex((r: OathkeeperRule) => r.id === name)
+      if (ruleIdx === -1) {
+        throw Object.assign(new Error(`Oathkeeper rule not found for service: ${name}`), { statusCode: 404 })
+      }
 
-    const existing = rules[ruleIdx]
-    const updated: OathkeeperRule = {
-      ...existing,
-      upstream: {
-        url: options.upstreamUrl ?? existing.upstream.url,
-        ...(options.stripPath !== undefined
-          ? options.stripPath === null
-            ? {}  // remove strip_path
-            : { strip_path: options.stripPath }
-          : existing.upstream.strip_path !== undefined
-            ? { strip_path: existing.upstream.strip_path }
-            : {}),
-        ...(existing.upstream.preserve_host !== undefined ? { preserve_host: existing.upstream.preserve_host } : {}),
-      },
-      match: {
-        url: options.matchUrl ?? existing.match.url,
-        methods: (options.matchMethods ?? existing.match.methods) as OathkeeperRule['match']['methods'],
-      },
-    }
+      const existing = rules[ruleIdx]
+      const updated: OathkeeperRule = {
+        ...existing,
+        upstream: {
+          url: options.upstreamUrl ?? existing.upstream.url,
+          ...(options.stripPath !== undefined
+            ? options.stripPath === null
+              ? {}  // remove strip_path
+              : { strip_path: options.stripPath }
+            : existing.upstream.strip_path !== undefined
+              ? { strip_path: existing.upstream.strip_path }
+              : {}),
+          ...(existing.upstream.preserve_host !== undefined ? { preserve_host: existing.upstream.preserve_host } : {}),
+        },
+        match: {
+          url: options.matchUrl ?? existing.match.url,
+          methods: (options.matchMethods ?? existing.match.methods) as OathkeeperRule['match']['methods'],
+        },
+      }
 
-    rules[ruleIdx] = updated
-    await redisRbacRepository.setAccessRules(rules)
+      rules[ruleIdx] = updated
+      await redisRbacRepository.setAccessRules(rules)
+    })
     await this.invalidateBundle('rbac.service_config_updated', { type: 'service', id: name }, actor)
     return this.result(`Service '${name}' config updated`)
   }
