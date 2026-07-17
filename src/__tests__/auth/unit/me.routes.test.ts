@@ -120,7 +120,7 @@ describe('meRoutes — GET /me/organizations', () => {
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'dev@b.io' } }), reply)
 
-    expect(reply._body).toEqual({ organizations: [], scope: 'delegated' })
+    expect(reply._body).toEqual({ organizations: [], scope: 'all' })
     expect(opaService.manageableOrgs).not.toHaveBeenCalled()
   })
 })
