@@ -2,6 +2,7 @@ import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
 import { opaService } from './opa.service.js'
 import { auditEventService } from './audit-event.service.js'
+import { withRedisLock } from './redis-lock.js'
 
 /**
  * Identity the helper operates on. Resolved by the controller (different
@@ -73,6 +74,17 @@ class UserGroupsService {
   async applyGroupUpdate(input: ApplyGroupUpdateInput): Promise<ApplyGroupUpdateResult> {
     const { identity, newGroups, actor, privilegePolicy, auditEventType, auditExtraDetails } = input
 
+    // Serialize all group updates for THIS user under a per-user lock. The
+    // removal privilege gate is computed from the oldGroups pre-image (read
+    // below) but the write is a full REPLACE. Without serialization, a
+    // concurrent grant landing between our read and write — e.g. a super_admin
+    // adding `super_admins` — is invisible to the removal gate, so our replace
+    // silently strips it: an UNGATED strip + a lost update. Holding the lock
+    // across read → gate → write makes the pre-image authoritative for the
+    // duration. Every jinbe group writer (this method + removeGroupFromAllUsers)
+    // takes the SAME lock. See audit finding #9.
+    return withRedisLock(`user-groups:${identity.email}`, async () => {
+
     // Pre-image: the target's CURRENT groups. This is SECURITY-LOAD-BEARING —
     // it drives the removal gate (which groups the update drops) and the audit
     // snapshot. getUserGroups returns ['users'] for a user with no special
@@ -83,9 +95,9 @@ class UserGroupsService {
     // FAIL-CLOSED: refuse the whole update rather than risk stripping groups we
     // failed to read.
     //
-    // Pre-existing race: Kratos has no ETag/CAS, so another request can still
-    // mutate between this read and the write below; the window is microseconds
-    // and the only residual effect is a stale audit `oldGroups` snapshot.
+    // Residual: Kratos itself has no ETag/CAS, so a group write originating
+    // OUTSIDE jinbe could still race; within jinbe the per-user lock above
+    // serializes every writer, so the pre-image is authoritative here.
     let oldGroups: string[]
     try {
       const fetched = await kratosService.getUserGroups(identity.email)
@@ -186,6 +198,7 @@ class UserGroupsService {
         updatedAt: new Date().toISOString(),
       },
     }
+    }) // end withRedisLock(user-groups:<email>)
   }
 
   private async checkPrivilegeEscalation(

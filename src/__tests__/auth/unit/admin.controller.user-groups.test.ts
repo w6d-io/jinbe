@@ -15,6 +15,13 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
   },
 }))
 
+// The Redis mutex is infrastructure; these units validate the group-update
+// guard/MFA logic, not locking. Passthrough so no Redis is required (the lock
+// has its own test).
+vi.mock('../../../services/redis-lock.js', () => ({
+  withRedisLock: (_name: string, fn: () => unknown) => fn(),
+}))
+
 // Mock dependencies
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
