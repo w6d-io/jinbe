@@ -425,6 +425,15 @@ export class RbacService {
       const entries = [
         { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
         { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
+        // Global roles are always part of OPA's dataset even though "global"
+        // is not in the services registry (getServices()), so the loop below
+        // never emits it. Push it explicitly, matching GET /opal-datasource:
+        // data.roles.global holds the platform-wide "*" wildcard the
+        // super_admin role resolves to. If a dataset is ever rebuilt solely
+        // from a push (e.g. opal-client's initial pull 503s and this refresh
+        // back-fills the store), omitting it would drop the wildcard and 403
+        // every privileged operation with no recovery path.
+        { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
         // Keep in lock-step with GET /opal-datasource so an org_service_map
         // mutation re-publishes data.org_service_map to OPA (else it goes stale).
         { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },

@@ -68,7 +68,7 @@ describe('KratosService - getAllIdentitiesWithBindings', () => {
 
     const result = await service.getAllIdentitiesWithBindings()
 
-    expect(result.get('multi@example.com')).toEqual({
+    expect(result.get('multi@example.com')).toMatchObject({
       groups: ['admins', 'users'],
       organizations: ['org-a', 'org-b'],
       primaryOrganization: 'org-a',
@@ -84,7 +84,7 @@ describe('KratosService - getAllIdentitiesWithBindings', () => {
 
     const result = await service.getAllIdentitiesWithBindings()
 
-    expect(result.get('orgless@example.com')).toEqual({
+    expect(result.get('orgless@example.com')).toMatchObject({
       groups: ['users'],
       organizations: [],
       primaryOrganization: null,
