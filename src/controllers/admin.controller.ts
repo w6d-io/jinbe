@@ -25,6 +25,39 @@ interface IdentityWithRbac extends KratosIdentity {
 }
 
 /**
+ * `metadata_admin.groups` is the AUTHORITATIVE group-membership source — it
+ * drives the OPA bindings that grant every permission (kratos.service resolves
+ * groups from it). It must therefore only ever change through the hardened
+ * group endpoint (PUT /admin/users/:email/groups → userGroupsService.
+ * applyGroupUpdate), which enforces the super_admin check, the can_grant
+ * delegation/tenant-containment gate, and the MFA-enrolment gate.
+ *
+ * The generic identity writers (POST /users, PUT /users/:id, PATCH
+ * /users/:id/metadata) must never be an escalation path, so they refuse any
+ * attempt to set/alter groups and pin the persisted groups to their current
+ * value. 422 (not 403) is deliberate and load-bearing: cluster ingress-nginx
+ * `custom-http-errors` strips bodies from 4xx/5xx but lets 422 through, so the
+ * client actually sees this message. See user-groups.service.ts.
+ */
+const GROUPS_NOT_MUTABLE_HERE = {
+  error: 'groups_not_mutable_here',
+  message:
+    'Group membership (metadata_admin.groups) cannot be changed through this endpoint. ' +
+    'Use PUT /admin/users/:email/groups (or the org-scoped groups endpoint), which enforces ' +
+    'the super_admin, delegation, and MFA checks.',
+}
+
+/** Order-insensitive equality between a requested groups value and current groups. */
+function sameGroups(requested: unknown, current: string[] | undefined): boolean {
+  const cur = Array.isArray(current) ? current.map(String) : []
+  if (!Array.isArray(requested)) return cur.length === 0
+  if (requested.length !== cur.length) return false
+  const a = [...requested].map(String).sort()
+  const b = [...cur].sort()
+  return a.every((v, i) => v === b[i])
+}
+
+/**
  * Admin Controller
  * Handles user management via Kratos Admin API
  */
@@ -134,11 +167,11 @@ export class AdminController {
 
     // Normalize simplified { email, name, groups, sendInvite } → Kratos format
     let kratosBody: KratosIdentityCreate
-    let groups: string[] | undefined
+    let requestedGroups: string[] | undefined
     let sendInvite = false
 
     if (body.email && !body.traits) {
-      groups = body.groups as string[] | undefined
+      requestedGroups = body.groups as string[] | undefined
       sendInvite = Boolean(body.sendInvite)
       kratosBody = {
         schema_id: 'default',
@@ -146,7 +179,27 @@ export class AdminController {
         traits: { email: body.email as string, ...(body.name ? { name: body.name as string } : {}) },
       } as KratosIdentityCreate
     } else {
-      kratosBody = body as KratosIdentityCreate
+      // Full Kratos body. metadata_admin.groups is authoritative membership and
+      // must not be set on this generic create path — extract it so it goes
+      // through the hardened grant gate below, then strip it from the create body.
+      kratosBody = { ...(body as KratosIdentityCreate) }
+      const meta = (kratosBody as Record<string, unknown>).metadata_admin as Record<string, unknown> | undefined
+      if (meta && 'groups' in meta) {
+        requestedGroups = meta.groups as string[] | undefined
+        const { groups: _drop, ...rest } = meta
+        ;(kratosBody as Record<string, unknown>).metadata_admin = rest
+      }
+    }
+
+    // Base `users` confers nothing → no grant check (Kratos' default resolves an
+    // ungrouped identity to `users` anyway). Any other group must clear the same
+    // super_admin + MFA + validation gate as PUT /users/:email/groups.
+    const desiredGroups = requestedGroups && requestedGroups.length > 0 ? requestedGroups : ['users']
+    const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
+
+    // Validate group existence BEFORE creating so a bad request never orphans a user.
+    if (needsGrantCheck) {
+      await rbacService.validateGroups(desiredGroups)
     }
 
     const identity = await kratosService.createIdentity(kratosBody)
@@ -156,13 +209,27 @@ export class AdminController {
     // it, so bust stats unconditionally.
     rbacService.invalidateDirectoryStats().catch(() => {})
 
-    // Set groups if provided
-    if (groups && groups.length > 0) {
-      try {
-        await kratosService.updateUserGroups(identity.traits?.email as string, groups)
-        rbacService.notifyBindingsChanged('user_created', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
-      } catch (err) {
-        request.log.warn({ err, id: identity.id }, 'Created user but failed to set groups')
+    // Assign requested groups through the SAME containment/MFA guard as the
+    // group-assign endpoint. A blocked grant rolls the just-created identity
+    // back so a refused privilege escalation can never strand a half-provisioned
+    // user (mirrors organization-user.controller.createUser).
+    if (needsGrantCheck) {
+      const grant = await userGroupsService.applyGroupUpdate({
+        identity: {
+          id: identity.id,
+          email: identity.traits?.email as string,
+          organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
+        },
+        newGroups: desiredGroups,
+        actor: { email: request.userContext?.email, ip: request.ip },
+        privilegePolicy: { kind: 'super_admin_required' },
+        auditEventType: 'user.groups_changed',
+      })
+      if (!grant.ok) {
+        await kratosService.deleteIdentity(identity.id).catch((err) => {
+          request.log.error({ err, id: identity.id }, 'Failed to roll back user after a blocked group assignment')
+        })
+        return reply.status(grant.status).send(grant.body)
       }
     }
 
@@ -180,7 +247,7 @@ export class AdminController {
       type: 'user.created',
       actor: { email: request.userContext?.email, ip: request.ip },
       target: { type: 'user', id: identity.id },
-      details: { email: identity.traits?.email, groups, sendInvite },
+      details: { email: identity.traits?.email, groups: desiredGroups, sendInvite },
       source: 'jinbe-api',
     }).catch(() => {})
     notificationService.emit({
@@ -204,12 +271,26 @@ export class AdminController {
     const { id } = request.params
     const { metadata_public, metadata_admin } = request.body
     const current = await kratosService.getIdentity(id)
+    const currentGroups = (current.metadata_admin as Record<string, unknown> | undefined)?.groups as string[] | undefined
+
+    // Group membership is authoritative and only mutable via the hardened group
+    // endpoint. Refuse an attempt to change it; strip a no-op `groups` key so the
+    // merge below preserves the current membership rather than this write setting it.
+    let adminToMerge = metadata_admin
+    if (metadata_admin !== undefined && 'groups' in metadata_admin) {
+      if (!sameGroups(metadata_admin.groups, currentGroups)) {
+        return reply.status(422).send(GROUPS_NOT_MUTABLE_HERE)
+      }
+      const { groups: _drop, ...rest } = metadata_admin
+      adminToMerge = rest
+    }
+
     const identity = await kratosService.updateIdentity(id, {
       metadata_public: metadata_public !== undefined
         ? { ...(current.metadata_public as Record<string, unknown> ?? {}), ...metadata_public }
         : current.metadata_public,
-      metadata_admin: metadata_admin !== undefined
-        ? { ...(current.metadata_admin as Record<string, unknown> ?? {}), ...metadata_admin }
+      metadata_admin: adminToMerge !== undefined
+        ? { ...(current.metadata_admin as Record<string, unknown> ?? {}), ...adminToMerge }
         : current.metadata_admin,
     } as KratosIdentityUpdate)
     if (metadata_admin !== undefined) {
@@ -270,8 +351,29 @@ export class AdminController {
     reply: FastifyReply
   ) {
     const { id } = request.params
-    const identity = await kratosService.updateIdentity(id, request.body)
-    if ((request.body as Record<string, unknown>).metadata_admin !== undefined) {
+    const body = { ...(request.body as Record<string, unknown>) }
+
+    // This is a FULL-REPLACE write (Kratos PUT). metadata_admin.groups is the
+    // authoritative membership source; a caller must be able to neither set it
+    // (escalation) nor accidentally wipe it (a replace that omits it). Read the
+    // current groups, refuse any attempt to change them, and pin them to their
+    // current value so the replace preserves membership. Group changes go only
+    // through PUT /users/:email/groups.
+    const current = await kratosService.getIdentity(id)
+    const currentGroups = (current.metadata_admin as Record<string, unknown> | undefined)?.groups as string[] | undefined
+    const incomingMeta = body.metadata_admin as Record<string, unknown> | undefined
+    if (incomingMeta && 'groups' in incomingMeta && !sameGroups(incomingMeta.groups, currentGroups)) {
+      return reply.status(422).send(GROUPS_NOT_MUTABLE_HERE)
+    }
+    if (currentGroups !== undefined) {
+      body.metadata_admin = { ...(incomingMeta ?? {}), groups: currentGroups }
+    } else if (incomingMeta && 'groups' in incomingMeta) {
+      const { groups: _drop, ...rest } = incomingMeta
+      body.metadata_admin = rest
+    }
+
+    const identity = await kratosService.updateIdentity(id, body as KratosIdentityUpdate)
+    if (body.metadata_admin !== undefined) {
       kratosService.invalidateGroupsCache()
       rbacService.notifyBindingsChanged('metadata_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
     }

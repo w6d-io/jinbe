@@ -66,6 +66,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
     getAvailableGroups: vi.fn().mockResolvedValue([]),
     validateGroups: vi.fn().mockResolvedValue(undefined),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
+    invalidateDirectoryStats: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -352,6 +353,77 @@ describe('AdminController', () => {
       expect(kratosService.updateIdentity).toHaveBeenCalledWith(
         '550e8400-e29b-41d4-a716-446655440001',
         updateData
+      )
+    })
+  })
+
+  // Regression guard for the privilege-escalation cluster: metadata_admin.groups
+  // is the authoritative membership source, so the generic identity writers must
+  // never set/alter it. Group changes go only through the hardened group endpoint
+  // (PUT /users/:email/groups → applyGroupUpdate: super_admin + can_grant + MFA).
+  describe('groups are immutable on generic user writers (privilege-escalation guard)', () => {
+    const ID = '550e8400-e29b-41d4-a716-446655440001'
+
+    beforeEach(() => {
+      mockState.identities = [
+        createKratosIdentity({
+          id: ID,
+          traits: { email: 'victim@example.com', name: 'Victim' },
+          state: 'active',
+          metadata_admin: { groups: ['users'] },
+        } as Parameters<typeof createKratosIdentity>[0]),
+      ]
+    })
+
+    it('updateUser refuses an attempt to change metadata_admin.groups (422, no write)', async () => {
+      const body = { metadata_admin: { groups: ['super_admins'] } }
+      const request = createMockRequest({ params: { id: ID }, body })
+      const reply = createMockReply()
+
+      await controller.updateUser(request as FastifyRequest<{ Params: { id: string }; Body: typeof body }>, reply)
+
+      expect(reply._statusCode).toBe(422)
+      expect((reply._body as { error?: string }).error).toBe('groups_not_mutable_here')
+      expect(kratosService.updateIdentity).not.toHaveBeenCalled()
+    })
+
+    it('updateUser preserves current groups when the (full-replace) body omits them', async () => {
+      const body = { traits: { email: 'victim@example.com', name: 'Renamed' } }
+      const request = createMockRequest({ params: { id: ID }, body })
+      const reply = createMockReply()
+
+      await controller.updateUser(request as FastifyRequest<{ Params: { id: string }; Body: typeof body }>, reply)
+
+      expect(kratosService.updateIdentity).toHaveBeenCalledWith(
+        ID,
+        expect.objectContaining({ metadata_admin: { groups: ['users'] } })
+      )
+    })
+
+    it('setUserMetadata refuses an attempt to change metadata_admin.groups (422, no write)', async () => {
+      const body = { metadata_admin: { groups: ['super_admins'] } }
+      const request = createMockRequest({ params: { id: ID }, body })
+      const reply = createMockReply()
+
+      await controller.setUserMetadata(request as FastifyRequest<{ Params: { id: string }; Body: typeof body }>, reply)
+
+      expect(reply._statusCode).toBe(422)
+      expect((reply._body as { error?: string }).error).toBe('groups_not_mutable_here')
+      expect(kratosService.updateIdentity).not.toHaveBeenCalled()
+    })
+
+    it('setUserMetadata allows non-group admin metadata and preserves current groups', async () => {
+      const body = { metadata_admin: { note: 'hello' } }
+      const request = createMockRequest({ params: { id: ID }, body })
+      const reply = createMockReply()
+
+      await controller.setUserMetadata(request as FastifyRequest<{ Params: { id: string }; Body: typeof body }>, reply)
+
+      expect(kratosService.updateIdentity).toHaveBeenCalledWith(
+        ID,
+        expect.objectContaining({
+          metadata_admin: expect.objectContaining({ groups: ['users'], note: 'hello' }),
+        })
       )
     })
   })

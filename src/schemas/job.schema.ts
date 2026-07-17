@@ -24,8 +24,14 @@ export type JobInfo = z.infer<typeof jobInfoSchema>
 export const createJobRequestSchema = z.object({
     database_type: z.enum(['postgresql', 'mongodb']),
     action: z.enum(['backup', 'restore']),
-    date: z.coerce.date().optional(), // Optional - defaults to current date for backup, required for restore
+    date: z.coerce.date().optional(), // Optional for backup (defaults to now); REQUIRED for restore.
     bases: z.array(databaseSelectedSchema),
+}).refine((d) => d.action !== 'restore' || d.date !== undefined, {
+    // A restore must reference an EXISTING backup snapshot. Without this, an
+    // omitted date silently defaulted to "now" and the restore targeted a
+    // snapshot that never existed. Reject at validation instead. (finding #12)
+    message: 'date is required for a restore job — it must reference an existing backup timestamp',
+    path: ['date'],
 })
 
 export type CreateJobRequest = z.infer<typeof createJobRequestSchema>

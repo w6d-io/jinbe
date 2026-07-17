@@ -10,6 +10,12 @@ vi.mock('../../../config/index.js', () => ({
   },
 }))
 
+// Redis mutex is infrastructure — passthrough so these units need no Redis.
+// (removeGroupFromAllUsers now serializes each user write under it.)
+vi.mock('../../../services/redis-lock.js', () => ({
+  withRedisLock: (_name: string, fn: () => unknown) => fn(),
+}))
+
 import { KratosService, KratosApiError } from '../../../services/kratos.service.js'
 
 describe('KratosService - User Groups Management', () => {
@@ -237,7 +243,13 @@ describe('KratosService - User Groups Management', () => {
         json: () => Promise.resolve(identities),
       })
 
-      // updateUserGroups for user1 (find + get + update)
+      // user1: authoritative re-read under the per-user lock, then
+      // updateUserGroups (find + get + update)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([identities[0]]),
+      })
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -254,7 +266,12 @@ describe('KratosService - User Groups Management', () => {
         json: () => Promise.resolve({ ...identities[0], metadata_admin: { groups: ['users'] } }),
       })
 
-      // updateUserGroups for user2 (find + get + update)
+      // user2: re-read + updateUserGroups (find + get + update)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([identities[1]]),
+      })
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -296,7 +313,13 @@ describe('KratosService - User Groups Management', () => {
         json: () => Promise.resolve(identities),
       })
 
-      // updateUserGroups calls
+      // Authoritative re-read under the per-user lock
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([identities[0]]),
+      })
+      // updateUserGroups calls (find + get + update)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -315,8 +338,9 @@ describe('KratosService - User Groups Management', () => {
 
       await service.removeGroupFromAllUsers('devs')
 
-      // Verify update was called with ['users'] as default
-      const putCall = mockFetch.mock.calls[3]
+      // Verify update was called with ['users'] as default (PUT is the 5th
+      // fetch now: getAll, re-read, find, get, PUT).
+      const putCall = mockFetch.mock.calls[4]
       const body = JSON.parse(putCall[1].body)
       expect(body.metadata_admin.groups).toEqual(['users'])
     })

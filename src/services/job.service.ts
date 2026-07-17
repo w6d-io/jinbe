@@ -19,7 +19,13 @@ export class JobService {
         data: CreateJobRequest
     ): Promise<true | string> {
         const clusterName = await this.getClusterNameById(clusterId)
-        // Default to current date if not provided (typically for backup)
+        // Restore must target an existing snapshot — never fabricate "now" for it
+        // (the schema already rejects a dateless restore; this is defense in depth
+        // for any non-HTTP caller). Backup legitimately defaults to the current
+        // date. See audit finding #12.
+        if (data.action === 'restore' && !data.date) {
+            return 'A restore job requires an explicit date referencing an existing backup snapshot'
+        }
         const jobDate = data.date ?? new Date()
         return createJob(
             data.database_type,
