@@ -317,19 +317,73 @@ class RedisRbacRepository {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ORG → SERVICE MAP (organization UUID → RBAC service name)
+  // ORG → SERVICE MAP (organization UUID → RBAC service bundle)
+  //
+  // Storage: Redis hash rbac:org_service_map, value = JSON array of service
+  // names (e.g. '["kuma","fleet"]'). An org can bundle more than one service.
+  //
+  // BACKWARD COMPAT: pre-migration values are a bare scalar service name
+  // (e.g. 'kuma'). Service names match ^[a-z0-9_]+$ so a legacy scalar can
+  // never be a JSON array literal. Reads normalize BOTH shapes to string[];
+  // writes always emit the JSON array. This lets pre-migration data keep
+  // serving correctly while jinbe emits arrays going forward.
   // ═══════════════════════════════════════════════════════════
 
-  async getOrgServiceMap(): Promise<Record<string, string>> {
-    return this.redis.hgetall('rbac:org_service_map')
+  /**
+   * Normalize a stored hash value to a service bundle (string[]).
+   *   - new format  → JSON array of strings   → the array (filtered to strings)
+   *   - legacy scalar → bare service name text → [name]
+   * A value that is valid JSON but not an array (a bare number/bool/null that
+   * happened to parse) is treated as a legacy scalar, not silently dropped.
+   */
+  private normalizeServiceBundle(raw: string): string[] {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
+      }
+      // Parsed but not an array → fall through to legacy-scalar handling.
+    } catch {
+      // Not JSON at all → legacy scalar service name.
+    }
+    return raw ? [raw] : []
   }
 
+  async getOrgServiceMap(): Promise<Record<string, string[]>> {
+    const raw = await this.redis.hgetall('rbac:org_service_map')
+    const out: Record<string, string[]> = {}
+    for (const [org, value] of Object.entries(raw)) {
+      out[org] = this.normalizeServiceBundle(value)
+    }
+    return out
+  }
+
+  /**
+   * The primary (first) service of an org's bundle, or the legacy scalar.
+   * Returns null when the org is unmapped or its bundle is empty. Callers that
+   * resolve "which service's RBAC governs this org" keep single-service
+   * behaviour: a one-element bundle resolves exactly as the old scalar did.
+   */
   async getServiceForOrg(organizationId: string): Promise<string | null> {
-    return this.redis.hget('rbac:org_service_map', organizationId)
+    const raw = await this.redis.hget('rbac:org_service_map', organizationId)
+    if (raw === null) return null
+    const bundle = this.normalizeServiceBundle(raw)
+    return bundle[0] ?? null
   }
 
-  async setOrgServiceMapping(organizationId: string, serviceName: string): Promise<void> {
-    await this.redis.hset('rbac:org_service_map', organizationId, serviceName)
+  /**
+   * Replace the org's service bundle with exactly `services` (deduped, order
+   * preserved). Always writes the new JSON-array format. An empty bundle
+   * removes the mapping entirely (callers should prefer deleteOrgServiceMapping
+   * for that intent; the route layer rejects empty bundles up front).
+   */
+  async setOrgServiceMapping(organizationId: string, services: string[]): Promise<void> {
+    const bundle = [...new Set(services.filter(s => typeof s === 'string' && s.length > 0))]
+    if (bundle.length === 0) {
+      await this.redis.hdel('rbac:org_service_map', organizationId)
+      return
+    }
+    await this.redis.hset('rbac:org_service_map', organizationId, JSON.stringify(bundle))
   }
 
   async deleteOrgServiceMapping(organizationId: string): Promise<boolean> {

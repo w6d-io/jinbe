@@ -389,7 +389,7 @@ export class RbacService {
     await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
   }
 
-  private async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string }, actor?: { email?: string; ip?: string }): Promise<void> {
+  private async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: { email?: string; ip?: string }): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
@@ -1095,17 +1095,22 @@ export class RbacService {
   // Org → Service Map
   // ===========================================================================
 
-  async getOrgServiceMap(): Promise<Record<string, string>> {
+  async getOrgServiceMap(): Promise<Record<string, string[]>> {
     return redisRbacRepository.getOrgServiceMap()
   }
 
-  async setOrgServiceMapping(organizationId: string, serviceName: string, actor?: { email?: string; ip?: string }): Promise<void> {
-    const serviceExists = await redisRbacRepository.serviceExists(serviceName)
-    if (!serviceExists) {
-      throw Object.assign(new Error(`Service '${serviceName}' does not exist`), { statusCode: 400 })
+  async setOrgServiceMapping(organizationId: string, services: string[], actor?: { email?: string; ip?: string }): Promise<void> {
+    // Fail-closed: validate EVERY service in the bundle exists before writing.
+    // Reject the whole set if any is unknown rather than mapping an org to a
+    // phantom service (which would resolve to no route_map / no roles in OPA).
+    for (const serviceName of services) {
+      const serviceExists = await redisRbacRepository.serviceExists(serviceName)
+      if (!serviceExists) {
+        throw Object.assign(new Error(`Service '${serviceName}' does not exist`), { statusCode: 400 })
+      }
     }
-    await redisRbacRepository.setOrgServiceMapping(organizationId, serviceName)
-    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, service: serviceName }, actor)
+    await redisRbacRepository.setOrgServiceMapping(organizationId, services)
+    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, services }, actor)
   }
 
   async deleteOrgServiceMapping(organizationId: string, actor?: { email?: string; ip?: string }): Promise<void> {

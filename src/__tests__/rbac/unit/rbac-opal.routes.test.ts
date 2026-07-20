@@ -98,10 +98,10 @@ describe('rbacOpalRoutes — OPAL public data endpoints', () => {
   })
 
   describe('GET /opal/org_service_map', () => {
-    it('returns the raw Redis org→service hash', async () => {
+    it('returns the normalized org→service bundle hash (values are arrays)', async () => {
       const map = {
-        '11111111-1111-1111-1111-111111111111': 'service_a',
-        '22222222-2222-2222-2222-222222222222': 'service_b',
+        '11111111-1111-1111-1111-111111111111': ['service_a'],
+        '22222222-2222-2222-2222-222222222222': ['service_b', 'service_c'],
       }
       mocks.getOrgServiceMap.mockResolvedValueOnce(map)
 
