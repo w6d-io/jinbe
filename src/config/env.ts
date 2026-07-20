@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import dotenv from 'dotenv'
+import { MIN_ADMIN_PASSWORD_LENGTH, WEAK_ADMIN_PASSWORD_PREFIX } from './admin-password.js'
 
 // Load environment variables
 dotenv.config()
@@ -13,7 +14,7 @@ const fqdnSchema = z
   })
 
 // Environment schema with validation
-const envSchema = z.object({
+export const envSchema = z.object({
   // Server
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
@@ -127,9 +128,21 @@ const envSchema = z.object({
   // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
   OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
-  // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts)
+  // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts).
+  // ADMIN_PASSWORD seeds the first super_admins identity: it must be at least
+  // MIN_ADMIN_PASSWORD_LENGTH chars and must not start with a well-known weak
+  // prefix. Kept in sync with the seed-admin runtime guard via the shared policy
+  // in ./admin-password.ts. Validated whenever present; the first-run presence
+  // check lives in src/cli/bootstrap.ts.
   ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(12).optional(),
+  ADMIN_PASSWORD: z
+    .string()
+    .min(MIN_ADMIN_PASSWORD_LENGTH, `ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`)
+    .refine((v) => !WEAK_ADMIN_PASSWORD_PREFIX.test(v), {
+      message:
+        'ADMIN_PASSWORD starts with a well-known weak prefix (changeme/password/admin/123)',
+    })
+    .optional(),
   ADMIN_NAME: z.string().min(1).default('Admin'),
 
   // Reset path guards (CLI only). Both must be set; reset only if RESET_CONFIRM matches the running image SHA.

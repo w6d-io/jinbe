@@ -197,7 +197,7 @@ The full list lives in [.env.example](./.env.example) — every variable is docu
 
 ```bash
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=<at-least-12-characters>
+ADMIN_PASSWORD=<at-least-16-characters-no-weak-prefix>
 ADMIN_NAME=Admin
 ```
 
@@ -329,7 +329,7 @@ That's it. Every other URL is templated from the Helm release name + namespace +
 | Variable | Default | Notes |
 |---|---|---|
 | `ADMIN_EMAIL` | unset | If set, creates a Kratos identity with this email on first boot. |
-| `ADMIN_PASSWORD` | unset | ≥ 12 chars. Required if `ADMIN_EMAIL` is set. |
+| `ADMIN_PASSWORD` | unset | ≥ 16 chars, must not start with a weak prefix (`changeme`/`password`/`admin`/`123`). Required if `ADMIN_EMAIL` is set. Bootstrap refuses to seed a weak value. |
 | `ADMIN_NAME` | `Admin` | Display name for the bootstrap admin. |
 
 #### Auto-computed by the chart
@@ -443,7 +443,7 @@ jinbe:
   env:
     ENCRYPTION_KEY: ""               # REQUIRED — ≥ 32 chars
     ADMIN_EMAIL: admin@mycorp.com    # optional — bootstrap admin
-    ADMIN_PASSWORD: ""               # ≥ 12 chars
+    ADMIN_PASSWORD: ""               # ≥ 16 chars, no weak prefix (changeme/password/admin/123)
     ADMIN_NAME: Admin
     DATABASE_URL: ""                 # optional — only for /clusters, /databases, /backups
     LOG_LEVEL: info
