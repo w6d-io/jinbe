@@ -355,13 +355,16 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 
   fastify.get('/org-service-map', {
     schema: {
-      description: 'List all organization → service name mappings.',
+      description: 'List all organization → service bundle mappings (each org maps to an array of service names).',
       tags: ['rbac'],
       response: {
         200: {
           type: 'object',
           properties: {
-            mappings: { type: 'object', additionalProperties: { type: 'string' } },
+            mappings: {
+              type: 'object',
+              additionalProperties: { type: 'array', items: { type: 'string' } },
+            },
           },
         },
         401: unauthorizedResponseSchema,
@@ -370,16 +373,20 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.getOrgServiceMap.bind(rbacController))
 
-  fastify.post('/org-service-map', {
+  fastify.put('/org-service-map', {
     schema: {
-      description: 'Create or update an organization → service name mapping.',
+      description: 'Set an organization → service bundle mapping. Replaces the org\'s entire bundle with the provided (non-empty) list of service names.',
       tags: ['rbac'],
       body: {
         type: 'object',
-        required: ['organizationId', 'serviceName'],
+        required: ['organizationId', 'services'],
         properties: {
           organizationId: { type: 'string', format: 'uuid' },
-          serviceName: { type: 'string', pattern: '^[a-z0-9_]+$' },
+          services: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'string', pattern: '^[a-z0-9_]+$' },
+          },
         },
       },
       response: {
@@ -393,7 +400,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/org-service-map/:organizationId', {
     schema: {
-      description: 'Delete an organization → service name mapping.',
+      description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',
       tags: ['rbac'],
       params: { type: 'object', required: ['organizationId'], properties: { organizationId: { type: 'string', format: 'uuid' } } },
       response: {
@@ -523,7 +530,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     return reply.send(groups)
   })
 
-  // Org → service map: { organizationId: serviceName } (feeds data.org_service_map)
+  // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
+  // Values are service bundles (arrays). Legacy scalar values in Redis are
+  // normalized to single-element arrays by the repository before serving.
   fastify.get('/opal/org_service_map', async (_request, reply) => {
     const map = await redisRbacRepository.getOrgServiceMap()
     return reply.send(map)

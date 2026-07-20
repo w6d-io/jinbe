@@ -81,7 +81,7 @@ describe('meRoutes — GET /me/organizations', () => {
 
   it('returns ALL mapped orgs with scope=all for a global super_admin', async () => {
     vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(true)
-    vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({ 'org-a': 'kuma', 'org-b': 'fleet' })
+    vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({ 'org-a': ['kuma'], 'org-b': ['fleet'] })
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'super@b.io' } }), reply)
 

@@ -239,15 +239,18 @@ export class RbacController {
   }
 
   async setOrgServiceMapping(
-    request: FastifyRequest<{ Body: { organizationId: string; serviceName: string } }>,
+    request: FastifyRequest<{ Body: { organizationId: string; services: string[] } }>,
     reply: FastifyReply,
   ) {
+    // Set-bundle semantics: the request replaces the org's ENTIRE service
+    // bundle with `services`. Require at least one service — clearing the
+    // mapping is DELETE /org-service-map/:organizationId.
     const body = z.object({
       organizationId: z.string().uuid(),
-      serviceName: z.string().min(1).regex(/^[a-z0-9_]+$/),
+      services: z.array(z.string().min(1).regex(/^[a-z0-9_]+$/)).min(1),
     }).parse(request.body)
-    await rbacService.setOrgServiceMapping(body.organizationId, body.serviceName, this.actor(request))
-    return reply.status(201).send({ success: true, message: `Mapped ${body.organizationId} → ${body.serviceName}` })
+    await rbacService.setOrgServiceMapping(body.organizationId, body.services, this.actor(request))
+    return reply.status(201).send({ success: true, message: `Mapped ${body.organizationId} → [${body.services.join(', ')}]` })
   }
 
   async deleteOrgServiceMapping(
