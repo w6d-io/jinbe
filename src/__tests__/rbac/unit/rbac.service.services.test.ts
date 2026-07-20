@@ -145,4 +145,33 @@ describe('RbacService - Services', () => {
       await expect(service.getServiceRoles('nonexistent')).rejects.toThrow('Service not found')
     })
   })
+
+  describe('org → service bundle map', () => {
+    const ORG = '11111111-1111-1111-1111-111111111111'
+
+    it('sets a multi-service bundle when every service exists', async () => {
+      await service.setOrgServiceMapping(ORG, ['jinbe', 'kuma'])
+      expect(await service.getOrgServiceMap()).toEqual({ [ORG]: ['jinbe', 'kuma'] })
+    })
+
+    it('fails closed: rejects the whole bundle if ANY service is unknown', async () => {
+      await expect(
+        service.setOrgServiceMapping(ORG, ['jinbe', 'ghost']),
+      ).rejects.toThrow(/Service 'ghost' does not exist/)
+      // Nothing is persisted — validation runs before the single write.
+      expect(await service.getOrgServiceMap()).toEqual({})
+    })
+
+    it('normalizes a legacy scalar value already in Redis to a bundle', async () => {
+      await redisMock.hset('rbac:org_service_map', ORG, 'kuma') // pre-migration shape
+      expect(await service.getOrgServiceMap()).toEqual({ [ORG]: ['kuma'] })
+    })
+
+    it('deleteOrgServiceMapping clears the bundle and 404s when absent', async () => {
+      await service.setOrgServiceMapping(ORG, ['kuma'])
+      await service.deleteOrgServiceMapping(ORG)
+      expect(await service.getOrgServiceMap()).toEqual({})
+      await expect(service.deleteOrgServiceMapping(ORG)).rejects.toThrow(/No mapping found/)
+    })
+  })
 })

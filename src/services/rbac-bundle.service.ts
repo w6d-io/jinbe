@@ -10,7 +10,9 @@ export interface AuthBundle {
     roles: Record<string, FlatRolesMap>
     routeMaps: Record<string, RouteMap>
     oathkeeperRules: OathkeeperRule[]
-    orgServiceMap?: Record<string, string>
+    // Org → service bundle. Exported as arrays; legacy bundles that stored a
+    // scalar per org are tolerated on import (see import() below).
+    orgServiceMap?: Record<string, string[]>
   }
 }
 
@@ -77,8 +79,11 @@ class RbacBundleService {
     await redisRbacRepository.setAccessRules(oathkeeperRules)
 
     if (orgServiceMap && Object.keys(orgServiceMap).length > 0) {
-      for (const [orgId, svcName] of Object.entries(orgServiceMap)) {
-        await redisRbacRepository.setOrgServiceMapping(orgId, svcName)
+      for (const [orgId, services] of Object.entries(orgServiceMap)) {
+        // Tolerate a legacy bundle whose values are a scalar service name
+        // (pre-migration export) as well as the current array shape.
+        const bundle = Array.isArray(services) ? services : [services as unknown as string]
+        await redisRbacRepository.setOrgServiceMapping(orgId, bundle)
       }
     }
 
