@@ -1,4 +1,5 @@
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
+import { assertStrongAdminPassword } from '../config/admin-password.js'
 import type { BootstrapAdmin, BootstrapLogger } from './types.js'
 
 /**
@@ -17,6 +18,14 @@ export async function seedDefaultAdmin(
   admin: BootstrapAdmin,
   logger: BootstrapLogger,
 ): Promise<{ created: boolean }> {
+  // Fail-closed, defence-in-depth: never seed an admin identity with a
+  // missing, too-short, or weak-prefix password — even if the env schema was
+  // loosened or `admin` config was assembled outside the bootstrap CLI. This
+  // throws WeakAdminPasswordError before any Kratos call is made, so a weak
+  // credential can never be written. Kept in sync with the env-layer rule via
+  // the shared policy in ../config/admin-password.ts.
+  assertStrongAdminPassword(admin.password)
+
   try {
     const { identities } = await kratosService.listIdentities(1, undefined, admin.email)
     if (identities.length > 0) {
