@@ -78,7 +78,7 @@ export async function seedDelegation(logger: BootstrapLogger): Promise<{ seeded:
   }
 
   // Global admin tier — distinct from `super_admins` (global super_admin). Binds
-  // the global `admin` role (resolves to "*"). Replaces the old `stairfleet_admin`.
+  // the global `admin` role (resolves to "*").
   if (!(await redisRbacRepository.getGroup('platform-admins'))) {
     await redisRbacRepository.setGroup('platform-admins', { global: ['admin'] })
     await redisRbacRepository.setGroupMetadata('platform-admins', {
