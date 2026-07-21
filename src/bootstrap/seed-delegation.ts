@@ -88,26 +88,10 @@ export async function seedDelegation(logger: BootstrapLogger): Promise<{ seeded:
     seeded.push('group:platform-admins')
   }
 
-  // ── Single service-agnostic org-admin FLAG group (flag-based model) ──
-  // Membership in this ONE group makes a user an admin of the org(s) they belong
-  // to, scoped to each org's service bundle — enforced ENTIRELY in policy
-  // (rbac.is_org_admin + rbac.delegation.manageable_orgs). It carries an EMPTY
-  // binding, so it confers ZERO service permissions: it can never be granted
-  // through the org endpoint (0 perms → not bundle-containable in can_grant), so
-  // an org admin can never promote a peer. The NAME must stay in lock-step with
-  // the rego constant `rbac.org_admin_group`. Marked system:true so it cannot be
-  // deleted / structurally mutated except by a super_admin (rbac:write_system);
-  // assigning it to a user is gated to super_admin in userGroupsService.
-  const ORG_ADMIN_FLAG_GROUP = 'org_admins'
-  if (!(await redisRbacRepository.getGroup(ORG_ADMIN_FLAG_GROUP))) {
-    await redisRbacRepository.setGroup(ORG_ADMIN_FLAG_GROUP, {})
-    await redisRbacRepository.setGroupMetadata(ORG_ADMIN_FLAG_GROUP, {
-      system: true,
-      description:
-        "Org-admin flag: administers the org(s) the member belongs to, scoped to each org's service bundle. Assigned by super_admins only.",
-    })
-    seeded.push(`group:${ORG_ADMIN_FLAG_GROUP}`)
-  }
+  // NOTE: org-admin is NOT a group. It is a PER-ORG roster (data.org_admin_map,
+  // Redis hash rbac:org_admins, org → [admin emails]) set via the super_admin +
+  // step-up gated PUT /api/admin/rbac/org-admin-map. The former single
+  // `org_admins` flag group is retired — nothing seeds it here.
 
   if (seeded.length > 0) {
     await redisRbacRepository.invalidateBundleEtag()

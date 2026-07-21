@@ -67,23 +67,13 @@ describe('seedDelegation', () => {
     expect(store.groups.get('platform-admins')).toEqual({ global: ['admin'] })
     expect(store.groupMeta.get('platform-admins')).toMatchObject({ system: true })
 
-    // Single service-agnostic org-admin flag group: EMPTY binding (confers no
-    // service perms — its power is positional, granted in policy) + system:true
-    // so only a super_admin can delete/structurally mutate it.
-    expect(store.groups.get('org_admins')).toEqual({})
-    expect(store.groupMeta.get('org_admins')).toMatchObject({ system: true })
+    // org-admin is NOT a group anymore — it is a per-org roster (data.org_admin_map).
+    expect(store.groups.has('org_admins')).toBe(false)
 
-    // 2 org_admin roles + 4 per-service groups + platform-admins + org_admins
-    expect(seeded.length).toBe(8)
-    expect(seeded).toContain('group:org_admins')
+    // 2 org_admin roles + 4 per-service groups + platform-admins
+    expect(seeded.length).toBe(7)
     expect(seeded).toContain('group:platform-admins')
-  })
-
-  it('org_admins flag is idempotent + keeps its empty binding on re-run', async () => {
-    await seedDelegation(logger)
-    const { seeded } = await seedDelegation(logger)
-    expect(seeded).toEqual([])
-    expect(store.groups.get('org_admins')).toEqual({})
+    expect(seeded).not.toContain('group:org_admins')
   })
 
   it('preserves existing service roles (additive, not a replace)', async () => {

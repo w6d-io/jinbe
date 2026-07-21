@@ -1124,6 +1124,19 @@ export class RbacService {
     await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor)
   }
 
+  async getOrgAdminMap(): Promise<Record<string, string[]>> {
+    return redisRbacRepository.getOrgAdminMap()
+  }
+
+  // Replace an org's admin roster with exactly `admins`. Membership is NOT
+  // re-validated here on purpose: the policy's manageable_orgs requires the admin
+  // to also be a MEMBER of the org (data.bindings.user_organizations), so a
+  // rostered non-member is inert — they gain nothing until they're a member.
+  async setOrgAdmins(organizationId: string, admins: string[], actor?: { email?: string; ip?: string }): Promise<void> {
+    await redisRbacRepository.setOrgAdmins(organizationId, admins)
+    await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor)
+  }
+
   // ===========================================================================
   // Kratos Bindings
   // ===========================================================================

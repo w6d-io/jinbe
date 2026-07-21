@@ -281,3 +281,32 @@ export async function requireSuperAdmin(
     'Super admin access granted'
   )
 }
+
+/**
+ * Step-up gate (R2), reused by the org-admin roster endpoint: the actor must
+ * hold a SECOND FACTOR proven within the last 15 minutes (AAL2 + a fresh
+ * authenticated_at from the Kratos session, surfaced on request.userContext).
+ * Returns 422 reauth_required (status pinned to 422 so cluster ingress does not
+ * strip the body) when the factor is absent or stale. Fail-closed on missing
+ * AAL/timestamp. The dev-bypass identity is stamped AAL2, so local dev passes.
+ */
+const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
+export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
+  const aal = request.userContext?.aal
+  const authAt = request.userContext?.authenticatedAt
+  const authedMs = authAt ? new Date(authAt).getTime() : 0
+  const fresh =
+    aal === 'aal2' &&
+    !!authedMs &&
+    !Number.isNaN(authedMs) &&
+    Date.now() - authedMs <= STEP_UP_MAX_AGE_MS
+  if (!fresh) {
+    return reply.status(422).send({
+      error: 'reauth_required',
+      message:
+        'This action requires a recent second factor. Re-verify two-factor authentication (TOTP) within the last 15 minutes and retry.',
+      stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000 },
+      hint: 'Re-verify at /login?aal=aal2&refresh=true, then retry.',
+    })
+  }
+}
