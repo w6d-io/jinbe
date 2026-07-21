@@ -53,7 +53,9 @@ const IDENTITY: ResolvedIdentity = {
   organizationId: 'org-1',
 }
 
-const ACTOR = { email: 'actor@example.com', ip: '127.0.0.1' }
+// A freshly-2FA'd actor: passes the R2 step-up gate so the pre-existing privilege
+// tests exercise their intended paths. Step-up-specific cases override this.
+const ACTOR = { email: 'actor@example.com', ip: '127.0.0.1', aal: 'aal2', authenticatedAt: new Date() }
 
 describe('userGroupsService.applyGroupUpdate — happy path', () => {
   beforeEach(() => {
@@ -146,6 +148,67 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
     expect(rbacService.isAdminPowerGroup).not.toHaveBeenCalled()
     expect(rbacService.findPrivilegedGroupRequiringMFA).not.toHaveBeenCalled()
     expect(kratosService.updateUserGroups).toHaveBeenCalled()
+  })
+})
+
+describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true) // target group is privileged
+    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+  })
+
+  const assignPrivileged = (actor: Record<string, unknown>) =>
+    userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['admins'],
+      actor,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+  it('blocks a privileged assignment when the actor is only AAL1 (no second factor)', async () => {
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.status).toBe(422)
+      expect(result.body).toMatchObject({ error: 'reauth_required' })
+    }
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('blocks when the AAL2 factor is older than the 15-minute step-up window', async () => {
+    const stale = new Date(Date.now() - 20 * 60 * 1000)
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: stale })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.body).toMatchObject({ error: 'reauth_required' })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when AAL is absent', async () => {
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.body).toMatchObject({ error: 'reauth_required' })
+  })
+
+  it('allows a privileged assignment with a fresh AAL2 factor', async () => {
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: new Date() })
+    expect(result.ok).toBe(true)
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['admins'])
+  })
+
+  it('does NOT require step-up for a non-privileged change (demotion to base group)', async () => {
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: { email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() }, // AAL1 is fine: nothing gated
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+    expect(result.ok).toBe(true)
   })
 })
 

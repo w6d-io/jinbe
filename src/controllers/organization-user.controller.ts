@@ -116,7 +116,7 @@ export class OrganizationUserController {
       const grant = await userGroupsService.applyGroupUpdate({
         identity: { id: identity.id, email, organizationId },
         newGroups: desiredGroups,
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: {
           kind: 'wildcard_in_org',
           orgId: organizationId,
@@ -253,7 +253,7 @@ export class OrganizationUserController {
     const result = await userGroupsService.applyGroupUpdate({
       identity: { id, email, organizationId },
       newGroups: groups,
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
       privilegePolicy: {
         kind: 'wildcard_in_org',
         orgId: organizationId,

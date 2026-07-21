@@ -49,7 +49,7 @@ function req(body: Record<string, unknown>, permissions: string[] = ['org:manage
     params: { organizationId: ORG },
     body,
     ip: '127.0.0.1',
-    userContext: { email: 'orgadmin@example.com' },
+    userContext: { email: 'orgadmin@example.com', aal: 'aal2', authenticatedAt: new Date() },
     rbacInfo: { email: 'orgadmin@example.com', groups: [], roles: [], permissions },
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   } as unknown as FastifyRequest<{ Params: { organizationId: string }; Body: never }>
@@ -161,7 +161,7 @@ describe('OrganizationUserController.createUser — group assignment', () => {
     expect(userGroupsService.applyGroupUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         privilegePolicy: { kind: 'wildcard_in_org', orgId: ORG },
-        actor: { email: 'orgadmin@example.com', ip: '127.0.0.1' },
+        actor: expect.objectContaining({ email: 'orgadmin@example.com', ip: '127.0.0.1', aal: 'aal2' }),
       })
     )
   })

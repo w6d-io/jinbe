@@ -44,7 +44,9 @@ export type ActorPrivilegePolicy =
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
   newGroups: string[]
-  actor: { email?: string; ip?: string }
+  // `aal` / `authenticatedAt` carry the actor's second-factor state for the R2
+  // step-up gate; sourced from the Kratos-validated session (request.userContext).
+  actor: { email?: string; ip?: string; aal?: string; authenticatedAt?: Date | string }
   privilegePolicy: ActorPrivilegePolicy
   auditEventType: string
   auditExtraDetails?: Record<string, unknown>
@@ -69,6 +71,13 @@ const BASE_GROUP = 'users'
 // 0 perms → not bundle-containable). Name must match the rego constant
 // rbac.org_admin_group.
 const ORG_ADMIN_FLAG_GROUP = 'org_admins'
+
+// R2 — a privilege-gated group assignment requires the ACTOR to have proven a
+// second factor (AAL2) within this window. Time-boxed step-up: a long-lived
+// session cannot keep minting privileged access without re-verifying TOTP. The
+// window matches the operator-chosen 15 minutes; a refresh=true AAL2 login
+// re-stamps `authenticated_at`, resetting it.
+const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 
 /**
  * Shared core of "update a user's groups". Both the global admin endpoint
@@ -147,24 +156,27 @@ class UserGroupsService {
         : []),
     ]
 
+    // Which changes must clear the privilege gate:
+    //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely empty
+    //    base group. The rego enforces single-service containment for ALL
+    //    groups, not just `*`-bearing ones, so gating on isAdminPowerGroup here
+    //    would let a multi-service read group (e.g. a cross-service `viewers`)
+    //    slip the tenant boundary. The base-group exemption is keyed on the
+    //    group actually conferring nothing (isEmptyGroup), not its name, so a
+    //    redefined base group is still put to can_grant — on add AND remove.
+    //  - global (`super_admin_required`): only admin-power groups need the
+    //    super_admin authority check; the endpoint is super_admin-gated.
+    const gated: Array<{ group: string; op: 'add' | 'remove' }> = []
     for (const { group: g, op } of toCheck) {
-      // Which changes must clear the privilege gate:
-      //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely empty
-      //    base group. The rego enforces single-service containment for ALL
-      //    groups, not just `*`-bearing ones, so gating on isAdminPowerGroup here
-      //    would let a multi-service read group (e.g. a cross-service `viewers`)
-      //    slip the tenant boundary. The base-group exemption is keyed on the
-      //    group actually conferring nothing (isEmptyGroup), not its name, so a
-      //    redefined base group is still put to can_grant — on add AND remove.
-      //  - global (`super_admin_required`): only admin-power groups need the
-      //    super_admin authority check; the endpoint is super_admin-gated.
       const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
         ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
         : (await rbacService.isAdminPowerGroup(g)) || g === ORG_ADMIN_FLAG_GROUP
-      if (mustCheck) {
-        const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
-        if (denial) return denial
-      }
+      if (mustCheck) gated.push({ group: g, op })
+    }
+
+    for (const { group: g, op } of gated) {
+      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
+      if (denial) return denial
     }
 
     if (newlyAdded.length > 0) {
@@ -182,6 +194,17 @@ class UserGroupsService {
           },
         }
       }
+    }
+
+    // STEP-UP (R2, final gate): the actor is authorized and the target satisfies
+    // the MFA requirement — now require the ACTOR's own second factor to be recent
+    // (AAL2 within STEP_UP_MAX_AGE). Placed LAST so an unauthenticated/unauthorized
+    // actor still gets the precise authority denial (401/403/privilege_escalation),
+    // and a stale factor blocks the WRITE. Fires only for a privilege-gated change;
+    // fail-closed on missing AAL/timestamp.
+    if (gated.length > 0) {
+      const stale = this.stepUpDenial(actor, identity.email)
+      if (stale) return stale
     }
 
     await kratosService.updateUserGroups(identity.email, finalGroups)
@@ -210,6 +233,39 @@ class UserGroupsService {
       },
     }
     }) // end withRedisLock(user-groups:<email>)
+  }
+
+  // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE.
+  // Returns a 422 `reauth_required` denial (status pinned to 422 so cluster
+  // ingress does not strip the body/headers) when the second factor is absent or
+  // stale; null when satisfied. Fail-closed: a missing aal/authenticatedAt denies.
+  private stepUpDenial(
+    actor: { aal?: string; authenticatedAt?: Date | string },
+    targetEmail: string,
+  ): ApplyGroupUpdateResult | null {
+    const reauth = (message: string): ApplyGroupUpdateResult => ({
+      ok: false,
+      status: 422,
+      body: {
+        error: 'reauth_required',
+        message,
+        targetEmail,
+        stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000 },
+        hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
+      },
+    })
+    if (actor.aal !== 'aal2') {
+      return reauth(
+        'This change assigns privileged access and requires two-factor authentication (TOTP). Complete 2FA and retry.',
+      )
+    }
+    const authedAt = actor.authenticatedAt ? new Date(actor.authenticatedAt).getTime() : 0
+    if (!authedAt || Number.isNaN(authedAt) || Date.now() - authedAt > STEP_UP_MAX_AGE_MS) {
+      return reauth(
+        `Your two-factor verification is older than ${STEP_UP_MAX_AGE_MS / 60000} minutes; re-verify (TOTP) to assign privileged access.`,
+      )
+    }
+    return null
   }
 
   private async checkPrivilegeEscalation(

@@ -15,6 +15,9 @@ export interface UserContext {
   name: string
   sessionId?: string
   expiresAt?: Date
+  // Second-factor state for the privileged-action step-up gate (R2).
+  aal?: string
+  authenticatedAt?: Date
 }
 
 declare module 'fastify' {
@@ -48,6 +51,8 @@ export async function extractIdentity(
       email: devEmail,
       id: 'dev-user-id',
       name: 'Dev User',
+      aal: 'aal2',
+      authenticatedAt: new Date(),
     }
     request.log.warn(
       { email: devEmail },
@@ -77,6 +82,8 @@ export async function extractIdentity(
       name: validatedSession.name || 'unknown',
       sessionId: validatedSession.sessionId,
       expiresAt: validatedSession.expiresAt,
+      aal: validatedSession.aal,
+      authenticatedAt: validatedSession.authenticatedAt,
     }
     request.log.debug(
       {

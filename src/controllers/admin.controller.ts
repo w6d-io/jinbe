@@ -221,7 +221,7 @@ export class AdminController {
           organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: desiredGroups,
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -492,7 +492,7 @@ export class AdminController {
           organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: groups,
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
