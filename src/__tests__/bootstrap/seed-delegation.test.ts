@@ -5,6 +5,7 @@ const store = vi.hoisted(() => ({
   services: new Set<string>(),
   roles: new Map<string, Record<string, string[]>>(),
   groups: new Map<string, Record<string, string[]>>(),
+  groupMeta: new Map<string, Record<string, unknown>>(),
   etagInvalidated: 0,
 }))
 
@@ -15,6 +16,7 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     setRoles: vi.fn(async (svc: string, r: Record<string, string[]>) => { store.roles.set(svc, r) }),
     getGroup: vi.fn(async (n: string) => store.groups.get(n) ?? null),
     setGroup: vi.fn(async (n: string, g: Record<string, string[]>) => { store.groups.set(n, g) }),
+    setGroupMetadata: vi.fn(async (n: string, m: Record<string, unknown>) => { store.groupMeta.set(n, m) }),
     invalidateBundleEtag: vi.fn(async () => { store.etagInvalidated++; return 'etag' }),
   },
 }))
@@ -30,6 +32,7 @@ beforeEach(() => {
     ['jinbe', { admin: ['*'], viewer: ['databases:list', 'databases:read'] }],
   ])
   store.groups = new Map()
+  store.groupMeta = new Map()
   store.etagInvalidated = 0
   vi.clearAllMocks()
 })
@@ -53,7 +56,22 @@ describe('seedDelegation', () => {
     expect(store.groups.get('kuma-org-admins')).toEqual({ kuma: ['org_admin'] })
     expect(store.groups.get('kuma-viewers')).toEqual({ kuma: ['viewer'] })
     expect(store.groups.get('jinbe-org-admins')).toEqual({ jinbe: ['org_admin'] })
-    expect(seeded.length).toBe(6) // 2 roles + 4 groups
+
+    // Single service-agnostic org-admin flag group: EMPTY binding (confers no
+    // service perms — its power is positional, granted in policy) + system:true
+    // so only a super_admin can delete/structurally mutate it.
+    expect(store.groups.get('org_admins')).toEqual({})
+    expect(store.groupMeta.get('org_admins')).toMatchObject({ system: true })
+
+    expect(seeded.length).toBe(7) // 2 roles + 4 per-service groups + 1 flag group
+    expect(seeded).toContain('group:org_admins')
+  })
+
+  it('org_admins flag is idempotent + keeps its empty binding on re-run', async () => {
+    await seedDelegation(logger)
+    const { seeded } = await seedDelegation(logger)
+    expect(seeded).toEqual([])
+    expect(store.groups.get('org_admins')).toEqual({})
   })
 
   it('preserves existing service roles (additive, not a replace)', async () => {

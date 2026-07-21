@@ -149,6 +149,78 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
   })
 })
 
+describe('userGroupsService.applyGroupUpdate — org_admins flag gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    // The flag group is EMPTY → NOT admin-power. Without the explicit guard the
+    // global path (isAdminPowerGroup) would skip the super_admin check for it.
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+  })
+
+  it('global path: assigning org_admins is super_admin-gated even though it is not admin-power', async () => {
+    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
+      Object.assign(new Error('only super_admins may assign org_admins'), { statusCode: 403 }),
+    )
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['org_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.status).toBe(422)
+      expect(result.body).toMatchObject({ error: 'privilege_escalation_blocked', blockingGroup: 'org_admins' })
+    }
+    expect(rbacService.assertSuperAdmin).toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('global path: a super_admin CAN assign org_admins', async () => {
+    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['org_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['org_admins'])
+  })
+
+  it('org-scoped path: org_admins is put to can_grant (denied), never waved through as an empty group', async () => {
+    // isEmptyGroup(org_admins) is true, but the wildcard_in_org exemption keys on
+    // the base group NAME ("users"), so org_admins IS submitted to can_grant —
+    // which denies it (0 perms → not bundle-containable).
+    vi.mocked(rbacService.isEmptyGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
+    vi.mocked(opaService.canGrant).mockResolvedValue(false)
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['org_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
+      auditEventType: 'organization_user.groups_changed',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.body).toMatchObject({ error: 'privilege_escalation_blocked', blockingGroup: 'org_admins' })
+    }
+    expect(opaService.canGrant).toHaveBeenCalledWith(expect.objectContaining({ target_group: 'org_admins' }))
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+})
+
 describe('userGroupsService.applyGroupUpdate — super_admin_required policy', () => {
   beforeEach(() => {
     vi.clearAllMocks()

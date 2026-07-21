@@ -59,6 +59,17 @@ export type ApplyGroupUpdateResult =
 // gate (the rego would deny it anyway — it enforces "no vacuous grant").
 const BASE_GROUP = 'users'
 
+// The single service-agnostic org-admin flag group. Its authority is POSITIONAL
+// (granted in policy: rbac.is_org_admin + delegation.manageable_orgs), so it
+// carries an EMPTY binding and therefore does NOT register as admin-power. On the
+// global endpoint the priv gate keys on isAdminPowerGroup, which would SKIP this
+// group — letting a non-super platform admin mint an org admin. We force it
+// through the super_admin gate below. On the org-scoped endpoint it is already
+// gated (it is not the base group, so it goes to can_grant, which denies it —
+// 0 perms → not bundle-containable). Name must match the rego constant
+// rbac.org_admin_group.
+const ORG_ADMIN_FLAG_GROUP = 'org_admins'
+
 /**
  * Shared core of "update a user's groups". Both the global admin endpoint
  * and the org-scoped endpoint funnel through here so the MFA gate, the
@@ -149,7 +160,7 @@ class UserGroupsService {
       //    super_admin authority check; the endpoint is super_admin-gated.
       const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
         ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
-        : await rbacService.isAdminPowerGroup(g)
+        : (await rbacService.isAdminPowerGroup(g)) || g === ORG_ADMIN_FLAG_GROUP
       if (mustCheck) {
         const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
         if (denial) return denial

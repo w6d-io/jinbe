@@ -35,8 +35,11 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  * v4: add `fleet` to the delegated services. Re-runs the additive seed so
  *     fleet gets its org_admin role + fleet-org-admins/-viewers groups
  *     (idempotent — skips any already present).
+ * v5: single service-agnostic `org_admins` flag group (empty binding,
+ *     system:true). The bump forces the additive seed to run on
+ *     already-bootstrapped installs so the flag group is created + published.
  */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export type BootstrapOutcome =
   | 'first-run'
