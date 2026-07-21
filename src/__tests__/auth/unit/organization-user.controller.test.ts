@@ -143,7 +143,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['users'] },
       ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com' },
+      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: { email: 'actor@example.com', groups: [], roles: [], permissions: ['*'] },
     } as unknown as FastifyRequest
 
@@ -164,7 +164,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['admins'] },
       ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com' },
+      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: {
         email: 'actor@example.com',
         groups: ['admins'],
@@ -199,7 +199,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['admins'] },
       ip: '127.0.0.1',
-      userContext: { email: 'orgadmin@example.com' },
+      userContext: { email: 'orgadmin@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: {
         email: 'orgadmin@example.com',
         groups: ['org-admins'],
@@ -235,7 +235,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['kuma-viewers'] },
       ip: '127.0.0.1',
-      userContext: { email: 'super@example.com' },
+      userContext: { email: 'super@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: {
         email: 'super@example.com',
         groups: ['super_admins'],
@@ -265,7 +265,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['users'] },
       ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com' },
+      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: {
         email: 'actor@example.com',
         groups: ['admins'],
@@ -299,7 +299,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: [] },
       ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com' },
+      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
       rbacInfo: {
         email: 'actor@example.com',
         groups: ['admins'],

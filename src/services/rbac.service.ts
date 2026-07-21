@@ -438,6 +438,9 @@ export class RbacService {
         // Keep in lock-step with GET /opal-datasource so an org_service_map
         // mutation re-publishes data.org_service_map to OPA (else it goes stale).
         { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
+        // Org → admin roster (data.org_admin_map): per-org list of admin emails;
+        // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
+        { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
       ]
       for (const svc of services) {
         entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
@@ -1119,6 +1122,19 @@ export class RbacService {
       throw Object.assign(new Error(`No mapping found for organization '${organizationId}'`), { statusCode: 404 })
     }
     await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor)
+  }
+
+  async getOrgAdminMap(): Promise<Record<string, string[]>> {
+    return redisRbacRepository.getOrgAdminMap()
+  }
+
+  // Replace an org's admin roster with exactly `admins`. Membership is NOT
+  // re-validated here on purpose: the policy's manageable_orgs requires the admin
+  // to also be a MEMBER of the org (data.bindings.user_organizations), so a
+  // rostered non-member is inert — they gain nothing until they're a member.
+  async setOrgAdmins(organizationId: string, admins: string[], actor?: { email?: string; ip?: string }): Promise<void> {
+    await redisRbacRepository.setOrgAdmins(organizationId, admins)
+    await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor)
   }
 
   // ===========================================================================

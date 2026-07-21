@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { env } from '../config/index.js'
 import { rbacController } from '../controllers/rbac.controller.js'
-import { requireAdmin } from '../middleware/require-admin.js'
+import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import {
   unauthorizedResponseSchema,
   notFoundResponseSchema,
@@ -398,6 +398,49 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.setOrgServiceMapping.bind(rbacController))
 
+  // Org → admin roster (per-org admin list; feeds data.org_admin_map).
+  fastify.get('/org-admin-map', {
+    schema: {
+      description: 'List all organization → admin roster mappings (each org maps to an array of admin emails).',
+      tags: ['rbac'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            mappings: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+          },
+        },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.getOrgAdminMap.bind(rbacController))
+
+  // Set an org's admin roster. super_admin + a RECENT second factor (R2 step-up)
+  // are required — assigning who administers an org is a privileged action.
+  fastify.put('/org-admin-map', {
+    preHandler: [requireSuperAdmin, requireRecentMfa],
+    schema: {
+      description: "Set an organization's admin roster (emails). Replaces the org's entire roster; an empty list clears it. Requires super_admin + a second factor proven within 15 minutes.",
+      tags: ['rbac'],
+      body: {
+        type: 'object',
+        required: ['organizationId', 'admins'],
+        properties: {
+          organizationId: { type: 'string', format: 'uuid' },
+          admins: { type: 'array', items: { type: 'string', format: 'email' } },
+        },
+      },
+      response: {
+        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
+        400: badRequestResponseSchema,
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        422: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+      },
+    },
+  }, rbacController.setOrgAdmins.bind(rbacController))
+
   fastify.delete('/org-service-map/:organizationId', {
     schema: {
       description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',
@@ -538,6 +581,12 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     return reply.send(map)
   })
 
+  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
+  fastify.get('/opal/org_admin_map', async (_request, reply) => {
+    const map = await redisRbacRepository.getOrgAdminMap()
+    return reply.send(map)
+  })
+
   // Roles per service
   fastify.get('/opal/roles/:service', async (request, reply) => {
     const { service } = request.params as { service: string }
@@ -568,6 +617,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       // Org → service map (data.org_service_map): the delegation rego resolves
       // which service a target org's RBAC lives under from this.
       { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
+      // Org → admin roster (data.org_admin_map): per-org list of admin emails;
+      // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
+      { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
     ]
 
     for (const svc of services) {

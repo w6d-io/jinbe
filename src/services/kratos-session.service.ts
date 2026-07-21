@@ -44,6 +44,9 @@ export interface ValidatedSession {
   picture?: string
   expiresAt: Date
   active: boolean
+  // Second-factor state, used by the privileged-action step-up gate (R2).
+  aal: string // authenticator_assurance_level: "aal1" | "aal2"
+  authenticatedAt: Date // last authentication time; re-stamped by a refresh=true step-up
 }
 
 /**
@@ -116,6 +119,8 @@ export class KratosSessionService {
           picture: session.identity.traits.picture || undefined,
           expiresAt,
           active: session.active,
+          aal: session.authenticator_assurance_level,
+          authenticatedAt: new Date(session.authenticated_at),
         },
       }
     } catch (error) {
