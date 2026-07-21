@@ -59,17 +59,33 @@ export async function seedDelegation(logger: BootstrapLogger): Promise<{ seeded:
       seeded.push(`role:${svc}.org_admin`)
     }
 
-    const orgAdminsGroup = `${svc}-org-admins`
-    if (!(await redisRbacRepository.getGroup(orgAdminsGroup))) {
-      await redisRbacRepository.setGroup(orgAdminsGroup, { [svc]: ['org_admin'] })
-      seeded.push(`group:${orgAdminsGroup}`)
+    // Naming norm: singular `<service>-<role>` groups. The per-service
+    // `<svc>-org-admins` group is RETIRED — org-admin is now the single
+    // service-agnostic `org_admins` flag (below) — and `<svc>-viewers` (plural)
+    // is superseded by `<svc>-viewer`. The org_admin ROLE above is kept only as
+    // the clause-4 gateway fallback; no group binds it in the new norm.
+    const viewerGroup = `${svc}-viewer`
+    if (!(await redisRbacRepository.getGroup(viewerGroup))) {
+      await redisRbacRepository.setGroup(viewerGroup, { [svc]: ['viewer'] })
+      seeded.push(`group:${viewerGroup}`)
     }
 
-    const viewersGroup = `${svc}-viewers`
-    if (!(await redisRbacRepository.getGroup(viewersGroup))) {
-      await redisRbacRepository.setGroup(viewersGroup, { [svc]: ['viewer'] })
-      seeded.push(`group:${viewersGroup}`)
+    const adminGroup = `${svc}-admin`
+    if (!(await redisRbacRepository.getGroup(adminGroup))) {
+      await redisRbacRepository.setGroup(adminGroup, { [svc]: ['admin'] })
+      seeded.push(`group:${adminGroup}`)
     }
+  }
+
+  // Global admin tier — distinct from `super_admins` (global super_admin). Binds
+  // the global `admin` role (resolves to "*"). Replaces the old `stairfleet_admin`.
+  if (!(await redisRbacRepository.getGroup('platform-admins'))) {
+    await redisRbacRepository.setGroup('platform-admins', { global: ['admin'] })
+    await redisRbacRepository.setGroupMetadata('platform-admins', {
+      system: true,
+      description: 'Global admin (all services). Assigned by super_admins only.',
+    })
+    seeded.push('group:platform-admins')
   }
 
   // ── Single service-agnostic org-admin FLAG group (flag-based model) ──

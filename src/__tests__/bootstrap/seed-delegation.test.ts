@@ -53,9 +53,19 @@ describe('seedDelegation', () => {
     expect(store.roles.get('kuma')!['org_admin']).not.toContain('*')
     expect(store.roles.get('kuma')!['org_admin']).not.toContain('admin:read')
 
-    expect(store.groups.get('kuma-org-admins')).toEqual({ kuma: ['org_admin'] })
-    expect(store.groups.get('kuma-viewers')).toEqual({ kuma: ['viewer'] })
-    expect(store.groups.get('jinbe-org-admins')).toEqual({ jinbe: ['org_admin'] })
+    // Naming norm: singular <service>-<role> groups.
+    expect(store.groups.get('kuma-viewer')).toEqual({ kuma: ['viewer'] })
+    expect(store.groups.get('kuma-admin')).toEqual({ kuma: ['admin'] })
+    expect(store.groups.get('jinbe-viewer')).toEqual({ jinbe: ['viewer'] })
+    expect(store.groups.get('jinbe-admin')).toEqual({ jinbe: ['admin'] })
+    // Retired: no per-service org-admins / plural viewers group in the new norm.
+    expect(store.groups.has('kuma-org-admins')).toBe(false)
+    expect(store.groups.has('jinbe-org-admins')).toBe(false)
+    expect(store.groups.has('kuma-viewers')).toBe(false)
+
+    // Global admin tier (distinct from super_admins).
+    expect(store.groups.get('platform-admins')).toEqual({ global: ['admin'] })
+    expect(store.groupMeta.get('platform-admins')).toMatchObject({ system: true })
 
     // Single service-agnostic org-admin flag group: EMPTY binding (confers no
     // service perms — its power is positional, granted in policy) + system:true
@@ -63,8 +73,10 @@ describe('seedDelegation', () => {
     expect(store.groups.get('org_admins')).toEqual({})
     expect(store.groupMeta.get('org_admins')).toMatchObject({ system: true })
 
-    expect(seeded.length).toBe(7) // 2 roles + 4 per-service groups + 1 flag group
+    // 2 org_admin roles + 4 per-service groups + platform-admins + org_admins
+    expect(seeded.length).toBe(8)
     expect(seeded).toContain('group:org_admins')
+    expect(seeded).toContain('group:platform-admins')
   })
 
   it('org_admins flag is idempotent + keeps its empty binding on re-run', async () => {

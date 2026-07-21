@@ -38,8 +38,13 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  * v5: single service-agnostic `org_admins` flag group (empty binding,
  *     system:true). The bump forces the additive seed to run on
  *     already-bootstrapped installs so the flag group is created + published.
+ * v6: naming norm. Seed singular `<svc>-viewer`/`<svc>-admin` groups + the
+ *     `platform-admins` global-admin tier; stop seeding the retired
+ *     `<svc>-org-admins`/`<svc>-viewers`. The bump re-runs the additive seed so
+ *     existing installs gain the new-norm group definitions (old groups are
+ *     removed by the separate data migration, not the seed).
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export type BootstrapOutcome =
   | 'first-run'
