@@ -136,7 +136,23 @@ export class AdminController {
     const q = (request.query.q ?? '').toString()
     const limit = Math.min(Math.max(parseInt(request.query.limit ?? '50', 10) || 50, 1), 200)
     const data = await kratosService.searchIdentities(q, limit)
-    return reply.send({ data })
+    // Enrich each hit with its REAL second-factor status so the search table shows
+    // ON/OFF instead of "—". searchIdentities is a lightweight cache (no
+    // credentials), so hasMFA is resolved per hit here — bounded by `limit`, run in
+    // parallel, and fail-soft (an error → undefined → that row shows "unknown"
+    // rather than failing the whole search).
+    const withMfa = await Promise.all(
+      data.map(async (u) => {
+        let mfa: boolean | undefined
+        try {
+          mfa = await kratosService.hasMFA(u.id)
+        } catch {
+          mfa = undefined
+        }
+        return { ...u, mfa }
+      }),
+    )
+    return reply.send({ data: withMfa })
   }
 
   /**
