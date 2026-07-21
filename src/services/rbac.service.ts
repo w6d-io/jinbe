@@ -438,6 +438,9 @@ export class RbacService {
         // Keep in lock-step with GET /opal-datasource so an org_service_map
         // mutation re-publishes data.org_service_map to OPA (else it goes stale).
         { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
+        // Org → admin roster (data.org_admin_map): per-org list of admin emails;
+        // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
+        { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
       ]
       for (const svc of services) {
         entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })

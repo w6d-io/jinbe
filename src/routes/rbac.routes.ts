@@ -538,6 +538,12 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     return reply.send(map)
   })
 
+  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
+  fastify.get('/opal/org_admin_map', async (_request, reply) => {
+    const map = await redisRbacRepository.getOrgAdminMap()
+    return reply.send(map)
+  })
+
   // Roles per service
   fastify.get('/opal/roles/:service', async (request, reply) => {
     const { service } = request.params as { service: string }
@@ -568,6 +574,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       // Org → service map (data.org_service_map): the delegation rego resolves
       // which service a target org's RBAC lives under from this.
       { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
+      // Org → admin roster (data.org_admin_map): per-org list of admin emails;
+      // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
+      { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
     ]
 
     for (const svc of services) {
