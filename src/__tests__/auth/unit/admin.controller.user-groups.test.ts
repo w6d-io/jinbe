@@ -99,7 +99,7 @@ function createMockRequest(
   return {
     params: { email },
     body: body || { groups: [] },
-    userContext: { email: 'admin@example.com' },
+    userContext: { email: 'admin@example.com', aal: 'aal2', authenticatedAt: new Date() },
     log: {
       info: vi.fn(),
       warn: vi.fn(),

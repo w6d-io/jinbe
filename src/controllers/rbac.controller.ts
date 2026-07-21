@@ -263,6 +263,30 @@ export class RbacController {
   }
 
   // ===========================================================================
+  // Org → Admin Roster (per-org admin list; feeds data.org_admin_map)
+  // ===========================================================================
+
+  async getOrgAdminMap(_request: FastifyRequest, reply: FastifyReply) {
+    const mappings = await rbacService.getOrgAdminMap()
+    return reply.send({ mappings })
+  }
+
+  async setOrgAdmins(request: FastifyRequest, reply: FastifyReply) {
+    // Set-roster semantics: replaces the org's ENTIRE admin roster with `admins`
+    // (emails). An empty list clears the roster (the org then has no delegated
+    // admins). Gated at the route by super_admin + a recent second factor.
+    const body = z.object({
+      organizationId: z.string().uuid(),
+      admins: z.array(z.string().email()).max(100),
+    }).parse(request.body)
+    await rbacService.setOrgAdmins(body.organizationId, body.admins, this.actor(request))
+    return reply.status(200).send({
+      success: true,
+      message: `Roster for ${body.organizationId} set to [${body.admins.join(', ') || 'none'}]`,
+    })
+  }
+
+  // ===========================================================================
   // Permission Simulator
   // ===========================================================================
 

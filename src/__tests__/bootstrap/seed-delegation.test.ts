@@ -5,6 +5,7 @@ const store = vi.hoisted(() => ({
   services: new Set<string>(),
   roles: new Map<string, Record<string, string[]>>(),
   groups: new Map<string, Record<string, string[]>>(),
+  groupMeta: new Map<string, Record<string, unknown>>(),
   etagInvalidated: 0,
 }))
 
@@ -15,6 +16,7 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     setRoles: vi.fn(async (svc: string, r: Record<string, string[]>) => { store.roles.set(svc, r) }),
     getGroup: vi.fn(async (n: string) => store.groups.get(n) ?? null),
     setGroup: vi.fn(async (n: string, g: Record<string, string[]>) => { store.groups.set(n, g) }),
+    setGroupMetadata: vi.fn(async (n: string, m: Record<string, unknown>) => { store.groupMeta.set(n, m) }),
     invalidateBundleEtag: vi.fn(async () => { store.etagInvalidated++; return 'etag' }),
   },
 }))
@@ -30,6 +32,7 @@ beforeEach(() => {
     ['jinbe', { admin: ['*'], viewer: ['databases:list', 'databases:read'] }],
   ])
   store.groups = new Map()
+  store.groupMeta = new Map()
   store.etagInvalidated = 0
   vi.clearAllMocks()
 })
@@ -50,10 +53,27 @@ describe('seedDelegation', () => {
     expect(store.roles.get('kuma')!['org_admin']).not.toContain('*')
     expect(store.roles.get('kuma')!['org_admin']).not.toContain('admin:read')
 
-    expect(store.groups.get('kuma-org-admins')).toEqual({ kuma: ['org_admin'] })
-    expect(store.groups.get('kuma-viewers')).toEqual({ kuma: ['viewer'] })
-    expect(store.groups.get('jinbe-org-admins')).toEqual({ jinbe: ['org_admin'] })
-    expect(seeded.length).toBe(6) // 2 roles + 4 groups
+    // Naming norm: singular <service>-<role> groups.
+    expect(store.groups.get('kuma-viewer')).toEqual({ kuma: ['viewer'] })
+    expect(store.groups.get('kuma-admin')).toEqual({ kuma: ['admin'] })
+    expect(store.groups.get('jinbe-viewer')).toEqual({ jinbe: ['viewer'] })
+    expect(store.groups.get('jinbe-admin')).toEqual({ jinbe: ['admin'] })
+    // Retired: no per-service org-admins / plural viewers group in the new norm.
+    expect(store.groups.has('kuma-org-admins')).toBe(false)
+    expect(store.groups.has('jinbe-org-admins')).toBe(false)
+    expect(store.groups.has('kuma-viewers')).toBe(false)
+
+    // Global admin tier (distinct from super_admins).
+    expect(store.groups.get('platform-admins')).toEqual({ global: ['admin'] })
+    expect(store.groupMeta.get('platform-admins')).toMatchObject({ system: true })
+
+    // org-admin is NOT a group anymore — it is a per-org roster (data.org_admin_map).
+    expect(store.groups.has('org_admins')).toBe(false)
+
+    // 2 org_admin roles + 4 per-service groups + platform-admins
+    expect(seeded.length).toBe(7)
+    expect(seeded).toContain('group:platform-admins')
+    expect(seeded).not.toContain('group:org_admins')
   })
 
   it('preserves existing service roles (additive, not a replace)', async () => {

@@ -392,6 +392,53 @@ class RedisRbacRepository {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // ORG → ADMIN ROSTER (organization UUID → list of admin emails)
+  //
+  // Storage: Redis hash rbac:org_admins, value = JSON array of emails. Symmetric
+  // with rbac:org_service_map — an org has a service BUNDLE and an admin ROSTER.
+  // Being on an org's roster AND a member of it makes a user its org admin
+  // (enforced in policy: rbac.delegation.manageable_orgs + rbac.is_org_admin_of).
+  // Per-org: a user can be on org A's roster but not org B's.
+  // ═══════════════════════════════════════════════════════════
+
+  private normalizeRoster(raw: string): string[] {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return parsed.filter((e): e is string => typeof e === 'string' && e.length > 0)
+      }
+    } catch {
+      // not JSON → treat a bare value as a single-email roster
+    }
+    return raw ? [raw] : []
+  }
+
+  async getOrgAdminMap(): Promise<Record<string, string[]>> {
+    const raw = await this.redis.hgetall('rbac:org_admins')
+    const out: Record<string, string[]> = {}
+    for (const [org, value] of Object.entries(raw)) {
+      out[org] = this.normalizeRoster(value)
+    }
+    return out
+  }
+
+  async getOrgAdmins(organizationId: string): Promise<string[]> {
+    const raw = await this.redis.hget('rbac:org_admins', organizationId)
+    return raw === null ? [] : this.normalizeRoster(raw)
+  }
+
+  /** Replace an org's admin roster with exactly `emails` (deduped). An empty
+   *  roster removes the org's entry (the org then has no delegated admins). */
+  async setOrgAdmins(organizationId: string, emails: string[]): Promise<void> {
+    const roster = [...new Set(emails.filter((e) => typeof e === 'string' && e.length > 0))]
+    if (roster.length === 0) {
+      await this.redis.hdel('rbac:org_admins', organizationId)
+      return
+    }
+    await this.redis.hset('rbac:org_admins', organizationId, JSON.stringify(roster))
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // BULK: Get all RBAC data for OPA bundle
   // ═══════════════════════════════════════════════════════════
 
