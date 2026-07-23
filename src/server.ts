@@ -35,6 +35,7 @@ import { MarkerCorruptError } from './bootstrap/marker.js'
 import { rbacService } from './services/rbac.service.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
 import { realtimeService } from './services/realtime.service.js'
+import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
 
 // Singleton notification service — exported for controllers.
@@ -204,6 +205,11 @@ async function start() {
       rbacService.refreshAllDataSources('jinbe-startup').catch(err => {
         fastify.log.warn({ err: err.message }, 'OPAL data refresh on startup failed (non-fatal)')
       })
+
+      // Scheduled RBAC-bundle backup, run by jinbe itself (self-authenticated +
+      // holds S3 creds). No-op unless backup is enabled. Replaces the external
+      // aws-cli CronJob, which had no way to authenticate to /bundle/export.
+      startBackupScheduler(fastify.log)
     } catch (err) {
       if (err instanceof BootstrapTimeoutError) {
         fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')
