@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   checkAdminPasswordHardening,
   assertStrongAdminPassword,
+  estimateAdminPasswordEntropyBits,
   WeakAdminPasswordError,
   MIN_ADMIN_PASSWORD_LENGTH,
-  WEAK_ADMIN_PASSWORD_PREFIX,
+  MIN_ADMIN_PASSWORD_ENTROPY_BITS,
+  MIN_ADMIN_PASSWORD_UNIQUE_CHARS,
 } from '../../config/admin-password.js'
 import { envSchema } from '../../config/env.js'
 import type { BootstrapLogger } from '../../bootstrap/types.js'
@@ -14,42 +16,59 @@ import type { BootstrapLogger } from '../../bootstrap/types.js'
  * independent layers that must stay in sync:
  *   - src/config/env.ts        (zod schema — rejects at process start)
  *   - src/bootstrap/seed-admin  (runtime guard — refuses to seed a weak admin)
- * Both consume the shared constants/helpers in src/config/admin-password.ts.
+ * Both consume the shared helpers in src/config/admin-password.ts, which score
+ * entropy (search-space bits + distinct-character floor + length) rather than
+ * blocklisting fixed prefixes.
  *
- * All fixture values are built from short, low-entropy tokens via expressions
- * (never literal secret-looking strings) so secret scanners do not flag these
- * synthetic test passwords.
+ * All fixture values are built from short, obviously-synthetic tokens via
+ * expressions (never literal secret-looking strings) so secret scanners do not
+ * flag these test passwords.
  */
 
-// 4-char token: mixed case + digit + symbol, and NOT a weak prefix.
-const TOK = 'aB9-'
-const STRONG16 = TOK.repeat(4) // 16 chars, acceptable
-const STRONG20 = TOK.repeat(5) // 20 chars, acceptable
-const LEN12 = TOK.repeat(3) // 12 chars, too short, no weak prefix
-const LEN15 = TOK.repeat(3) + 'aB9' // 15 chars, too short, no weak prefix
-const WEAK_CHANGEME = 'changeme-' + TOK.repeat(4) // weak prefix, 25 chars
-const WEAK_LOWER = 'password-' + TOK.repeat(4) // weak prefix, 25 chars
-const WEAK_UPPER = 'PASSWORD-' + TOK.repeat(4) // weak prefix (case-insensitive)
-const WEAK_ADMIN = 'admin-' + TOK.repeat(5) // weak prefix, 26 chars
-const WEAK_123 = '123-' + TOK.repeat(5) // weak prefix, 24 chars
-const WEAK_BOTH = 'changeme' + '12' // 10 chars: weak prefix AND too short
+const AZ = 'abcdefghijklmnopqrstuvwxyz'
+// N distinct sequential letters → high variety, clears the entropy floor.
+const distinctOf = (n: number) => AZ.slice(0, n)
+
+const STRONG16 = distinctOf(16) // 16 distinct chars — acceptable (boundary)
+const STRONG20 = distinctOf(20) // 20 distinct chars — acceptable
+const LEN12 = distinctOf(12) // 12 chars — too short (and under the bit floor)
+const LEN15 = distinctOf(15) // 15 chars — too short, but entropy is fine
+
+// High length, too few distinct characters → fails the distinct-char floor
+// even though the nominal search space looks large. This is the class the old
+// prefix denylist missed entirely.
+const REPEAT_ONE = 'a'.repeat(20) // 1 distinct char
+const REPEAT_TOKEN = 'aB9-'.repeat(5) // 20 chars, 4 distinct chars
+
+// The false positive the prefix denylist got wrong: a high-variety value that
+// merely STARTS with "123" is strong and must now be accepted.
+const LEADING_123 = '123' + AZ.slice(3, 16) // 16 distinct chars, starts with 123
+
+// Short AND low-entropy (repetitive) — violates both rules.
+const SHORT_LOW = 'a'.repeat(10)
 
 // ---------------------------------------------------------------------------
 // Shared pure policy
 // ---------------------------------------------------------------------------
 
 describe('admin-password policy constants', () => {
-  it('requires a minimum length of 16', () => {
+  it('sets the documented floors', () => {
     expect(MIN_ADMIN_PASSWORD_LENGTH).toBe(16)
+    expect(MIN_ADMIN_PASSWORD_ENTROPY_BITS).toBe(60)
+    expect(MIN_ADMIN_PASSWORD_UNIQUE_CHARS).toBe(8)
   })
+})
 
-  it('flags the well-known weak prefixes (case-insensitive)', () => {
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('changeme')).toBe(true)
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('password')).toBe(true)
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('admin')).toBe(true)
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('123')).toBe(true)
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('CHANGEME')).toBe(true)
-    expect(WEAK_ADMIN_PASSWORD_PREFIX.test('Zebra')).toBe(false)
+describe('estimateAdminPasswordEntropyBits', () => {
+  it('is zero for empty and grows with length × pool size', () => {
+    expect(estimateAdminPasswordEntropyBits('')).toBe(0)
+    // 16 lowercase letters → 16 * log2(26) ≈ 75 bits.
+    expect(estimateAdminPasswordEntropyBits(STRONG16)).toBeGreaterThan(70)
+    // Mixed pool (digits + letters) scores higher per character than the
+    // same-length lowercase-only value.
+    expect(estimateAdminPasswordEntropyBits(LEADING_123)).toBeGreaterThan(
+      estimateAdminPasswordEntropyBits(STRONG16),
+    )
   })
 })
 
@@ -58,28 +77,35 @@ describe('checkAdminPasswordHardening', () => {
     expect(checkAdminPasswordHardening(undefined)).toBeNull()
   })
 
-  it('returns null for a strong password', () => {
+  it('returns null for a strong, high-variety password', () => {
     expect(checkAdminPasswordHardening(STRONG20)).toBeNull()
   })
 
-  it('flags tooShort only for a 12-char, non-weak-prefix password', () => {
+  it('accepts a strong value that merely starts with "123" (denylist regression)', () => {
+    expect(LEADING_123.length).toBe(16)
+    expect(checkAdminPasswordHardening(LEADING_123)).toBeNull()
+  })
+
+  it('flags tooShort for a 12-char password', () => {
     expect(LEN12.length).toBe(12)
-    expect(checkAdminPasswordHardening(LEN12)).toEqual({ tooShort: true, weakPrefix: false })
+    expect(checkAdminPasswordHardening(LEN12)).toMatchObject({ tooShort: true })
   })
 
-  it('flags weakPrefix only for a >=16-char weak-prefix string', () => {
-    expect(WEAK_LOWER.length).toBeGreaterThanOrEqual(16)
-    expect(checkAdminPasswordHardening(WEAK_LOWER)).toEqual({ tooShort: false, weakPrefix: true })
-  })
-
-  it('flags both tooShort and weakPrefix for a short weak-prefix string', () => {
-    expect(checkAdminPasswordHardening(WEAK_BOTH)).toEqual({ tooShort: true, weakPrefix: true })
+  it('flags lowEntropy for a long but repetitive password', () => {
+    expect(checkAdminPasswordHardening(REPEAT_ONE)).toMatchObject({
+      tooShort: false,
+      lowEntropy: true,
+    })
+    expect(checkAdminPasswordHardening(REPEAT_TOKEN)).toMatchObject({
+      tooShort: false,
+      lowEntropy: true,
+    })
   })
 
   it('treats length 15 as too short and length 16 as acceptable (boundary)', () => {
     expect(LEN15.length).toBe(15)
     expect(STRONG16.length).toBe(16)
-    expect(checkAdminPasswordHardening(LEN15)).toEqual({ tooShort: true, weakPrefix: false })
+    expect(checkAdminPasswordHardening(LEN15)).toMatchObject({ tooShort: true, lowEntropy: false })
     expect(checkAdminPasswordHardening(STRONG16)).toBeNull()
   })
 })
@@ -98,17 +124,20 @@ describe('assertStrongAdminPassword', () => {
     expect(() => assertStrongAdminPassword(LEN12)).toThrow(WeakAdminPasswordError)
   })
 
-  it('throws WeakAdminPasswordError for a weak-prefix password', () => {
-    expect(() => assertStrongAdminPassword(WEAK_CHANGEME)).toThrow(WeakAdminPasswordError)
+  it('throws WeakAdminPasswordError for a low-entropy (repetitive) password', () => {
+    expect(() => assertStrongAdminPassword(REPEAT_TOKEN)).toThrow(WeakAdminPasswordError)
   })
 
   it('exposes the structured weakness on the thrown error', () => {
     try {
-      assertStrongAdminPassword(WEAK_BOTH)
+      assertStrongAdminPassword(SHORT_LOW)
       throw new Error('expected assertStrongAdminPassword to throw')
     } catch (err) {
       expect(err).toBeInstanceOf(WeakAdminPasswordError)
-      expect((err as WeakAdminPasswordError).weakness).toEqual({ tooShort: true, weakPrefix: true })
+      expect((err as WeakAdminPasswordError).weakness).toMatchObject({
+        tooShort: true,
+        lowEntropy: true,
+      })
     }
   })
 })
@@ -122,12 +151,16 @@ describe('envSchema ADMIN_PASSWORD validation', () => {
   // else the schema needs has a default, so this is a minimal valid base.
   const baseEnv = { ENCRYPTION_KEY: 'x'.repeat(32) }
 
-  it('accepts a strong password (>= 16 chars, no weak prefix)', () => {
+  it('accepts a strong password (>= 16 chars, high entropy)', () => {
     expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: STRONG20 }).success).toBe(true)
   })
 
   it('accepts an omitted ADMIN_PASSWORD (optional — validated only when present)', () => {
     expect(envSchema.safeParse(baseEnv).success).toBe(true)
+  })
+
+  it('accepts a strong value starting with "123" (no longer a false positive)', () => {
+    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: LEADING_123 }).success).toBe(true)
   })
 
   it('rejects a password shorter than 16 chars', () => {
@@ -141,21 +174,9 @@ describe('envSchema ADMIN_PASSWORD validation', () => {
     expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: STRONG16 }).success).toBe(true)
   })
 
-  it('rejects a long "changeme" prefix password', () => {
-    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: WEAK_CHANGEME }).success).toBe(false)
-  })
-
-  it('rejects a long weak prefix in upper case (case-insensitive)', () => {
-    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: WEAK_UPPER }).success).toBe(false)
-  })
-
-  it('rejects long "admin" and "123" prefix passwords', () => {
-    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: WEAK_ADMIN }).success).toBe(false)
-    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: WEAK_123 }).success).toBe(false)
-  })
-
-  it('rejects a short weak-prefix password (too short AND weak prefix)', () => {
-    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: WEAK_BOTH }).success).toBe(false)
+  it('rejects a long but repetitive (low-entropy) password', () => {
+    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: REPEAT_ONE }).success).toBe(false)
+    expect(envSchema.safeParse({ ...baseEnv, ADMIN_PASSWORD: REPEAT_TOKEN }).success).toBe(false)
   })
 })
 
@@ -203,10 +224,10 @@ describe('seedDefaultAdmin password hardening', () => {
     expect(kratosMock.createIdentity).not.toHaveBeenCalled()
   })
 
-  it('refuses to seed a weak-prefix password and never calls Kratos', async () => {
+  it('refuses to seed a low-entropy password and never calls Kratos', async () => {
     await expect(
       seedDefaultAdmin(
-        { email: 'admin@example.org', password: WEAK_CHANGEME, name: 'Admin' },
+        { email: 'admin@example.org', password: REPEAT_TOKEN, name: 'Admin' },
         logger,
       ),
     ).rejects.toBeInstanceOf(WeakAdminPasswordError)

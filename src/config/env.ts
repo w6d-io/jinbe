@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import dotenv from 'dotenv'
-import { MIN_ADMIN_PASSWORD_LENGTH, WEAK_ADMIN_PASSWORD_PREFIX } from './admin-password.js'
+import { checkAdminPasswordHardening, describeAdminPasswordWeakness } from './admin-password.js'
 
 // Load environment variables
 dotenv.config()
@@ -129,18 +129,22 @@ export const envSchema = z.object({
   OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
   // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts).
-  // ADMIN_PASSWORD seeds the first super_admins identity: it must be at least
-  // MIN_ADMIN_PASSWORD_LENGTH chars and must not start with a well-known weak
-  // prefix. Kept in sync with the seed-admin runtime guard via the shared policy
-  // in ./admin-password.ts. Validated whenever present; the first-run presence
-  // check lives in src/cli/bootstrap.ts.
+  // ADMIN_PASSWORD seeds the first super_admins identity: it must clear the
+  // length + entropy + distinct-character floors scored by the shared policy in
+  // ./admin-password.ts (same helper the seed-admin runtime guard uses, so the
+  // two layers can never drift). Validated whenever present; the first-run
+  // presence check lives in src/cli/bootstrap.ts.
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z
     .string()
-    .min(MIN_ADMIN_PASSWORD_LENGTH, `ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`)
-    .refine((v) => !WEAK_ADMIN_PASSWORD_PREFIX.test(v), {
-      message:
-        'ADMIN_PASSWORD starts with a well-known weak prefix (changeme/password/admin/123)',
+    .superRefine((v, ctx) => {
+      const weakness = checkAdminPasswordHardening(v)
+      if (weakness) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `ADMIN_PASSWORD is ${describeAdminPasswordWeakness(weakness)}`,
+        })
+      }
     })
     .optional(),
   ADMIN_NAME: z.string().min(1).default('Admin'),
@@ -164,6 +168,17 @@ export const envSchema = z.object({
   // GCP project ID injected into backup job env. Required for the GCS
   // output of the backup tool.
   BACKUP_GCP_PROJECT_ID: z.string().optional(),
+
+  // ── RBAC-bundle backup (S3) ──────────────────────────────────────────────
+  // Mirrors the chart `backup.*` values. When enabled, jinbe reads the S3
+  // bucket the backup CronJob writes to (list snapshots, restore, first-init).
+  // Credentials come from the default AWS chain (IRSA) — no static keys.
+  BACKUP_ENABLED: z.string().default('false').transform((v) => v === 'true'),
+  BACKUP_S3_BUCKET: z.string().optional(),
+  BACKUP_S3_PREFIX: z.string().default('auth-backup'),
+  BACKUP_S3_REGION: z.string().default('eu-west-3'),
+  // Cron for jinbe's own scheduled backup (UTC). Default daily 02:00.
+  BACKUP_SCHEDULE: z.string().default('0 2 * * *'),
 })
 
 // Parse and validate environment variables

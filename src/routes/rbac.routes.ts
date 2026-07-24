@@ -274,6 +274,48 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.updateServiceRoutes.bind(rbacController))
 
+  fastify.post('/services/:name/routes/import/preview', {
+    bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
+    schema: {
+      description:
+        'Dry-run: parse an OpenAPI/Swagger spec and preview the route rules + diff it would produce for a service. Does not mutate; apply is PUT /services/:name/routes.',
+      tags: ['rbac'],
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+      body: {
+        type: 'object',
+        required: ['source'],
+        properties: {
+          source: {
+            type: 'object',
+            properties: {
+              url: { type: 'string' },
+              content: { type: 'string' },
+              format: { type: 'string', enum: ['json', 'yaml', 'auto'] },
+            },
+          },
+          options: {
+            type: 'object',
+            properties: {
+              resourceFrom: { type: 'string', enum: ['tag', 'path', 'operationId'] },
+              verbMap: { type: 'object', additionalProperties: { type: 'string' } },
+              listAsRead: { type: 'boolean' },
+              honorExtension: { type: 'boolean' },
+              scopeMap: { type: 'object', additionalProperties: { type: 'string' } },
+              basePath: { type: 'string', enum: ['prepend', 'strip', 'none'] },
+            },
+          },
+        },
+      },
+      // No 200 response schema: the preview payload is rich/nested — let Fastify
+      // serialize it as-is rather than risk fast-json-stringify stripping fields.
+      response: {
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        404: notFoundResponseSchema,
+      },
+    },
+  }, rbacController.importRoutesPreview.bind(rbacController))
+
   // ===========================================================================
   // Access Rules (Oathkeeper)
   // ===========================================================================

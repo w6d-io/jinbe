@@ -4,6 +4,7 @@ import { withRedisLock } from './redis-lock.js'
 import { auditEventService } from './audit-event.service.js'
 import { opaService } from './opa.service.js'
 import { realtimeService } from './realtime.service.js'
+import { defaultServiceRoles } from './rbac-defaults.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -389,7 +390,10 @@ export class RbacService {
     await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
   }
 
-  private async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: { email?: string; ip?: string }): Promise<void> {
+  // Public: the RBAC bundle importer reuses this exact fan-out so a restore
+  // propagates to OPAL/OPA immediately (etag bump + real-time + OPAL push),
+  // instead of leaving OPA on stale data until the next mutation/restart.
+  async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: { email?: string; ip?: string }): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
@@ -832,13 +836,8 @@ export class RbacService {
     const matchMethods = options.matchMethods || ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
     const stripPath = options.stripPath
 
-    // 1. Create default roles
-    const defaultRoles: FlatRolesMap = {
-      admin: ['*'],
-      operator: [`${name}:list`, `${name}:read`, `${name}:create`, `${name}:update`, `${name}:delete`, `${name}:execute`],
-      editor: [`${name}:list`, `${name}:read`, `${name}:create`, `${name}:update`],
-      viewer: [`${name}:list`, `${name}:read`],
-    }
+    // 1. Create default roles (shared with the bundle-import autofix)
+    const defaultRoles: FlatRolesMap = defaultServiceRoles(name)
 
     // 2. Create default route map with health endpoint
     const defaultRouteMap: RouteMap = {

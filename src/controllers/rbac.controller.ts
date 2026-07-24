@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
 import { opaService } from '../services/opa.service.js'
+import { previewImport } from '../services/openapi-import/importer.js'
 import {
   createGroupBodySchema,
   updateGroupBodySchema,
@@ -172,6 +173,38 @@ export class RbacController {
       })),
     }).parse(request.body)
     const result = await rbacService.updateServiceRoutes(name, rules, this.actor(request))
+    return reply.send(result)
+  }
+
+  /**
+   * Dry-run: parse an OpenAPI/Swagger spec and preview the route rules + diff it
+   * would produce for a service. Never mutates — apply is the existing PUT.
+   */
+  async importRoutesPreview(
+    request: FastifyRequest<{ Params: { name: string } }>,
+    reply: FastifyReply
+  ) {
+    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
+    const { source, options } = z
+      .object({
+        source: z.object({
+          url: z.string().url().optional(),
+          content: z.string().optional(),
+          format: z.enum(['json', 'yaml', 'auto']).optional(),
+        }),
+        options: z
+          .object({
+            resourceFrom: z.enum(['tag', 'path', 'operationId']).optional(),
+            verbMap: z.record(z.string()).optional(),
+            listAsRead: z.boolean().optional(),
+            honorExtension: z.boolean().optional(),
+            scopeMap: z.record(z.string()).optional(),
+            basePath: z.enum(['prepend', 'strip', 'none']).optional(),
+          })
+          .optional(),
+      })
+      .parse(request.body)
+    const result = await previewImport(name, source, options ?? {})
     return reply.send(result)
   }
 
