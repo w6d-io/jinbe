@@ -1,4 +1,6 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { backupStore } from '../services/backup-store.service.js'
+import { rbacBundleService } from '../services/rbac-bundle.service.js'
 import { seedRbacDefaults } from './seed-rbac.js'
 import { applySystemMetadataMigration } from './migrate-system-metadata.js'
 import { buildBuiltInRules } from './build-rules.js'
@@ -145,7 +147,31 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
   }
 }
 
+/**
+ * First-init only (marker absent). If backup is enabled and a `latest.json`
+ * exists in S3, restore the RBAC bundle from it. The idempotent seeders that
+ * follow then no-op over the restored data (but still ensure built-ins + the
+ * admin identity, which the bundle does not contain). A failed restore falls
+ * back to a normal default seed rather than blocking first-init.
+ */
+async function maybeRestoreFromBackup(logger: BootstrapLogger): Promise<void> {
+  if (!backupStore.enabled()) return
+  try {
+    const latest = await backupStore.getLatest()
+    if (!latest) {
+      logger.info('Backup enabled but no latest.json in S3 — seeding defaults')
+      return
+    }
+    logger.info('First-init: restoring RBAC from latest backup')
+    await rbacBundleService.import(latest)
+    logger.info({ services: latest.rbac?.services?.length ?? 0 }, 'Restored RBAC from latest backup')
+  } catch (e) {
+    logger.warn({ err: String(e) }, 'Backup restore failed — falling back to default seed')
+  }
+}
+
 async function runFullBootstrap(config: BootstrapConfig, logger: BootstrapLogger): Promise<void> {
+  await maybeRestoreFromBackup(logger)
   await seedRbacDefaults(logger)
   // Seed the kuma service BEFORE runUpsertOnly so seedDelegation (inside it)
   // sees both jinbe and kuma and can seed org_admin for each.
