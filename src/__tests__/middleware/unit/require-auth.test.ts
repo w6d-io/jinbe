@@ -144,14 +144,23 @@ describe('requireAuth middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
-    it('should skip auth for /api/webhooks routes', async () => {
-      const request = createMockRequest({ url: '/api/webhooks' })
+    it('should skip auth for the exact /api/webhooks/kratos route', async () => {
+      const request = createMockRequest({ url: '/api/webhooks/kratos' })
       const reply = createMockReply()
 
       await requireAuth(request, reply)
 
       expect(reply.status).not.toHaveBeenCalled()
       expect(reply.send).not.toHaveBeenCalled()
+    })
+
+    it('should REQUIRE auth for other /api/webhooks/* sub-paths (P0-1)', async () => {
+      const request = createMockRequest({ url: '/api/webhooks/evil', userContext: undefined })
+      const reply = createMockReply()
+
+      await requireAuth(request, reply)
+
+      expect(reply._statusCode).toBe(401)
     })
   })
 
@@ -368,8 +377,8 @@ describe('requireAuth middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
-    it('should skip auth for /api/webhooks with query string', async () => {
-      const request = createMockRequest({ url: '/api/webhooks?format=json' })
+    it('should skip auth for /api/webhooks/kratos with query string', async () => {
+      const request = createMockRequest({ url: '/api/webhooks/kratos?format=json' })
       const reply = createMockReply()
 
       await requireAuth(request, reply)

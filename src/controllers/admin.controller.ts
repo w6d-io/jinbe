@@ -4,6 +4,7 @@ import { rbacResolverService } from '../services/rbac-resolver.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
+import { auditActor } from '../utils/audit-actor.js'
 import { env } from '../config/env.js'
 import { notificationService } from '../server.js'
 import {
@@ -237,7 +238,7 @@ export class AdminController {
           organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: desiredGroups,
-        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -261,7 +262,7 @@ export class AdminController {
 
     auditEventService.emit({
       type: 'user.created',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id: identity.id },
       details: { email: identity.traits?.email, groups: desiredGroups, sendInvite },
       source: 'jinbe-api',
@@ -311,11 +312,11 @@ export class AdminController {
     } as KratosIdentityUpdate)
     if (metadata_admin !== undefined) {
       kratosService.invalidateGroupsCache()
-      rbacService.notifyBindingsChanged('metadata_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+      rbacService.notifyBindingsChanged('metadata_updated', auditActor(request)).catch(() => {})
     }
     auditEventService.emit({
       type: 'user.updated',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id },
       details: { metadata_public, metadata_admin },
       source: 'jinbe-api',
@@ -343,7 +344,7 @@ export class AdminController {
     rbacService.invalidateDirectoryStats().catch(() => {})
     auditEventService.emit({
       type: 'user.updated',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id },
       details: { state },
       source: 'jinbe-api',
@@ -391,11 +392,11 @@ export class AdminController {
     const identity = await kratosService.updateIdentity(id, body as KratosIdentityUpdate)
     if (body.metadata_admin !== undefined) {
       kratosService.invalidateGroupsCache()
-      rbacService.notifyBindingsChanged('metadata_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+      rbacService.notifyBindingsChanged('metadata_updated', auditActor(request)).catch(() => {})
     }
     auditEventService.emit({
       type: 'user.updated',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id },
       details: { email: identity.traits?.email },
       source: 'jinbe-api',
@@ -418,10 +419,10 @@ export class AdminController {
     const { id } = request.params
     kratosService.invalidateGroupsCache()
     await kratosService.deleteIdentity(id)
-    rbacService.notifyBindingsChanged('user_deleted', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    rbacService.notifyBindingsChanged('user_deleted', auditActor(request)).catch(() => {})
     auditEventService.emit({
       type: 'user.deleted',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id },
       source: 'jinbe-api',
     }).catch(() => {})
@@ -508,7 +509,7 @@ export class AdminController {
           organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: groups,
-        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -550,11 +551,11 @@ export class AdminController {
     ])
 
     kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('organization_changed', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    rbacService.notifyBindingsChanged('organization_changed', auditActor(request)).catch(() => {})
 
     auditEventService.emit({
       type: 'user.organization_changed',
-      actor: { email: request.userContext?.email, ip: request.ip },
+      actor: auditActor(request),
       target: { type: 'user', id },
       details: { organization_id },
       source: 'jinbe-api',
@@ -578,6 +579,13 @@ export class AdminController {
   ) {
     const { sessionId } = request.params
     await kratosService.revokeSession(sessionId)
+    // Session end is auditable here (logout is NOT hookable in Kratos — A5).
+    auditEventService.emit({
+      category: 'auth', kind: 'auth', verb: 'revoke', target: `session:${sessionId}`,
+      result: 'applied', severity: 'warn',
+      actor: auditActor(request), targetType: 'session', targetId: sessionId,
+      source: 'jinbe-api',
+    }).catch(() => {})
     return reply.status(204).send()
   }
 
@@ -587,6 +595,12 @@ export class AdminController {
   ) {
     const { id } = request.params
     await kratosService.revokeAllIdentitySessions(id)
+    auditEventService.emit({
+      category: 'auth', kind: 'auth', verb: 'revoke_all', target: `user:${id}`,
+      result: 'applied', severity: 'warn',
+      actor: auditActor(request), targetType: 'user', targetId: id,
+      source: 'jinbe-api',
+    }).catch(() => {})
     return reply.status(204).send()
   }
 
@@ -599,7 +613,7 @@ export class AdminController {
       await kratosService.sendRecoveryEmail(id)
       auditEventService.emit({
         type: 'user.recovery_email_sent',
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: auditActor(request),
         target: { type: 'user', id },
         source: 'jinbe-api',
       }).catch(() => {})

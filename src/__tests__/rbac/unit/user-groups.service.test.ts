@@ -720,3 +720,40 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })
+
+describe('applyGroupUpdate — denied writes emit an audit event (A2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
+    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
+  })
+
+  it('emits a denied event when a privilege escalation is blocked', async () => {
+    // A non-super actor attempts to grant an admin-power group on the global
+    // endpoint → assertSuperAdmin rejects → privilege_escalation_blocked.
+    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValue(
+      Object.assign(new Error('not a super_admin'), { statusCode: 403 }),
+    )
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['admins'],
+      actor: { email: 'attacker@x.io', ip: '9.9.9.9', aal: 'aal2', authenticatedAt: new Date() },
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+    expect(auditEventService.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'access',
+        result: 'denied',
+        reason: 'privilege_escalation_blocked',
+        target: 'user:target@example.com',
+        targetType: 'user',
+      }),
+    )
+  })
+})

@@ -129,6 +129,11 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
     } else {
       outcome = 'no-op'
       logger.info({ schemaVersion: existing.schemaVersion }, 'Bootstrap marker present and current — no work')
+      // Even on a no-op boot, ensure system-protection tags are current: this
+      // migration is idempotent and cheap, and it lets a new build add/adjust
+      // the protected-resource set (e.g. a newly-recognised platform service)
+      // without needing a schema bump or built-in drift to trigger a re-run.
+      await applySystemMetadataMigration(logger)
       return { outcome, marker: existing }
     }
 

@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify'
 import { requireSuperAdmin } from '../middleware/require-admin.js'
 import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
+import { auditEventService } from '../services/audit-event.service.js'
+import { auditActor } from '../utils/audit-actor.js'
 
 /**
  * Auth config bundle export / import + S3 backup routes.
@@ -37,6 +39,16 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         ? raw.split(',').map((s) => s.trim()).filter((s): s is BundleSection => (ALL_BUNDLE_SECTIONS as string[]).includes(s))
         : undefined
       const bundle = await rbacBundleService.export(sections)
+      // Audit the export — this is an exfil path (the whole RBAC config leaves
+      // the cluster). Actor is always a resolvable super_admin here.
+      const a = auditActor(request)
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'export', target: 'bundle',
+        result: 'applied', severity: 'warn',
+        actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+        requestId: a.requestId,
+        details: { sections: sections ?? 'full' },
+      }).catch(() => {})
       const filename = `auth-bundle-${bundle.exportedAt.slice(0, 10)}.json`
       reply.header('Content-Disposition', `attachment; filename="${filename}"`)
       reply.header('Content-Type', 'application/json')
@@ -50,8 +62,9 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
     {
       preHandler: requireSuperAdmin,
       schema: {
-        description: 'Import an auth bundle — restores RBAC config (full replace). Requires a full snapshot.',
+        description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore.',
         tags: ['rbac', 'backup'],
+        querystring: { type: 'object', properties: { sections: { type: 'string' } } },
         body: { type: 'object', additionalProperties: true },
         response: {
           200: { type: 'object', properties: { success: { type: 'boolean' }, imported: { type: 'object', additionalProperties: true } } },
@@ -60,11 +73,17 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       const bundle = request.body as AuthBundle
+      // Uploaded file must still be a FULL snapshot — a selective import picks
+      // which parts of that snapshot to apply, it does not accept a partial file.
       const err = validateFullBundle(bundle)
       if (err) return reply.status(400).send({ error: 'Bad Request', message: err })
 
-      const actor = { email: request.userContext?.email, ip: request.ip }
-      const result = await rbacBundleService.import(bundle, actor)
+      const raw = (request.query as { sections?: string })?.sections
+      const sections = raw
+        ? raw.split(',').map((s) => s.trim()).filter((s): s is BundleSection => (ALL_BUNDLE_SECTIONS as string[]).includes(s))
+        : undefined
+
+      const result = await rbacBundleService.import(bundle, auditActor(request), sections)
       return { success: true, imported: result }
     }
   )
@@ -100,8 +119,16 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       const err = validateFullBundle(bundle)
       if (err) return reply.status(400).send({ error: 'Bad Request', message: `Backup ${key} is not a valid full snapshot: ${err}` })
 
-      const actor = { email: request.userContext?.email, ip: request.ip }
-      const result = await rbacBundleService.import(bundle, actor)
+      const a = auditActor(request)
+      // Record the S3 snapshot key this restore came from (import() emits the
+      // config-diff event; this records the provenance of the restore).
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'restore', target: `backup:${key}`,
+        result: 'applied', severity: 'high',
+        actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+        requestId: a.requestId, details: { snapshotKey: key },
+      }).catch(() => {})
+      const result = await rbacBundleService.import(bundle, a)
       return { success: true, restoredFrom: key, imported: result }
     }
   )
@@ -110,10 +137,17 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/backups/now',
     { preHandler: requireSuperAdmin, schema: { description: 'Export current RBAC config and upload it to S3 now.', tags: ['rbac', 'backup'] } },
-    async (_request, reply) => {
+    async (request, reply) => {
       if (!backupStore.enabled()) return disabled(reply)
       const bundle = await rbacBundleService.export()
       const { key } = await backupStore.putBackup(bundle)
+      const a = auditActor(request)
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'backup', target: `backup:${key}`,
+        result: 'applied',
+        actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+        requestId: a.requestId, details: { snapshotKey: key },
+      }).catch(() => {})
       return { success: true, key }
     }
   )

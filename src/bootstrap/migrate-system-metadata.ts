@@ -23,9 +23,28 @@ const SYSTEM_GROUP_DESCRIPTIONS: Record<string, string> = {
   users:       'Default group for newly registered identities.',
 }
 
+// Platform services — the auth stack's own entrypoints. Flagged system so they
+// render read-only and can't be deleted/restructured by a regular admin (a
+// super_admin can still edit them; `system` only gates lesser admins), because
+// removing e.g. the Kratos or login-UI rule breaks sign-in for everyone.
+//
+// Keys are the ACTUAL registered service names on this platform (verified
+// against the live registry + Oathkeeper upstreams). Only names that exist are
+// marked — the loop below guards on serviceExists — so extra forward-compat
+// spellings are harmless. Business/tenant services (fleet-*, payments-*,
+// stairfleet, …) and test services (dummy) are intentionally NOT listed.
 const SYSTEM_SERVICE_DESCRIPTIONS: Record<string, string> = {
-  jinbe: 'Jinbe API — RBAC management, audit, user lifecycle.',
-  kuma:  'Kuma admin UI — RBAC management dashboard.',
+  jinbe:                'Jinbe API — RBAC management, audit, user lifecycle.',
+  kuma:                 'Kuma admin UI — RBAC management dashboard.',
+  auth:                 'Ory Kratos public API — identity, sessions & self-service.',
+  'local-auth':         'Ory Kratos public API — local (password) auth.',
+  login_page:           'Login UI — sign-in & self-service screens.',
+  'hydra-oauth2-public': 'Ory Hydra — OAuth2 / OIDC public endpoint.',
+  // Forward-compat spellings (skipped unless registered under these names).
+  kratos:               'Ory Kratos — identity, sessions & self-service.',
+  oathkeeper:           'Ory Oathkeeper — the identity-aware gateway.',
+  hydra:                'Ory Hydra — OAuth2 / OIDC for API keys.',
+  'kratos-login-ui':    'Login UI — sign-in & self-service screens.',
 }
 
 export async function applySystemMetadataMigration(

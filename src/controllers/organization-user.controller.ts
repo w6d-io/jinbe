@@ -5,6 +5,7 @@ import { opaService } from '../services/opa.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
+import { auditActor } from '../utils/audit-actor.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -116,7 +117,7 @@ export class OrganizationUserController {
       const grant = await userGroupsService.applyGroupUpdate({
         identity: { id: identity.id, email, organizationId },
         newGroups: desiredGroups,
-        actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
         privilegePolicy: {
           kind: 'wildcard_in_org',
           orgId: organizationId,
@@ -151,12 +152,12 @@ export class OrganizationUserController {
     }
 
     kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('user_created', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    rbacService.notifyBindingsChanged('user_created', auditActor(request)).catch(() => {})
 
     auditEventService
       .emit({
         type: 'organization_user.created',
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: auditActor(request),
         target: { type: 'user', id: identity.id },
         details: { email, organizationId, sendInvite },
         source: 'jinbe-api',
@@ -190,12 +191,12 @@ export class OrganizationUserController {
     const identity = await kratosService.updateIdentity(id, body)
 
     kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('user_updated', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    rbacService.notifyBindingsChanged('user_updated', auditActor(request)).catch(() => {})
 
     auditEventService
       .emit({
         type: 'organization_user.updated',
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: auditActor(request),
         target: { type: 'user', id },
         details: { organizationId, ...body },
         source: 'jinbe-api',
@@ -253,7 +254,7 @@ export class OrganizationUserController {
     const result = await userGroupsService.applyGroupUpdate({
       identity: { id, email, organizationId },
       newGroups: groups,
-      actor: { email: request.userContext?.email, ip: request.ip, aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+      actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
       privilegePolicy: {
         kind: 'wildcard_in_org',
         orgId: organizationId,
@@ -353,12 +354,12 @@ export class OrganizationUserController {
     await kratosService.deleteIdentity(id)
 
     kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('user_deleted', { email: request.userContext?.email, ip: request.ip }).catch(() => {})
+    rbacService.notifyBindingsChanged('user_deleted', auditActor(request)).catch(() => {})
 
     auditEventService
       .emit({
         type: 'organization_user.deleted',
-        actor: { email: request.userContext?.email, ip: request.ip },
+        actor: auditActor(request),
         target: { type: 'user', id },
         details: { organizationId },
         source: 'jinbe-api',

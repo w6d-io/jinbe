@@ -27,6 +27,7 @@ import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
+import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
@@ -136,6 +137,7 @@ export async function buildServer() {
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(auditRoutes, { prefix: '/admin/audit' })
+      await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
