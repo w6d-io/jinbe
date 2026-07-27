@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { adminController } from '../controllers/admin.controller.js'
 import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
 import { realtimeService } from '../services/realtime.service.js'
+import { accessReviewService } from '../services/access-review.service.js'
 import {
   userIdParamSchema,
   usersQuerySchema,
@@ -42,10 +43,16 @@ export async function adminRoutes(fastify: FastifyInstance) {
   // emits a minimal {type} signal on any RBAC/directory change; the client
   // reacts by refetching through the normal auth'd endpoints (no data on wire).
   fastify.get('/events', (request, reply) => {
+    // NB: do NOT send a `Connection: keep-alive` header. It is a
+    // connection-specific header field, forbidden under HTTP/2 (RFC 7540
+    // §8.1.2.2). When this SSE response is fronted by an HTTP/2 ingress/gateway
+    // the header makes the stream malformed and the browser aborts it with
+    // ERR_HTTP2_PROTOCOL_ERROR. It is also redundant on HTTP/1.1 (keep-alive is
+    // already the default). `X-Accel-Buffering: no` (nginx) + `no-transform`
+    // keep proxies from buffering the stream.
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     })
     reply.raw.write(': connected\n\n')
@@ -107,6 +114,33 @@ export async function adminRoutes(fastify: FastifyInstance) {
       },
     },
     adminController.getStats.bind(adminController)
+  )
+
+  // Access review (Part B / [P1-5]) — "who can do anything, and how".
+  // Resolves power across ALL services from the group definitions, tiers each
+  // identity (T0 global super-admin → T3 broad reach), joins MFA + last-active +
+  // grant provenance, and ranks by power score. SWR-cached (getDirectoryStats
+  // pattern), fail-closed on a directory/group read error. Inherits the plugin's
+  // requireAdmin preHandler. Response is additive/permissive so the kuma
+  // AccessReview contract fields are never stripped.
+  fastify.get(
+    '/access-review',
+    {
+      schema: {
+        description:
+          'Access review: privileged identities across all services, tiered + ranked, with grant paths, MFA, last-active and provenance.',
+        tags: ['admin'],
+        response: {
+          200: { type: 'object', additionalProperties: true },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+        },
+      },
+    },
+    async (_request, reply) => {
+      const data = await accessReviewService.getAccessReview()
+      return reply.send(data)
+    },
   )
 
   // Substring search over identities (email + name), cached in-memory.

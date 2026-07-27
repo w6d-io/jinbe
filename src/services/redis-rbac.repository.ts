@@ -48,6 +48,10 @@ export interface OathkeeperRule {
   authenticators: Array<{ handler: string; config?: unknown }>
   authorizer: { handler: string; config?: unknown }
   mutators: Array<{ handler: string; config?: unknown }>
+  // Optional error handlers — what a denied/failed request receives (e.g.
+  // redirect to login vs. a JSON error). First-class so it round-trips through
+  // create/update and is served to Oathkeeper unchanged.
+  errors?: Array<{ handler: string; config?: unknown }>
   [key: string]: unknown
 }
 

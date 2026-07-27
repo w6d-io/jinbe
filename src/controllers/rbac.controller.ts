@@ -1,6 +1,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
+import { faviconService } from '../services/favicon.service.js'
 import { opaService } from '../services/opa.service.js'
+import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
 import { previewImport } from '../services/openapi-import/importer.js'
 import {
   createGroupBodySchema,
@@ -10,6 +12,7 @@ import {
   type UpdateGroupBody,
   type OathkeeperRule,
 } from '../schemas/rbac/index.js'
+import { auditActor } from '../utils/audit-actor.js'
 import { z } from 'zod'
 
 // =============================================================================
@@ -21,8 +24,9 @@ export class RbacController {
   // Helper
   // ===========================================================================
 
+  // Shared audit-actor (A4/P2-5): email/name/ip/ua/sessionId + requestId.
   private actor(request: FastifyRequest) {
-    return { email: request.userContext?.email, ip: request.ip }
+    return auditActor(request)
   }
 
   // ===========================================================================
@@ -121,6 +125,30 @@ export class RbacController {
     const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
     const result = await rbacService.getServicePermissions(name)
     return reply.send(result)
+  }
+
+  /**
+   * Serve a service's cached favicon (fetched server-side by jinbe from the
+   * service's own public host). Returns the image with its content-type and a
+   * public Cache-Control, or 204 No Content when there's no favicon so kuma can
+   * cleanly fall back to its default avatar. The :name param is guarded to the
+   * service-name charset.
+   */
+  async getServiceFavicon(
+    request: FastifyRequest<{ Params: { name: string } }>,
+    reply: FastifyReply
+  ) {
+    const { name } = z
+      .object({ name: z.string().min(1).regex(/^[a-z0-9_-]+$/) })
+      .parse(request.params)
+    const favicon = await faviconService.getFavicon(name)
+    if (!favicon) {
+      return reply.status(204).send()
+    }
+    return reply
+      .header('Content-Type', favicon.contentType)
+      .header('Cache-Control', `public, max-age=${7 * 24 * 60 * 60}`)
+      .send(favicon.data)
   }
 
   async deleteService(
@@ -260,6 +288,19 @@ export class RbacController {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params)
     const result = await rbacService.deleteAccessRule(id, this.actor(request))
     return reply.send(result)
+  }
+
+  // ===========================================================================
+  // Oathkeeper Handler Catalog
+  // ===========================================================================
+
+  /**
+   * Return the Oathkeeper handlers ENABLED in the running gateway, grouped by
+   * pipeline stage and carrying guided field descriptors. Feeds the admin UI's
+   * handler pickers/forms so it can only ever offer handlers that will load.
+   */
+  async getOathkeeperHandlers(_request: FastifyRequest, reply: FastifyReply) {
+    return reply.send(getEnabledHandlers())
   }
 
   // ===========================================================================

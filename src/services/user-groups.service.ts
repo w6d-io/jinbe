@@ -2,7 +2,20 @@ import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
 import { opaService } from './opa.service.js'
 import { auditEventService } from './audit-event.service.js'
+import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
+
+/** Actor threaded from a request — audit fields (A4) + the R2 step-up state. */
+export type GroupUpdateActor = {
+  email?: string | null
+  ip?: string | null
+  name?: string | null
+  ua?: string | null
+  sessionId?: string | null
+  requestId?: string | null
+  aal?: string
+  authenticatedAt?: Date | string
+}
 
 /**
  * Identity the helper operates on. Resolved by the controller (different
@@ -46,7 +59,7 @@ export type ApplyGroupUpdateInput = {
   newGroups: string[]
   // `aal` / `authenticatedAt` carry the actor's second-factor state for the R2
   // step-up gate; sourced from the Kratos-validated session (request.userContext).
-  actor: { email?: string; ip?: string; aal?: string; authenticatedAt?: Date | string }
+  actor: GroupUpdateActor
   privilegePolicy: ActorPrivilegePolicy
   auditEventType: string
   auditExtraDetails?: Record<string, unknown>
@@ -176,12 +189,18 @@ class UserGroupsService {
 
     for (const { group: g, op } of gated) {
       const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
-      if (denial) return denial
+      if (denial) {
+        // Emit the currently-silent denied write (highest-signal audit event).
+        // checkPrivilegeEscalation only ever returns the ok:false variant.
+        this.emitDenied('privilege_escalation_blocked', identity, actor, g, denial.ok ? 422 : denial.status)
+        return denial
+      }
     }
 
     if (newlyAdded.length > 0) {
       const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identity.id)
       if (blocker) {
+        this.emitDenied('mfa_required', identity, actor, blocker, 422)
         return {
           ok: false,
           status: 422,
@@ -204,7 +223,10 @@ class UserGroupsService {
     // fail-closed on missing AAL/timestamp.
     if (gated.length > 0) {
       const stale = this.stepUpDenial(actor, identity.email)
-      if (stale) return stale
+      if (stale) {
+        this.emitDenied('reauth_required', identity, actor, gated[0]?.group, 422)
+        return stale
+      }
     }
 
     await kratosService.updateUserGroups(identity.email, finalGroups)
@@ -216,9 +238,14 @@ class UserGroupsService {
 
     auditEventService.emit({
       type: auditEventType,
-      actor: { email: actor.email, ip: actor.ip },
+      actor: { email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      requestId: actor.requestId,
       target: { type: 'user', id: identity.id },
-      details: { ...(auditExtraDetails ?? {}), oldGroups, newGroups: finalGroups },
+      // Keep oldGroups/newGroups in details for back-compat; the structural
+      // before→after (A3) lives in `changes`, and targetEmail powers the
+      // per-user "done-to" trail (P1-4).
+      details: { ...(auditExtraDetails ?? {}), oldGroups, newGroups: finalGroups, targetEmail: identity.email },
+      changes: diffUserGroups(identity.id, oldGroups, finalGroups),
       source: 'jinbe-api',
     }).catch(() => {})
 
@@ -233,6 +260,36 @@ class UserGroupsService {
       },
     }
     }) // end withRedisLock(user-groups:<email>)
+  }
+
+  /**
+   * Emit a denied group-mutation (A2). These are the highest-signal audit
+   * events (an attempted privilege change that was refused) and were previously
+   * silent. Fail-open on the emit — never block the denial itself.
+   */
+  private emitDenied(
+    reason: string,
+    identity: ResolvedIdentity,
+    actor: GroupUpdateActor,
+    blockingGroup: string | undefined,
+    status: number,
+  ): void {
+    auditEventService.emit({
+      category: 'access',
+      kind: 'change',
+      verb: 'assign',
+      target: `user:${identity.email}`,
+      result: 'denied',
+      severity: 'warn',
+      reason,
+      actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      requestId: actor.requestId,
+      targetId: identity.id,
+      targetType: 'user',
+      statusCode: status,
+      details: { blockingGroup, targetEmail: identity.email },
+      source: 'jinbe-api',
+    }).catch(() => {})
   }
 
   // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE.
@@ -271,7 +328,7 @@ class UserGroupsService {
   private async checkPrivilegeEscalation(
     groupName: string,
     targetEmail: string,
-    actor: { email?: string; ip?: string },
+    actor: { email?: string | null; ip?: string | null },
     policy: ActorPrivilegePolicy,
     op: 'add' | 'remove' = 'add',
   ): Promise<ApplyGroupUpdateResult | null> {
