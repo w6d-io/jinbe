@@ -92,7 +92,12 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min keeps the cache under the 10GB Actions-cache quota (mode=max
+          # exceeded it → "failed to reserve cache", a poisoned cache, and an
+          # 80-min cold-arm64 rebuild hang). ignore-error=true means a cache
+          # export hiccup never fails this step (which previously skipped the
+          # tag/release steps downstream).
+          cache-to: type=gha,mode=min,ignore-error=true
 
       - name: Create git tag
         run: |
