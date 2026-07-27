@@ -190,8 +190,13 @@ async function start() {
       )
 
       // Start notification service (Redis-backed outbox → notifiers).
+      // Use a DEDICATED connection (.duplicate()): the consumer loop runs a
+      // blocking `XREADGROUP … BLOCK 5000`, and ioredis serialises commands per
+      // connection — on the shared singleton that block stalls every other
+      // redis command (RBAC reads, /health ping) behind it for up to 5s per
+      // cycle. realtimeService already isolates its blocking read the same way.
       if (env.JINBE_SERVICE_URL) {
-        notificationService.setRedis(getRedisClient())
+        notificationService.setRedis(getRedisClient().duplicate())
         notificationService.register(new HttpNotifier({ url: env.JINBE_SERVICE_URL }))
         await notificationService.start()
       }
