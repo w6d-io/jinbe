@@ -16,6 +16,49 @@ import {
   oathkeeperRuleJsonSchema,
 } from '../schemas/rbac/index.js'
 
+// Response schema for GET /oathkeeper/handlers. A handler descriptor is the
+// plain-language shape the admin UI renders (label/description + guided fields);
+// an explicit schema keeps fast-json-stringify from stripping nested fields.
+const handlerDescriptorJsonSchema = {
+  type: 'object',
+  properties: {
+    handler: { type: 'string' },
+    label: { type: 'string' },
+    description: { type: 'string' },
+    hasFreeformConfig: { type: 'boolean' },
+    fields: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          label: { type: 'string' },
+          type: {
+            type: 'string',
+            enum: ['string', 'url', 'bool', 'textarea', 'kv', 'list', 'json'],
+          },
+          required: { type: 'boolean' },
+          placeholder: { type: 'string' },
+          help: { type: 'string' },
+        },
+        required: ['key', 'label', 'type'],
+      },
+    },
+  },
+  required: ['handler', 'label', 'description', 'hasFreeformConfig', 'fields'],
+}
+
+const oathkeeperHandlerCatalogJsonSchema = {
+  type: 'object',
+  properties: {
+    authenticators: { type: 'array', items: handlerDescriptorJsonSchema },
+    authorizers: { type: 'array', items: handlerDescriptorJsonSchema },
+    mutators: { type: 'array', items: handlerDescriptorJsonSchema },
+    errorHandlers: { type: 'array', items: handlerDescriptorJsonSchema },
+  },
+  required: ['authenticators', 'authorizers', 'mutators', 'errorHandlers'],
+}
+
 // =============================================================================
 // RBAC Routes — Redis-backed, no branch prefix
 // =============================================================================
@@ -124,7 +167,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       body: {
         type: 'object', required: ['name'],
         properties: {
-          name: { type: 'string', pattern: '^[a-z0-9_]+$' },
+          name: { type: 'string', pattern: '^[a-z0-9_-]+$' },
           displayName: { type: 'string' },
           upstreamUrl: { type: 'string', format: 'uri' },
           matchUrl: { type: 'string' },
@@ -192,6 +235,22 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.getServicePermissions.bind(rbacController))
+
+  fastify.get('/services/:name/favicon', {
+    schema: {
+      description:
+        "Serve the service's favicon, fetched server-side by jinbe from the service's own public host and cached in Redis (7d). Returns the image with a public Cache-Control, or 204 No Content when there is no favicon.",
+      tags: ['rbac'],
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z0-9_-]+$' } } },
+      // No 200/204 body schema: the payload is a raw image (binary) — let it
+      // pass through unserialized. Error shapes are still enforced.
+      response: {
+        400: badRequestResponseSchema,
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.getServiceFavicon.bind(rbacController))
 
   fastify.get('/services/:name/roles', {
     schema: {
@@ -392,6 +451,23 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.deleteAccessRule.bind(rbacController))
 
   // ===========================================================================
+  // Oathkeeper Handler Catalog
+  // ===========================================================================
+
+  fastify.get('/oathkeeper/handlers', {
+    schema: {
+      description:
+        'List the Oathkeeper handlers ENABLED in the running gateway, grouped by pipeline stage, each with guided field descriptors. Drives the admin UI handler pickers/forms so it only offers handlers the gateway will accept.',
+      tags: ['rbac'],
+      response: {
+        200: oathkeeperHandlerCatalogJsonSchema,
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.getOathkeeperHandlers.bind(rbacController))
+
+  // ===========================================================================
   // Org → Service Map
   // ===========================================================================
 
@@ -427,7 +503,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           services: {
             type: 'array',
             minItems: 1,
-            items: { type: 'string', pattern: '^[a-z0-9_]+$' },
+            items: { type: 'string', pattern: '^[a-z0-9_-]+$' },
           },
         },
       },

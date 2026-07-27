@@ -78,6 +78,12 @@ export const envSchema = z.object({
     .pipe(z.number().int().positive())
     .default('10000'),
 
+  // Shared secret authenticating the Kratos after-hook webhook
+  // (POST /api/webhooks/kratos). Kratos sends it as an api_key header; jinbe
+  // constant-time compares it and rejects (401, emitting nothing) on mismatch.
+  // Vault-injected in production; when unset the webhook rejects every call.
+  KRATOS_WEBHOOK_SECRET: z.string().optional(),
+
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.
   HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
@@ -108,6 +114,10 @@ export const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().transform(Number).pipe(z.number().min(0)).default('0'),
   REDIS_AUDIT_STREAM: z.string().default('auth:audit:events'),
+  // Cap on the global audit stream (approximate, ~ trimming). Per-entity
+  // fan-out keys carry their own tighter cap. Retention is bounded by this
+  // number — there is no tamper-evident/WORM store in this pass.
+  REDIS_AUDIT_MAXLEN: z.string().transform(Number).pipe(z.number().int().positive()).default('100000'),
 
   // Service Creation Defaults (for Oathkeeper rules and kustomization).
   // The defaults are placeholders — every production deployment must set
@@ -127,6 +137,30 @@ export const envSchema = z.object({
 
   // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
   OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
+
+  // Oathkeeper enabled handler sets (comma-separated → string[]). These are the
+  // handlers actually REGISTERED in the gateway's Oathkeeper config. jinbe
+  // validates every access-rule handler against these sets fail-closed, so a
+  // rule can never reference a handler the gateway doesn't know (which would
+  // make Oathkeeper reject the entire ruleset at load → gateway down). The
+  // deployer derives these from the gateway config; the defaults mirror the
+  // currently-registered set so behavior is safe even before they're wired.
+  OATHKEEPER_ENABLED_AUTHENTICATORS: z
+    .string()
+    .default('cookie_session,noop')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  OATHKEEPER_ENABLED_AUTHORIZERS: z
+    .string()
+    .default('allow,remote_json')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  OATHKEEPER_ENABLED_MUTATORS: z
+    .string()
+    .default('noop,header')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  OATHKEEPER_ENABLED_ERROR_HANDLERS: z
+    .string()
+    .default('redirect,json')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
 
   // Default admin identity (only required on first bootstrap — see src/cli/bootstrap.ts).
   // ADMIN_PASSWORD seeds the first super_admins identity: it must clear the

@@ -1,10 +1,17 @@
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
-import { auditEventService } from './audit-event.service.js'
+import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
+import { accessReviewService } from './access-review.service.js'
+import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { opaService } from './opa.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
+import {
+  isHandlerEnabled,
+  getEnabledHandlerNames,
+  type HandlerKind,
+} from './oathkeeper-handlers.js'
 import { env } from '../config/env.js'
 import {
   DEFAULT_GROUP_SERVICE_ROLES,
@@ -195,7 +202,7 @@ export class RbacService {
    * a global wildcard role (super_admin). Lookup goes through OPA so the
    * decision matches request-time authorization exactly.
    */
-  private async requireSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+  private async requireSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
     if (!actor?.email) {
       throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
     }
@@ -217,7 +224,7 @@ export class RbacService {
    * FAIL-CLOSED: returns false on missing email or any OPA error, so an
    * unreachable OPA never widens visibility.
    */
-  async isSuperAdmin(actor: { email?: string }): Promise<boolean> {
+  async isSuperAdmin(actor: { email?: string | null }): Promise<boolean> {
     if (!actor?.email) return false
     try {
       const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
@@ -262,7 +269,7 @@ export class RbacService {
    * Public wrapper exposing the super_admin authority check used internally
    * by mutation guards. Throws 403 if the actor is not a super_admin.
    */
-  async assertSuperAdmin(reason: string, actor?: { email?: string }): Promise<void> {
+  async assertSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
     return this.requireSuperAdmin(reason, actor)
   }
 
@@ -386,14 +393,18 @@ export class RbacService {
   }
 
   // Public: call after any user-group mutation that bypasses rbacService methods
-  async notifyBindingsChanged(reason: string, actor?: { email?: string; ip?: string }): Promise<void> {
+  async notifyBindingsChanged(reason: string, actor?: AuditActorInput): Promise<void> {
     await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
   }
 
   // Public: the RBAC bundle importer reuses this exact fan-out so a restore
   // propagates to OPAL/OPA immediately (etag bump + real-time + OPAL push),
   // instead of leaving OPA on stale data until the next mutation/restart.
-  async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: { email?: string; ip?: string }): Promise<void> {
+  //
+  // `changes` (A3) carries the redacted before→after envelope; `actor` is the
+  // full audit-actor (A4) so name/ua/sessionId/requestId thread through and
+  // cascade child-events correlate by requestId.
+  async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: AuditActorInput, changes?: AuditChanges): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
@@ -401,6 +412,9 @@ export class RbacService {
     // every mutation flowing through here (groups/services/org-map + all
     // notifyBindingsChanged user mutations).
     redisRbacRepository.invalidateStats().catch(() => {})
+    // Access-review resolves the same bindings/group definitions — bust its SWR
+    // cache too ([P1-5]) so the next review reflects this mutation.
+    accessReviewService.invalidate()
     // Push a real-time signal so connected admin browsers refetch at once.
     realtimeService.publish(eventType ?? 'rbac')
 
@@ -408,7 +422,14 @@ export class RbacService {
     this.notifyOpal(eventType).catch(() => {})
 
     if (eventType) {
-      auditEventService.emit({ type: eventType, target, actor, source: 'jinbe-api' }).catch(() => {})
+      auditEventService.emit({
+        type: eventType,
+        target,
+        actor: { email: actor?.email, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        requestId: actor?.requestId,
+        changes,
+        source: 'jinbe-api',
+      }).catch(() => {})
     }
   }
 
@@ -691,6 +712,8 @@ export class RbacService {
     // bypass the binding-cache invalidation their sibling mutation paths get.
     kratosService.invalidateGroupsCache()
     await redisRbacRepository.invalidateStats().catch(() => {})
+    // Directory membership drives access-review tiers/reach — bust it too ([P1-5]).
+    accessReviewService.invalidate()
     realtimeService.publish('directory')
   }
 
@@ -715,7 +738,7 @@ export class RbacService {
     return { groups: groupsInfo }
   }
 
-  async createGroup(name: string, services: GroupDefinition, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async createGroup(name: string, services: GroupDefinition, actor?: AuditActorInput): Promise<MutationResult> {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
     }
@@ -726,11 +749,12 @@ export class RbacService {
       await this.requireSuperAdmin('create a group with the super_admin role', actor)
     }
     await redisRbacRepository.setGroup(name, services)
-    await this.invalidateBundle('rbac.group_created', { type: 'group', id: name }, actor)
+    const changes = diffGroupDefinition(name, null, services)
+    await this.invalidateBundle('rbac.group_created', { type: 'group', id: name }, actor, changes)
     return this.result(`Group '${name}' created`)
   }
 
-  async updateGroup(name: string, services: GroupDefinition, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async updateGroup(name: string, services: GroupDefinition, actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
@@ -739,25 +763,37 @@ export class RbacService {
     if (name === 'super_admins') {
       await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
+    // Capture the pre-image for the before→after diff (A3).
+    const before = await redisRbacRepository.getGroup(name)
     // PUT semantics: full replace. Earlier behavior merged the incoming
     // services map with the existing one, which silently dropped the
     // operator's intent when they unchecked every role for a service —
     // the API returned 200 but nothing changed in Redis. Replacing
     // matches the REST PUT contract and what kuma's UI implies.
     await redisRbacRepository.setGroup(name, services)
-    await this.invalidateBundle('rbac.group_updated', { type: 'group', id: name }, actor)
+    const changes = diffGroupDefinition(name, before, services)
+    await this.invalidateBundle('rbac.group_updated', { type: 'group', id: name }, actor, changes)
     return this.result(`Group '${name}' updated`)
   }
 
-  async deleteGroup(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async deleteGroup(name: string, actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
     if (await this.isSystemGroup(name)) {
       // System groups are never deletable — even by super_admins. Removing
       // super_admins leaves the cluster with no path back to global admin.
+      // Emit the denied attempt (previously silent) before failing closed.
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'delete', target: `group:${name}`,
+        result: 'denied', reason: 'system_resource_immutable', severity: 'warn',
+        targetType: 'group', targetId: name,
+        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        requestId: actor?.requestId, source: 'jinbe-api',
+      }).catch(() => {})
       throw new SystemResourceImmutable('group', name)
     }
+    const before = await redisRbacRepository.getGroup(name)
     await redisRbacRepository.deleteGroup(name)
     await redisRbacRepository.deleteGroupMetadata(name)
 
@@ -771,7 +807,8 @@ export class RbacService {
       console.error(`[rbac] Failed to remove group '${name}' from Kratos users:`, error)
     }
 
-    await this.invalidateBundle('rbac.group_deleted', { type: 'group', id: name }, actor)
+    const changes = diffGroupDefinition(name, before, {})
+    await this.invalidateBundle('rbac.group_deleted', { type: 'group', id: name }, actor, changes)
     return this.result(`Group '${name}' deleted`)
   }
 
@@ -819,7 +856,7 @@ export class RbacService {
     return { services }
   }
 
-  async createService(options: CreateServiceOptions, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async createService(options: CreateServiceOptions, actor?: AuditActorInput): Promise<MutationResult> {
     const { name } = options
 
     if (await redisRbacRepository.serviceExists(name)) {
@@ -846,11 +883,7 @@ export class RbacService {
 
     // 3. Create Oathkeeper rules
     // Per-rule authorizer config overrides the global one — sets app to this service name
-    // so OPA evaluates RBAC against this service's roles/routes, not the global jinbe config
-    const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
-    // Build OPA payload — Go templates need literal "email" (unescaped), JSON.stringify handles escaping when stored
-    const q = '"'
-    const opaPayload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${name}"}}`
+    // so OPA evaluates RBAC against this service's roles/routes, not the global config
     const mainRule: OathkeeperRule = {
       id: name,
       upstream: stripPath ? { url: upstreamUrl, strip_path: stripPath } : { url: upstreamUrl },
@@ -858,10 +891,7 @@ export class RbacService {
       authenticators: [{ handler: 'cookie_session' }],
       authorizer: {
         handler: 'remote_json',
-        config: {
-          remote: env.OPA_AUTHZ_REMOTE,
-          payload: opaPayload,
-        },
+        config: this.buildRemoteJsonConfig(name),
       },
       mutators: [{ handler: 'header' }],
     }
@@ -903,15 +933,22 @@ export class RbacService {
       }
     })
 
-    await this.invalidateBundle('rbac.service_created', { type: 'service', id: name }, actor)
+    await this.invalidateBundle('rbac.service_created', { type: 'service', id: name, service: name }, actor)
     return this.result(`Service '${name}' created with roles, routes, and oathkeeper rules`)
   }
 
-  async deleteService(name: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async deleteService(name: string, actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.serviceExists(name))) {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
     }
     if (await this.isSystemService(name)) {
+      auditEventService.emit({
+        category: 'service', kind: 'change', verb: 'delete', target: `service:${name}`,
+        result: 'denied', reason: 'system_resource_immutable', severity: 'warn',
+        service: name, targetType: 'service', targetId: name,
+        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        requestId: actor?.requestId, source: 'jinbe-api',
+      }).catch(() => {})
       throw new SystemResourceImmutable('service', name)
     }
 
@@ -938,7 +975,7 @@ export class RbacService {
     await redisRbacRepository.removeService(name)
     await redisRbacRepository.deleteServiceMetadata(name)
 
-    await this.invalidateBundle('rbac.service_deleted', { type: 'service', id: name }, actor)
+    await this.invalidateBundle('rbac.service_deleted', { type: 'service', id: name, service: name }, actor)
     return this.result(`Service '${name}' deleted`)
   }
 
@@ -964,11 +1001,14 @@ export class RbacService {
     return { service: serviceName, permissions: [...permSet].sort() }
   }
 
-  async updateServiceConfig(name: string, options: UpdateServiceOptions, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async updateServiceConfig(name: string, options: UpdateServiceOptions, actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.serviceExists(name))) {
       throw Object.assign(new Error(`Service not found: ${name}`), { statusCode: 404 })
     }
 
+    // Capture the posture before→after (A3) — structural fields only, computed
+    // inside the lock where `existing` is authoritative.
+    let changes: AuditChanges | undefined
     // Same read-modify-write on rbac:oathkeeper:rules as the repository's
     // add/update/deleteAccessRule — take the SAME lock so a service-config edit
     // can't clobber (or be clobbered by) a concurrent rule mutation (#7).
@@ -1000,18 +1040,21 @@ export class RbacService {
       }
 
       rules[ruleIdx] = updated
+      changes = diffOathkeeperRule(name, existing, updated)
       await redisRbacRepository.setAccessRules(rules)
     })
-    await this.invalidateBundle('rbac.service_config_updated', { type: 'service', id: name }, actor)
+    await this.invalidateBundle('rbac.service_config_updated', { type: 'service', id: name, service: name }, actor, changes)
     return this.result(`Service '${name}' config updated`)
   }
 
-  async updateServiceRoutes(serviceName: string, rules: RouteMap['rules'], actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async updateServiceRoutes(serviceName: string, rules: RouteMap['rules'], actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    const before = await redisRbacRepository.getRouteMap(serviceName)
     await redisRbacRepository.setRouteMap(serviceName, { rules })
-    await this.invalidateBundle('rbac.service_routes_updated', { type: 'service', id: serviceName }, actor)
+    const changes = diffRouteMap(serviceName, before, { rules })
+    await this.invalidateBundle('rbac.service_routes_updated', { type: 'service', id: serviceName, service: serviceName }, actor, changes)
     return this.result(`Route map for '${serviceName}' updated (${rules.length} rules)`)
   }
 
@@ -1026,21 +1069,33 @@ export class RbacService {
   async updateServiceRoles(
     serviceName: string,
     roles: Record<string, string[]>,
-    actor?: { email?: string; ip?: string }
+    actor?: AuditActorInput
   ): Promise<MutationResult> {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    const before = await redisRbacRepository.getRoles(serviceName)
     await redisRbacRepository.setRoles(serviceName, roles)
     this.notifyOpalRoles(serviceName).catch(() => {})
-    await this.invalidateBundle('roles.updated', { type: 'service', id: serviceName, service: serviceName }, actor)
+    const changes = diffRoles(serviceName, before, roles)
+    await this.invalidateBundle('roles.updated', { type: 'service', id: serviceName, service: serviceName }, actor, changes)
     return this.result(`Roles updated for ${serviceName}`)
   }
 
   async getServiceRoles(serviceName: string): Promise<{ service: string; roles: Array<{ name: string; permissions: string[] }> }> {
-    const roles = await redisRbacRepository.getRoles(serviceName)
-    if (!roles) {
-      throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
+    let roles = await redisRbacRepository.getRoles(serviceName)
+    // Self-repair: a registered service with no roles (legacy / hand-created
+    // without defaults) is seeded the standard default role set on first read —
+    // the same defaults createService applies — instead of 404-ing. 404 only if
+    // the service isn't registered at all.
+    if (!roles || Object.keys(roles).length === 0) {
+      const services = await redisRbacRepository.getServices()
+      if (!services.includes(serviceName)) {
+        throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
+      }
+      roles = defaultServiceRoles(serviceName)
+      await redisRbacRepository.setRoles(serviceName, roles)
+      await this.invalidateBundle('rbac.roles_selfrepaired', { type: 'service', id: serviceName, service: serviceName }, { email: 'system' })
     }
     return {
       service: serviceName,
@@ -1065,26 +1120,133 @@ export class RbacService {
     return { rule }
   }
 
-  async createAccessRule(rule: OathkeeperRule, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  /**
+   * Builds the PER-SERVICE `remote_json` authorizer config: the shared OPA
+   * remote endpoint plus a Go-template `payload` that embeds this service's
+   * name as `app`, so OPA authorizes the request against THIS service's
+   * roles/routes rather than some other service's. Extracted from createService
+   * and reused by the create/update backfill net so a rule can never be
+   * persisted with a bare or app-less remote_json config that would silently
+   * authorize against the wrong service.
+   */
+  private buildRemoteJsonConfig(service: string): { remote: string; payload: string } {
+    const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
+    // Go templates need a literal "email" key (unescaped); JSON.stringify handles
+    // escaping when the rule is stored.
+    const q = '"'
+    const payload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${service}"}}`
+    return { remote: env.OPA_AUTHZ_REMOTE, payload }
+  }
+
+  /**
+   * Derives the owning service of an access rule from its id. Rule ids are the
+   * service name, optionally with a suffix (e.g. `<service>-health`,
+   * `<service>-preflight`). Matches the id against the registered service names
+   * and returns the LONGEST one the id equals or is prefixed by (at a `-`
+   * boundary) — so a hyphenated service like `order-service` wins over a bare
+   * `order`, and suffixed sub-rules resolve to their real service. Falls back to
+   * the id's first `-`-segment only when no registered service matches (e.g. the
+   * rule is created before its service is registered).
+   */
+  private deriveServiceForRule(id: string, services: string[]): string {
+    let best: string | null = null
+    for (const svc of services) {
+      if (id === svc || id.startsWith(`${svc}-`)) {
+        if (best === null || svc.length > best.length) best = svc
+      }
+    }
+    return best ?? id.split('-')[0]
+  }
+
+  /**
+   * P0 safety net for the gateway editor: `remote_json`'s config is PER-SERVICE
+   * (its `payload` embeds `"app":"<service>"`). A rule saved with a bare or
+   * app-less remote_json config would authorize against the wrong service —
+   * silent mis-authorization. So before persisting, if the authorizer is
+   * remote_json and either `remote` or `payload` is missing/empty, backfill the
+   * correct per-service config derived from the rule's id. Any already-present
+   * value is preserved verbatim — only absent fields are filled — so a complete
+   * or custom per-service config is stored unchanged.
+   */
+  private async backfillRemoteJsonConfig(rule: OathkeeperRule): Promise<void> {
+    if (rule.authorizer?.handler !== 'remote_json') return
+    const config = rule.authorizer.config as { remote?: unknown; payload?: unknown } | undefined
+    const isEmpty = (v: unknown): boolean =>
+      v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
+    const remoteMissing = isEmpty(config?.remote)
+    const payloadMissing = isEmpty(config?.payload)
+    if (!remoteMissing && !payloadMissing) return
+
+    const services = await redisRbacRepository.getServices()
+    const service = this.deriveServiceForRule(rule.id, services)
+    const built = this.buildRemoteJsonConfig(service)
+    rule.authorizer.config = {
+      ...(config ?? {}),
+      ...(remoteMissing ? { remote: built.remote } : {}),
+      ...(payloadMissing ? { payload: built.payload } : {}),
+    }
+  }
+
+  /**
+   * Fail-closed guard: reject any access rule that references a handler not
+   * enabled in the running gateway. If jinbe stored such a rule, Oathkeeper
+   * would reject the ENTIRE ruleset at load → the gateway goes down for every
+   * service. So we validate every stage (authenticators, authorizer, mutators,
+   * error handlers) before writing and throw a 400 naming the offending handler
+   * and the allowed options. Per-service rule generation only ever uses handlers
+   * from the enabled defaults, so it is unaffected.
+   */
+  private assertHandlersEnabled(rule: OathkeeperRule): void {
+    const stages: Array<{ kind: HandlerKind; name: string }> = []
+    for (const a of rule.authenticators ?? []) stages.push({ kind: 'authenticator', name: a.handler })
+    if (rule.authorizer) stages.push({ kind: 'authorizer', name: rule.authorizer.handler })
+    for (const m of rule.mutators ?? []) stages.push({ kind: 'mutator', name: m.handler })
+    for (const e of rule.errors ?? []) stages.push({ kind: 'error', name: e.handler })
+
+    for (const { kind, name } of stages) {
+      if (!isHandlerEnabled(kind, name)) {
+        const allowed = getEnabledHandlerNames(kind)
+        throw Object.assign(
+          new Error(
+            `The ${kind} handler '${name}' is not enabled in the gateway and would break the entire ruleset. ` +
+              `Enabled ${kind}s: ${allowed.join(', ') || '(none)'}.`,
+          ),
+          { statusCode: 400 },
+        )
+      }
+    }
+  }
+
+  async createAccessRule(rule: OathkeeperRule, actor?: AuditActorInput): Promise<MutationResult> {
+    this.assertHandlersEnabled(rule)
+    await this.backfillRemoteJsonConfig(rule)
     try {
       await redisRbacRepository.addAccessRule(rule)
     } catch (err) {
       throw Object.assign(new Error((err as Error).message), { statusCode: 409 })
     }
-    await this.invalidateBundle('rbac.access_rule_created', { type: 'access_rule', id: rule.id }, actor)
+    const changes = diffOathkeeperRule(rule.id, null, rule)
+    await this.invalidateBundle('rbac.access_rule_created', { type: 'access_rule', id: rule.id }, actor, changes)
     return this.result(`Access rule '${rule.id}' created`)
   }
 
-  async updateAccessRule(id: string, rule: OathkeeperRule, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
-    const updated = await redisRbacRepository.updateAccessRule(id, { ...rule, id })
+  async updateAccessRule(id: string, rule: OathkeeperRule, actor?: AuditActorInput): Promise<MutationResult> {
+    this.assertHandlersEnabled(rule)
+    // Persist under the path id (authoritative). Backfill derives the service
+    // from that same id so a bare/app-less remote_json can't slip through.
+    const toPersist: OathkeeperRule = { ...rule, id }
+    const before = (await redisRbacRepository.getAccessRules() ?? []).find((r) => r.id === id)
+    await this.backfillRemoteJsonConfig(toPersist)
+    const updated = await redisRbacRepository.updateAccessRule(id, toPersist)
     if (!updated) {
       throw Object.assign(new Error(`Access rule not found: ${id}`), { statusCode: 404 })
     }
-    await this.invalidateBundle('rbac.access_rule_updated', { type: 'access_rule', id }, actor)
+    const changes = diffOathkeeperRule(id, before, toPersist)
+    await this.invalidateBundle('rbac.access_rule_updated', { type: 'access_rule', id }, actor, changes)
     return this.result(`Access rule '${id}' updated`)
   }
 
-  async deleteAccessRule(id: string, actor?: { email?: string; ip?: string }): Promise<MutationResult> {
+  async deleteAccessRule(id: string, actor?: AuditActorInput): Promise<MutationResult> {
     const deleted = await redisRbacRepository.deleteAccessRule(id)
     if (!deleted) {
       throw Object.assign(new Error(`Access rule not found: ${id}`), { statusCode: 404 })
@@ -1101,7 +1263,7 @@ export class RbacService {
     return redisRbacRepository.getOrgServiceMap()
   }
 
-  async setOrgServiceMapping(organizationId: string, services: string[], actor?: { email?: string; ip?: string }): Promise<void> {
+  async setOrgServiceMapping(organizationId: string, services: string[], actor?: AuditActorInput): Promise<void> {
     // Fail-closed: validate EVERY service in the bundle exists before writing.
     // Reject the whole set if any is unknown rather than mapping an org to a
     // phantom service (which would resolve to no route_map / no roles in OPA).
@@ -1115,7 +1277,7 @@ export class RbacService {
     await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, services }, actor)
   }
 
-  async deleteOrgServiceMapping(organizationId: string, actor?: { email?: string; ip?: string }): Promise<void> {
+  async deleteOrgServiceMapping(organizationId: string, actor?: AuditActorInput): Promise<void> {
     const deleted = await redisRbacRepository.deleteOrgServiceMapping(organizationId)
     if (!deleted) {
       throw Object.assign(new Error(`No mapping found for organization '${organizationId}'`), { statusCode: 404 })
@@ -1131,7 +1293,7 @@ export class RbacService {
   // re-validated here on purpose: the policy's manageable_orgs requires the admin
   // to also be a MEMBER of the org (data.bindings.user_organizations), so a
   // rostered non-member is inert — they gain nothing until they're a member.
-  async setOrgAdmins(organizationId: string, admins: string[], actor?: { email?: string; ip?: string }): Promise<void> {
+  async setOrgAdmins(organizationId: string, admins: string[], actor?: AuditActorInput): Promise<void> {
     await redisRbacRepository.setOrgAdmins(organizationId, admins)
     await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor)
   }

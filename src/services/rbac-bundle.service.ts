@@ -1,5 +1,5 @@
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
-import { auditEventService } from './audit-event.service.js'
+import { auditEventService, type AuditActorInput, type AuditFlag } from './audit-event.service.js'
 import { rbacService } from './rbac.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 
@@ -67,51 +67,73 @@ class RbacBundleService {
     return { version: '1', exportedAt: new Date().toISOString(), rbac }
   }
 
-  async import(bundle: AuthBundle, actor?: { email?: string; ip?: string }): Promise<ImportResult> {
+  async import(bundle: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[]): Promise<ImportResult> {
     const { services, groups, roles, routeMaps, oathkeeperRules, orgServiceMap } = bundle.rbac
+    // `sections` (optional) restricts a selective import to the chosen parts.
+    // Full 1:1 restore (prune orphans) happens ONLY when applying the whole
+    // bundle; a selective import overrides/adds the chosen sections and NEVER
+    // prunes anything outside them.
+    const want = (s: BundleSection) => !sections || sections.length === 0 || sections.includes(s)
+    const isFull = !sections || sections.length === 0 || sections.length >= ALL_BUNDLE_SECTIONS.length
 
-    // ── Service registry: full replace ──
     const existingServices = await redisRbacRepository.getServices()
-    await Promise.all(existingServices.map(svc => redisRbacRepository.removeService(svc)))
-    await Promise.all(services.map(svc => redisRbacRepository.addService(svc)))
+    let orphanServices: string[] = []
 
-    // ── Prune for a true 1:1 restore: drop roles/routeMaps of services that are
-    // no longer in the bundle (the old upsert-only import left these orphaned). ──
-    const bundleServices = new Set(services)
-    const orphanServices = existingServices.filter(svc => !bundleServices.has(svc))
-    await Promise.all(orphanServices.flatMap(svc => [
-      redisRbacRepository.deleteRoles(svc),
-      redisRbacRepository.deleteRouteMap(svc),
-    ]))
-
-    // ── Groups: overwrite the bundle's, prune any group absent from the bundle ──
-    const existingGroups = await redisRbacRepository.getGroups()
-    for (const name of Object.keys(existingGroups)) {
-      if (!(name in groups)) await redisRbacRepository.deleteGroup(name)
-    }
-    for (const [name, def] of Object.entries(groups)) {
-      await redisRbacRepository.setGroup(name, def)
+    // ── Service registry ──
+    if (want('services')) {
+      await Promise.all(services.map(svc => redisRbacRepository.addService(svc)))
+      if (isFull) {
+        // True 1:1 restore: drop services (and their roles/routeMaps) not in the bundle.
+        const bundleServices = new Set(services)
+        orphanServices = existingServices.filter(svc => !bundleServices.has(svc))
+        await Promise.all(orphanServices.map(svc => redisRbacRepository.removeService(svc)))
+        await Promise.all(orphanServices.flatMap(svc => [
+          redisRbacRepository.deleteRoles(svc),
+          redisRbacRepository.deleteRouteMap(svc),
+        ]))
+      }
     }
 
-    // ── Roles: AUTOFIX — every imported service ends up with the full default
-    // roles. Defaults fill gaps; the bundle's own definitions win on conflict.
+    // ── Groups: overwrite the bundle's; prune absent ones only on a full restore ──
+    if (want('groups')) {
+      if (isFull) {
+        const existingGroups = await redisRbacRepository.getGroups()
+        for (const name of Object.keys(existingGroups)) {
+          if (!(name in groups)) await redisRbacRepository.deleteGroup(name)
+        }
+      }
+      for (const [name, def] of Object.entries(groups)) {
+        await redisRbacRepository.setGroup(name, def)
+      }
+    }
+
+    // ── Roles: AUTOFIX — defaults fill gaps; the bundle's definitions win.
     // 'global' is not a service, so it passes through untouched. ──
-    for (const [svc, r] of Object.entries(roles)) {
-      const merged = svc === 'global' ? r : { ...defaultServiceRoles(svc), ...r }
-      await redisRbacRepository.setRoles(svc, merged)
-    }
-    // A service listed in the registry but with no roles entry still gets defaults.
-    for (const svc of services) {
-      if (!(svc in roles)) await redisRbacRepository.setRoles(svc, defaultServiceRoles(svc))
+    if (want('roles')) {
+      for (const [svc, r] of Object.entries(roles)) {
+        const merged = svc === 'global' ? r : { ...defaultServiceRoles(svc), ...r }
+        await redisRbacRepository.setRoles(svc, merged)
+      }
+      // A newly-added service with no roles entry still gets defaults (only when
+      // the services section was also applied, so we don't seed untouched services).
+      if (want('services')) {
+        for (const svc of services) {
+          if (!(svc in roles)) await redisRbacRepository.setRoles(svc, defaultServiceRoles(svc))
+        }
+      }
     }
 
-    for (const [svc, rm] of Object.entries(routeMaps)) {
-      await redisRbacRepository.setRouteMap(svc, rm)
+    if (want('routeMaps')) {
+      for (const [svc, rm] of Object.entries(routeMaps)) {
+        await redisRbacRepository.setRouteMap(svc, rm)
+      }
     }
 
-    await redisRbacRepository.setAccessRules(oathkeeperRules)
+    if (want('oathkeeperRules')) {
+      await redisRbacRepository.setAccessRules(oathkeeperRules)
+    }
 
-    if (orgServiceMap && Object.keys(orgServiceMap).length > 0) {
+    if (want('orgServiceMap') && orgServiceMap && Object.keys(orgServiceMap).length > 0) {
       for (const [orgId, svcs] of Object.entries(orgServiceMap)) {
         // Tolerate a legacy bundle whose values are a scalar service name
         // (pre-migration export) as well as the current array shape.
@@ -120,19 +142,39 @@ class RbacBundleService {
       }
     }
 
+    // A full restore is high-signal — flag it if any imported group grants the
+    // global super_admin role (structural, no secrets in the envelope).
+    const flags: AuditFlag[] = []
+    const grantsSuper = Object.values(groups).some((def) => (def.global ?? []).includes('super_admin'))
+    if (grantsSuper) flags.push('grants_super_admin')
+
     auditEventService.emit({
       category: 'rbac',
+      kind:     'change',
       verb:     'import',
       target:   'bundle',
-      result:   'ok',
-      actor:    { email: actor?.email ?? null, ip: actor?.ip ?? null },
+      result:   'applied',
+      severity: grantsSuper ? 'high' : 'warn',
+      actor:    { email: actor?.email ?? null, ip: actor?.ip ?? null, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+      requestId: actor?.requestId,
       reason:   `services=${services.length}`,
+      changes: {
+        resource: 'bundle',
+        added:    want('services') ? services : [],
+        removed:  orphanServices,
+        flags:    flags.length ? flags : undefined,
+        summary:  isFull
+          ? `full restore — ${services.length} services, ${Object.keys(groups).length} groups, ${oathkeeperRules.length} rules`
+          : `imported sections: ${(sections ?? []).join(', ')}`,
+      },
     }).catch(() => {})
 
     // Propagate to OPAL/OPA immediately (the fix): etag bump + real-time push +
     // OPAL data refresh — otherwise OPA serves the pre-restore dataset until the
-    // next unrelated mutation or a jinbe restart.
-    await rbacService.invalidateBundle('rbac.bundle_imported', { type: 'bundle' }, actor)
+    // next unrelated mutation or a jinbe restart. [P2-4] Pass eventType=undefined
+    // so invalidateBundle does NOT emit a second (diff-less) event — the rich
+    // event above is the single audit record for the import.
+    await rbacService.invalidateBundle(undefined, { type: 'bundle' }, actor)
 
     return {
       rbac: {

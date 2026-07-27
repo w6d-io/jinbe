@@ -9,7 +9,10 @@ const PUBLIC_ROUTES = [
   '/api/whoami',
   '/api/opa/bundle',
   '/api/oathkeeper/rules',
-  '/api/webhooks',
+  // [P0-1] Narrowed from '/api/webhooks' (a startsWith prefix that made every
+  // sub-path public) to the EXACT Kratos webhook path. The handler still
+  // self-authenticates via a shared secret; this only lifts the session gate.
+  '/api/webhooks/kratos',
   '/docs',
   '/docs/',
 ]

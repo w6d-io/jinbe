@@ -301,6 +301,27 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
     !Number.isNaN(authedMs) &&
     Date.now() - authedMs <= STEP_UP_MAX_AGE_MS
   if (!fresh) {
+    // Emit the currently-silent step-up denial (A2).
+    auditEventService.emit({
+      category: 'access',
+      kind:     'change',
+      verb:     'deny',
+      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
+      result:   'denied',
+      severity: 'warn',
+      reason:   'reauth_required',
+      actor:    {
+        email: request.userContext?.email ?? null,
+        ip: request.ip,
+        ua: (request.headers['user-agent'] as string) || null,
+        sessionId: request.userContext?.sessionId ?? null,
+      },
+      requestId: (request.headers['x-request-id'] as string) || null,
+      method:   request.method,
+      path:     (request.url || '').split('?')[0],
+      statusCode: 422,
+      source:   'jinbe-api',
+    }).catch(() => {})
     return reply.status(422).send({
       error: 'reauth_required',
       message:

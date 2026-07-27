@@ -207,6 +207,20 @@ export const oathkeeperRuleJsonSchema = {
         required: ['handler'],
       },
     },
+    // Optional error handlers (what a denied/failed request sees, e.g. redirect
+    // to login vs. a JSON error). Handler name is an open string — the enabled
+    // set is enforced fail-closed at write time, not by this schema's enum.
+    errors: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          handler: { type: 'string' },
+          config: { type: 'object' },
+        },
+        required: ['handler'],
+      },
+    },
   },
   required: ['id', 'upstream', 'match', 'authenticators', 'authorizer', 'mutators'],
 }
