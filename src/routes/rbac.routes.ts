@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { env } from '../config/index.js'
 import { rbacController } from '../controllers/rbac.controller.js'
-import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { requireAdmin, requireSuperAdmin, requireSuperAdminRole, requireRecentMfa } from '../middleware/require-admin.js'
 import {
   unauthorizedResponseSchema,
   notFoundResponseSchema,
@@ -161,6 +161,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServices.bind(rbacController))
 
   fastify.post('/services', {
+    // J11: authoring a service hot-creates its oathkeeper rules — gate to a
+    // resolved global super_admin (not a name-only match).
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Create a new service with default roles, route map, and oathkeeper rules.',
       tags: ['rbac'],
@@ -183,9 +186,15 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         409: conflictResponseSchema,
       },
     },
-  }, rbacController.createService.bind(rbacController))
+    // as never: route-level preHandler collapses Fastify's RouteGeneric to the
+    // base interface, which the strictly-typed controller handler rejects —
+    // same cast the existing preHandler routes use (organization-user.routes).
+  }, rbacController.createService.bind(rbacController) as never)
 
   fastify.delete('/services/:name', {
+    // J11: deleting a service tears down its oathkeeper rules (hot-propagated) —
+    // same gateway-affecting authoring write, so same super_admin gate.
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Delete a service and all associated roles, routes, and rules.',
       tags: ['rbac'],
@@ -197,9 +206,12 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.deleteService.bind(rbacController))
+  }, rbacController.deleteService.bind(rbacController) as never)
 
   fastify.patch('/services/:name', {
+    // J11: edits the service's oathkeeper rule config (hot-propagated) — gate to
+    // a resolved global super_admin.
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Update oathkeeper rule config for a service (upstream URL, match URL/methods, strip_path).',
       tags: ['rbac'],
@@ -220,7 +232,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateServiceConfig.bind(rbacController))
+  }, rbacController.updateServiceConfig.bind(rbacController) as never)
 
   fastify.get('/services/:name/permissions', {
     schema: {
@@ -406,6 +418,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getAccessRule.bind(rbacController))
 
   fastify.post('/access-rules', {
+    // J11: an oathkeeper access rule (e.g. authorizer: allow) hot-propagates to
+    // the gateway — a non-super admin authoring one is an instant bypass.
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Create a new access rule.',
       tags: ['rbac'],
@@ -418,9 +433,11 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         409: conflictResponseSchema,
       },
     },
-  }, rbacController.createAccessRule.bind(rbacController))
+  }, rbacController.createAccessRule.bind(rbacController) as never)
 
   fastify.put('/access-rules/:id', {
+    // J11: same hot-propagation bypass risk as create — gate to super_admin.
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Update an existing access rule.',
       tags: ['rbac'],
@@ -434,9 +451,12 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateAccessRule.bind(rbacController))
+  }, rbacController.updateAccessRule.bind(rbacController) as never)
 
   fastify.delete('/access-rules/:id', {
+    // J11: removing an access rule changes gateway enforcement (hot) — gate to
+    // super_admin.
+    preHandler: requireSuperAdminRole,
     schema: {
       description: 'Delete an access rule.',
       tags: ['rbac'],
@@ -448,7 +468,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.deleteAccessRule.bind(rbacController))
+  }, rbacController.deleteAccessRule.bind(rbacController) as never)
 
   // ===========================================================================
   // Oathkeeper Handler Catalog

@@ -388,6 +388,17 @@ export class KratosService {
   }
 
   /**
+   * Best-effort extend a session's lifetime via Kratos admin
+   * PATCH /admin/sessions/{id}/extend. Idempotent: Kratos only actually pushes
+   * the expiry out once the session is past session.earliest_possible_extend,
+   * so calling it on every whoami is safe (throttled server-side). Callers use
+   * this fire-and-forget — a failure must never break the caller (see whoami).
+   */
+  async extendSession(sessionId: string): Promise<void> {
+    await this.request<void>(`/admin/sessions/${sessionId}/extend`, { method: 'PATCH' })
+  }
+
+  /**
    * Revoke all sessions for an identity
    */
   async revokeAllIdentitySessions(identityId: string): Promise<void> {

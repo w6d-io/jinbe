@@ -290,6 +290,84 @@ export async function requireSuperAdmin(
  * strip the body) when the factor is absent or stale. Fail-closed on missing
  * AAL/timestamp. The dev-bypass identity is stamped AAL2, so local dev passes.
  */
+/**
+ * ROBUST super-admin gate (finding J11). Authorizes ONLY callers whose
+ * RESOLVED RBAC confers the global super_admin role — a global role that
+ * resolves to the "*" wildcard. It reads the flag straight from OPA's
+ * super_admin detector (data.rbac.simulate.super_admin) — the SAME rego signal
+ * request-time authorization uses, and the same one rbacService.isSuperAdmin
+ * reads, so the notion of "super_admin" cannot drift between them. The
+ * super_admin flag is derived from data.roles.global (the global wildcard) and
+ * is app-independent; the app/action/object below only pick a policy path.
+ *
+ * Deliberately NOT requireSuperAdmin: that gate matches group NAME shorthands
+ * ('super_admins' | 'superadmin' | 'superadmins') and would wave through a
+ * group that is merely NAMED like an admin group but grants no resolved power
+ * (finding J8). This gate reads the resolved DECISION, so a same-named but
+ * powerless group cannot pass, and a genuinely-powerful group under a different
+ * name still can.
+ *
+ * Use on authoring writes that hot-propagate to the gateway (service create/
+ * patch/delete, oathkeeper access-rule create/update/delete): a non-super admin
+ * editing an `authorizer: allow` rule would otherwise be an instant gateway
+ * bypass the moment it syncs.
+ *
+ * FAIL-CLOSED: opaService.simulate returns null on any error / non-2xx /
+ * missing result, and `!result?.super_admin` then denies (403) — an
+ * unreachable or erroring OPA never authorizes an authoring write. Mirrors the
+ * DEV_BYPASS_AUTH escape hatch the other gates use so local dev (no OPA) works.
+ */
+export async function requireSuperAdminRole(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const email = request.userContext?.email
+
+  if (!email || email === 'unknown') {
+    return reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'Authentication required',
+    })
+  }
+
+  // DEV MODE: bypass OPA and grant (mirrors requireSuperAdmin/requireServiceAdmin).
+  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
+    request.log.warn(
+      { email },
+      '⚠️  DEV MODE: Super admin (resolved-role) authorization bypassed'
+    )
+    return
+  }
+
+  const result = await opalService.simulate(
+    email,
+    env.APP_NAME,
+    'POST',
+    '/api/admin/rbac/groups'
+  )
+  if (!result?.super_admin) {
+    request.log.warn(
+      { email },
+      'Access denied - actor is not a resolved global super_admin'
+    )
+    auditEventService.emit({
+      category: 'access',
+      verb:     'deny',
+      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
+      result:   'denied',
+      actor:    { email, ip: request.ip, ua: request.headers['user-agent'] as string || null },
+      method:   request.method,
+      path:     (request.url || '').split('?')[0],
+      reason:   'not_super_admin_role',
+      source:   'jinbe-api',
+    }).catch(() => {})
+    return reply.status(403).send({
+      error: 'Forbidden',
+      message: 'Super admin role required to author gateway rules/services',
+    })
+  }
+}
+
 const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
   const aal = request.userContext?.aal
