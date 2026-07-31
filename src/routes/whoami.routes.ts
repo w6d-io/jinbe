@@ -1,6 +1,7 @@
 // routes/whoami.routes.ts
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { rbacResolverService } from '../services/rbac-resolver.service.js'
+import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
 
 /**
@@ -88,6 +89,21 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
           // Log error but don't fail the request
           request.log.error({ error, email }, 'Failed to resolve RBAC info')
         }
+      }
+
+      // WS6: best-effort session extension. Keep active users logged in by
+      // pushing the Kratos session expiry out on each whoami. Fire-and-forget —
+      // Kratos throttles via session.earliest_possible_extend, and a failed
+      // extend must NEVER break whoami, so we do not await and swallow errors.
+      if (validatedSession?.sessionId) {
+        kratosService
+          .extendSession(validatedSession.sessionId)
+          .catch((err) =>
+            request.log.warn(
+              { err, sessionId: validatedSession.sessionId },
+              'session extend failed'
+            )
+          )
       }
 
       return reply.send({

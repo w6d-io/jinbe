@@ -262,6 +262,25 @@ describe('KratosService', () => {
     })
   })
 
+  describe('extendSession', () => {
+    it('issues PATCH {KRATOS_ADMIN_URL}/admin/sessions/{id}/extend', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(200, { id: 'sess-123' }))
+
+      await service.extendSession('sess-123')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://kratos-admin:4434/admin/sessions/sess-123/extend',
+        expect.objectContaining({ method: 'PATCH' })
+      )
+    })
+
+    it('throws KratosApiError when Kratos rejects the extend', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(404, { error: 'Not found' }))
+
+      await expect(service.extendSession('missing')).rejects.toThrow(KratosApiError)
+    })
+  })
+
   describe('error handling', () => {
     it('should include error details from Kratos response', async () => {
       const errorDetails = { error: { message: 'Detailed error', code: 'ERR001' } }
