@@ -21,9 +21,19 @@ vi.mock('../../../services/rbac-resolver.service.js', () => ({
   },
 }))
 
+// Mock kratosService — the whoami handler best-effort extends the session
+// (WS6). Mock it so the test never touches the real Kratos client (and so we
+// can assert the fire-and-forget call).
+vi.mock('../../../services/kratos.service.js', () => ({
+  kratosService: {
+    extendSession: vi.fn().mockResolvedValue(undefined),
+  },
+}))
+
 // Import after mocking
 import { whoamiRoutes } from '../../../routes/whoami.routes.js'
 import { rbacResolverService } from '../../../services/rbac-resolver.service.js'
+import { kratosService } from '../../../services/kratos.service.js'
 
 // Helper types
 interface WhoamiResponse {
@@ -261,6 +271,50 @@ describe('whoamiRoutes', () => {
       expect(reply._body?.email).toBe('session@example.com')
       expect(reply._body?.identity_id).toBe('session-identity')
       expect(reply._body?.name).toBe('Session User')
+    })
+
+    it('should best-effort extend the Kratos session when authenticated (WS6)', async () => {
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'user@example.com',
+          sessionId: 'session-123',
+          identityId: 'identity-456',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(kratosService.extendSession).toHaveBeenCalledWith('session-123')
+      expect(kratosService.extendSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('should NOT extend the session when there is no session (WS6)', async () => {
+      const request = createMockRequest({})
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      expect(kratosService.extendSession).not.toHaveBeenCalled()
+    })
+
+    it('should still return 200 when the session extend rejects (fire-and-forget)', async () => {
+      vi.mocked(kratosService.extendSession).mockRejectedValueOnce(new Error('kratos down'))
+
+      const request = createMockRequest({
+        validatedSession: {
+          email: 'user@example.com',
+          sessionId: 'session-123',
+          identityId: 'identity-456',
+        },
+      })
+      const reply = createMockReply()
+
+      await handler(request, reply)
+
+      // whoami must not break on a failed extend
+      expect(reply._body?.authenticated).toBe(true)
+      expect(kratosService.extendSession).toHaveBeenCalledWith('session-123')
     })
 
     it('should return userContext name when no validatedSession name', async () => {
