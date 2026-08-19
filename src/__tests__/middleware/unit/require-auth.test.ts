@@ -180,7 +180,8 @@ describe('requireAuth middleware', () => {
       expect(reply._statusCode).toBe(401)
       expect(reply._body).toEqual({
         error: 'Unauthorized',
-        message: 'Valid authentication required. Please provide a valid ory_kratos_session cookie.',
+        message:
+          'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
       })
     })
 
@@ -208,7 +209,8 @@ describe('requireAuth middleware', () => {
       expect(reply._statusCode).toBe(401)
       expect(reply._body).toEqual({
         error: 'Unauthorized',
-        message: 'Valid authentication required. Please provide a valid ory_kratos_session cookie.',
+        message:
+          'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
       })
     })
 
