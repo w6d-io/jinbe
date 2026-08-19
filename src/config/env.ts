@@ -94,6 +94,45 @@ export const envSchema = z.object({
     .default('api:read,api:write')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
 
+  // ── Kubernetes ServiceAccount authentication (in-cluster M2M) ────────────
+  // When enabled, a caller may authenticate with a PROJECTED ServiceAccount
+  // token (`Authorization: Bearer <jwt>`) instead of a Kratos session cookie.
+  // The token is verified by the cluster's own API server (TokenReview — jinbe
+  // never validates the signature itself), and the resulting
+  // `system:serviceaccount:<ns>:<sa>` is mapped to the SYNTHETIC SUBJECT
+  // `<sa>.<ns>@K8S_SA_EMAIL_DOMAIN`. Authorization is unchanged: that subject
+  // must exist as a Kratos identity for OPA to resolve any permission, so a
+  // valid token alone grants nothing.
+  K8S_SA_AUTH_ENABLED: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('false'),
+  // Audience the caller's projected token MUST carry, and that jinbe asks the
+  // API server to validate. NEVER set this to the API server's own audience
+  // (e.g. https://kubernetes.default.svc): every pod's default token would
+  // then be a jinbe credential, and a token sent to jinbe could be replayed
+  // against the API server. A token whose TokenReview returns no audience is
+  // rejected for exactly that reason.
+  K8S_SA_TOKEN_AUDIENCE: z.string().min(1).default('jinbe'),
+  // Email domain of the synthetic subject. MUST be a domain reserved for
+  // machines — it shares the identity namespace with human logins, so a
+  // routable domain would let a human identity impersonate a ServiceAccount.
+  K8S_SA_EMAIL_DOMAIN: z.string().min(1).default('serviceaccount.cluster.local'),
+  // Defense-in-depth allowlist of `namespace:serviceaccount` entries
+  // (`namespace:*` allows a whole namespace). Empty = no subject filter; the
+  // Kratos identity + OPA-resolved permissions remain the authoritative gate.
+  K8S_SA_ALLOWED_SUBJECTS: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // TokenReview result cache TTL (ms), further capped by the token's own exp.
+  // Bounds the per-request API-server round-trip without outliving the token.
+  K8S_SA_CACHE_TTL_MS: z
+    .string()
+    .transform(Number)
+    .pipe(z.number().int().nonnegative())
+    .default('60000'),
+
   // OPAL/OPA Client
   OPA_URL: z.string().url().default('http://opal-client:8181'),
 

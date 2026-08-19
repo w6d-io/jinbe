@@ -38,6 +38,7 @@ Where the others are protocol servers, Jinbe is the **API + audit + policy autho
 | **Oathkeeper rules** | Serves access rules dynamically over HTTP — no ConfigMap reload |
 | **OPA policy sync** | Exposes an OPA bundle endpoint; OPAL pulls and distributes it |
 | **Multi-tenant scoping** | Org-scoped user management endpoints (`/api/organizations/:orgId/...`) |
+| **Machine-to-machine auth** | In-cluster callers authenticate with a Kubernetes ServiceAccount token; external ones with a Hydra `client_credentials` key |
 | **Privilege-escalation guards** | 422-gated assignment of admin-power groups, with optional MFA enforcement |
 | **Audit log** | Every mutation and authz decision appended to a Redis Stream |
 | **Backup / restore** | Bundle export + import for full RBAC + identity snapshots |
@@ -73,6 +74,8 @@ Where the others are protocol servers, Jinbe is the **API + audit + policy autho
 4. OPA decides using RBAC data that OPAL last pushed.
 5. On allow, Oathkeeper forwards the request with identity headers injected.
 6. Jinbe is the source of truth — it serves both the Oathkeeper rule feed and the OPA data bundle.
+
+Jinbe **ignores** the `x-user-*` headers Oathkeeper injects for downstream services. Its own trust anchors are the `ory_kratos_session` cookie (validated against Kratos `/sessions/whoami`) and — when enabled — a Kubernetes ServiceAccount token verified by the cluster's API server. Trusting the headers would let any in-cluster pod impersonate an admin by setting them.
 
 ---
 
@@ -212,6 +215,8 @@ These are only consulted on the very first start (empty Redis). On subsequent re
 |---|---|---|
 | `GET` | `/api/whoami` | Current session identity |
 
+Every non-public route accepts either credential: an `ory_kratos_session` cookie (humans) or, when `K8S_SA_AUTH_ENABLED=true`, a Kubernetes ServiceAccount token as `Authorization: Bearer …` (machines — see [machine-to-machine auth](#machine-to-machine-auth)).
+
 ### Users (global admin)
 | Method | Path | Description |
 |---|---|---|
@@ -279,6 +284,108 @@ These are only consulted on the very first start (empty Redis). On subsequent re
 **Why 422 and not 403:** ingress-nginx `custom-http-errors` rewrites 4xx / 5xx through a default backend that strips the response body and CORS headers. 422 isn't in that list, so the body and `Access-Control-Allow-Origin` reach the browser — clients can render meaningful toasts instead of "Failed to fetch."
 
 **Fail-closed identity resolution:** if Kratos cannot resolve the target user, the request returns `404 Not Found`. Previously the admin path silently returned `200` with `id: null`, which bypassed the MFA gate when Kratos was degraded. That hole is now closed.
+
+---
+
+## Machine-to-machine auth
+
+Two ways for a service to call Jinbe without a browser session. Pick by where the caller runs:
+
+| Caller | Credential | Why |
+|---|---|---|
+| Pod in Jinbe's own cluster | **Kubernetes ServiceAccount token** | No secret to distribute, kubelet-rotated, audience-bound, revoked with the pod |
+| Anything else (external, or another managed cluster) | **Hydra `client_credentials` API key** (`/api/organizations/:orgId/api-keys`) | Jinbe can't `TokenReview` a token minted by a cluster it doesn't hold credentials for |
+
+### ServiceAccount tokens (in-cluster)
+
+Jinbe never verifies the token signature itself — it hands the token to the cluster's API server via `TokenReview`, the only authority on its own tokens. The resulting `system:serviceaccount:<ns>:<sa>` is mapped to a **synthetic subject** `<sa>.<ns>@K8S_SA_EMAIL_DOMAIN`, and everything downstream (OPA group/role/permission resolution, org scoping, audit) runs exactly as it does for a human. Authentication is therefore *not* authorization: a valid token whose synthetic subject has no Kratos identity resolves to zero permissions and gets `403`.
+
+**1. Let Jinbe call TokenReview.** Its ServiceAccount needs `create` on `tokenreviews` — the built-in ClusterRole exists for this:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jinbe-token-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: jinbe          # Jinbe's own ServiceAccount
+    namespace: auth      # Jinbe's namespace
+```
+
+**2. Enable it on Jinbe:**
+
+```
+K8S_SA_AUTH_ENABLED=true
+K8S_SA_TOKEN_AUDIENCE=jinbe
+K8S_SA_EMAIL_DOMAIN=serviceaccount.cluster.local
+K8S_SA_ALLOWED_SUBJECTS=acme-prod:provisioner    # optional; `acme-prod:*` also works
+```
+
+**3. Give the caller a projected token with an explicit audience:**
+
+```yaml
+spec:
+  serviceAccountName: provisioner
+  containers:
+    - name: app
+      volumeMounts:
+        - { name: jinbe-token, mountPath: /var/run/secrets/jinbe, readOnly: true }
+  volumes:
+    - name: jinbe-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: jinbe
+              expirationSeconds: 3600
+```
+
+**Re-read the file on every request** — kubelet rotates it in place at ~80% of lifetime, so a token cached at startup starts failing after ~48 minutes.
+
+**4. Create the synthetic identity** (as a human admin, once per ServiceAccount). For `system:serviceaccount:acme-prod:provisioner`:
+
+```bash
+curl -X POST "https://api.example.com/api/organizations/$ORG/users" \
+  -H 'content-type: application/json' -b "ory_kratos_session=$SESSION" \
+  -d '{
+        "email": "provisioner.acme-prod@serviceaccount.cluster.local",
+        "name":  "ServiceAccount provisioner (acme-prod)",
+        "groups": ["<org-admin-group>"],
+        "sendInvite": false
+      }'
+```
+
+One call sets `organization_id` and the group, through the same delegation/containment guard as the group-assign endpoint. Keep `sendInvite: false` — the address isn't routable. Grant the same group a human org admin would get for that org, not `admins` / `super_admins`. The identity has no credentials, so it can never log in interactively.
+
+**5. Call Jinbe from the pod:**
+
+```bash
+curl -H "Authorization: Bearer $(cat /var/run/secrets/jinbe/token)" \
+     "https://api.example.com/api/organizations/$ORG/users/$USER_ID"
+```
+
+### Security properties
+
+- **Audience binding is load-bearing.** Jinbe asks the API server to validate `K8S_SA_TOKEN_AUDIENCE`, and rejects a review that comes back authenticated with *no* audience — that means "valid for the API server's own audience", i.e. a default pod token. Without this, every pod's default token would be a Jinbe credential and a token sent to Jinbe could be replayed against the API server. Never point `K8S_SA_TOKEN_AUDIENCE` at `https://kubernetes.default.svc`.
+- **`K8S_SA_EMAIL_DOMAIN` must not be routable.** Synthetic subjects share the identity namespace with human logins; a registrable domain would let a human identity impersonate a ServiceAccount.
+- **Fail-closed everywhere.** Unreachable API server, missing RBAC grant, `authenticated: false`, audience mismatch, a non-ServiceAccount subject, or a subject outside `K8S_SA_ALLOWED_SUBJECTS` all deny.
+- **No step-up.** A machine principal carries no `aal` / session, so MFA-gated routes (`requireRecentMfa`) can never be satisfied by one. That's deliberate.
+- **A rejected token falls through**, rather than short-circuiting the request — so a caller sending both a stale token and a valid session still authenticates as the human.
+- **Caching.** `TokenReview` results are cached by token hash for `K8S_SA_CACHE_TTL_MS`, always capped by the token's own `exp`; failures are cached ~10s so a token spray can't hammer the API server.
+- **`/api/admin/*` stays human-only** unless you deliberately put a synthetic identity in `admins`. Prefer the org-scoped endpoints: a machine confined to one org can't reach a sibling tenant.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `401` | `TokenReview` rejected the token. Check Jinbe logs for the audience-mismatch or "not a ServiceAccount" warning; confirm the `system:auth-delegator` binding exists. |
+| `403` | Token verified, but the synthetic subject has no OPA-resolved permission for that org. Check the identity's group, and that `manageable_orgs` includes the org. |
+| Works, then fails after ~48 min | The caller cached the token instead of re-reading the projected file after kubelet rotation. |
 
 ---
 
@@ -414,6 +521,20 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 | Variable | Default | Notes |
 |---|---|---|
 | `JINBE_SERVICE_URL` | unset | When set, enables the notification system. Events are pushed to `<url>/ingest`. Example: `http://jinbe-service:8080`. |
+
+#### Machine-to-machine auth (optional)
+
+See [machine-to-machine auth](#machine-to-machine-auth) for the full setup — including the `system:auth-delegator` ClusterRoleBinding Jinbe's ServiceAccount needs before `K8S_SA_AUTH_ENABLED` does anything.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `K8S_SA_AUTH_ENABLED` | `false` | Accept projected Kubernetes ServiceAccount tokens as a Bearer credential, verified via `TokenReview`. |
+| `K8S_SA_TOKEN_AUDIENCE` | `jinbe` | Audience the caller's token must carry. **Never** set this to the API server's own audience (`https://kubernetes.default.svc`) — every pod's default token would become a Jinbe credential. |
+| `K8S_SA_EMAIL_DOMAIN` | `serviceaccount.cluster.local` | Domain of the synthetic subject `<sa>.<ns>@<domain>`. Must not be routable or registrable. |
+| `K8S_SA_ALLOWED_SUBJECTS` | unset | Optional allow-list of `namespace:serviceaccount` (`namespace:*` for a whole namespace). Empty ⇒ no subject filter; Kratos identity + OPA permissions still gate. |
+| `K8S_SA_CACHE_TTL_MS` | `60000` | `TokenReview` cache TTL, always capped by the token's own `exp`. |
+| `HYDRA_ADMIN_URL` | `http://auth-hydra-admin:4445` | Private Hydra Admin API backing per-org `client_credentials` API keys. Never expose publicly. |
+| `API_KEY_ALLOWED_SCOPES` | `api:read,api:write` | Scope catalog validated server-side when an API key is created. |
 
 #### Dev / debugging (never enable in production)
 
