@@ -66,7 +66,8 @@ export async function requireAuth(
     }).catch(() => {})
     return reply.status(401).send({
       error: 'Unauthorized',
-      message: 'Valid authentication required. Please provide a valid ory_kratos_session cookie.',
+      message:
+        'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
     })
   }
 }
