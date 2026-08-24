@@ -129,6 +129,20 @@ describe('bootstrap/build-rules', () => {
       ])
     })
 
+    it('skips jinbe-api/preflight when API domain equals the app domain (gateway-outage regression)', () => {
+      // API_DOMAIN == APP_DOMAIN made the jinbe-api catch-all overlap every
+      // kuma-* rule on the same host — Oathkeeper 500'd the whole host
+      // ("Expected exactly one rule but found multiple"). 2026-08-24 incident.
+      const rules = buildBuiltInRules({
+        domains: { auth: 'auth.example.com', app: 'app.example.com', api: 'app.example.com' },
+        urls: URLS,
+      })
+      const ids = rules.map((r) => r.id)
+      expect(ids).not.toContain('jinbe-api')
+      expect(ids).not.toContain('jinbe-preflight')
+      expect(ids).toContain('kuma-api') // app-domain routing still fully present
+    })
+
     it('skips auth-domain rules when authDomain is empty', () => {
       const rules = buildBuiltInRules({
         domains: { auth: '', app: 'app.example.com', api: 'api.example.com' },

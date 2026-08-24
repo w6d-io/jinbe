@@ -35,7 +35,14 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
     rules.push(buildKumaAppRule(domains.app, urls.adminUi))
   }
 
-  if (domains.api) {
+  // The jinbe-api rule is a catch-all (`/<.*>`) on the API domain. When the
+  // deployer sets (or a chart default computes) API_DOMAIN equal to the APP
+  // domain, that catch-all overlaps every kuma-* rule above and Oathkeeper
+  // 500s the WHOLE host ("Expected exactly one rule but found multiple") —
+  // this took the dev gateway down on 2026-08-24. The app-domain rules
+  // already route /api to jinbe, so a same-domain jinbe rule set adds
+  // nothing: skip it, fail-safe by construction.
+  if (domains.api && domains.api !== domains.app) {
     rules.push(buildJinbePreflightRule(domains.api, urls.jinbeInternal))
     rules.push(buildJinbeApiRule(domains.api, urls.jinbeInternal))
   }
