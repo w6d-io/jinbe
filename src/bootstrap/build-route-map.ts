@@ -15,6 +15,16 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/whoami' },
   { method: 'GET',    path: '/docs/:any*' },
 
+  // SCIM 2.0 provisioning (IdP → jinbe). Public at the OPA layer so the
+  // gateway forwards them — the routes enforce their OWN bearer-token auth
+  // (middleware/scim-auth.ts, hashed tokens, fail-closed 401). Same pattern
+  // as /api/webhooks/kratos: gateway-public, self-authenticated.
+  { method: 'GET',    path: '/scim/v2/:any*' },
+  { method: 'POST',   path: '/scim/v2/Users' },
+  { method: 'PUT',    path: '/scim/v2/Users/:id' },
+  { method: 'PATCH',  path: '/scim/v2/Users/:id' },
+  { method: 'DELETE', path: '/scim/v2/Users/:id' },
+
   // Clusters
   { method: 'GET',    path: '/api/clusters',                        permission: 'clusters:list' },
   { method: 'POST',   path: '/api/clusters',                        permission: 'clusters:create' },

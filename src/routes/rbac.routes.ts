@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { env } from '../config/index.js'
 import { rbacController } from '../controllers/rbac.controller.js'
 import { requireAdmin, requireSuperAdmin, requireSuperAdminRole, requireRecentMfa } from '../middleware/require-admin.js'
+import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
   notFoundResponseSchema,
@@ -170,12 +171,15 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       body: {
         type: 'object', required: ['name'],
         properties: {
-          name: { type: 'string', pattern: '^[a-z0-9_-]+$' },
+          name: { type: 'string', pattern: SERVICE_NAME_PATTERN.source },
           displayName: { type: 'string' },
           upstreamUrl: { type: 'string', format: 'uri' },
           matchUrl: { type: 'string' },
           matchMethods: { type: 'array', items: { type: 'string' } },
           stripPath: { type: 'string' },
+          // Ordered sign-in fallback: cookie → bearer → introspection.
+          // Empty array = public. Omitted = cookie (legacy default).
+          signIn: { type: 'array', items: { type: 'string', enum: ['cookie', 'bearer', 'introspection'] } },
         },
       },
       response: {
@@ -213,7 +217,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     // a resolved global super_admin.
     preHandler: requireSuperAdminRole,
     schema: {
-      description: 'Update oathkeeper rule config for a service (upstream URL, match URL/methods, strip_path).',
+      description: 'Update oathkeeper rule config for a service (upstream URL, match URL/methods, strip_path, sign-in methods).',
       tags: ['rbac'],
       params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       body: {
@@ -223,6 +227,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           matchUrl: { type: 'string' },
           matchMethods: { type: 'array', items: { type: 'string' } },
           stripPath: { type: ['string', 'null'] },
+          // Ordered sign-in fallback: cookie → bearer → introspection.
+          // Empty array = public.
+          signIn: { type: 'array', items: { type: 'string', enum: ['cookie', 'bearer', 'introspection'] } },
         },
       },
       response: {
@@ -253,7 +260,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       description:
         "Serve the service's favicon, fetched server-side by jinbe from the service's own public host and cached in Redis (7d). Returns the image with a public Cache-Control, or 204 No Content when there is no favicon.",
       tags: ['rbac'],
-      params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z0-9_-]+$' } } },
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: SERVICE_NAME_PATTERN.source } } },
       // No 200/204 body schema: the payload is a raw image (binary) — let it
       // pass through unserialized. Error shapes are still enforced.
       response: {
@@ -523,7 +530,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
           services: {
             type: 'array',
             minItems: 1,
-            items: { type: 'string', pattern: '^[a-z0-9_-]+$' },
+            items: { type: 'string', pattern: SERVICE_NAME_PATTERN.source },
           },
         },
       },
@@ -592,6 +599,43 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.deleteOrgServiceMapping.bind(rbacController))
+
+  // ===========================================================================
+  // Impact preview — "who gains/loses access if this change is applied?"
+  // ===========================================================================
+
+  fastify.post('/impact-preview', {
+    schema: {
+      description:
+        'Evaluate a proposed RBAC change (groups / roles / route maps / user group assignment) against a sample of ' +
+        'real audit traffic + the declared route surface, and return every access decision that flips. ' +
+        'Evaluated by the live OPA policy via data overrides — the preview cannot drift from the gateway.',
+      tags: ['rbac'],
+      body: {
+        type: 'object',
+        properties: {
+          groups: { type: 'object', additionalProperties: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } },
+          roles: { type: 'object', additionalProperties: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } },
+          routeMaps: { type: 'object', additionalProperties: { type: 'object', additionalProperties: true } },
+          groupMembership: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+        },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            losses: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            gains: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            unchanged: { type: 'number' },
+            sample: { type: 'object', additionalProperties: true },
+            evaluated: { type: 'boolean' },
+          },
+        },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+      },
+    },
+  }, rbacController.impactPreview.bind(rbacController))
 
   // ===========================================================================
   // Permission Simulator

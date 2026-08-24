@@ -1,0 +1,94 @@
+# Local Oathkeeper (docker-compose) — E2E validator for the rules jinbe serves.
+#
+# Modeled on the production chart config (w6d-io/charts charts/auth values.yaml,
+# oathkeeper.config) minus the Helm templating: regexp matching, the same
+# enabled pipeline handlers, and the same error-handler split (redirect for
+# browsers on unauthorized, JSON otherwise).
+#
+# Rules come from jinbe over HTTP. An HTTP repository is fetched ONCE at boot
+# (unlike the chart's file:// + fsnotify sidecar), so restart this container to
+# reload rules — acceptable for a dev validator.
+#
+# kratos/hydra/opa are resolved on the compose network; hydra is absent locally,
+# which is fine — oauth2_introspection only dials out when a rule uses it.
+serve:
+  proxy:
+    port: 4455
+  api:
+    port: 4456
+
+access_rules:
+  matching_strategy: regexp
+  repositories:
+    - http://api:3000/api/oathkeeper/rules
+
+authenticators:
+  cookie_session:
+    enabled: true
+    config:
+      check_session_url: http://kratos:4433/sessions/whoami
+      preserve_path: true
+      extra_from: '@this'
+      subject_from: 'identity.id'
+      only:
+        - ory_kratos_session
+  noop:
+    enabled: true
+  bearer_token:
+    enabled: true
+    config:
+      check_session_url: http://kratos:4433/sessions/whoami
+      token_from:
+        header: X-Session-Token
+  oauth2_introspection:
+    enabled: true
+    config:
+      introspection_url: http://hydra:4445/admin/oauth2/introspect
+
+authorizers:
+  allow:
+    enabled: true
+  deny:
+    enabled: true
+  remote_json:
+    enabled: true
+    config:
+      remote: http://opa:8181/v1/data/rbac/allow
+      payload: |
+        {
+          "input": {
+            "sub": "{{ print .Subject }}",
+            "object": "{{ .MatchContext.URL.Path }}",
+            "action": "{{ .MatchContext.Method }}"
+          }
+        }
+
+mutators:
+  noop:
+    enabled: true
+  header:
+    enabled: true
+    config:
+      headers:
+        x-user-id: '{{ print .Subject }}'
+        x-user-email: '{{ if .Extra.identity }}{{ index .Extra.identity.traits "email" }}{{ end }}'
+
+errors:
+  fallback:
+    - redirect
+    - json
+  handlers:
+    redirect:
+      enabled: true
+      config:
+        to: http://localhost:3001/login
+        return_to_query_param: return_to
+        when:
+          - error: [unauthorized]
+            request:
+              header:
+                accept: [text/html]
+    json:
+      enabled: true
+      config:
+        verbose: true

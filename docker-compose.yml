@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: jinbe
     ports:
-      - '3000:3000'
+      - '${API_PORT:-3000}:3000'
     environment:
       NODE_ENV: development
       PORT: 3000
@@ -13,11 +13,30 @@ services:
       DATABASE_URL: mongodb://mongo:27017/jinbe
       OPA_URL: http://opa:8181
       OPA_DATA_URL: http://opa:8181
-      DEV_BYPASS_AUTH: 'true'
-      DEV_USER_EMAIL: dev@localhost
+      DEV_BYPASS_AUTH: '${DEV_BYPASS_AUTH:-true}'
+      DEV_USER_EMAIL: dev@localhost.dev
       ENCRYPTION_KEY: dev-encryption-key-minimum-32-characters!!
       ENABLE_SWAGGER: 'true'
       LOG_LEVEL: debug
+      AUTH_DOMAIN: auth.localhost.dev
+      APP_DOMAIN: app.localhost.dev
+      API_DOMAIN: api.localhost.dev
+      LOGIN_UI_URL: http://localhost:3001
+      ADMIN_UI_URL: http://localhost:5173
+      KRATOS_ADMIN_URL: http://kratos:4434
+      KRATOS_PUBLIC_URL: http://kratos:4433
+      ADMIN_EMAIL: dev@localhost.dev
+      ADMIN_PASSWORD: dev-local-bootstrap-secret!!
+      # Same kratos.yml the local Kratos container watches (kratos-login-ui
+      # compose) — enables the /api/admin/auth/methods hot-reload toggles.
+      KRATOS_CONFIG_PATH: /etc/kratos-config/kratos.yml
+      # Mirrors the authenticators enabled in the local oathkeeper container
+      # (oathkeeper/oathkeeper.yml) so fail-closed rule validation matches it.
+      OATHKEEPER_ENABLED_AUTHENTICATORS: cookie_session,noop,bearer_token,oauth2_introspection
+    volumes:
+      - ../kratos-login-ui/examples/kratos:/etc/kratos-config
+    # Match the host user so jinbe can write the bind-mounted kratos.yml.
+    user: '${DEV_UID:-1000}:${DEV_GID:-1000}'
     env_file:
       - .env
     depends_on:
@@ -48,6 +67,10 @@ services:
     command:
       - run
       - --server
+      # The policy (infra/opal-policies) is migrated to the `import rego.v1`
+      # bridge syntax: it parses on BOTH pre-1.0 OPA and 1.x strict — no
+      # --v0-compatible flag needed, and the engine can be upgraded
+      # independently of the policy.
       - --addr=:8181
       - --set=services.jinbe.url=http://api:3000
       - --set=bundles.authz.service=jinbe
@@ -55,6 +78,22 @@ services:
       - --set=bundles.authz.polling.min_delay_seconds=10
       - --set=bundles.authz.polling.max_delay_seconds=30
       - --log-level=info
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
+  # Local Oathkeeper gateway for E2E validation of the rules jinbe serves.
+  # Rules are fetched ONCE at boot from the HTTP repository — restart the
+  # container to reload them (fine for a dev validator).
+  oathkeeper:
+    image: oryd/oathkeeper:v0.40
+    container_name: jinbe-oathkeeper
+    command: serve --config /etc/config/oathkeeper/oathkeeper.yml
+    ports:
+      - '4455:4455'
+      - '4456:4456'
+    volumes:
+      - ./oathkeeper:/etc/config/oathkeeper:ro
     depends_on:
       - api
     restart: unless-stopped

@@ -17,6 +17,14 @@ import { withRedisLock } from './redis-lock.js'
  *   rbac:rego                      → String: raw rego policy text
  *   rbac:bundle:etag               → String: bundle version hash
  *   rbac:stats                     → String: JSON({computedAt, stats}) — directory counts, SWR (only TTL'd key)
+ *   rbac:import:history            → List: JSON({id, takenAt, actor, reason, bundle}) — pre-import/restore/rollback
+ *                                    snapshots (LPUSH newest-first, LTRIM cap 10) for quick rollback
+ *   rbac:scim:tokens               → Hash: { tokenId: JSON({sha256, label, createdBy, createdAt, lastUsedAt}) }
+ *                                    — SCIM bearer tokens, hashed at rest (scim-token.service)
+ *   rbac:recert:campaigns          → Hash: { campaignId: JSON(RecertCampaign) } — access-recertification
+ *   rbac:recert:items:{campaignId} → Hash: { itemId: JSON(RecertItem) }         campaigns (redis-recert.repository);
+ *   rbac:recert:inbox:{reviewer}   → Set:  [ "{campaignId}:{itemId}" ]          inbox = inverse reviewer index;
+ *   rbac:recert:reports            → Hash: { campaignId: JSON(RecertReport) }   reports frozen at close (no TTL)
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -54,6 +62,23 @@ export interface OathkeeperRule {
   errors?: Array<{ handler: string; config?: unknown }>
   [key: string]: unknown
 }
+
+/**
+ * A pre-apply snapshot of the whole RBAC config, taken before every bundle
+ * import/restore/rollback. `bundle` is a full AuthBundle (typed loosely here —
+ * the AuthBundle type lives in rbac-bundle.service, which imports this module).
+ */
+export type ImportHistoryReason = 'pre-import' | 'pre-restore' | 'pre-rollback'
+export interface ImportHistoryEntry {
+  id: string
+  takenAt: string
+  actor: string | null
+  reason: ImportHistoryReason
+  bundle: unknown
+}
+
+const IMPORT_HISTORY_KEY = 'rbac:import:history'
+const IMPORT_HISTORY_CAP = 10
 
 // ─────────────────────────────────────────────────────────────
 // Repository
@@ -257,6 +282,29 @@ class RedisRbacRepository {
       await this.setAccessRules(filtered)
       return true
     })
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // IMPORT HISTORY (pre-apply snapshots for quick rollback)
+  //
+  // Every import/restore/rollback pushes a full pre-apply snapshot here
+  // (newest first). Capped at 10 entries so a runaway restore loop can't
+  // grow the key unboundedly — an entry embeds the whole AuthBundle.
+  // ═══════════════════════════════════════════════════════════
+
+  async pushImportHistory(entry: ImportHistoryEntry): Promise<void> {
+    await this.redis.lpush(IMPORT_HISTORY_KEY, JSON.stringify(entry))
+    await this.redis.ltrim(IMPORT_HISTORY_KEY, 0, IMPORT_HISTORY_CAP - 1)
+  }
+
+  async getImportHistory(): Promise<ImportHistoryEntry[]> {
+    const raw = await this.redis.lrange(IMPORT_HISTORY_KEY, 0, -1)
+    return raw.map((json) => JSON.parse(json))
+  }
+
+  async getImportHistoryEntry(id: string): Promise<ImportHistoryEntry | null> {
+    const entries = await this.getImportHistory()
+    return entries.find((e) => e.id === id) ?? null
   }
 
   // ═══════════════════════════════════════════════════════════

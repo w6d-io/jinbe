@@ -12,6 +12,8 @@ const mockState = vi.hoisted(() => ({
 
 // Mock rbac service (Redis-backed, no branch/authorEmail params)
 vi.mock('../../../services/rbac.service.js', () => ({
+  // Real constant (not a stub): the controller validates names against it.
+  SERVICE_NAME_PATTERN: /^[a-z0-9_-]+$/,
   rbacService: {
     getUsers: vi.fn().mockResolvedValue({
       users: [{ email: 'user@example.com', groupMembership: { admin: true } }],

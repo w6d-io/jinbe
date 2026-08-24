@@ -27,6 +27,11 @@ export const unauthorizedResponseSchema = {
     type: 'object',
     properties: {
         error: { type: 'string', example: 'Unauthorized' },
+        // authentication_required = no credential presented;
+        // session_invalid = a credential WAS presented but rejected
+        // (expired/revoked cookie, bad SA token) — clients should force
+        // re-auth via login?refresh=true to regenerate the session.
+        code: { type: 'string', example: 'authentication_required' },
         message: {
             type: 'string',
             example: 'Valid authentication required. Please provide a valid ory_kratos_session cookie.',

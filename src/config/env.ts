@@ -78,6 +78,11 @@ export const envSchema = z.object({
     .pipe(z.number().int().positive())
     .default('10000'),
 
+  // Path to the kratos.yml the Kratos process watches (shared mount).
+  // Enables the /api/admin/auth/methods toggles — jinbe patches
+  // selfservice.methods there and Kratos hot-reloads. Unset → feature off (501).
+  KRATOS_CONFIG_PATH: z.string().optional(),
+
   // Shared secret authenticating the Kratos after-hook webhook
   // (POST /api/webhooks/kratos). Kratos sends it as an api_key header; jinbe
   // constant-time compares it and rejects (401, emitting nothing) on mismatch.

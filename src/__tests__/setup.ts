@@ -10,6 +10,10 @@ process.env.SERVICE_DEFAULT_NAMESPACE = 'default'
 process.env.SERVICE_DEFAULT_DOMAIN = 'example.com'
 process.env.SERVICE_DEFAULT_PORT = '8080'
 process.env.DEV_BYPASS_AUTH = 'false'
+// Pin a zod-valid dev email: a local .env carrying DEV_USER_EMAIL=dev@localhost
+// (no TLD → z.email() rejects) would otherwise fail env parsing at collection
+// for every suite that imports config/env. dotenv never overrides existing vars.
+process.env.DEV_USER_EMAIL = 'dev@localhost.dev'
 process.env.KRATOS_PUBLIC_URL = 'http://localhost:4433'
 process.env.KRATOS_ADMIN_URL = 'http://localhost:4434'
 process.env.OPA_URL = 'http://localhost:8181'
