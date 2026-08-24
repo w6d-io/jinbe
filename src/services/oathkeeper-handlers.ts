@@ -117,6 +117,93 @@ const CATALOG: CatalogEntry[] = [
   },
   {
     kind: 'authenticator',
+    handler: 'bearer_token',
+    label: 'API token (Bearer)',
+    description:
+      'Recognizes a caller by a session token sent in a header — for scripts, CLIs and machine callers that have a Kratos session token instead of a cookie.',
+    hasFreeformConfig: true,
+    fields: [
+      {
+        key: 'check_session_url',
+        label: 'Token check address',
+        type: 'url',
+        help: 'The internal address the gateway asks to confirm the token is valid.',
+        placeholder: 'http://kratos-public/sessions/whoami',
+      },
+      {
+        key: 'token_from',
+        label: 'Where to read the token',
+        type: 'json',
+        help: 'Which header/query/cookie carries the token. Use {"header": "X-Session-Token"} when OAuth2 introspection also reads Authorization.',
+        placeholder: '{"header": "X-Session-Token"}',
+      },
+      {
+        key: 'preserve_path',
+        label: 'Keep original path when checking',
+        type: 'bool',
+        help: 'Leave on unless the session service expects the check on its own path.',
+      },
+      {
+        key: 'subject_from',
+        label: 'Where to read the user id',
+        type: 'string',
+        help: 'Field in the session response that identifies the user. Usually left at the default.',
+        placeholder: 'identity.id',
+      },
+      {
+        key: 'extra_from',
+        label: 'Where to read extra user info',
+        type: 'string',
+        help: 'Field in the session response carrying extra attributes passed on to the service.',
+        placeholder: 'identity.traits',
+      },
+    ],
+  },
+  {
+    kind: 'authenticator',
+    handler: 'oauth2_introspection',
+    label: 'OAuth2 access token (introspection)',
+    description:
+      'Validates an OAuth2 access token (Authorization: Bearer …) against the OAuth2 server — for third-party apps and machine-to-machine API keys issued by Hydra.',
+    hasFreeformConfig: true,
+    fields: [
+      {
+        key: 'introspection_url',
+        label: 'Introspection address',
+        type: 'url',
+        required: true,
+        help: 'The OAuth2 server endpoint that validates access tokens.',
+        placeholder: 'http://hydra-admin:4445/admin/oauth2/introspect',
+      },
+      {
+        key: 'required_scope',
+        label: 'Required scopes',
+        type: 'list',
+        help: 'Scopes the token must carry. Leave empty to accept any valid token.',
+      },
+      {
+        key: 'target_audience',
+        label: 'Required audience',
+        type: 'list',
+        help: 'Audience values the token must be issued for.',
+      },
+      {
+        key: 'trusted_issuers',
+        label: 'Trusted issuers',
+        type: 'list',
+        help: 'Only accept tokens issued by these servers.',
+      },
+      {
+        key: 'token_from',
+        label: 'Where to read the token',
+        type: 'json',
+        help: 'Defaults to the Authorization header. Override only if tokens arrive elsewhere.',
+        placeholder: '{"header": "Authorization"}',
+      },
+    ],
+  },
+  {
+    kind: 'authenticator',
     handler: 'noop',
     label: 'No sign-in required',
     description:

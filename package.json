@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && npm run openapi",
+    "openapi": "ENABLE_SWAGGER=true ENCRYPTION_KEY=openapi-generation-dummy-key-32ch DEV_USER_EMAIL=openapi@build.local node dist/scripts/generate-openapi.js",
     "start": "node dist/server.js",
     "bootstrap": "node dist/cli/bootstrap.js",
     "bootstrap:dev": "tsx src/cli/bootstrap.ts",
