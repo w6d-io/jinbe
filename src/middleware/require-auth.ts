@@ -15,6 +15,12 @@ const PUBLIC_ROUTES = [
   '/api/webhooks/kratos',
   '/docs',
   '/docs/',
+  // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed
+  // tokens in rbac:scim:tokens, constant-time compare — see middleware/
+  // scim-auth.ts, registered as the first hook of every /scim/v2 route).
+  // Bypassing the session gate here does NOT open them: scimAuth fails closed
+  // 401 with an RFC 7644 error body when the token is missing or invalid.
+  '/scim/v2',
 ]
 
 /**
@@ -54,6 +60,12 @@ export async function requireAuth(
   }
 
   if (!request.userContext || request.userContext.email === 'unknown') {
+    // Distinguish "no credential at all" from "a credential was presented but
+    // rejected" (expired/revoked cookie, bad SA token — sessionError is set by
+    // extractIdentity). Clients use `code` to decide between a plain login
+    // redirect and a forced re-auth (login?refresh=true) that regenerates the
+    // broken session.
+    const credentialRejected = !!request.sessionError
     auditEventService.emit({
       category: 'access',
       verb:     'deny',
@@ -62,10 +74,11 @@ export async function requireAuth(
       actor:    { email: null, ip: request.ip, ua: request.headers['user-agent'] as string || null },
       method:   request.method,
       path,
-      reason:   'unauthenticated',
+      reason:   credentialRejected ? 'session_invalid' : 'unauthenticated',
     }).catch(() => {})
     return reply.status(401).send({
       error: 'Unauthorized',
+      code: credentialRejected ? 'session_invalid' : 'authentication_required',
       message:
         'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
     })

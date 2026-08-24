@@ -24,12 +24,15 @@ import { adminRoutes } from './routes/admin.routes.js'
 import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes, rbacOpalRoutes } from './routes/rbac.routes.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
+import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
+import { scimRoutes } from './routes/scim.routes.js'
+import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
@@ -123,6 +126,11 @@ export async function buildServer() {
     },
   })
 
+  // SCIM 2.0 provisioning (IdP → jinbe), OUTSIDE the /api scope: no Kratos
+  // cookie, no TokenReview — routes enforce their own bearer-token auth
+  // (middleware/scim-auth.ts; /scim/v2 is on the require-auth bypass list).
+  await fastify.register(scimRoutes, { prefix: '/scim/v2' })
+
   await fastify.register(
     async function (api) {
       await api.register(whoamiRoutes)
@@ -136,7 +144,9 @@ export async function buildServer() {
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // Public OPAL data endpoints (no auth)
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
+      await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
       await api.register(auditRoutes, { prefix: '/admin/audit' })
+      await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })

@@ -9,6 +9,7 @@ export class RedisMock {
   private store = new Map<string, string>()
   private hashStore = new Map<string, Map<string, string>>()
   private setStore = new Map<string, Set<string>>()
+  private listStore = new Map<string, string[]>()
   private streams = new Map<string, Array<{ id: string; fields: Record<string, string> }>>()
 
   // String operations
@@ -92,6 +93,29 @@ export class RedisMock {
     return set?.has(member) ? 1 : 0
   }
 
+  // List operations
+  async lpush(key: string, ...values: string[]): Promise<number> {
+    if (!this.listStore.has(key)) this.listStore.set(key, [])
+    const list = this.listStore.get(key)!
+    for (const value of values) list.unshift(value)
+    return list.length
+  }
+
+  async ltrim(key: string, start: number, stop: number): Promise<'OK'> {
+    const list = this.listStore.get(key)
+    if (list) {
+      const end = stop < 0 ? list.length + stop + 1 : stop + 1
+      this.listStore.set(key, list.slice(start, end))
+    }
+    return 'OK'
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    const list = this.listStore.get(key) ?? []
+    const end = stop < 0 ? list.length + stop + 1 : stop + 1
+    return list.slice(start, end)
+  }
+
   // Stream operations
   async xadd(key: string, id: string, ...fieldValues: string[]): Promise<string> {
     if (!this.streams.has(key)) this.streams.set(key, [])
@@ -136,6 +160,7 @@ export class RedisMock {
     this.store.clear()
     this.hashStore.clear()
     this.setStore.clear()
+    this.listStore.clear()
     this.streams.clear()
   }
 }
@@ -178,6 +203,7 @@ export function hoistedRedisMock() {
     store = new Map<string, string>()
     hashStore = new Map<string, Map<string, string>>()
     setStore = new Map<string, Set<string>>()
+    listStore = new Map<string, string[]>()
 
     async get(key: string) { return this.store.get(key) ?? null }
     async set(key: string, value: string) { this.store.set(key, value); return 'OK' as const }
@@ -189,9 +215,12 @@ export function hoistedRedisMock() {
     async sadd(key: string, ...members: string[]) { if (!this.setStore.has(key)) this.setStore.set(key, new Set()); let c = 0; for (const m of members) { if (!this.setStore.get(key)!.has(m)) { this.setStore.get(key)!.add(m); c++ } } return c }
     async srem(key: string, ...members: string[]) { const s = this.setStore.get(key); if (!s) return 0; let c = 0; for (const m of members) { if (s.delete(m)) c++ } return c }
     async smembers(key: string) { const s = this.setStore.get(key); return s ? Array.from(s) : [] }
+    async lpush(key: string, ...values: string[]) { if (!this.listStore.has(key)) this.listStore.set(key, []); const l = this.listStore.get(key)!; for (const v of values) l.unshift(v); return l.length }
+    async ltrim(key: string, start: number, stop: number) { const l = this.listStore.get(key); if (l) { const end = stop < 0 ? l.length + stop + 1 : stop + 1; this.listStore.set(key, l.slice(start, end)) } return 'OK' as const }
+    async lrange(key: string, start: number, stop: number) { const l = this.listStore.get(key) ?? []; const end = stop < 0 ? l.length + stop + 1 : stop + 1; return l.slice(start, end) }
     async ping() { return 'PONG' }
     async quit() { return 'OK' as const }
-    clear() { this.store.clear(); this.hashStore.clear(); this.setStore.clear() }
+    clear() { this.store.clear(); this.hashStore.clear(); this.setStore.clear(); this.listStore.clear() }
   }
 
   const mock = new InlineRedisMock()

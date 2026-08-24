@@ -1,8 +1,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { rbacService } from '../services/rbac.service.js'
+import { rbacService, SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { faviconService } from '../services/favicon.service.js'
 import { opaService } from '../services/opa.service.js'
 import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
+import { impactPreviewService } from '../services/impact-preview.service.js'
 import { previewImport } from '../services/openapi-import/importer.js'
 import {
   createGroupBodySchema,
@@ -90,12 +91,13 @@ export class RbacController {
   ) {
     const options = z
       .object({
-        name: z.string().min(1).regex(/^[a-z0-9_]+$/, 'Service name must be lowercase alphanumeric with underscores'),
+        name: z.string().min(1).regex(SERVICE_NAME_PATTERN, 'Service name must be lowercase alphanumeric with underscores or hyphens'),
         displayName: z.string().optional(),
         upstreamUrl: z.string().url().optional(),
         matchUrl: z.string().optional(),
         matchMethods: z.array(z.string()).optional(),
         stripPath: z.string().optional(),
+        signIn: z.array(z.enum(['cookie', 'bearer', 'introspection'])).optional(),
       })
       .parse(request.body)
 
@@ -113,6 +115,7 @@ export class RbacController {
       matchUrl: z.string().optional(),
       matchMethods: z.array(z.string()).optional(),
       stripPath: z.string().nullable().optional(),
+      signIn: z.array(z.enum(['cookie', 'bearer', 'introspection'])).optional(),
     }).parse(request.body)
     const result = await rbacService.updateServiceConfig(name, options, this.actor(request))
     return reply.send(result)
@@ -358,6 +361,29 @@ export class RbacController {
       success: true,
       message: `Roster for ${body.organizationId} set to [${body.admins.join(', ') || 'none'}]`,
     })
+  }
+
+  // ===========================================================================
+  // Impact preview
+  // ===========================================================================
+
+  async impactPreview(
+    request: FastifyRequest<{ Body: Record<string, unknown> }>,
+    reply: FastifyReply
+  ) {
+    const rolesMap = z.record(z.record(z.array(z.string())))
+    const proposed = z
+      .object({
+        groups: rolesMap.optional(),
+        roles: rolesMap.optional(),
+        routeMaps: z
+          .record(z.object({ rules: z.array(z.object({ method: z.string(), path: z.string(), permission: z.string().optional() }).passthrough()) }))
+          .optional(),
+        groupMembership: z.record(z.array(z.string())).optional(),
+      })
+      .parse(request.body ?? {})
+    const result = await impactPreviewService.preview(proposed)
+    return reply.send(result)
   }
 
   // ===========================================================================

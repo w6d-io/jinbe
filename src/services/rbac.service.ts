@@ -126,6 +126,57 @@ export interface ServicesResponse {
   services: ServiceInfo[]
 }
 
+/**
+ * SINGLE source of truth for legal service names. Used by BOTH the Fastify
+ * route JSON schema and the controller's zod validation — they diverged once
+ * (route allowed hyphens, controller didn't → every hyphenated service name
+ * 400'd) and must never be able to again.
+ */
+export const SERVICE_NAME_PATTERN = /^[a-z0-9_-]+$/
+
+/**
+ * High-level sign-in methods a service accepts on its main gateway rule.
+ * Maps to an ORDERED Oathkeeper authenticator chain (the gateway consults the
+ * first authenticator that recognizes the credential format):
+ *   cookie → cookie_session, bearer → bearer_token, introspection →
+ *   oauth2_introspection. Empty array = public (noop + allow).
+ */
+export type SignInMethod = 'cookie' | 'bearer' | 'introspection'
+
+/**
+ * Maps high-level sign-in methods to an ORDERED Oathkeeper authenticator
+ * chain. Fallback order is fixed cookie → bearer → introspection (the gateway
+ * consults the first authenticator recognizing the credential format). When
+ * bearer AND introspection are both on, both would read `Authorization:
+ * Bearer` and the first match would stop the chain — so the Kratos bearer
+ * reads the X-Session-Token header instead. Fails closed: throws 400 if a
+ * mapped authenticator is not in the gateway's enabled set.
+ */
+export function buildSignInAuthenticators(signIn: SignInMethod[]): OathkeeperRule['authenticators'] {
+  if (signIn.length === 0) return [{ handler: 'noop' }]
+  const out: OathkeeperRule['authenticators'] = []
+  if (signIn.includes('cookie')) out.push({ handler: 'cookie_session' })
+  if (signIn.includes('bearer')) {
+    out.push(
+      signIn.includes('introspection')
+        ? { handler: 'bearer_token', config: { token_from: { header: 'X-Session-Token' } } }
+        : { handler: 'bearer_token' }
+    )
+  }
+  if (signIn.includes('introspection')) out.push({ handler: 'oauth2_introspection' })
+  for (const a of out) {
+    if (!isHandlerEnabled('authenticator', a.handler)) {
+      throw Object.assign(
+        new Error(
+          `Sign-in method requires authenticator '${a.handler}', which is not enabled on this gateway (OATHKEEPER_ENABLED_AUTHENTICATORS).`
+        ),
+        { statusCode: 400 }
+      )
+    }
+  }
+  return out
+}
+
 export interface CreateServiceOptions {
   name: string
   displayName?: string
@@ -133,6 +184,8 @@ export interface CreateServiceOptions {
   matchUrl?: string
   matchMethods?: string[]
   stripPath?: string
+  /** Accepted sign-in methods. Default ['cookie']. [] = public endpoint. */
+  signIn?: SignInMethod[]
 }
 
 export interface UpdateServiceOptions {
@@ -140,6 +193,8 @@ export interface UpdateServiceOptions {
   matchUrl?: string
   matchMethods?: string[]
   stripPath?: string | null  // null = remove strip_path
+  /** Replace the accepted sign-in methods on the service's main rule. */
+  signIn?: SignInMethod[]
 }
 
 export interface AccessRulesResponse {
@@ -884,16 +939,23 @@ export class RbacService {
     // 3. Create Oathkeeper rules
     // Per-rule authorizer config overrides the global one — sets app to this service name
     // so OPA evaluates RBAC against this service's roles/routes, not the global config
+    // Sign-in methods → ordered authenticator chain. Default: cookie only
+    // (previous hardcoded behavior). [] = public: no auth check, allow-all
+    // authorizer — OPA has no subject to evaluate for anonymous traffic.
+    const signIn = options.signIn ?? ['cookie']
+    const isPublic = signIn.length === 0
     const mainRule: OathkeeperRule = {
       id: name,
       upstream: stripPath ? { url: upstreamUrl, strip_path: stripPath } : { url: upstreamUrl },
       match: { url: matchUrl, methods: matchMethods },
-      authenticators: [{ handler: 'cookie_session' }],
-      authorizer: {
-        handler: 'remote_json',
-        config: this.buildRemoteJsonConfig(name),
-      },
-      mutators: [{ handler: 'header' }],
+      authenticators: buildSignInAuthenticators(signIn),
+      authorizer: isPublic
+        ? { handler: 'allow' }
+        : {
+            handler: 'remote_json',
+            config: this.buildRemoteJsonConfig(name),
+          },
+      mutators: [{ handler: isPublic ? 'noop' : 'header' }],
     }
 
     // Health rule only for default path-prefix services — custom matchUrl domains
@@ -1037,6 +1099,27 @@ export class RbacService {
           url: options.matchUrl ?? existing.match.url,
           methods: (options.matchMethods ?? existing.match.methods) as OathkeeperRule['match']['methods'],
         },
+        // Replace the sign-in chain when requested. Switching to public also
+        // relaxes authorizer/mutators (OPA can't evaluate anonymous traffic);
+        // switching BACK from public restores the OPA-checked posture.
+        ...(options.signIn !== undefined
+          ? options.signIn.length === 0
+            ? {
+                authenticators: buildSignInAuthenticators([]),
+                authorizer: { handler: 'allow' as const },
+                mutators: [{ handler: 'noop' }],
+              }
+            : {
+                authenticators: buildSignInAuthenticators(options.signIn),
+                authorizer:
+                  existing.authorizer.handler === 'allow'
+                    ? { handler: 'remote_json' as const, config: this.buildRemoteJsonConfig(name) }
+                    : existing.authorizer,
+                mutators: existing.mutators?.some((m) => m.handler === 'header')
+                  ? existing.mutators
+                  : [{ handler: 'header' }],
+              }
+          : {}),
       }
 
       rules[ruleIdx] = updated

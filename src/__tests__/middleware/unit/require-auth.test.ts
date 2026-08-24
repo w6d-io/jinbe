@@ -180,9 +180,38 @@ describe('requireAuth middleware', () => {
       expect(reply._statusCode).toBe(401)
       expect(reply._body).toEqual({
         error: 'Unauthorized',
+        code: 'authentication_required',
         message:
           'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
       })
+    })
+
+    it('should tag 401 with code=session_invalid when a credential was presented but rejected', async () => {
+      const request = createMockRequest({
+        url: '/api/clusters',
+        userContext: undefined,
+        sessionError: 'Session expired or invalid',
+      } as Parameters<typeof createMockRequest>[0])
+      const reply = createMockReply()
+
+      await requireAuth(request, reply)
+
+      expect(reply._statusCode).toBe(401)
+      expect((reply._body as { code?: string }).code).toBe('session_invalid')
+    })
+
+    it('should tag 401 with code=session_invalid for a rejected ServiceAccount token', async () => {
+      const request = createMockRequest({
+        url: '/api/clusters',
+        userContext: undefined,
+        sessionError: 'k8s_service_account_token_rejected',
+      } as Parameters<typeof createMockRequest>[0])
+      const reply = createMockReply()
+
+      await requireAuth(request, reply)
+
+      expect(reply._statusCode).toBe(401)
+      expect((reply._body as { code?: string }).code).toBe('session_invalid')
     })
 
     it('should return 401 when userContext is null', async () => {
@@ -209,6 +238,7 @@ describe('requireAuth middleware', () => {
       expect(reply._statusCode).toBe(401)
       expect(reply._body).toEqual({
         error: 'Unauthorized',
+        code: 'authentication_required',
         message:
           'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
       })

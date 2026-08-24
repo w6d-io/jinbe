@@ -6,6 +6,7 @@ import { z } from 'zod'
 export const authenticatorHandlerSchema = z.enum([
   'noop',
   'cookie_session',
+  'bearer_token',
   'jwt',
   'oauth2_introspection',
   'oauth2_client_credentials',
@@ -173,6 +174,7 @@ export const oathkeeperRuleJsonSchema = {
             enum: [
               'noop',
               'cookie_session',
+              'bearer_token',
               'jwt',
               'oauth2_introspection',
               'oauth2_client_credentials',
