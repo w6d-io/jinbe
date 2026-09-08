@@ -1,0 +1,9 @@
+variables:
+  PROJECT_NAME: jinbe
+  HELM_RELEASE_NAME: jinbe
+  HELM_NS: ory
+
+include:
+  - project: 'library/stages'
+    ref: input-parameters
+    file: '/pipelines/back-nodejs.yaml'
