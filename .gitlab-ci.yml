@@ -2,8 +2,19 @@ variables:
   PROJECT_NAME: jinbe
   HELM_RELEASE_NAME: jinbe
   HELM_NS: ory
+  # Referenced by .unit_testback_nodejs but never defined in library/stages, so the job otherwise
+  # runs on an image without npm and dies with exit 127.
+  NODEJS_IMAGE_VERSION: node:22-bookworm-slim
 
 include:
   - project: 'library/stages'
     ref: input-parameters
     file: '/pipelines/back-nodejs.yaml'
+
+# The shared script installs and tests in one go, with no room for a code generation step. The test
+# files import modules that import the Prisma client, which does not exist until it is generated.
+test:unit:npm:
+  script:
+    - npm ci --legacy-peer-deps
+    - npx prisma generate
+    - npm run test:coverage
