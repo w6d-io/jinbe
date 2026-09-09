@@ -15,7 +15,7 @@ import {
   usersQuerySchema,
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
-import { setMemberships } from '../services/organisation-store.js'
+import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -24,6 +24,8 @@ interface IdentityWithRbac extends KratosIdentity {
   groups: string[]
   roles: string[]
   permissions: string[]
+  /** The organisations this identity belongs to, where this service owns membership. */
+  organizations?: string[]
   /**
    * Set when what this identity holds could not be read.
    *
@@ -107,6 +109,35 @@ async function mirrorMemberships(identity: KratosIdentity, request: FastifyReque
   }
 }
 
+/**
+ * Show the organisations each identity actually belongs to.
+ *
+ * The rows carried what was written on the identity, which stopped being where anybody reads it the
+ * moment this service started owning membership: the column showed nothing for people who belong to
+ * three. A screen that lists membership wrongly is worse than one that omits it, because somebody
+ * assigns from what it shows.
+ *
+ * One query for the whole page, not one per row. And a failure costs the column, never the list —
+ * the identities exist whether or not their memberships can be read.
+ */
+async function withMemberships(
+  identities: readonly IdentityWithRbac[],
+  request: FastifyRequest
+): Promise<IdentityWithRbac[]> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return [...identities]
+
+  try {
+    const held = await membershipsForSubjects(identities.map((identity) => identity.id))
+    return identities.map((identity) => ({
+      ...identity,
+      organizations: held.get(identity.id) ?? [],
+    }))
+  } catch (err) {
+    request.log.error({ err }, 'Listed the identities but could not read their memberships')
+    return [...identities]
+  }
+}
+
 export class AdminController {
   /**
    * Enrich identity with RBAC info resolved directly from Kratos + Git
@@ -171,7 +202,7 @@ export class AdminController {
     )
 
     return reply.send({
-      data: identitiesWithRbac,
+      data: await withMemberships(identitiesWithRbac, request),
       next_page_token: nextPageToken,
     })
   }

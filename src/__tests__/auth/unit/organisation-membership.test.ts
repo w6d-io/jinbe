@@ -100,3 +100,41 @@ describe('removing somebody', () => {
     expect(call[1]).toEqual(['subject-1'])
   })
 })
+
+describe('membershipsForSubjects', () => {
+  beforeEach(async () => {
+    await store.closeOrganisationStore()
+    poolState.query.mockReset()
+    poolState.query.mockResolvedValue({ rows: [] })
+  })
+
+  it('answers the whole page in one query', async () => {
+    // Asking per row turns one screen into as many round trips as it has rows, which is how a list
+    // becomes slow enough that somebody caches it and then shows a stale one.
+    poolState.query.mockReset()
+    poolState.query.mockResolvedValueOnce({ rows: [] })
+    poolState.query.mockResolvedValueOnce({
+      rows: [
+        { subject_id: 's1', organisation_id: 'org-a' },
+        { subject_id: 's1', organisation_id: 'org-b' },
+        { subject_id: 's2', organisation_id: 'org-a' },
+      ],
+    })
+
+    const held = await store.membershipsForSubjects(['s1', 's2', 's3'])
+
+    // `FROM`, not the bare table name: the schema statement creates that table and would count too.
+    expect(poolState.query.mock.calls.filter((c) => String(c[0]).includes('FROM organisation_members')))
+      .toHaveLength(1)
+    expect(held.get('s1')).toEqual(['org-a', 'org-b'])
+    expect(held.get('s2')).toEqual(['org-a'])
+    // Absent rather than an empty array: the caller decides what "belongs to nothing" looks like.
+    expect(held.has('s3')).toBe(false)
+  })
+
+  it('asks nothing for an empty page', async () => {
+    poolState.query.mockClear()
+    await expect(store.membershipsForSubjects([])).resolves.toEqual(new Map())
+    expect(poolState.query).not.toHaveBeenCalled()
+  })
+})

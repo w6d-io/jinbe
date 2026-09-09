@@ -25,6 +25,7 @@
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import {
+  allOrganisations,
   applyOrganisations,
   closeOrganisationStore,
   organisationStoreConfigured,
@@ -84,6 +85,36 @@ function contradictions(records: readonly OrganisationRecord[]): string[] {
   return problems
 }
 
+/**
+ * Organisations this store holds that the input says nothing about.
+ *
+ * Reported and never removed. An input derived from one system cannot know about an organisation
+ * created in another, so absence means "not mentioned" and not "deleted" — and the moment this
+ * store is the place people create them, pruning on absence would delete the newest ones first.
+ * Whoever reads this decides; the command does not.
+ */
+async function reportUnmentioned(records: readonly OrganisationRecord[]): Promise<void> {
+  const mentioned = new Set(records.map((r) => r.id))
+
+  let unmentioned: Awaited<ReturnType<typeof allOrganisations>>
+  try {
+    unmentioned = (await allOrganisations()).filter((o) => !mentioned.has(o.id))
+  } catch {
+    // A store that cannot be listed costs this report and nothing else: the import itself is
+    // keyed on identifiers and does not need to know what else is there.
+    console.log('\n  Could not list what is already held, so nothing is reported as unmentioned.')
+    return
+  }
+
+  if (unmentioned.length === 0) return
+
+  console.log(`\n  ${unmentioned.length} organisation(s) held here and NOT mentioned by this input:`)
+  for (const organisation of unmentioned) {
+    console.log(`    ${organisation.id}  ${organisation.tenant.padEnd(14)} ${organisation.name}`)
+  }
+  console.log('    Left untouched. Absence is not an instruction to delete.')
+}
+
 async function main(): Promise<number> {
   const [path, ...flags] = process.argv.slice(2)
   const apply = flags.includes('--apply')
@@ -137,6 +168,8 @@ async function main(): Promise<number> {
     `\n  ${records.length} organisation(s) across ${tenants.size} namespace(s); ` +
       `${records.length - held.size} not held yet`,
   )
+
+  await reportUnmentioned(records)
 
   if (!apply) {
     console.log('\n  Nothing written. Pass --apply to write it.')

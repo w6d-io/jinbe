@@ -97,6 +97,17 @@ describe('applyOrganisations', () => {
     expect(clientState.release).toHaveBeenCalled()
   })
 
+  it('CLEARS the members of an organisation given an empty list', async () => {
+    // Load-bearing for running this repeatedly: the extractor always emits the whole member list
+    // per organisation, so an empty one is how a revoked access stops working. Merging instead
+    // would leave it in place for ever, which is a revocation that never takes effect.
+    await store.applyOrganisations([{ ...business, members: [] }])
+
+    const statements = clientState.query.mock.calls.map((c) => String(c[0]))
+    expect(statements.some((s) => s.startsWith('DELETE FROM organisation_members'))).toBe(true)
+    expect(statements.some((s) => s.includes('INSERT INTO organisation_members'))).toBe(false)
+  })
+
   it('omits the deployments and memberships it was not given, rather than emptying them', async () => {
     // A file describing only names must not silently revoke every membership it does not mention.
     await store.applyOrganisations([{ id: business.id, name: 'Business', tenant: 'business' }])
