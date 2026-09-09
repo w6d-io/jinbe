@@ -76,7 +76,7 @@ describe('meRoutes — GET /me/organizations', () => {
     await handler(createMockRequest({ validatedSession: { email: 'a@b.io' } }), reply)
 
     expect(opaService.manageableOrgs).toHaveBeenCalledWith('a@b.io')
-    expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], scope: 'delegated' })
+    expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], names: {}, scope: 'delegated' })
   })
 
   it('returns ALL mapped orgs with scope=all for a global super_admin', async () => {
@@ -85,7 +85,7 @@ describe('meRoutes — GET /me/organizations', () => {
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'super@b.io' } }), reply)
 
-    expect(reply._body).toEqual({ organizations: ['org-a', 'org-b'], scope: 'all' })
+    expect(reply._body).toEqual({ organizations: ['org-a', 'org-b'], names: {}, scope: 'all' })
     // super_admin path does not consult the delegated manageable_orgs
     expect(opaService.manageableOrgs).not.toHaveBeenCalled()
   })
@@ -96,7 +96,7 @@ describe('meRoutes — GET /me/organizations', () => {
     await handler(createMockRequest({ userContext: { email: 'c@d.io' } }), reply)
 
     expect(opaService.manageableOrgs).toHaveBeenCalledWith('c@d.io')
-    expect(reply._body).toEqual({ organizations: ['org-9'], scope: 'delegated' })
+    expect(reply._body).toEqual({ organizations: ['org-9'], names: {}, scope: 'delegated' })
   })
 
   it('returns 401 when unauthenticated', async () => {
@@ -120,7 +120,7 @@ describe('meRoutes — GET /me/organizations', () => {
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'dev@b.io' } }), reply)
 
-    expect(reply._body).toEqual({ organizations: [], scope: 'all' })
+    expect(reply._body).toEqual({ organizations: [], names: {}, scope: 'all' })
     expect(opaService.manageableOrgs).not.toHaveBeenCalled()
   })
 })
