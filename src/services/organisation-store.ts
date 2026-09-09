@@ -140,6 +140,34 @@ export async function organisationsForSubject(subjectId: string): Promise<string
   return rows.map((row) => row.organisation_id)
 }
 
+/**
+ * What each of these subjects belongs to, in one query.
+ *
+ * A listing asks about everybody on the page, and asking per row turns one screen into as many
+ * round trips as it has rows — which is how a list becomes slow enough that somebody caches it and
+ * then shows a stale one.
+ */
+export async function membershipsForSubjects(
+  subjectIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const held = new Map<string, string[]>()
+  if (subjectIds.length === 0) return held
+
+  const rows = await query<{ subject_id: string; organisation_id: string }>(
+    `SELECT DISTINCT subject_id, organisation_id
+     FROM organisation_members
+     WHERE subject_id = ANY($1::text[])`,
+    [subjectIds],
+  )
+
+  for (const row of rows) {
+    const already = held.get(row.subject_id)
+    if (already) already.push(row.organisation_id)
+    else held.set(row.subject_id, [row.organisation_id])
+  }
+  return held
+}
+
 /** Members of one organisation, for the screens that administer it. */
 export async function membersOf(organisationId: string): Promise<OrganisationMember[]> {
   const rows = await query<{ subject_id: string; role: string }>(
