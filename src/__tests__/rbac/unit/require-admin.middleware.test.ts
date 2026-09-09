@@ -16,11 +16,18 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
-// What the caller holds is resolved from the model this service owns, not asked of the policy
-// engine — which decides at the edge and was never given this model.
-vi.mock('../../../services/rbac.service.js', () => ({
-  rbacService: {
-    resolveUserRbac: vi.fn().mockImplementation(async () => mockState.opalUserInfo),
+// What the caller holds is resolved from the model this service owns — the identity's groups and
+// this service's own definitions — not asked of the policy engine, which decides at the edge and
+// was never given this model.
+vi.mock('../../../services/rbac-resolver.service.js', () => ({
+  rbacResolverService: {
+    resolveUserRbac: vi.fn().mockImplementation(async () => {
+      const held = mockState.opalUserInfo
+      // The resolver never answers null: unreadable groups degrade to the base group, so a caller
+      // is refused for holding nothing rather than for an unknown reason.
+      if (!held) throw new Error('the model could not be read')
+      return held
+    }),
   },
 }))
 
@@ -30,10 +37,10 @@ vi.mock('../../../services/opa.service.js', () => ({
 }))
 
 import { requireAdmin, requireGroups } from '../../../middleware/require-admin.js'
-import { rbacService } from '../../../services/rbac.service.js'
+import { rbacResolverService } from '../../../services/rbac-resolver.service.js'
 
-/** The resolver the guard now consults. Named as before so the assertions read the same. */
-const opalService = { getUserInfo: rbacService.resolveUserRbac }
+/** The resolver the guard consults. Named as before so the assertions read the same. */
+const opalService = { getUserInfo: rbacResolverService.resolveUserRbac }
 
 // Helper to create mock request
 function createMockRequest(email?: string, rbacInfo?: UserRbacInfo): FastifyRequest {
