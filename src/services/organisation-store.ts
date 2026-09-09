@@ -175,6 +175,99 @@ export async function deploymentsOf(organisationId: string): Promise<Organisatio
   return rows.map((row) => ({ application: row.application, enabled: row.enabled }))
 }
 
+export interface OrganisationRecord {
+  readonly id: string
+  readonly name: string
+  readonly tenant: string
+  readonly attributes?: Readonly<Record<string, unknown>>
+  readonly deployments?: readonly OrganisationDeployment[]
+  readonly members?: readonly OrganisationMember[]
+}
+
+export interface ApplyOutcome {
+  readonly organisations: number
+  readonly deployments: number
+  readonly members: number
+}
+
+/**
+ * Write a set of organisations, all of them or none.
+ *
+ * One transaction, because a half-applied import is worse than a refused one: the rows that landed
+ * grant access, the rows that did not are missing, and nothing on screen distinguishes that from a
+ * deliberate state.
+ *
+ * Replayable by construction — every write is an upsert keyed on the identifier the source already
+ * had, so running it twice changes nothing and running it after a partial failure completes it.
+ * Deployments and memberships of a named organisation are REPLACED rather than merged: they
+ * describe a whole set, and merging would leave yesterday's removals in place for ever.
+ *
+ * Nothing is ever deleted here. An organisation absent from the input is left alone, because an
+ * input that is incomplete for any reason — a filtered query, a source half migrated — must not
+ * read as an instruction to revoke.
+ */
+export async function applyOrganisations(
+  records: readonly OrganisationRecord[],
+): Promise<ApplyOutcome> {
+  await ready()
+  const client = await connection()
+    .connect()
+    .catch((failure: unknown) => {
+      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
+    })
+
+  try {
+    await client.query('BEGIN')
+    let deployments = 0
+    let members = 0
+
+    for (const record of records) {
+      await client.query(
+        `INSERT INTO organisations (id, name, tenant, attributes, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, now())
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name,
+               tenant = EXCLUDED.tenant,
+               attributes = EXCLUDED.attributes,
+               updated_at = now()`,
+        [record.id, record.name, record.tenant, JSON.stringify(record.attributes ?? {})],
+      )
+
+      if (record.deployments) {
+        await client.query('DELETE FROM organisation_deployments WHERE organisation_id = $1', [record.id])
+        for (const deployment of record.deployments) {
+          await client.query(
+            `INSERT INTO organisation_deployments (organisation_id, application, enabled)
+             VALUES ($1, $2, $3)`,
+            [record.id, deployment.application, deployment.enabled],
+          )
+          deployments += 1
+        }
+      }
+
+      if (record.members) {
+        await client.query('DELETE FROM organisation_members WHERE organisation_id = $1', [record.id])
+        for (const member of record.members) {
+          await client.query(
+            `INSERT INTO organisation_members (organisation_id, subject_id, role)
+             VALUES ($1, $2, $3)`,
+            [record.id, member.subjectId, member.role],
+          )
+          members += 1
+        }
+      }
+    }
+
+    await client.query('COMMIT')
+    return { organisations: records.length, deployments, members }
+  } catch (failure) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw new OrganisationStoreUnavailableError(`The import did not apply: ${String(failure)}`)
+  } finally {
+    client.release()
+  }
+}
+
 /** Released between tests, and on shutdown. */
 export async function closeOrganisationStore(): Promise<void> {
   const held = pool
