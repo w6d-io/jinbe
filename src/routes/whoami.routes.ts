@@ -39,6 +39,10 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
               groups: { type: 'array', items: { type: 'string' } },
               roles: { type: 'array', items: { type: 'string' } },
               permissions: { type: 'array', items: { type: 'string' } },
+              // Where the rules are enforced from. Answered here rather than configured again in
+              // the console: the deployment states it once, and two places that can disagree about
+              // whether an editor works is one place too many.
+              rules_source: { type: 'string', enum: ['service', 'gitops'] },
             },
           },
         },
@@ -117,6 +121,7 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
         groups,
         roles,
         permissions,
+        rules_source: env.RULES_SOURCE,
       })
     }
   )
