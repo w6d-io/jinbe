@@ -26,6 +26,31 @@ export interface EnforcedDocument {
   decides: string
   /** The object as YAML, pruned of what the server adds. */
   yaml: string
+  /**
+   * The route table, read out of the document, when it holds one.
+   *
+   * Parsed here rather than in the browser: the shape is known here, and a console that parsed it
+   * would be a second reader of the same document — free to disagree with the engine about what it
+   * says, which is the one thing a screen showing "what is enforced" must never do.
+   */
+  routes?: EnforcedRoute[]
+  /** What each role carries, when the document holds that instead. */
+  roles?: EnforcedRole[]
+}
+
+export interface EnforcedRoute {
+  method: string
+  /** The path as called, rebuilt from the segments the engine matches on. */
+  path: string
+  /** `public` | `authenticated` | `authorized` — what the engine requires before forwarding. */
+  class: string
+  /** Only for `authorized`: the permission a caller must hold. */
+  permission?: string
+}
+
+export interface EnforcedRole {
+  role: string
+  permissions: string[]
 }
 
 const RULE_GROUP = 'oathkeeper.ory.sh'
@@ -94,7 +119,53 @@ async function policyData(kc: k8s.KubeConfig, namespace: string): Promise<Enforc
     namespace,
     decides: describePolicyData(item),
     yaml: asYaml(item as unknown as Record<string, unknown>, 'ConfigMap'),
+    routes: routesIn(item),
+    roles: rolesIn(item),
   }))
+}
+
+/**
+ * The route table as rows, or nothing.
+ *
+ * A malformed document costs the table and never the screen: the YAML is still shown, and somebody
+ * looking at why the rows are missing is looking at the document that caused it.
+ */
+function routesIn(item: k8s.V1ConfigMap): EnforcedRoute[] | undefined {
+  const held = item.data?.['permissions.json']
+  if (!held) return undefined
+  try {
+    const parsed = JSON.parse(held) as {
+      routes?: Record<string, Record<string, { segments?: string[]; class?: string; permission?: string }>>
+    }
+    const rows: EnforcedRoute[] = []
+    for (const [method, byName] of Object.entries(parsed.routes ?? {})) {
+      for (const definition of Object.values(byName ?? {})) {
+        rows.push({
+          method,
+          path: `/${(definition.segments ?? []).join('/')}`,
+          class: definition.class ?? 'unknown',
+          ...(definition.permission ? { permission: definition.permission } : {}),
+        })
+      }
+    }
+    return rows.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+  } catch {
+    return undefined
+  }
+}
+
+/** What each role carries, so a permission on a route can be read back to the roles that hold it. */
+function rolesIn(item: k8s.V1ConfigMap): EnforcedRole[] | undefined {
+  const held = item.data?.['roles.json']
+  if (!held) return undefined
+  try {
+    const parsed = JSON.parse(held) as Record<string, string[]>
+    return Object.entries(parsed)
+      .map(([role, permissions]) => ({ role, permissions: permissions ?? [] }))
+      .sort((a, b) => a.role.localeCompare(b.role))
+  } catch {
+    return undefined
+  }
 }
 
 /** Named by what a reader is looking for, not by the file that happens to hold it. */
