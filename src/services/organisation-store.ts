@@ -234,6 +234,49 @@ export async function removeMemberEverywhere(subjectId: string): Promise<void> {
   await query('DELETE FROM organisation_members WHERE subject_id = $1', [subjectId])
 }
 
+/**
+ * Make somebody's memberships exactly this set.
+ *
+ * The screens that edit membership send an end state, not a change, so this replaces rather than
+ * adds: merging would leave every removal in place for ever, which is a revoked access that still
+ * works. One transaction, because a half-applied set is a membership list nobody chose.
+ *
+ * An empty set is a legitimate answer and removes them from everywhere. It is also what an
+ * accidental empty request looks like, which is why only a caller holding the whole intended set
+ * may use this — the create and delete paths add and drop one at a time instead.
+ */
+export async function setMemberships(
+  subjectId: string,
+  organisationIds: readonly string[],
+  role = 'member',
+): Promise<void> {
+  await ready()
+  const client = await connection()
+    .connect()
+    .catch((failure: unknown) => {
+      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
+    })
+
+  try {
+    await client.query('BEGIN')
+    await client.query('DELETE FROM organisation_members WHERE subject_id = $1', [subjectId])
+    for (const organisationId of new Set(organisationIds)) {
+      await client.query(
+        `INSERT INTO organisation_members (organisation_id, subject_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (organisation_id, subject_id, role) DO NOTHING`,
+        [organisationId, subjectId, role],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (failure) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw new OrganisationStoreUnavailableError(`The memberships were not changed: ${String(failure)}`)
+  } finally {
+    client.release()
+  }
+}
+
 export interface OrganisationRecord {
   readonly id: string
   readonly name: string

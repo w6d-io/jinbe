@@ -15,6 +15,7 @@ import {
   usersQuerySchema,
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
+import { setMemberships } from '../services/organisation-store.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -62,6 +63,43 @@ function sameGroups(requested: unknown, current: string[] | undefined): boolean 
  * Admin Controller
  * Handles user management via Kratos Admin API
  */
+/**
+ * Keep the membership records in step with the identity the screens just edited.
+ *
+ * The editors write the organisations onto the identity — a primary one and a list — because that
+ * is where the set used to be read back from. Where this service owns membership, that is no longer
+ * where anybody reads it, so the records are reconciled to the same set: otherwise assigning
+ * somebody in the console would change nothing that any service asks about.
+ *
+ * Nothing happens in the other modes, where the identity IS the answer and a second copy would be
+ * an answer nothing reconciles.
+ *
+ * A failure is reported and not swallowed, and it does not undo the identity: the two are allowed to
+ * disagree for as long as it takes to notice, where refusing after the write would leave them
+ * disagreeing AND report success.
+ */
+async function mirrorMemberships(identity: KratosIdentity, request: FastifyRequest): Promise<void> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return
+
+  const metadata = identity.metadata_admin as Record<string, unknown> | undefined
+  const listed = Array.isArray(metadata?.organizations) ? (metadata.organizations as string[]) : []
+  const primary = (identity as { organization_id?: string | null }).organization_id
+  // The effective set is the primary one plus the list, which is what the screens show and what
+  // anybody editing them believes they are setting.
+  const effective = [...new Set([...(primary ? [primary] : []), ...listed])].filter(
+    (id) => typeof id === 'string' && id.length > 0,
+  )
+
+  try {
+    await setMemberships(identity.id, effective)
+  } catch (err) {
+    request.log.error(
+      { err, subjectId: identity.id, effective },
+      'Updated the identity but could not reconcile its membership records'
+    )
+  }
+}
+
 export class AdminController {
   /**
    * Enrich identity with RBAC info resolved directly from Kratos + Git
@@ -325,6 +363,7 @@ export class AdminController {
       action: 'updated', entity_type: 'user',
       payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
     })
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 
@@ -405,6 +444,7 @@ export class AdminController {
       action: 'updated', entity_type: 'user',
       payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
     })
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 
@@ -561,6 +601,7 @@ export class AdminController {
       source: 'jinbe-api',
     }).catch(() => {})
 
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 
