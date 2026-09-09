@@ -6,16 +6,18 @@ import type { FastifyRequest } from 'fastify'
 // a deployment that reads organisations from the token deliberately never populates it — and a
 // fallback would turn "belongs to nothing" into "ask an administrator", which nobody can act on.
 
-const { envState, opaModule } = vi.hoisted(() => {
-  const state = { env: { ORGANISATION_SOURCE: 'local' as 'local' | 'claim' } }
+const { envState, opaModule, storeModule } = vi.hoisted(() => {
+  const state = { env: { ORGANISATION_SOURCE: 'local' as 'local' | 'directory' | 'claim' } }
   return {
     envState: state,
     opaModule: { opaService: { manageableOrgs: vi.fn(async () => ['from-the-local-model']) } },
+    storeModule: { organisationsForSubject: vi.fn(async () => ['from-the-directory']) },
   }
 })
 
 vi.mock('../../../config/index.js', () => ({ env: envState.env }))
 vi.mock('../../../services/opa.service.js', () => opaModule)
+vi.mock('../../../services/organisation-store.js', () => storeModule)
 
 const { callerOrganisations, callerOrganisationsScope } = await import(
   '../../../services/caller-organisations.js'
@@ -54,9 +56,57 @@ describe('callerOrganisations', () => {
     })
   })
 
+  describe('directory mode — records this service owns answer', () => {
+    beforeEach(() => {
+      envState.env.ORGANISATION_SOURCE = 'directory'
+      storeModule.organisationsForSubject.mockResolvedValue(['from-the-directory'])
+    })
+
+    it('asks the store by SUBJECT, not by address', async () => {
+      // The subject is the one key that survives somebody changing their address, and the only one
+      // the store can be asked about on behalf of a caller who is not that person.
+      await expect(
+        callerOrganisations(request(['from-the-token']), 'someone@strada.eu'),
+      ).resolves.toEqual(['from-the-directory'])
+      expect(storeModule.organisationsForSubject).toHaveBeenCalledWith('an-id')
+      expect(opaModule.opaService.manageableOrgs).not.toHaveBeenCalled()
+    })
+
+    it('does NOT fall back to the inferred model, nor to the token', async () => {
+      await expect(callerOrganisations(request([]), 'someone@strada.eu')).resolves.toEqual([
+        'from-the-directory',
+      ])
+      expect(opaModule.opaService.manageableOrgs).not.toHaveBeenCalled()
+    })
+
+    it('answers nothing for a caller with no subject, without asking the store', async () => {
+      await expect(callerOrganisations({} as FastifyRequest, 'someone@strada.eu')).resolves.toEqual([])
+      expect(storeModule.organisationsForSubject).not.toHaveBeenCalled()
+    })
+
+    it('lets a store that cannot answer refuse, instead of reporting no membership', async () => {
+      // Reporting none would turn an outage into a permission decision, which is the failure that
+      // cannot be spotted from the outside.
+      storeModule.organisationsForSubject.mockRejectedValue(new Error('store down'))
+      await expect(callerOrganisations(request([]), 'someone@strada.eu')).rejects.toThrow('store down')
+    })
+
+    it('reports its scope as delegated: something here can still change the answer', () => {
+      expect(callerOrganisationsScope()).toBe('delegated')
+    })
+  })
+
   describe('claim mode — the token answers', () => {
     beforeEach(() => {
       envState.env.ORGANISATION_SOURCE = 'claim'
+    })
+
+    it('asks neither the inferred model nor the store', async () => {
+      await expect(callerOrganisations(request(['org-a']), 'someone@strada.eu')).resolves.toEqual([
+        'org-a',
+      ])
+      expect(storeModule.organisationsForSubject).not.toHaveBeenCalled()
+      expect(opaModule.opaService.manageableOrgs).not.toHaveBeenCalled()
     })
 
     it('reads the token and asks the model nothing', async () => {
