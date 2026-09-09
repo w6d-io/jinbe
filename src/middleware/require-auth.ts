@@ -1,5 +1,22 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { auditEventService } from '../services/audit-event.service.js'
+import { env } from '../config/index.js'
+
+/**
+ * What a caller may actually present, listed from what this deployment enables.
+ *
+ * A 401 that enumerates the accepted credentials and omits one sends the reader looking for a
+ * method that was never going to work — so the list is derived rather than written down.
+ */
+function acceptedCredentials(): string {
+  const accepted: string[] = []
+  if (env.AUTH_COOKIE_ENABLED !== false) accepted.push('a valid ory_kratos_session cookie')
+  if (env.AUTH_BEARER_ENABLED) accepted.push('an OIDC access token as a Bearer credential')
+  accepted.push('a Kubernetes ServiceAccount token as a Bearer credential')
+  return accepted.length > 1
+    ? `${accepted.slice(0, -1).join(', ')} or ${accepted[accepted.length - 1]}`
+    : accepted[0]
+}
 
 /**
  * Routes that don't require authentication (exact prefix match)
@@ -79,8 +96,7 @@ export async function requireAuth(
     return reply.status(401).send({
       error: 'Unauthorized',
       code: credentialRejected ? 'session_invalid' : 'authentication_required',
-      message:
-        'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
+      message: `Valid authentication required. Provide ${acceptedCredentials()}.`,
     })
   }
 }
