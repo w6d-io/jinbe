@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import * as k8s from '@kubernetes/client-node'
 import { stringify } from 'yaml'
+import { kratosService } from './kratos.service.js'
+import { organisationsById, organisationStoreConfigured } from './organisation-store.js'
 
 /**
  * What actually decides, read from where it actually lives.
@@ -36,6 +38,23 @@ export interface EnforcedDocument {
   routes?: EnforcedRoute[]
   /** What each role carries, when the document holds that instead. */
   roles?: EnforcedRole[]
+  /**
+   * Who holds which role, and where — the last link of the chain a reader is actually following.
+   *
+   * A screen that stops at "this route needs `context:read`" answers half the question. The half
+   * that matters to whoever is asking is "so who can call it, and how would somebody else be
+   * allowed to" — and that is a person, in an organisation, holding a role.
+   */
+  grants?: EnforcedGrant[]
+}
+
+export interface EnforcedGrant {
+  /** The immutable identity the grant is keyed on. Never an address: one changes, the other does not. */
+  subject: string
+  /** The address that identity carries today, for a reader. Absent when it cannot be resolved. */
+  email?: string
+  /** What this subject holds, per organisation. */
+  held: { organisation: string; organisationName?: string; roles: string[] }[]
 }
 
 export interface EnforcedRoute {
@@ -121,7 +140,34 @@ async function policyData(kc: k8s.KubeConfig, namespace: string): Promise<Enforc
     yaml: asYaml(item as unknown as Record<string, unknown>, 'ConfigMap'),
     routes: routesIn(item),
     roles: rolesIn(item),
+    grants: grantsIn(item),
   }))
+}
+
+/**
+ * Who holds what, read out of the document.
+ *
+ * Names are NOT resolved here — that is a directory read, and one failing directory must not cost
+ * the answer to "what is enforced". They are added afterwards, per subject, and a subject nobody can
+ * name is still shown by its identifier: a grant that cannot be attributed is more interesting than
+ * one that can, not less.
+ */
+function grantsIn(item: k8s.V1ConfigMap): EnforcedGrant[] | undefined {
+  const held = item.data?.['grants.json']
+  if (!held) return undefined
+  try {
+    const parsed = JSON.parse(held) as Record<string, Record<string, string[]>>
+    return Object.entries(parsed)
+      .map(([subject, byOrganisation]) => ({
+        subject,
+        held: Object.entries(byOrganisation ?? {})
+          .map(([organisation, roles]) => ({ organisation, roles: roles ?? [] }))
+          .sort((a, b) => a.organisation.localeCompare(b.organisation)),
+      }))
+      .sort((a, b) => a.subject.localeCompare(b.subject))
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -207,10 +253,75 @@ export async function enforcedConfiguration(): Promise<EnforcedDocument[]> {
   try {
     const kc = client()
     const [edge, policy] = await Promise.all([edgeRules(kc, namespace), policyData(kc, namespace)])
-    return [...edge, ...policy]
+    return await named([...edge, ...policy])
   } catch (err) {
     throw new EnforcedConfigUnavailableError(
       `Could not read the enforced configuration in namespace ${namespace}: ${(err as Error).message}`,
     )
+  }
+}
+
+/**
+ * Put a name on every subject and organisation a grant mentions.
+ *
+ * Separate from reading the documents, and failing separately: a directory or a membership store
+ * that cannot answer costs the reader a name and never the answer to "what is enforced". An
+ * identifier is worse to read and still true.
+ */
+async function named(documents: EnforcedDocument[]): Promise<EnforcedDocument[]> {
+  const subjects = [...new Set(documents.flatMap((d) => (d.grants ?? []).map((g) => g.subject)))]
+  const organisations = [
+    ...new Set(documents.flatMap((d) => (d.grants ?? []).flatMap((g) => g.held.map((h) => h.organisation)))),
+  ]
+  if (subjects.length === 0) return documents
+
+  const [addresses, organisationNames] = await Promise.all([
+    addressesFor(subjects),
+    organisationNamesFor(organisations),
+  ])
+
+  return documents.map((document) =>
+    document.grants
+      ? {
+          ...document,
+          grants: document.grants.map((grant) => ({
+            ...grant,
+            ...(addresses.get(grant.subject) ? { email: addresses.get(grant.subject) } : {}),
+            held: grant.held.map((held) => ({
+              ...held,
+              ...(organisationNames.get(held.organisation)
+                ? { organisationName: organisationNames.get(held.organisation) }
+                : {}),
+            })),
+          })),
+        }
+      : document,
+  )
+}
+
+async function addressesFor(subjects: readonly string[]): Promise<Map<string, string>> {
+  const found = new Map<string, string>()
+  // One at a time and tolerant of each: a subject present in a grant and absent from the directory
+  // is exactly the case worth seeing, and it must not take the other names with it.
+  await Promise.all(
+    subjects.map(async (subject) => {
+      try {
+        const identity = await kratosService.getIdentity(subject)
+        const email = (identity?.traits as { email?: string } | undefined)?.email
+        if (email) found.set(subject, email)
+      } catch {
+        // Left unnamed on purpose.
+      }
+    }),
+  )
+  return found
+}
+
+async function organisationNamesFor(ids: readonly string[]): Promise<Map<string, string>> {
+  if (!organisationStoreConfigured() || ids.length === 0) return new Map()
+  try {
+    return new Map((await organisationsById(ids)).map((o) => [o.id, o.name]))
+  } catch {
+    return new Map()
   }
 }
