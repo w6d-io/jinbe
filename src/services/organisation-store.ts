@@ -181,6 +181,59 @@ export async function deploymentsOf(organisationId: string): Promise<Organisatio
   return rows.map((row) => ({ application: row.application, enabled: row.enabled }))
 }
 
+/**
+ * Record that somebody belongs to an organisation.
+ *
+ * Idempotent on the three together, so assigning a role twice is not an error and re-running a
+ * repair changes nothing. The subject is the immutable identity: an address is a trait its owner can
+ * change, and one that moved would take an entitlement with it.
+ *
+ * Refuses when the organisation is not held, rather than creating a membership pointing at nothing:
+ * an edge to an organisation this service does not know is invisible everywhere it matters and
+ * impossible to explain later.
+ */
+export async function addMember(
+  organisationId: string,
+  subjectId: string,
+  role: string,
+): Promise<void> {
+  await query(
+    `INSERT INTO organisation_members (organisation_id, subject_id, role)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (organisation_id, subject_id, role) DO NOTHING`,
+    [organisationId, subjectId, role],
+  )
+}
+
+/**
+ * Take somebody out of an organisation, or out of one role in it.
+ *
+ * Silent when there was nothing to remove: the caller asked for an end state, and reporting a
+ * failure for an absence would make every repair look broken.
+ */
+export async function removeMember(
+  organisationId: string,
+  subjectId: string,
+  role?: string,
+): Promise<void> {
+  if (role) {
+    await query(
+      'DELETE FROM organisation_members WHERE organisation_id = $1 AND subject_id = $2 AND role = $3',
+      [organisationId, subjectId, role],
+    )
+    return
+  }
+  await query('DELETE FROM organisation_members WHERE organisation_id = $1 AND subject_id = $2', [
+    organisationId,
+    subjectId,
+  ])
+}
+
+/** Every organisation somebody belongs to, so removing them everywhere takes one call. */
+export async function removeMemberEverywhere(subjectId: string): Promise<void> {
+  await query('DELETE FROM organisation_members WHERE subject_id = $1', [subjectId])
+}
+
 export interface OrganisationRecord {
   readonly id: string
   readonly name: string

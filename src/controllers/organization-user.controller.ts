@@ -20,11 +20,49 @@ import {
   organizationUserUpdateBodySchema,
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
+import { env } from '../config/index.js'
+import { addMember, removeMemberEverywhere } from '../services/organisation-store.js'
 
 function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
   const orgId = (identity as Record<string, unknown>).organization_id as string | null | undefined
   if (orgId !== organizationId) {
     throw new KratosApiError(404, 'User not found in this organization')
+  }
+}
+
+/**
+ * Record an assignment where this service owns membership.
+ *
+ * Does nothing in the other modes: there the set is inferred from groups or asserted by a token,
+ * and writing a record would create a second answer that nothing reconciles.
+ *
+ * A failure is reported and never swallowed, but it does not undo the identity: the person exists
+ * and can be assigned again, whereas rolling back would delete an account somebody may already have
+ * been told about.
+ */
+async function recordMembership(
+  organisationId: string,
+  subjectId: string,
+  request: FastifyRequest
+): Promise<void> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return
+  try {
+    await addMember(organisationId, subjectId, 'member')
+  } catch (err) {
+    request.log.error(
+      { err, organisationId, subjectId },
+      'Created the identity but could not record its membership'
+    )
+  }
+}
+
+/** Drop every membership of a subject that no longer exists. */
+async function forgetMembership(subjectId: string, request: FastifyRequest): Promise<void> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return
+  try {
+    await removeMemberEverywhere(subjectId)
+  } catch (err) {
+    request.log.error({ err, subjectId }, 'Deleted the identity but could not drop its memberships')
   }
 }
 
@@ -135,6 +173,11 @@ export class OrganizationUserController {
         return reply.status(grant.status).send(grant.body)
       }
     }
+
+    // Where this service owns membership, the assignment is a record here — not something read
+    // back out of the identity's own metadata. Written AFTER the grant check, so a refused
+    // privilege never leaves a membership behind the rollback.
+    await recordMembership(organizationId, identity.id, request)
 
     if (sendInvite) {
       try {
@@ -352,6 +395,11 @@ export class OrganizationUserController {
     assertOrganizationMatch(identity, organizationId)
 
     await kratosService.deleteIdentity(id)
+
+    // The identity is gone, so no membership of it can mean anything. Removed everywhere rather
+    // than in the organisation asked for: a row left behind names a subject that no longer
+    // exists, and would grant to whoever is issued that identifier next.
+    await forgetMembership(id, request)
 
     kratosService.invalidateGroupsCache()
     rbacService.notifyBindingsChanged('user_deleted', auditActor(request)).catch(() => {})
