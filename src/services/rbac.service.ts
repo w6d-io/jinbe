@@ -4,7 +4,8 @@ import { withRedisLock } from './redis-lock.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { opaService, type UserRbacInfo } from './opa.service.js'
+import { opaService } from './opa.service.js'
+import { rbacResolverService } from './rbac-resolver.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {
@@ -280,63 +281,6 @@ export class RbacService {
    * unreachable OPA never widens visibility.
    */
   /**
-   * What somebody holds in this service, resolved from the model this service owns.
-   *
-   * It used to be asked of the policy engine, which decides at the EDGE and is given the data for
-   * that job. It was never given this model — group membership lives on the identity and the group
-   * definitions live in this service's own store — so the question went to something that could not
-   * answer it, and the failure surfaced as a refused administrator rather than as a missing
-   * dependency.
-   *
-   * Resolved here instead: the identity's groups, what each group grants for the application asked
-   * about and globally, and what those roles carry. One snapshot of the directory, so two answers
-   * in the same request cannot disagree.
-   *
-   * Returns null only when the model itself cannot be read. That is not "holds nothing" — the
-   * caller must refuse rather than treat it as an answer.
-   */
-  async resolveUserRbac(email: string, app: string): Promise<UserRbacInfo | null> {
-    if (!email) return null
-
-    try {
-      const bindings = await this.getBindingsFromKratos()
-      const groups = await redisRbacRepository.getGroups()
-
-      const held = bindings.group_membership[email] ?? []
-      // A group named on an identity but no longer defined grants nothing, and is not an error: the
-      // group was deleted and the membership has not been tidied.
-      const roleNames = new Set<string>()
-      const scopes = new Set<string>(['global', app])
-      for (const groupName of held) {
-        const definition = groups[groupName]
-        if (!definition) continue
-        for (const [service, roles] of Object.entries(definition)) {
-          if (!scopes.has(service)) continue
-          for (const role of roles) roleNames.add(role)
-        }
-      }
-
-      const permissions = new Set<string>()
-      for (const service of scopes) {
-        const roles = await redisRbacRepository.getRoles(service)
-        if (!roles) continue
-        for (const role of roleNames) {
-          for (const permission of roles[role] ?? []) permissions.add(permission)
-        }
-      }
-
-      return {
-        email,
-        groups: [...held],
-        roles: [...roleNames],
-        permissions: [...permissions],
-      }
-    } catch {
-      return null
-    }
-  }
-
-  /**
    * Whether somebody may do anything here.
    *
    * The wildcard is the test, not a role name: a deployment renames its groups and its roles, and a
@@ -344,8 +288,8 @@ export class RbacService {
    */
   async isSuperAdmin(actor: { email?: string | null }): Promise<boolean> {
     if (!actor?.email) return false
-    const held = await this.resolveUserRbac(actor.email, 'jinbe')
-    return held?.permissions.includes('*') === true
+    const held = await rbacResolverService.resolveUserRbac(actor.email, 'jinbe')
+    return held.permissions.includes('*')
   }
 
   /**

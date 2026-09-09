@@ -2,7 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { opaService as opalService, type UserRbacInfo } from '../services/opa.service.js'
 import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { rbacService } from '../services/rbac.service.js'
+import { rbacResolverService } from '../services/rbac-resolver.service.js'
 
 /**
  * Admin groups that grant access to protected routes.
@@ -42,6 +42,21 @@ function hasAnyGroup(userGroups: string[], requiredGroups: string[]): boolean {
  *
  * In DEV mode with DEV_BYPASS_AUTH=true, skips OPAL check and grants admin access.
  */
+/**
+ * What the caller holds, or null when that could not be established.
+ *
+ * The distinction is the whole point of this file: "holds nothing" is a decision and answers 403,
+ * "cannot be established" is an outage and answers 503. Letting the second pass as the first would
+ * turn every failure of the model into a permission somebody would go and ask about.
+ */
+async function resolveOrNull(email: string): Promise<UserRbacInfo | null> {
+  try {
+    return await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
+  } catch {
+    return null
+  }
+}
+
 export async function requireAdmin(
   request: FastifyRequest,
   reply: FastifyReply
@@ -72,7 +87,7 @@ export async function requireAdmin(
   }
 
   // Fetch RBAC info from OPAL
-  const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
+  const rbacInfo = await resolveOrNull(email)
 
   if (!rbacInfo) {
     request.log.warn(
@@ -146,7 +161,7 @@ export function requireGroups(allowedGroups: string[]) {
 
     // Fetch RBAC info from OPAL if not already fetched
     if (!request.rbacInfo) {
-      const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
+      const rbacInfo = await resolveOrNull(email)
 
       if (!rbacInfo) {
         request.log.warn(
@@ -232,7 +247,7 @@ export async function requireSuperAdmin(
   }
 
   // Fetch RBAC info from OPAL
-  const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
+  const rbacInfo = await resolveOrNull(email)
 
   if (!rbacInfo) {
     request.log.warn(

@@ -24,6 +24,13 @@ interface IdentityWithRbac extends KratosIdentity {
   groups: string[]
   roles: string[]
   permissions: string[]
+  /**
+   * Set when what this identity holds could not be read.
+   *
+   * Empty and unknown are different facts, and a screen showing no groups for both tells somebody
+   * an account has none when the truth is that nobody could find out.
+   */
+  rbacUnavailable?: boolean
 }
 
 /**
@@ -105,20 +112,35 @@ export class AdminController {
    * Enrich identity with RBAC info resolved directly from Kratos + Git
    * (No OPAL dependency - uses rbacResolverService for direct resolution)
    */
+  /**
+   * An identity, with what it holds where that can be resolved.
+   *
+   * Listing who exists is a directory read and must not depend on the permission model: one
+   * unresolvable identity used to take the whole list with it, and an empty screen says "nobody is
+   * here" — the one thing that is certainly false. So a failure costs that row's groups and never
+   * the row.
+   */
   private async enrichWithRbac(identity: KratosIdentity): Promise<IdentityWithRbac> {
     const email = identity.traits?.email
     if (!email) {
       return { ...identity, groups: [], roles: [], permissions: [] }
     }
 
-    // Direct resolution from Kratos (groups) + Git (definitions)
-    const rbacInfo = await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
+    try {
+      // Direct resolution from Kratos (groups) + Redis (definitions)
+      const rbacInfo = await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
 
-    return {
-      ...identity,
-      groups: rbacInfo.groups,
-      roles: rbacInfo.roles,
-      permissions: rbacInfo.permissions,
+      return {
+        ...identity,
+        groups: rbacInfo.groups,
+        roles: rbacInfo.roles,
+        permissions: rbacInfo.permissions,
+      }
+    } catch (err) {
+      // Empty is not the same as unknown, and a screen must be able to tell them apart: this row
+      // says its groups could not be read rather than showing none.
+      console.error(`[admin] Could not resolve what ${email} holds:`, err)
+      return { ...identity, groups: [], roles: [], permissions: [], rbacUnavailable: true }
     }
   }
 
