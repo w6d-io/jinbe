@@ -172,6 +172,30 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     namespace: { type: 'string' },
                     decides: { type: 'string' },
                     yaml: { type: 'string' },
+                    // Declared, or the serializer removes them without a word — which is exactly
+                    // how the memberships column came to be empty on a route that resolved it.
+                    routes: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          method: { type: 'string' },
+                          path: { type: 'string' },
+                          class: { type: 'string' },
+                          permission: { type: 'string' },
+                        },
+                      },
+                    },
+                    roles: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          role: { type: 'string' },
+                          permissions: { type: 'array', items: { type: 'string' } },
+                        },
+                      },
+                    },
                   },
                 },
               },

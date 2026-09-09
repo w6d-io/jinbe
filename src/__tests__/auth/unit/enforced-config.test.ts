@@ -98,6 +98,66 @@ describe('the enforced configuration', () => {
     expect(documents.find((d) => d.kind === 'ConfigMap')!.decides).toContain('which permission each route requires')
   })
 
+  it('reads the route table out as rows, so a screen need not parse it again', async () => {
+    // Parsed here because the shape is known here. A console that parsed the same document would be
+    // a second reader of it, free to disagree with the engine about what it says.
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'strada-demo-api', namespace: 'ory' },
+          data: {
+            'permissions.json': JSON.stringify({
+              routes: {
+                GET: {
+                  context: { segments: ['api', 'v1', 'context'], class: 'authorized', permission: 'context:read' },
+                  health: { segments: ['health', 'live'], class: 'public' },
+                },
+              },
+            }),
+          },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.routes).toEqual([
+      { method: 'GET', path: '/api/v1/context', class: 'authorized', permission: 'context:read' },
+      { method: 'GET', path: '/health/live', class: 'public' },
+    ])
+  })
+
+  it('reads what each role carries, so a permission can be traced to the roles holding it', async () => {
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz', namespace: 'ory' },
+          data: { 'roles.json': JSON.stringify({ operator: ['context:read'], viewer: [] }) },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.roles).toEqual([
+      { role: 'operator', permissions: ['context:read'] },
+      { role: 'viewer', permissions: [] },
+    ])
+  })
+
+  it('costs the rows and never the document when the table cannot be parsed', async () => {
+    // The YAML is still shown, so whoever asks why the rows are missing is looking at the document
+    // that caused it.
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [{ metadata: { name: 'broken', namespace: 'ory' }, data: { 'permissions.json': '{ not json' } }],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.routes).toBeUndefined()
+    expect(data.yaml).toContain('name: broken')
+  })
+
   it('raises rather than answering a short list when the cluster cannot be read', async () => {
     // An empty screen would say "nothing is enforced". That is the one answer that is certainly wrong.
     custom.listNamespacedCustomObject.mockRejectedValue(new Error('rules is forbidden'))
