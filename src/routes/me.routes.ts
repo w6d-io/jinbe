@@ -4,6 +4,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
+import { organisationsById, organisationStoreConfigured } from '../services/organisation-store.js'
 
 /**
  * The full org universe a global super_admin administers. Organizations are
@@ -49,6 +50,23 @@ async function allOrganizations(): Promise<string[]> {
  *   Requires a valid session (401 otherwise). FAIL-CLOSED: OPA error → empty
  *   list (the UI then offers nothing).
  */
+/**
+ * What to call each organisation on screen.
+ *
+ * Only this service's own records carry a label, so nothing is invented when there are none: the
+ * caller falls back to the identifier, which is worse to read and still correct. A store that
+ * cannot answer costs a label and never the list — losing the list would turn a display problem
+ * into somebody appearing to belong nowhere.
+ */
+async function namesFor(ids: readonly string[]): Promise<Record<string, string>> {
+  if (!organisationStoreConfigured() || ids.length === 0) return {}
+  try {
+    return Object.fromEntries((await organisationsById(ids)).map((o) => [o.id, o.name]))
+  } catch {
+    return {}
+  }
+}
+
 export async function meRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organizations',
@@ -61,6 +79,10 @@ export async function meRoutes(fastify: FastifyInstance) {
             type: 'object',
             properties: {
               organizations: { type: 'array', items: { type: 'string' } },
+              // What to call each one on screen, keyed by the identifier above. Additive: a caller that
+              // only knows identifiers keeps working, and one that shows them to a person no longer has
+              // to display a UUID nobody can tell from another.
+              names: { type: 'object', additionalProperties: { type: 'string' } },
               scope: { type: 'string', enum: ['all', 'delegated'] },
             },
           },
@@ -77,7 +99,8 @@ export async function meRoutes(fastify: FastifyInstance) {
       // (scope: 'all') rather than an empty delegated list, which was hiding
       // every org from the local console.
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-        return reply.send({ organizations: await allOrganizations(), scope: 'all' })
+        const organizations = await allOrganizations()
+        return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })
       }
 
       const email =
@@ -97,11 +120,16 @@ export async function meRoutes(fastify: FastifyInstance) {
       // the ones they happen to be a member of (manageable_orgs). The enforcement
       // layers already admit them to any org via their global "*".
       if (await rbacService.isSuperAdmin({ email })) {
-        return reply.send({ organizations: await allOrganizations(), scope: 'all' })
+        const organizations = await allOrganizations()
+        return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })
       }
 
       const organizations = await callerOrganisations(request, email)
-      return reply.send({ organizations, scope: callerOrganisationsScope() })
+      return reply.send({
+        organizations,
+        names: await namesFor(organizations),
+        scope: callerOrganisationsScope(),
+      })
     }
   )
 }
