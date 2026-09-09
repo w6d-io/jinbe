@@ -4,6 +4,10 @@ import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
 import { realtimeService } from '../services/realtime.service.js'
 import { accessReviewService } from '../services/access-review.service.js'
 import {
+  enforcedConfiguration,
+  EnforcedConfigUnavailableError,
+} from '../services/enforced-config.service.js'
+import {
   userIdParamSchema,
   usersQuerySchema,
   kratosIdentityJsonSchema,
@@ -140,6 +144,63 @@ export async function adminRoutes(fastify: FastifyInstance) {
     async (_request, reply) => {
       const data = await accessReviewService.getAccessReview()
       return reply.send(data)
+    },
+  )
+
+  // What actually decides, read from where it actually lives — the rule resources the edge is fed
+  // from and the ConfigMaps the policy engine loads. Read-only on purpose: the source of truth is a
+  // repository synced by Argo, so a screen that edited it in place would invite a change the next
+  // sync reverts without telling anybody.
+  fastify.get(
+    '/enforced-config',
+    {
+      schema: {
+        description:
+          'The enforced authorization configuration as YAML, read from the cluster objects the engines load. Read-only.',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              documents: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    kind: { type: 'string' },
+                    name: { type: 'string' },
+                    namespace: { type: 'string' },
+                    decides: { type: 'string' },
+                    yaml: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          503: {
+            type: 'object',
+            properties: { error: { type: 'string' }, message: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        return reply.send({ documents: await enforcedConfiguration() })
+      } catch (err) {
+        if (err instanceof EnforcedConfigUnavailableError) {
+          // 503 and never an empty list: a screen showing no rules would say nothing is enforced,
+          // which is the one thing that is certainly false.
+          request.log.error({ err }, 'Could not read the enforced configuration')
+          return reply.status(503).send({
+            error: 'Service Unavailable',
+            message: 'The enforced configuration could not be read from the cluster.',
+          })
+        }
+        throw err
+      }
     },
   )
 

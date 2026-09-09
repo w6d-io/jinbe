@@ -1,0 +1,107 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// The screen this feeds replaces editors that wrote where nothing reads. Three properties matter,
+// and none of them is about formatting:
+//   - only what the engines actually LOAD is shown (selected by the loader's own label),
+//   - what the API server adds is pruned, or the two lines that matter are unreadable,
+//   - a read failure raises: "nothing is enforced" and "I cannot tell" are opposite facts.
+
+const { core, custom, loadFromCluster } = vi.hoisted(() => ({
+  core: { listNamespacedConfigMap: vi.fn() },
+  custom: { listNamespacedCustomObject: vi.fn() },
+  loadFromCluster: vi.fn(),
+}))
+
+vi.mock('@kubernetes/client-node', () => {
+  class CoreV1Api {}
+  class CustomObjectsApi {}
+  return {
+    CoreV1Api,
+    CustomObjectsApi,
+    KubeConfig: class {
+      loadFromCluster = loadFromCluster
+      makeApiClient(kind: unknown) {
+        return kind === CoreV1Api ? core : custom
+      }
+    },
+  }
+})
+
+const service = await import('../../../services/enforced-config.service.js')
+
+const RULE = {
+  apiVersion: 'oathkeeper.ory.sh/v1alpha1',
+  kind: 'Rule',
+  metadata: {
+    name: 'demo-api',
+    namespace: 'ory',
+    resourceVersion: '918273',
+    uid: 'e6f2…',
+    generation: 4,
+    creationTimestamp: '2026-09-01T10:00:00Z',
+    managedFields: [{ manager: 'argocd-controller' }],
+    annotations: {
+      'kubectl.kubernetes.io/last-applied-configuration': '{"the":"whole object again"}',
+      'argocd.argoproj.io/tracking-id': 'ory-rules:oathkeeper.ory.sh/Rule:ory/demo-api',
+    },
+  },
+  spec: { upstream: { url: 'http://strada-demo-api.ory.svc.cluster.local:8080' } },
+  status: { validation: { valid: true } },
+}
+
+const POLICY_DATA = {
+  metadata: { name: 'strada-demo-api', namespace: 'ory' },
+  data: { 'permissions.json': '{\n  "routes": {}\n}\n' },
+}
+
+describe('the enforced configuration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    custom.listNamespacedCustomObject.mockResolvedValue({ items: [RULE] })
+    core.listNamespacedConfigMap.mockResolvedValue({ items: [POLICY_DATA] })
+  })
+
+  it('shows only what the policy engine loads, selected by the loader label', async () => {
+    await service.enforcedConfiguration()
+
+    const [call] = core.listNamespacedConfigMap.mock.calls
+    expect(call[0].labelSelector).toBe('openpolicyagent.org/data=opa')
+  })
+
+  it('prunes what the API server owns, so the two lines that matter are readable', async () => {
+    const [rule] = await service.enforcedConfiguration()
+
+    expect(rule.kind).toBe('Rule')
+    for (const noise of ['resourceVersion', 'uid', 'generation', 'creationTimestamp', 'managedFields', 'status:']) {
+      expect(rule.yaml, `${noise} should not be shown`).not.toContain(noise)
+    }
+    // The copy of the whole object that lives inside the object.
+    expect(rule.yaml).not.toContain('last-applied-configuration')
+    // But what says where it came from stays: that is the point of the screen.
+    expect(rule.yaml).toContain('argocd.argoproj.io/tracking-id')
+    expect(rule.yaml).toContain('strada-demo-api.ory.svc.cluster.local')
+  })
+
+  it('keeps an embedded document readable instead of one escaped line', async () => {
+    const documents = await service.enforcedConfiguration()
+    const data = documents.find((d) => d.kind === 'ConfigMap')!
+
+    // A literal block, as it reads in the repository — not "{\n  \"routes\"…".
+    expect(data.yaml).toContain('permissions.json: |')
+    expect(data.yaml).not.toContain('\\n')
+  })
+
+  it('names what each object decides, in the reader\'s terms', async () => {
+    const documents = await service.enforcedConfiguration()
+
+    expect(documents.find((d) => d.kind === 'Rule')!.decides).toContain('authenticated')
+    expect(documents.find((d) => d.kind === 'ConfigMap')!.decides).toContain('which permission each route requires')
+  })
+
+  it('raises rather than answering a short list when the cluster cannot be read', async () => {
+    // An empty screen would say "nothing is enforced". That is the one answer that is certainly wrong.
+    custom.listNamespacedCustomObject.mockRejectedValue(new Error('rules is forbidden'))
+
+    await expect(service.enforcedConfiguration()).rejects.toThrow(service.EnforcedConfigUnavailableError)
+  })
+})
