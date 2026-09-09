@@ -67,6 +67,41 @@ export const envSchema = z.object({
   DEV_USER_EMAIL: z.string().email().optional(),
 
   // Kratos APIs
+  // ─── Authentication methods ───
+  // Each way of proving who is calling is a switch, so a deployment takes the ones it wants and
+  // nothing else. Both default to what this service did before they existed: the Kratos session
+  // cookie on, the bearer off.
+  //
+  // A deployment whose console holds an OIDC token has no cookie to send, and one that turns the
+  // cookie off stops accepting session-based callers entirely — which is the point: an
+  // authentication method left on is an authentication method that can be used.
+  AUTH_COOKIE_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('true'),
+  AUTH_BEARER_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+
+  // ─── OIDC bearer ───
+  // Where a bearer token is verified against. No default: a wrong or missing issuer must fail the
+  // verification rather than quietly accept a token from somewhere else.
+  OIDC_ISSUER: z.string().url().optional(),
+  OIDC_JWKS_URL: z.string().url().optional(),
+  // The audience this service answers to. A token minted for another audience is not for us, and
+  // accepting it would let any holder of any token of that issuer in.
+  OIDC_AUDIENCE: z.string().optional(),
+
+  // ─── Where organisations come from ───
+  // `local` reads them from this service's own model, administered through the console. `claim`
+  // reads them from the verified token, so whoever issues it decides and this service asks nobody
+  // — which is how a deployment plugs its own directory in without this code knowing it exists.
+  ORGANISATION_SOURCE: z.enum(['local', 'claim']).default('local'),
+  // The claim the organisations are read from in `claim` mode. Named rather than fixed: a claim
+  // name is a deployment's vocabulary, not this service's.
+  ORGANISATION_CLAIM: z.string().default('orgs'),
+
   KRATOS_PUBLIC_URL: z.string().url().default('http://kratos-public:80'),
   KRATOS_ADMIN_URL: z.string().url().default('http://kratos-admin:80'),
   // Per-request timeout (ms) for Kratos Admin directory calls. Bounds the
