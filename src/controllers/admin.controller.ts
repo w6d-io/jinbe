@@ -258,7 +258,12 @@ export class AdminController {
     const { id } = request.params
     const identity = await kratosService.getIdentity(id)
     const identityWithRbac = await this.enrichWithRbac(identity)
-    return reply.send(identityWithRbac)
+    // The memberships too, and this one is not cosmetic: the screen that EDITS them reads this
+    // route, computes its starting point from what it receives, and saves that. Answering without
+    // them would show an empty set to somebody who belongs to three, and saving would then reduce
+    // them to what the screen happened to show.
+    const [withOne] = await withMemberships([identityWithRbac], request)
+    return reply.send(withOne)
   }
 
   /**

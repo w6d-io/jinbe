@@ -177,6 +177,19 @@ export const kratosIdentityJsonSchema = {
       items: { type: 'string' },
       description: 'User permissions from OPAL RBAC',
     },
+    // The organisations this identity belongs to, and whether what it holds could be read at all.
+    // Declared for the same reason `credentials` is: the serializer strips what the schema does not
+    // name, and it strips it SILENTLY — the controller resolved these, the response carried them,
+    // and the screen received an identity that appeared to belong nowhere.
+    organizations: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Organisations this identity belongs to, where this service owns membership',
+    },
+    rbacUnavailable: {
+      type: 'boolean',
+      description: 'Set when what this identity holds could not be resolved — empty is not the same fact',
+    },
     // Credentials map (only populated when listIdentities is called with
     // include_credential=…). Fastify's response serializer strips
     // unknown properties, so this must be declared even though we treat
