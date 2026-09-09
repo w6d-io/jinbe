@@ -16,13 +16,24 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
+// What the caller holds is resolved from the model this service owns, not asked of the policy
+// engine — which decides at the edge and was never given this model.
+vi.mock('../../../services/rbac.service.js', () => ({
+  rbacService: {
+    resolveUserRbac: vi.fn().mockImplementation(async () => mockState.opalUserInfo),
+  },
+}))
+
 vi.mock('../../../services/opa.service.js', () => ({
   opaService: { getUserInfo: vi.fn().mockImplementation(async () => mockState.opalUserInfo) },
   opalService: { getUserInfo: vi.fn().mockImplementation(async () => mockState.opalUserInfo) },
 }))
 
 import { requireAdmin, requireGroups } from '../../../middleware/require-admin.js'
-import { opaService as opalService } from '../../../services/opa.service.js'
+import { rbacService } from '../../../services/rbac.service.js'
+
+/** The resolver the guard now consults. Named as before so the assertions read the same. */
+const opalService = { getUserInfo: rbacService.resolveUserRbac }
 
 // Helper to create mock request
 function createMockRequest(email?: string, rbacInfo?: UserRbacInfo): FastifyRequest {
@@ -155,7 +166,7 @@ describe('requireAdmin middleware', () => {
   })
 
   describe('OPAL unavailable', () => {
-    it('should return 503 when opalService.getUserInfo returns null', async () => {
+    it('should return 503 when what the caller holds cannot be resolved', async () => {
       mockState.opalUserInfo = null
 
       const request = createMockRequest('user@example.com')
@@ -329,7 +340,7 @@ describe('requireGroups factory function', () => {
     expect(reply.send).not.toHaveBeenCalled()
   })
 
-  it('should fetch rbacInfo from OPAL if not present', async () => {
+  it('should resolve what the caller holds when it is not already known', async () => {
     mockState.opalUserInfo = {
       email: 'user@example.com',
       groups: ['developers'],
