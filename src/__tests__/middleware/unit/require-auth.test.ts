@@ -181,9 +181,12 @@ describe('requireAuth middleware', () => {
       expect(reply._body).toEqual({
         error: 'Unauthorized',
         code: 'authentication_required',
-        message:
-          'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
+        message: expect.stringContaining('Valid authentication required.'),
       })
+      // The credentials named are derived from what the deployment enables — see
+      // require-auth.message.test.ts. Here: the cookie and the ServiceAccount token, by default.
+      expect(reply._body.message).toContain('ory_kratos_session cookie')
+      expect(reply._body.message).toContain('ServiceAccount token')
     })
 
     it('should tag 401 with code=session_invalid when a credential was presented but rejected', async () => {
@@ -239,8 +242,7 @@ describe('requireAuth middleware', () => {
       expect(reply._body).toEqual({
         error: 'Unauthorized',
         code: 'authentication_required',
-        message:
-          'Valid authentication required. Provide a valid ory_kratos_session cookie, or a Kubernetes ServiceAccount token as a Bearer credential.',
+        message: expect.stringContaining('Valid authentication required.'),
       })
     })
 
