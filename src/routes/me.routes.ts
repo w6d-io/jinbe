@@ -4,11 +4,17 @@ import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
-import { organisationsById, organisationStoreConfigured } from '../services/organisation-store.js'
+import {
+  allOrganisations as heldOrganisations,
+  organisationsById,
+  organisationStoreConfigured,
+} from '../services/organisation-store.js'
 
 /**
- * The full org universe a global super_admin administers. Organizations are
- * NOT a first-class entity — they are implied by two independent sources:
+ * The full org universe a global super_admin administers. The union of three sources, because each
+ * one alone hides organisations the others hold:
+ *   0. the records this service owns, where it owns them — the only source that knows about an
+ *      organisation nobody belongs to yet, which is exactly the one somebody is about to assign,
  *   1. org_service_map keys (orgs that have a service mapping), and
  *   2. the org ids identities carry (native organization_id + any
  *      metadata_admin.organizations).
@@ -22,6 +28,17 @@ async function allOrganizations(): Promise<string[]> {
   const orgs = new Set<string>(
     Object.keys(await redisRbacRepository.getOrgServiceMap()),
   )
+  // The records this service owns, first: since it took ownership of organisations, an organisation
+  // with members but no service mapping and nobody carrying it on their identity existed only here.
+  // It was therefore absent from the one list the console offers when somebody assigns — so the
+  // organisations that actually exist could not be assigned, only the ones already in use.
+  if (organisationStoreConfigured()) {
+    try {
+      for (const held of await heldOrganisations()) orgs.add(held.id)
+    } catch {
+      // A store that cannot answer costs its own entries and never the rest of the list.
+    }
+  }
   try {
     const bindings = await kratosService.getAllIdentitiesWithBindings()
     for (const b of bindings.values()) {
@@ -29,7 +46,7 @@ async function allOrganizations(): Promise<string[]> {
       for (const o of b.organizations) if (o) orgs.add(o)
     }
   } catch {
-    // Kratos directory scan failed — degrade to the mapped orgs only.
+    // Kratos directory scan failed — degrade to whatever the other sources gave.
   }
   return [...orgs]
 }
