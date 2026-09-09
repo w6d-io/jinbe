@@ -1,0 +1,184 @@
+import { Pool } from 'pg'
+import { env } from '../config/index.js'
+
+/**
+ * Organisations as records this service owns, rather than a set inferred from group names.
+ *
+ * The inferred model cannot hold what a directory knows about an organisation — a label somebody
+ * can read, which namespace it deploys into, which applications it runs, what tier it is on — and
+ * it cannot answer about a subject the caller is not. Both are needed the moment this service is
+ * the place other services ask.
+ *
+ * Deliberately relational and deliberately not the document store this service uses for the
+ * platform it manages: these rows are structure, they are joined and constrained, and losing one
+ * silently is not recoverable from a cache.
+ *
+ * Whatever else a directory carries — a tier, a contract, a commercial range — travels in
+ * `attributes` rather than in columns named after one deployment's vocabulary. Anything that
+ * decides an entitlement MUST be carried here, because an organisation imported without it grants
+ * differently than the one it was copied from, and nothing says so.
+ */
+export class OrganisationStoreUnavailableError extends Error {}
+
+export interface Organisation {
+  readonly id: string
+  readonly name: string
+  readonly tenant: string
+  readonly attributes: Readonly<Record<string, unknown>>
+}
+
+export interface OrganisationDeployment {
+  readonly application: string
+  readonly enabled: boolean
+}
+
+export interface OrganisationMember {
+  readonly subjectId: string
+  readonly role: string
+}
+
+/**
+ * The schema, applied on first use and safe to apply again.
+ *
+ * `tenant` carries no unique constraint on purpose: a namespace is measured to host more than one
+ * organisation, and a constraint that assumed otherwise would merge two of them into one on import
+ * — silently, and with the memberships of both.
+ */
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS organisations (
+  id          uuid PRIMARY KEY,
+  name        text NOT NULL,
+  tenant      text NOT NULL,
+  attributes  jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS organisations_tenant_idx ON organisations (tenant);
+
+CREATE TABLE IF NOT EXISTS organisation_deployments (
+  organisation_id uuid NOT NULL REFERENCES organisations (id) ON DELETE CASCADE,
+  application     text NOT NULL,
+  enabled         boolean NOT NULL,
+  PRIMARY KEY (organisation_id, application)
+);
+
+CREATE TABLE IF NOT EXISTS organisation_members (
+  organisation_id uuid NOT NULL REFERENCES organisations (id) ON DELETE CASCADE,
+  subject_id      text NOT NULL,
+  role            text NOT NULL,
+  PRIMARY KEY (organisation_id, subject_id, role)
+);
+CREATE INDEX IF NOT EXISTS organisation_members_subject_idx ON organisation_members (subject_id);
+`
+
+let pool: Pool | null = null
+let schemaReady: Promise<void> | null = null
+
+/** Whether this deployment has somewhere to keep organisations. */
+export function organisationStoreConfigured(): boolean {
+  return Boolean(env.ORGANISATION_DATABASE_URL)
+}
+
+function connection(): Pool {
+  if (!env.ORGANISATION_DATABASE_URL) {
+    throw new OrganisationStoreUnavailableError('No organisation database is configured.')
+  }
+  pool ??= new Pool({
+    connectionString: env.ORGANISATION_DATABASE_URL,
+    max: env.ORGANISATION_DATABASE_POOL_MAX,
+    // A request waiting on a connection for ever is a request nobody times out. Refusing is worse
+    // for one caller and better for the service, and it is visible.
+    connectionTimeoutMillis: env.ORGANISATION_DATABASE_TIMEOUT_MS,
+  })
+  return pool
+}
+
+/** Applied once per process, and awaited by every read so none can run against a missing table. */
+async function ready(): Promise<void> {
+  schemaReady ??= connection()
+    .query(SCHEMA)
+    .then(() => undefined)
+    .catch((failure: unknown) => {
+      // Cleared so the next caller tries again: a database that was starting up must not leave the
+      // process convinced for ever that its schema cannot be applied.
+      schemaReady = null
+      throw new OrganisationStoreUnavailableError(`Could not prepare the organisation store: ${String(failure)}`)
+    })
+  return schemaReady
+}
+
+async function query<T>(sql: string, values: readonly unknown[]): Promise<T[]> {
+  await ready()
+  try {
+    const result = await connection().query(sql, values as unknown[])
+    return result.rows as T[]
+  } catch (failure) {
+    // Never an empty answer: "cannot tell" and "belongs to nothing" are opposite facts, and one of
+    // them must not be allowed to authorise anything.
+    throw new OrganisationStoreUnavailableError(`The organisation store did not answer: ${String(failure)}`)
+  }
+}
+
+/**
+ * The organisations a subject is a member of.
+ *
+ * Keyed on the subject, never on an address: an address is a trait its owner can change, and a
+ * changed address must not move an entitlement — nor must a reused one inherit the last holder's.
+ */
+export async function organisationsForSubject(subjectId: string): Promise<string[]> {
+  if (!subjectId) return []
+  const rows = await query<{ organisation_id: string }>(
+    'SELECT DISTINCT organisation_id FROM organisation_members WHERE subject_id = $1',
+    [subjectId],
+  )
+  return rows.map((row) => row.organisation_id)
+}
+
+/** Members of one organisation, for the screens that administer it. */
+export async function membersOf(organisationId: string): Promise<OrganisationMember[]> {
+  const rows = await query<{ subject_id: string; role: string }>(
+    'SELECT subject_id, role FROM organisation_members WHERE organisation_id = $1 ORDER BY subject_id, role',
+    [organisationId],
+  )
+  return rows.map((row) => ({ subjectId: row.subject_id, role: row.role }))
+}
+
+/** Every organisation, for a caller entitled to see them all. */
+export async function allOrganisations(): Promise<Organisation[]> {
+  const rows = await query<{ id: string; name: string; tenant: string; attributes: Record<string, unknown> }>(
+    'SELECT id, name, tenant, attributes FROM organisations ORDER BY tenant, name',
+    [],
+  )
+  return rows.map((row) => ({ id: row.id, name: row.name, tenant: row.tenant, attributes: row.attributes ?? {} }))
+}
+
+/** The named organisations, in the order asked, skipping any this store does not hold. */
+export async function organisationsById(ids: readonly string[]): Promise<Organisation[]> {
+  if (ids.length === 0) return []
+  const rows = await query<{ id: string; name: string; tenant: string; attributes: Record<string, unknown> }>(
+    'SELECT id, name, tenant, attributes FROM organisations WHERE id = ANY($1::uuid[])',
+    [ids],
+  )
+  const held = new Map(rows.map((row) => [row.id, row]))
+  return ids
+    .map((id) => held.get(id))
+    .filter((row): row is NonNullable<typeof row> => row !== undefined)
+    .map((row) => ({ id: row.id, name: row.name, tenant: row.tenant, attributes: row.attributes ?? {} }))
+}
+
+/** Which applications an organisation runs, and whether each is on. */
+export async function deploymentsOf(organisationId: string): Promise<OrganisationDeployment[]> {
+  const rows = await query<{ application: string; enabled: boolean }>(
+    'SELECT application, enabled FROM organisation_deployments WHERE organisation_id = $1 ORDER BY application',
+    [organisationId],
+  )
+  return rows.map((row) => ({ application: row.application, enabled: row.enabled }))
+}
+
+/** Released between tests, and on shutdown. */
+export async function closeOrganisationStore(): Promise<void> {
+  const held = pool
+  pool = null
+  schemaReady = null
+  await held?.end()
+}

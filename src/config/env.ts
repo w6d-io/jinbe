@@ -97,7 +97,16 @@ export const envSchema = z.object({
   // `local` reads them from this service's own model, administered through the console. `claim`
   // reads them from the verified token, so whoever issues it decides and this service asks nobody
   // — which is how a deployment plugs its own directory in without this code knowing it exists.
-  ORGANISATION_SOURCE: z.enum(['local', 'claim']).default('local'),
+  // local     — inferred from group memberships by the policy, as this service has always done
+  // directory  — records this service owns, in ORGANISATION_DATABASE_URL
+  // claim      — whatever the verified token asserts; this service consults nothing
+  ORGANISATION_SOURCE: z.enum(['local', 'directory', 'claim']).default('local'),
+
+  // Where organisations live when this service owns them. Absent, the `directory` source has
+  // nowhere to read from and start-up refuses rather than answering that nobody belongs anywhere.
+  ORGANISATION_DATABASE_URL: z.string().optional(),
+  ORGANISATION_DATABASE_POOL_MAX: z.coerce.number().int().positive().default(5),
+  ORGANISATION_DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   // The claim the organisations are read from in `claim` mode. Named rather than fixed: a claim
   // name is a deployment's vocabulary, not this service's.
   ORGANISATION_CLAIM: z.string().default('orgs'),
