@@ -100,6 +100,12 @@ export const envSchema = z.object({
   // local     — inferred from group memberships by the policy, as this service has always done
   // directory  — records this service owns, in ORGANISATION_DATABASE_URL
   // claim      — whatever the verified token asserts; this service consults nothing
+  // Whether this service is still a rule source. `service` — the engines fetch the rules from here
+  // at runtime, so the console's editors change what is enforced. `gitops` — the edge is fed from
+  // Rule resources and the policy engine from labelled ConfigMaps, both synced from a repository,
+  // and a write here would land in a store nothing reads. Reported to the console so it can stop
+  // offering an edit that cannot take effect; it changes nothing this service does.
+  RULES_SOURCE: z.enum(['service', 'gitops']).default('service'),
   ORGANISATION_SOURCE: z.enum(['local', 'directory', 'claim']).default('local'),
 
   // Where organisations live when this service owns them. Absent, the `directory` source has
