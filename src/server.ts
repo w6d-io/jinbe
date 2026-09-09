@@ -30,6 +30,7 @@ import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
+import { directoryRoutes } from './routes/directory.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
@@ -148,6 +149,9 @@ export async function buildServer() {
       await api.register(auditRoutes, { prefix: '/admin/audit' })
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
+      // Answers about a named subject rather than about its caller, so it takes a machine
+      // credential and nothing else — its own hook, registered inside the plugin.
+      await api.register(directoryRoutes, { prefix: '/directory' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only

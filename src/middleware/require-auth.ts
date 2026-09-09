@@ -30,6 +30,9 @@ const PUBLIC_ROUTES = [
   // sub-path public) to the EXACT Kratos webhook path. The handler still
   // self-authenticates via a shared secret; this only lifts the session gate.
   '/api/webhooks/kratos',
+  // Its own credential, checked by its own hook: a machine token, hashed at rest. Listed here for
+  // the same reason the SCIM prefix is — the session gate would refuse it before that hook runs.
+  '/api/directory',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed
