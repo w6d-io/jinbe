@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
-import { opaService } from '../services/opa.service.js'
+import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
@@ -100,8 +100,8 @@ export async function meRoutes(fastify: FastifyInstance) {
         return reply.send({ organizations: await allOrganizations(), scope: 'all' })
       }
 
-      const organizations = await opaService.manageableOrgs(email)
-      return reply.send({ organizations, scope: 'delegated' })
+      const organizations = await callerOrganisations(request, email)
+      return reply.send({ organizations, scope: callerOrganisationsScope() })
     }
   )
 }
