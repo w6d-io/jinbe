@@ -27,6 +27,18 @@ vi.mock('@kubernetes/client-node', () => {
   }
 })
 
+vi.mock('../../../services/kratos.service.js', () => ({
+  kratosService: {
+    getIdentity: vi.fn(async (id: string) =>
+      id === 'known' ? { traits: { email: 'somebody@strada.eu' } } : Promise.reject(new Error('not found')),
+    ),
+  },
+}))
+vi.mock('../../../services/organisation-store.js', () => ({
+  organisationStoreConfigured: vi.fn(() => true),
+  organisationsById: vi.fn(async () => [{ id: 'org-a', name: 'Business', tenant: 'business', attributes: {} }]),
+}))
+
 const service = await import('../../../services/enforced-config.service.js')
 
 const RULE = {
@@ -156,6 +168,36 @@ describe('the enforced configuration', () => {
 
     expect(data.routes).toBeUndefined()
     expect(data.yaml).toContain('name: broken')
+  })
+
+  it('names the person and the organisation behind a grant, and keeps the identifier when it cannot', async () => {
+    // The last link of the chain a reader follows. A subject present in a grant and absent from the
+    // directory is the case worth seeing, so it is shown by its identifier rather than dropped.
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz', namespace: 'ory' },
+          data: {
+            'roles.json': JSON.stringify({ operator: ['context:read'] }),
+            'grants.json': JSON.stringify({
+              known: { 'org-a': ['operator'] },
+              'gone-from-the-directory': { 'org-b': ['operator'] },
+            }),
+          },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.grants).toEqual([
+      { subject: 'gone-from-the-directory', held: [{ organisation: 'org-b', roles: ['operator'] }] },
+      {
+        subject: 'known',
+        email: 'somebody@strada.eu',
+        held: [{ organisation: 'org-a', organisationName: 'Business', roles: ['operator'] }],
+      },
+    ])
   })
 
   it('raises rather than answering a short list when the cluster cannot be read', async () => {

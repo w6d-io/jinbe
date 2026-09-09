@@ -196,6 +196,27 @@ export async function adminRoutes(fastify: FastifyInstance) {
                         },
                       },
                     },
+                    grants: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          subject: { type: 'string' },
+                          email: { type: 'string' },
+                          held: {
+                            type: 'array',
+                            items: {
+                              type: 'object',
+                              properties: {
+                                organisation: { type: 'string' },
+                                organisationName: { type: 'string' },
+                                roles: { type: 'array', items: { type: 'string' } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
                   },
                 },
               },
