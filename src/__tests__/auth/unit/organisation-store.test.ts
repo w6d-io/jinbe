@@ -16,7 +16,8 @@ const { poolState, envState } = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: envState.env }))
-vi.mock('pg', () => ({ Pool: vi.fn(() => poolState) }))
+const PoolMock = vi.fn(() => poolState)
+vi.mock('pg', () => ({ Pool: PoolMock }))
 
 const store = await import('../../../services/organisation-store.js')
 
@@ -92,6 +93,35 @@ describe('organisationsForSubject', () => {
       store.OrganisationStoreUnavailableError,
     )
     expect(store.organisationStoreConfigured()).toBe(false)
+  })
+})
+
+describe('how it connects', () => {
+  beforeEach(async () => {
+    await store.closeOrganisationStore()
+    PoolMock.mockClear()
+    envState.env.ORGANISATION_DATABASE_URL = 'postgres://somewhere/db'
+    delete envState.env.ORGANISATION_DATABASE_CA
+  })
+
+  it('verifies the certificate against the authority the deployment names', async () => {
+    envState.env.ORGANISATION_DATABASE_CA = '-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----'
+    answers([])
+    await store.allOrganisations()
+
+    const config = PoolMock.mock.calls[0][0] as { ssl?: { ca?: string; rejectUnauthorized?: boolean } }
+    // Not disabled — checked against a named authority. Disabling instead would encrypt the
+    // connection to whatever answered, which reads as protection and is not.
+    expect(config.ssl?.rejectUnauthorized).toBe(true)
+    expect(config.ssl?.ca).toContain('BEGIN CERTIFICATE')
+  })
+
+  it('says nothing about TLS when no authority is named, leaving the address to decide', async () => {
+    answers([])
+    await store.allOrganisations()
+
+    const config = PoolMock.mock.calls[0][0] as { ssl?: unknown }
+    expect(config.ssl).toBeUndefined()
   })
 })
 

@@ -89,6 +89,12 @@ function connection(): Pool {
     // A request waiting on a connection for ever is a request nobody times out. Refusing is worse
     // for one caller and better for the service, and it is visible.
     connectionTimeoutMillis: env.ORGANISATION_DATABASE_TIMEOUT_MS,
+    // Named authority: the certificate is still checked, against the one the deployment says signed
+    // it. Disabling the check instead would encrypt the connection to whatever answered, which is
+    // the shape of protection that reads as protection and is not.
+    ...(env.ORGANISATION_DATABASE_CA
+      ? { ssl: { ca: env.ORGANISATION_DATABASE_CA, rejectUnauthorized: true } }
+      : {}),
   })
   return pool
 }

@@ -105,6 +105,11 @@ export const envSchema = z.object({
   // Where organisations live when this service owns them. Absent, the `directory` source has
   // nowhere to read from and start-up refuses rather than answering that nobody belongs anywhere.
   ORGANISATION_DATABASE_URL: z.string().optional(),
+  // The authority that signed the database's certificate, as PEM. A certificate authority is
+  // public by nature, so it belongs in configuration rather than in a secret store. Without it a
+  // private authority cannot be verified, and the choice is then between refusing the connection
+  // and trusting whatever answers — this makes the third option available.
+  ORGANISATION_DATABASE_CA: z.string().optional(),
   ORGANISATION_DATABASE_POOL_MAX: z.coerce.number().int().positive().default(5),
   ORGANISATION_DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   // The claim the organisations are read from in `claim` mode. Named rather than fixed: a claim
