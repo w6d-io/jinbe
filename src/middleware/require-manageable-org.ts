@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { opaService } from '../services/opa.service.js'
+import { callerOrganisations } from '../services/caller-organisations.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
 /**
@@ -19,7 +19,7 @@ import { auditEventService } from '../services/audit-event.service.js'
  *    one org reaching a sibling org in the same service (tenant isolation).
  *
  * FAIL-CLOSED: manageable_orgs is resolved by OPA from OPAL data by email;
- * opaService.manageableOrgs returns `[]` on any OPA error, so an unreachable
+ * callerOrganisations returns `[]` on any resolution error, so an unreachable
  * OPA denies rather than grants.
  */
 export function requireManageableOrg(paramName = 'organizationId') {
@@ -55,8 +55,9 @@ export function requireManageableOrg(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
-    // Resolved server-side from OPAL data by email — never trusted from input.
-    const manageable = await opaService.manageableOrgs(email)
+    // Resolved server-side — never trusted from input. From this service own model, or from the
+    // verified token when the deployment has delegated who belongs where to its issuer.
+    const manageable = await callerOrganisations(request, email)
 
     if (!manageable.includes(organizationId)) {
       request.log.warn(
