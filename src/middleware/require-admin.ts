@@ -2,6 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { opaService as opalService, type UserRbacInfo } from '../services/opa.service.js'
 import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { rbacService } from '../services/rbac.service.js'
 
 /**
  * Admin groups that grant access to protected routes.
@@ -71,12 +72,12 @@ export async function requireAdmin(
   }
 
   // Fetch RBAC info from OPAL
-  const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+  const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
 
   if (!rbacInfo) {
     request.log.warn(
       { email },
-      'Failed to fetch RBAC info from OPAL - access denied'
+      'Could not resolve what this caller holds — refusing rather than guessing'
     )
     return reply.status(503).send({
       error: 'Service Unavailable',
@@ -145,12 +146,12 @@ export function requireGroups(allowedGroups: string[]) {
 
     // Fetch RBAC info from OPAL if not already fetched
     if (!request.rbacInfo) {
-      const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+      const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
 
       if (!rbacInfo) {
         request.log.warn(
           { email },
-          'Failed to fetch RBAC info from OPAL - access denied'
+          'Could not resolve what this caller holds — refusing rather than guessing'
         )
         return reply.status(503).send({
           error: 'Service Unavailable',
@@ -231,12 +232,12 @@ export async function requireSuperAdmin(
   }
 
   // Fetch RBAC info from OPAL
-  const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+  const rbacInfo = await rbacService.resolveUserRbac(email, env.APP_NAME)
 
   if (!rbacInfo) {
     request.log.warn(
       { email },
-      'Failed to fetch RBAC info from OPAL - access denied'
+      'Could not resolve what this caller holds — refusing rather than guessing'
     )
     return reply.status(503).send({
       error: 'Service Unavailable',
