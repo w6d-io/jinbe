@@ -323,22 +323,6 @@ export class RbacService {
   }
 
   /**
-   * Returns true when membership of `groupName` grants either the global
-   * super_admin role or a service-scoped admin role (i.e. holds the
-   * wildcard "*"). Such groups are considered "privileged" — adding a
-   * user to one of them is a privilege-escalation operation, so we
-   * gate it on the target identity having a second factor configured.
-   */
-  /**
-   * Public wrapper for the admin-power check — used by the user-group
-   * assignment endpoint to refuse privilege escalation by non-super_admin
-   * actors. Mirrors the private helper used by the MFA gate.
-   */
-  async isAdminPowerGroup(groupName: string): Promise<boolean> {
-    return this.groupGrantsAdminPower(groupName)
-  }
-
-  /**
    * Public wrapper exposing the super_admin authority check used internally
    * by mutation guards. Throws 403 if the actor is not a super_admin.
    */
@@ -349,124 +333,11 @@ export class RbacService {
     return this.requireSuperAdmin(reason, actor)
   }
 
-  /**
-   * Public: returns true iff membership of `groupName` grants GLOBAL admin
-   * power — the literal global `super_admin` role, or a global role that
-   * resolves to the wildcard "*" permission. Strictly narrower than
-   * groupGrantsAdminPower, which ALSO returns true for a merely service-scoped
-   * wildcard role.
-   *
-   * The user-group assignment gate uses this as a hard backstop (finding J1):
-   * a global group must require the actor to BE a super_admin, so an
-   * org-scoped ("*"-in-org) admin cannot cross the tenant boundary and mint a
-   * global super_admin.
-   *
-   * Fail-closed: only affirmative global signals return true. A missing group
-   * returns false — and in the assignment flow that group never reaches the
-   * gate, because it would not have registered as admin-power in the first
-   * place. A Redis failure THROWS (getGroup/getRoles reject) rather than
-   * silently returning false, so it surfaces as a request-level deny, never a
-   * bypass.
-   */
-  async groupGrantsGlobalPower(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return false
-    return this.defGrantsGlobalPower(def)
-  }
-
-  /**
-   * True iff the group confers NO roles in any service (an empty definition,
-   * e.g. the reserved base `users` group `{}`). Lets a demotion to the base
-   * group skip the delegation gate WITHOUT trusting the group NAME: if a
-   * privileged actor ever redefined the base group to bind real roles this
-   * returns false, so the grant is re-subjected to can_grant rather than waved
-   * through. A missing group confers nothing → true.
-   */
-  async isEmptyGroup(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return true
-    return !Object.values(def).some((roles) => Array.isArray(roles) && roles.length > 0)
-  }
-
-  /**
-   * Shared "does this group definition grant GLOBAL power" predicate. Reused
-   * by both groupGrantsGlobalPower (the public assignment gate) and
-   * groupGrantsAdminPower (the MFA / admin-power gate) so the notion of
-   * "global" cannot drift between them.
-   */
-  private async defGrantsGlobalPower(def: GroupDefinition): Promise<boolean> {
-    const globalRoles = def.global ?? []
-    if (globalRoles.length === 0) return false
-    // The literal global super_admin role is the absolute trigger.
-    if (globalRoles.includes('super_admin')) return true
-    // Otherwise resolve the named global roles against the global roles map;
-    // any wildcard permission is global admin power.
-    const allGlobalRoles = await redisRbacRepository.getRoles('global')
-    if (!allGlobalRoles) return false
-    for (const role of globalRoles) {
-      if ((allGlobalRoles[role] ?? []).includes('*')) return true
-    }
-    return false
-  }
-
-  private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return false
-
-    // Global power (super_admin, or a global role resolving to "*") is the
-    // absolute trigger — reuse the shared predicate so it stays in lock-step
-    // with groupGrantsGlobalPower.
-    if (await this.defGrantsGlobalPower(def)) return true
-
-    // For each service the group binds, check whether any of its roles
-    // resolves to a wildcard permission (admin role typically has "*").
-    for (const [svc, roles] of Object.entries(def)) {
-      if (svc === 'global' || !roles?.length) continue
-      const allRoles = await redisRbacRepository.getRoles(svc)
-      if (!allRoles) continue
-      for (const role of roles) {
-        const perms = allRoles[role] ?? []
-        if (perms.includes('*')) return true
-      }
-    }
-    return false
-  }
-
-  /**
-   * Iterates `candidateGroups`; for each one that grants admin power AND
-   * is system-protected, returns the first group name that the target
-   * identity cannot currently join because they have no second factor.
-   * Returns null if no such gate trips.
-   *
-   * Used by the user-group assignment endpoint to refuse one-click
-   * elevation of a user without MFA — required for SOC2-style controls.
-   */
-  async findPrivilegedGroupRequiringMFA(
-    candidateGroups: string[],
-    targetIdentityId: string,
-  ): Promise<string | null> {
-    let mfaCheckResult: boolean | null = null
-
-    for (const groupName of candidateGroups) {
-      const isSystem = await this.isSystemGroup(groupName)
-      if (!isSystem) continue
-      const grantsAdmin = await this.groupGrantsAdminPower(groupName)
-      if (!grantsAdmin) continue
-
-      // Lazy-load MFA check — only pay the Kratos round-trip if at least
-      // one candidate group qualifies as privileged.
-      if (mfaCheckResult === null) {
-        try {
-          mfaCheckResult = await kratosService.hasMFA(targetIdentityId)
-        } catch {
-          // Treat lookup failure as "no MFA" — fail closed for safety.
-          mfaCheckResult = false
-        }
-      }
-      if (!mfaCheckResult) return groupName
-    }
-    return null
-  }
+  // The group predicates that used to live here — admin power, global power, emptiness, and the
+  // MFA gate built on them — read this store's group and role definitions. The engine decides
+  // against a model carried in the bundle, which this store does not hold, so for every group that
+  // model declares they answered "confers nothing". `authorization-model.service` answers them now,
+  // from the documents the bundle carries.
 
   // Public: call after any user-group mutation that bypasses rbacService methods
   async notifyBindingsChanged(reason: string, actor?: AuditActorInput): Promise<void> {
@@ -808,23 +679,6 @@ export class RbacService {
     const changes = diffGroupDefinition(name, before, {})
     await this.invalidateBundle('rbac.group_deleted', { type: 'group', id: name }, actor, changes)
     return this.result(`Group '${name}' deleted`)
-  }
-
-  // ===========================================================================
-  // Group Validation
-  // ===========================================================================
-
-  async getAvailableGroups(): Promise<string[]> {
-    const groups = await redisRbacRepository.getGroups()
-    return Object.keys(groups)
-  }
-
-  async validateGroups(groups: string[]): Promise<void> {
-    const available = await this.getAvailableGroups()
-    const invalid = groups.filter(g => !available.includes(g))
-    if (invalid.length > 0) {
-      throw new Error(`Invalid groups: ${invalid.join(', ')}. Available: ${available.join(', ')}`)
-    }
   }
 
   // ===========================================================================

@@ -38,16 +38,10 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
-    getAvailableGroups: vi.fn(),
-    validateGroups: vi.fn(),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
-    isAdminPowerGroup: vi.fn().mockResolvedValue(false),
     // Default false: the admin-power groups in these cases are org-scoped, not
     // global, so the wildcard_in_org gate is exercised as before.
-    groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
     // Base group `users` is empty → exempt from the delegation gate.
-    isEmptyGroup: vi.fn().mockResolvedValue(true),
-    findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
   },
 }))
 
@@ -150,15 +144,12 @@ describe('OrganizationUserController.getUserGroups', () => {
 describe('OrganizationUserController.updateUserGroups', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
     vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('rejects when target identity is in a different org (404)', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(OTHER_ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -181,8 +172,6 @@ describe('OrganizationUserController.updateUserGroups', () => {
     // permission expresses it — so the endpoint refuses and names the authority that is missing,
     // instead of asking an engine that stopped answering when the model changed.
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -203,7 +192,6 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {
@@ -237,7 +225,6 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
   it('defaults to ["users"] when body groups is empty', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {

@@ -63,8 +63,6 @@ vi.mock('../../../services/opa.service.js', () => ({
 // Mock rbacService
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
-    getAvailableGroups: vi.fn().mockResolvedValue([]),
-    validateGroups: vi.fn().mockResolvedValue(undefined),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
     invalidateDirectoryStats: vi.fn().mockResolvedValue(undefined),
   },

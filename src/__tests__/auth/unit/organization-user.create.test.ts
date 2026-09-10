@@ -17,7 +17,6 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
-    validateGroups: vi.fn().mockResolvedValue(undefined),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
   },
 }))
@@ -83,7 +82,6 @@ describe('OrganizationUserController.createUser — group assignment', () => {
       expect.objectContaining({ metadata_admin: { groups: ['users'] } })
     )
     expect(userGroupsService.applyGroupUpdate).not.toHaveBeenCalled()
-    expect(rbacService.validateGroups).not.toHaveBeenCalled()
     expect(reply._statusCode).toBe(201)
   })
 
