@@ -199,8 +199,6 @@ export const envSchema = z.object({
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
 
-  // OPAL Server (for real-time RBAC update triggers)
-  OPAL_SERVER_URL: z.string().url().default('http://opal-server:7002'),
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),

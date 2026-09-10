@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify'
-import { env } from '../config/index.js'
 import { rbacController } from '../controllers/rbac.controller.js'
 import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
@@ -511,7 +510,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 // OPAL Public Data Routes — no auth, called by OPAL server to sync policy data
 // =============================================================================
 
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { rbacService } from '../services/rbac.service.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
@@ -534,68 +532,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   })
 
   // Groups: group → service → roles
-  fastify.get('/opal/groups', async (_request, reply) => {
-    const groups = await redisRbacRepository.getGroups()
-    return reply.send(groups)
-  })
+  // Six routes lived here whose only caller was OPAL: the datasource manifest and the five
+  // documents it fetched. No OPAL runs in this namespace, and the engine pulls a bundle rather
+  // than being pushed data — so they answered nobody, and the push that used to name them logged
+  // a DNS error on every mutation for a component that never existed here.
 
-  // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
-  // Values are service bundles (arrays). Legacy scalar values in Redis are
-  // normalized to single-element arrays by the repository before serving.
-  fastify.get('/opal/org_service_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgServiceMap()
-    return reply.send(map)
-  })
-
-  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
-  fastify.get('/opal/org_admin_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgAdminMap()
-    return reply.send(map)
-  })
-
-  // Roles per service
-  fastify.get('/opal/roles/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const roles = await redisRbacRepository.getRoles(service)
-    return reply.send(roles || {})
-  })
-
-  // Route map per service
-  fastify.get('/opal/route_map/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const routeMap = await redisRbacRepository.getRouteMap(service)
-    return reply.send(routeMap || { rules: [] })
-  })
-
-  // OPAL datasource config (tells OPAL what to fetch)
-  fastify.get('/opal-datasource', async (_request, reply) => {
-    const services = await redisRbacRepository.getServices()
-    const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-
-    const entries = [
-      { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-      { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-      // Global roles are always part of OPA's dataset, even though "global"
-      // is not listed in the services registry — they hold the platform-wide
-      // wildcard ("*") used by the super_admin role and the rego super_admin
-      // detector relies on data.roles.global being populated.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
-      // Org → service map (data.org_service_map): the delegation rego resolves
-      // which service a target org's RBAC lives under from this.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
-      // Org → admin roster (data.org_admin_map): per-org list of admin emails;
-      // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
-    ]
-
-    for (const svc of services) {
-      entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-      const routeMap = await redisRbacRepository.getRouteMap(svc)
-      if (routeMap) {
-        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-      }
-    }
-
-    return reply.send({ entries })
-  })
 }

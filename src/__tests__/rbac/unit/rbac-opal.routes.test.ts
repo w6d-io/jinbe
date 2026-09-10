@@ -82,7 +82,10 @@ function createMockReply() {
   return reply as unknown as FastifyReply & { _status: number; _body: unknown }
 }
 
-describe('rbacOpalRoutes — OPAL public data endpoints', () => {
+// What is left here is `/bindings`, which the console reads. The org->service map and the OPAL
+// datasource manifest tested alongside it are gone with the routes: their only caller was OPAL,
+// which does not run in this namespace.
+describe('rbacOpalRoutes — /bindings', () => {
   let fastify: ReturnType<typeof createMockFastify>
 
   const handlerFor = (path: string): Handler => {
@@ -95,59 +98,6 @@ describe('rbacOpalRoutes — OPAL public data endpoints', () => {
     vi.clearAllMocks()
     fastify = createMockFastify()
     await rbacOpalRoutes(fastify)
-  })
-
-  describe('GET /opal/org_service_map', () => {
-    it('returns the normalized org→service bundle hash (values are arrays)', async () => {
-      const map = {
-        '11111111-1111-1111-1111-111111111111': ['service_a'],
-        '22222222-2222-2222-2222-222222222222': ['service_b', 'service_c'],
-      }
-      mocks.getOrgServiceMap.mockResolvedValueOnce(map)
-
-      const reply = createMockReply()
-      await handlerFor('/opal/org_service_map')({} as FastifyRequest, reply)
-
-      expect(mocks.getOrgServiceMap).toHaveBeenCalledOnce()
-      expect(reply._body).toEqual(map)
-    })
-
-    it('returns an empty object when no mappings exist', async () => {
-      mocks.getOrgServiceMap.mockResolvedValueOnce({})
-
-      const reply = createMockReply()
-      await handlerFor('/opal/org_service_map')({} as FastifyRequest, reply)
-
-      expect(reply._body).toEqual({})
-    })
-  })
-
-  describe('GET /opal-datasource', () => {
-    it('includes an org_service_map entry pointing at /org_service_map', async () => {
-      mocks.getServices.mockResolvedValueOnce([])
-
-      const reply = createMockReply()
-      await handlerFor('/opal-datasource')({} as FastifyRequest, reply)
-
-      const body = reply._body as { entries: Array<{ url: string; topics: string[]; dst_path: string }> }
-      const entry = body.entries.find((e) => e.dst_path === '/org_service_map')
-
-      expect(entry).toBeDefined()
-      expect(entry!.url.endsWith('/api/admin/rbac/opal/org_service_map')).toBe(true)
-      expect(entry!.topics).toEqual(['policy_data'])
-    })
-
-    it('still emits the /bindings entry (unchanged dst_path)', async () => {
-      mocks.getServices.mockResolvedValueOnce([])
-
-      const reply = createMockReply()
-      await handlerFor('/opal-datasource')({} as FastifyRequest, reply)
-
-      const body = reply._body as { entries: Array<{ url: string; dst_path: string }> }
-      const bindings = body.entries.find((e) => e.dst_path === '/bindings')
-      expect(bindings).toBeDefined()
-      expect(bindings!.url.endsWith('/api/admin/rbac/bindings')).toBe(true)
-    })
   })
 
   describe('GET /bindings', () => {
