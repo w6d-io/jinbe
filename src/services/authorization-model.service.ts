@@ -2,6 +2,7 @@ import * as k8s from '@kubernetes/client-node'
 import { groupsForSubjects } from './organisation-store.js'
 import {
   EVERY_ORGANISATION,
+  permits,
   resolveRights,
   type Groups,
   type HeldRights,
@@ -32,37 +33,51 @@ const POLICY_DATA_SELECTOR = 'openpolicyagent.org/data=opa'
 const NAMESPACE_FILE = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
 
 
+/** Administering the platform needs `admin.membership:write` to hand out a group. */
+export const ASSIGN_MEMBERSHIP = 'admin.membership:write'
+
 /**
- * The groups that grant in EVERY organisation.
+ * What this subject holds ACROSS the platform — the roles their groups give under `*`.
  *
- * That is what global power is in this model — not a name. A group called `super_admins` that grants
- * nothing is not powerful, and a group called anything at all that grants under `*` is. Reading the
- * shape rather than the name is what stops a same-named but powerless group from waving somebody
- * through.
+ * Administering the platform is not an act inside one organisation, so the organisation-scoped
+ * entries are deliberately not read here: holding `admin.membership:write` in one company must not
+ * let somebody hand out a group everywhere.
+ *
+ * What this replaced asked whether the subject held any group granting under `*`, whatever it
+ * granted. That conflated "operator of one API everywhere" with "administrator of the platform", and
+ * it was a predicate invented here rather than a permission the model declares. Now the model says
+ * it, and the same rule that enforces a route decides it.
  */
-export async function globalPowerGroups(): Promise<Set<string>> {
-  const groups = await groupsModel()
-  const powerful = new Set<string>()
-  for (const [group, byOrganisation] of Object.entries(groups)) {
-    const roles = byOrganisation?.[EVERY_ORGANISATION] ?? []
-    if (roles.length > 0) powerful.add(group)
+export async function platformPermissions(subjectId: string): Promise<string[]> {
+  if (!subjectId) return []
+  const [documents, membership] = await Promise.all([
+    policyDocuments(),
+    groupsForSubjects([subjectId]),
+  ])
+
+  const roles = new Set<string>()
+  for (const group of membership.get(subjectId) ?? []) {
+    for (const role of documents.groups[group]?.[EVERY_ORGANISATION] ?? []) roles.add(role)
   }
-  return powerful
+
+  const permissions = new Set<string>()
+  for (const role of roles) {
+    for (const permission of documents.roles[role] ?? []) permissions.add(permission)
+  }
+  return [...permissions].sort()
 }
 
 /**
- * Whether this subject holds a group that grants in every organisation.
+ * Whether this subject may do something across the platform.
  *
  * Keyed on the immutable identity, never on an address: an address can be changed by its owner and
- * reused by somebody else, and this is the gate that decides who may hand out rights.
+ * reused by somebody else, and this decides who may hand out rights.
  */
-export async function holdsGlobalPower(subjectId: string): Promise<boolean> {
-  if (!subjectId) return false
-  const [powerful, held] = await Promise.all([
-    globalPowerGroups(),
-    groupsForSubjects([subjectId]),
-  ])
-  return (held.get(subjectId) ?? []).some((group) => powerful.has(group))
+export async function holdsPlatformPermission(
+  subjectId: string,
+  required: string,
+): Promise<boolean> {
+  return permits(await platformPermissions(subjectId), required)
 }
 
 /**
@@ -95,12 +110,8 @@ export async function rightsOf(subjectId: string, organisationId: string): Promi
  * into a surprise.
  */
 export async function assignableGroupsFor(subjectId: string): Promise<string[]> {
-  if (!(await holdsGlobalPower(subjectId))) return []
+  if (!(await holdsPlatformPermission(subjectId, ASSIGN_MEMBERSHIP))) return []
   return Object.keys((await policyDocuments()).groups).sort()
-}
-
-async function groupsModel(): Promise<Groups> {
-  return (await policyDocuments()).groups
 }
 
 async function policyDocuments(): Promise<{ groups: Groups; roles: Roles }> {

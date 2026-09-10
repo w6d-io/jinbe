@@ -63,7 +63,8 @@ vi.mock('../../../services/kratos.service.js', () => ({
 // The gate reads the MODEL, not an engine: it asks whether the actor holds a group granting in
 // every organisation, from the same ConfigMaps the artefact carries.
 vi.mock('../../../services/authorization-model.service.js', () => ({
-  holdsGlobalPower: vi.fn(),
+  holdsPlatformPermission: vi.fn(),
+  ASSIGN_MEMBERSHIP: 'admin.membership:write',
   AuthorizationModelUnavailableError: class extends Error {},
 }))
 
@@ -76,7 +77,7 @@ vi.mock('../../../services/opa.service.js', () => ({
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { opaService } from '../../../services/opa.service.js'
-import { holdsGlobalPower } from '../../../services/authorization-model.service.js'
+import { holdsPlatformPermission } from '../../../services/authorization-model.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 
@@ -150,41 +151,41 @@ describe('RbacService - security helpers', () => {
         message: 'Authentication required for this operation',
         statusCode: 401,
       })
-      expect(holdsGlobalPower).not.toHaveBeenCalled()
+      expect(holdsPlatformPermission).not.toHaveBeenCalled()
     })
 
     it('throws 401 when only an address is presented', async () => {
       await expect(
         service.assertSuperAdmin('reason', { email: 'root@example.com' }),
       ).rejects.toMatchObject({ statusCode: 401 })
-      expect(holdsGlobalPower).not.toHaveBeenCalled()
+      expect(holdsPlatformPermission).not.toHaveBeenCalled()
     })
 
-    it('resolves when the actor holds a group granting in every organisation', async () => {
-      vi.mocked(holdsGlobalPower).mockResolvedValueOnce(true)
+    it('resolves when the actor holds the permission to hand out a group', async () => {
+      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(true)
 
       await expect(
         service.assertSuperAdmin('do x', { id: 'subject-root', email: 'root@example.com' }),
       ).resolves.toBeUndefined()
 
-      expect(holdsGlobalPower).toHaveBeenCalledWith('subject-root')
+      expect(holdsPlatformPermission).toHaveBeenCalledWith('subject-root', 'admin.membership:write')
     })
 
-    it('throws 403 when the actor holds no such group', async () => {
-      vi.mocked(holdsGlobalPower).mockResolvedValueOnce(false)
+    it('throws 403 when the actor does not hold it', async () => {
+      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(false)
 
       await expect(
         service.assertSuperAdmin('elevate role', { id: 'subject-admin' }),
       ).rejects.toMatchObject({
         statusCode: 403,
-        message: 'Only a group granting in every organisation may elevate role',
+        message: 'Only admin.membership:write may elevate role',
       })
     })
 
     it('throws 503 when the model cannot be read, rather than deciding without it', async () => {
       // "Nobody is powerful" and "I could not tell" are opposite facts. Answering 403 here would
       // read as a missing right; answering 200 would authorize on ignorance.
-      vi.mocked(holdsGlobalPower).mockRejectedValueOnce(new Error('configmaps is forbidden'))
+      vi.mocked(holdsPlatformPermission).mockRejectedValueOnce(new Error('configmaps is forbidden'))
 
       await expect(
         service.assertSuperAdmin('do y', { id: 'subject-someone' }),

@@ -4,7 +4,7 @@ import { withRedisLock } from './redis-lock.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { holdsGlobalPower } from './authorization-model.service.js'
+import { ASSIGN_MEMBERSHIP, holdsPlatformPermission } from './authorization-model.service.js'
 import { rbacResolverService } from './rbac-resolver.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
@@ -261,16 +261,17 @@ export class RbacService {
   }
 
   /**
-   * Privilege escalation guard: refuses the mutation unless the actor holds a group that grants in
-   * EVERY organisation.
+   * Privilege escalation guard: refuses the mutation unless the actor holds `admin.membership:write`
+   * across the platform.
    *
-   * Decided from the same ConfigMaps the engine decides against, and keyed on the IMMUTABLE identity
-   * rather than an address — this is the gate that says who may hand out rights, so it must not move
-   * when somebody changes their email, nor follow a reused one.
+   * A DECLARED PERMISSION, not a shape. What this held before asked whether the actor was in any
+   * group granting under `*` — which conflated "operator of one API everywhere" with "administrator
+   * of the platform", and was a predicate invented here rather than something the model says. The
+   * model says it now, and the coverage rule that admits `admin:write` for it is the same one the
+   * engine applies to a route.
    *
-   * What this replaces asked an engine for `data.rbac.simulate`, a path that stopped existing when
-   * the model became `strada.authz`. It answered nothing, so every group assignment had been refused
-   * since — a 403 that read like a missing right rather than a broken query.
+   * Keyed on the IMMUTABLE identity rather than an address: this is the gate that says who may hand
+   * out rights, so it must not move when somebody changes their email, nor follow a reused one.
    *
    * FAIL-CLOSED on every uncertainty: no identity, or a model that cannot be read, both refuse.
    */
@@ -286,7 +287,7 @@ export class RbacService {
     }
     let powerful: boolean
     try {
-      powerful = await holdsGlobalPower(actor.id)
+      powerful = await holdsPlatformPermission(actor.id, ASSIGN_MEMBERSHIP)
     } catch (err) {
       throw Object.assign(
         new Error(`The authorization model could not be read, so nobody may ${reason}: ${(err as Error).message}`),
@@ -295,7 +296,7 @@ export class RbacService {
     }
     if (!powerful) {
       throw Object.assign(
-        new Error(`Only a group granting in every organisation may ${reason}`),
+        new Error(`Only ${ASSIGN_MEMBERSHIP} may ${reason}`),
         { statusCode: 403 },
       )
     }
