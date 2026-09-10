@@ -1,5 +1,14 @@
 import * as k8s from '@kubernetes/client-node'
 import { groupsForSubjects } from './organisation-store.js'
+import {
+  EVERY_ORGANISATION,
+  resolveRights,
+  type Groups,
+  type HeldRights,
+  type Roles,
+} from './authorization-resolution.js'
+
+export { resolveRights, type HeldRights }
 
 /**
  * The model, read for the decisions THIS service makes about its own API.
@@ -21,11 +30,7 @@ export class AuthorizationModelUnavailableError extends Error {}
 
 const POLICY_DATA_SELECTOR = 'openpolicyagent.org/data=opa'
 const NAMESPACE_FILE = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
-/** Every organisation at once. A group naming it grants wherever the holder happens to be. */
-const EVERY_ORGANISATION = '*'
 
-/** `{ "<group>": { "<organisation>": ["<role>"] } }`, as `groups.json` holds it. */
-type Groups = Record<string, Record<string, string[]>>
 
 /**
  * The groups that grant in EVERY organisation.
@@ -60,13 +65,6 @@ export async function holdsGlobalPower(subjectId: string): Promise<boolean> {
   return (held.get(subjectId) ?? []).some((group) => powerful.has(group))
 }
 
-/** What somebody holds, resolved the way the policy resolves it. */
-export interface HeldRights {
-  groups: string[]
-  roles: string[]
-  permissions: string[]
-}
-
 /**
  * What this subject holds IN one organisation.
  *
@@ -85,21 +83,7 @@ export async function rightsOf(subjectId: string, organisationId: string): Promi
     policyDocuments(),
     groupsForSubjects([subjectId]),
   ])
-  const groups = membership.get(subjectId) ?? []
-
-  const roles = new Set<string>()
-  for (const group of groups) {
-    const byOrganisation = documents.groups[group] ?? {}
-    for (const role of byOrganisation[organisationId] ?? []) roles.add(role)
-    for (const role of byOrganisation[EVERY_ORGANISATION] ?? []) roles.add(role)
-  }
-
-  const permissions = new Set<string>()
-  for (const role of roles) {
-    for (const permission of documents.roles[role] ?? []) permissions.add(permission)
-  }
-
-  return { groups, roles: [...roles].sort(), permissions: [...permissions].sort() }
+  return resolveRights(documents, membership.get(subjectId) ?? [], organisationId)
 }
 
 /**
@@ -119,7 +103,7 @@ async function groupsModel(): Promise<Groups> {
   return (await policyDocuments()).groups
 }
 
-async function policyDocuments(): Promise<{ groups: Groups; roles: Record<string, string[]> }> {
+async function policyDocuments(): Promise<{ groups: Groups; roles: Roles }> {
   const namespace = await ownNamespace()
   let items: k8s.V1ConfigMap[]
   try {
@@ -137,10 +121,10 @@ async function policyDocuments(): Promise<{ groups: Groups; roles: Record<string
   }
 
   const groups: Groups = {}
-  const roles: Record<string, string[]> = {}
+  const roles: Roles = {}
   for (const item of items) {
     Object.assign(groups, parse<Groups>(item, 'groups.json') ?? {})
-    Object.assign(roles, parse<Record<string, string[]>>(item, 'roles.json') ?? {})
+    Object.assign(roles, parse<Roles>(item, 'roles.json') ?? {})
   }
   return { groups, roles }
 }
