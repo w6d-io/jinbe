@@ -84,18 +84,23 @@ export async function policyBundle(): Promise<PolicyBundle> {
   const payload = JSON.stringify(data, null, 2)
   const rules = await rulesFrom(namespace)
 
-  // ONE revision, computed over everything the bundle carries. There was briefly a second, earlier
-  // check against a revision computed from the data alone: it matched the cache before the rules had
-  // even been read, so a bundle cached without rules could never gain them — and the engine kept
-  // deciding with rules that were no longer anywhere in the repository.
+  const roots = rootsFor(rules)
+
+  // ONE revision, over everything the bundle CARRIES AND EVERYTHING IT ASSERTS — the roots included.
+  // Two mistakes were made here in turn, and they are the same mistake. First the revision ignored
+  // the rules, so a policy change went out under an unchanged identity. Then it ignored the roots,
+  // and correcting how they are derived produced a genuinely different artefact under the identity
+  // of the broken one: the engine answered 304 and kept refusing the bundle it already had. The
+  // revision identifies the artefact, not a subset of its bytes.
   const revision = createHash('sha256')
     .update(payload)
     .update(rules.map((r) => `${r.name}\n${r.content}`).join('\n'))
+    .update(roots.join(','))
     .digest('hex')
     .slice(0, 16)
   if (cached?.revision === revision) return cached
 
-  const manifest = JSON.stringify({ revision, roots: rootsFor(rules) }, null, 2)
+  const manifest = JSON.stringify({ revision, roots }, null, 2)
   cached = {
     body: await archive([
       { name: '.manifest', content: manifest },
