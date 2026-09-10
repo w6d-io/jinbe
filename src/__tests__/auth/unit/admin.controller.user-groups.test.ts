@@ -58,16 +58,12 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
-    getAvailableGroups: vi.fn(),
-    validateGroups: vi.fn(),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
     // MFA-gate helper. Default returns null (no privileged group blocked);
     // individual tests override to simulate refusal.
-    findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
     // Privilege-escalation guard helpers. Default to non-privileged group +
     // super_admin actor so the guard always falls through to the MFA gate
     // unless a specific test overrides the behaviour.
-    isAdminPowerGroup: vi.fn().mockResolvedValue(false),
     assertSuperAdmin: vi.fn().mockResolvedValue(undefined),
   },
 }))
@@ -599,7 +595,7 @@ describe('AdminController - User Groups', () => {
         // Mutation MUST NOT proceed without a resolved identity, otherwise
         // the MFA gate would be bypassed when Kratos is degraded.
         expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-        expect(rbacService.findPrivilegedGroupRequiringMFA).not.toHaveBeenCalled()
+        expect(kratosService.hasMFA).not.toHaveBeenCalled()
       })
     })
   })

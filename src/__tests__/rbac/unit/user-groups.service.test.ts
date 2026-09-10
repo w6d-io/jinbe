@@ -33,7 +33,6 @@ vi.mock('../../../services/rbac.service.js', () => ({
     // Default: the group under test is NOT global (a plain "admins" group), so
     // the wildcard_in_org path keeps its org-"*" behaviour. Cases exercising a
     // global group override this per-test.
-    groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
     assertSuperAdmin: vi.fn().mockResolvedValue(undefined),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
   },
@@ -276,7 +275,6 @@ describe('userGroupsService.applyGroupUpdate — org_admins flag gate', () => {
     // exemption keys on the base group NAME ("users"), so a group that merely resolves to no
     // permission is NOT exempt. It is refused with the whole path, which is stricter than the
     // per-group check it replaces.
-    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -392,7 +390,6 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
-    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
   })
 
   it('writes a grant where the engine reads it, keyed on the identity', async () => {
@@ -488,7 +485,6 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
-    vi.mocked(rbacService.groupGrantsGlobalPower).mockResolvedValue(false)
   })
 
   it('refuses an org-scoped grant, and names what is missing', async () => {
