@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createHash } from 'node:crypto'
 import { createGunzip } from 'node:zlib'
 import { extract } from 'tar-stream'
 
@@ -268,6 +269,23 @@ describe('the policy bundle', () => {
         : { items: [...MODEL, { metadata: { name: 'membership' }, data: {} }] },
     )
     await expect(service.policyBundle()).rejects.toThrow(/collides/)
+  })
+
+  it('moves the revision when the roots change, not only when the bytes do', async () => {
+    // The manifest is part of the artefact. A revision covering only data and rules let a corrected
+    // roots derivation ship under the identity of the broken one, and the engine answered 304 and
+    // went on refusing the bundle it already held.
+    const files = await entriesOf((await service.policyBundle()).body)
+    const manifest = JSON.parse(files['.manifest'])
+
+    const forged = createHash('sha256')
+      .update(files['data.json'])
+      .update(`authz-policy.strada.rego\n${files['authz-policy.strada.rego']}`)
+      .update(manifest.roots.join(','))
+      .digest('hex')
+      .slice(0, 16)
+
+    expect(manifest.revision).toBe(forged)
   })
 
   it('gives the same revision to the same content, and a new one when a group changes', async () => {
