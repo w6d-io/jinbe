@@ -20,6 +20,9 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
 // has its own test).
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
+vi.mock('../../../services/authorization-model.service.js', async () =>
+  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
   removeFromGroup: vi.fn().mockResolvedValue(undefined),
@@ -157,12 +160,6 @@ describe('AdminController - User Groups', () => {
   describe('getUserGroups', () => {
     it('should return user groups and available groups', async () => {
       vi.mocked(kratosService.getUserGroups).mockResolvedValueOnce(['devs', 'users'])
-      vi.mocked(rbacService.getAvailableGroups).mockResolvedValueOnce([
-        'super_admins',
-        'admins',
-        'devs',
-        'users',
-      ])
 
       const request = createMockRequest('user@example.com')
       const reply = createMockReply()
@@ -172,7 +169,16 @@ describe('AdminController - User Groups', () => {
       expect(reply.send).toHaveBeenCalledWith({
         email: 'user@example.com',
         groups: ['devs', 'users'],
-        availableGroups: ['super_admins', 'admins', 'devs', 'users'],
+        availableGroups: [
+          'admins',
+          'devs',
+          'kuma-viewers',
+          'operators',
+          'org_admins',
+          'super_admins',
+          'users',
+          'viewers',
+        ],
       })
     })
 
@@ -212,7 +218,6 @@ describe('AdminController - User Groups', () => {
   // ===========================================================================
   describe('updateUserGroups', () => {
     it('should update user groups with valid groups', async () => {
-      vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
       vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
         id: 'user-123',
         schema_id: 'default',
@@ -231,7 +236,6 @@ describe('AdminController - User Groups', () => {
 
       await controller.updateUserGroups(request, reply)
 
-      expect(rbacService.validateGroups).toHaveBeenCalledWith(['admins', 'devs'])
       expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', [
         'admins',
         'devs',
@@ -244,7 +248,6 @@ describe('AdminController - User Groups', () => {
     })
 
     it('should default to ["users"] when empty groups array', async () => {
-      vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
       vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
         id: 'user-123',
         schema_id: 'default',
@@ -265,13 +268,7 @@ describe('AdminController - User Groups', () => {
       expect((reply._body as { groups: string[] }).groups).toEqual(['users'])
     })
 
-    it('should return 400 when groups are invalid', async () => {
-      vi.mocked(rbacService.validateGroups).mockRejectedValueOnce(
-        new Error(
-          'Invalid groups: fake_group. Available groups: super_admins, admins, devs, users'
-        )
-      )
-
+    it('should return 400 when a group is not in the authorization model', async () => {
       const request = createMockRequest('user@example.com', {
         groups: ['fake_group'],
       })
@@ -280,15 +277,14 @@ describe('AdminController - User Groups', () => {
       await controller.updateUserGroups(request, reply)
 
       expect(reply._statusCode).toBe(400)
-      expect(reply._body).toEqual({
+      expect(reply._body).toMatchObject({
         error: 'Bad Request',
-        message:
-          'Invalid groups: fake_group. Available groups: super_admins, admins, devs, users',
+        message: expect.stringContaining('Not in the authorization model: fake_group'),
       })
+      expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
     })
 
     it('should return 404 when user not found', async () => {
-      vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
       vi.mocked(kratosService.updateUserGroups).mockRejectedValueOnce(
         new KratosApiError(404, 'User not found: nonexistent@example.com')
       )
@@ -308,7 +304,6 @@ describe('AdminController - User Groups', () => {
     })
 
     it('should log update with admin email', async () => {
-      vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
       vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
         id: 'user-123',
         schema_id: 'default',
@@ -332,7 +327,6 @@ describe('AdminController - User Groups', () => {
     })
 
     it('should propagate unexpected errors', async () => {
-      vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
       vi.mocked(kratosService.updateUserGroups).mockRejectedValueOnce(
         new Error('Network timeout')
       )
@@ -355,9 +349,9 @@ describe('AdminController - User Groups', () => {
     // =========================================================================
     describe('updateUserGroups - privilege escalation guard (admin.controller.ts:343-365)', () => {
       it('returns 422 with error="privilege_escalation_blocked" when actor lacks super_admin and adds an admin-power group (admin.controller.ts:355-361)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        // 'super_admins' is admin-power
-        vi.mocked(rbacService.isAdminPowerGroup).mockImplementation(async (g: string) =>
+          // 'super_admins' is admin-power
+        // 'super_admins' grants in every organisation, so it is the gated one.
+        void (async () =>
           g === 'super_admins'
         )
         // Actor is a regular admin, not super_admin → assertSuperAdmin throws 403
@@ -386,8 +380,7 @@ describe('AdminController - User Groups', () => {
       })
 
       it('returns 401 (not 422) when actor email is missing — assertSuperAdmin throws 401 (rbac.service.ts:165-168)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValueOnce(true)
+          
         const err = Object.assign(
           new Error('Authentication required for this operation'),
           { statusCode: 401 },
@@ -409,8 +402,7 @@ describe('AdminController - User Groups', () => {
       })
 
       it('falls through to MFA gate when actor IS super_admin (admin.controller.ts:347-350)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValueOnce(true)
+          
         // assertSuperAdmin resolves → guard is satisfied
         vi.mocked(rbacService.assertSuperAdmin).mockResolvedValueOnce(undefined)
         // Target identity has MFA so the MFA gate also passes
@@ -423,7 +415,7 @@ describe('AdminController - User Groups', () => {
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         } as never)
-        vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValueOnce(null)
+        vi.mocked(kratosService.hasMFA).mockResolvedValueOnce(true)
         vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
           id: 'identity-with-mfa',
           schema_id: 'default',
@@ -450,8 +442,7 @@ describe('AdminController - User Groups', () => {
       })
 
       it('skips guard entirely when newlyAdded group is not admin-power (admin.controller.ts:344-345)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+          
         vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
           id: 'user-123',
           schema_id: 'default',
@@ -485,9 +476,8 @@ describe('AdminController - User Groups', () => {
     // =========================================================================
     describe('updateUserGroups - MFA gate (admin.controller.ts:367-397)', () => {
       it('returns 422 with error="mfa_required" when adding target without MFA to a privileged group (admin.controller.ts:388-395)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        // Privilege-escalation guard does not block (e.g. actor is super_admin)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+          // Privilege-escalation guard does not block (e.g. actor is super_admin)
+        
         // MFA gate finds an identity, then refuses
         vi.mocked(kratosService.findByEmail).mockResolvedValueOnce({
           id: 'identity-no-mfa',
@@ -498,9 +488,7 @@ describe('AdminController - User Groups', () => {
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         } as never)
-        vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValueOnce(
-          'super_admins',
-        )
+        vi.mocked(kratosService.hasMFA).mockResolvedValueOnce(false)
 
         const request = createMockRequest('fresh@example.com', {
           groups: ['super_admins'],
@@ -521,8 +509,7 @@ describe('AdminController - User Groups', () => {
       })
 
       it('proceeds with mutation when target identity has MFA enrolled (admin.controller.ts:379-380)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+          
         vi.mocked(kratosService.findByEmail).mockResolvedValueOnce({
           id: 'identity-mfa-yes',
           schema_id: 'default',
@@ -533,7 +520,7 @@ describe('AdminController - User Groups', () => {
           updated_at: '2024-01-01T00:00:00Z',
         } as never)
         // No blocker → gate passes
-        vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValueOnce(null)
+        vi.mocked(kratosService.hasMFA).mockResolvedValueOnce(true)
         vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
           id: 'identity-mfa-yes',
           schema_id: 'default',
@@ -564,12 +551,11 @@ describe('AdminController - User Groups', () => {
       })
 
       it('skips MFA gate when newlyAdded contains only non-privileged groups (admin.controller.ts:372)', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
+          
         // findByEmail must NOT be invoked because newlyAdded.length is checked
         // first AND findPrivilegedGroupRequiringMFA receives a list that won't
         // produce a blocker; we still assert the gate doesn't refuse.
-        vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValueOnce(null)
+        vi.mocked(kratosService.hasMFA).mockResolvedValueOnce(true)
         vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
           id: 'user-123',
           schema_id: 'default',
@@ -599,8 +585,7 @@ describe('AdminController - User Groups', () => {
       })
 
       it('returns 404 when identity lookup returns null — fail-closed identity resolution', async () => {
-        vi.mocked(rbacService.validateGroups).mockResolvedValueOnce(undefined)
-        vi.mocked(kratosService.findByEmail).mockResolvedValueOnce(null)
+          vi.mocked(kratosService.findByEmail).mockResolvedValueOnce(null)
 
         const request = createMockRequest('missing@example.com', {
           groups: ['super_admins'],

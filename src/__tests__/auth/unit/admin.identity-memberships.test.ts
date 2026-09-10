@@ -42,6 +42,7 @@ vi.mock('../../../services/organisation-store.js', () => ({
     return mockState.held
   }),
   setMemberships: vi.fn(async () => {}),
+  groupsForSubjects: vi.fn(async () => new Map()),
 }))
 
 vi.mock('../../../services/rbac-resolver.service.js', () => ({

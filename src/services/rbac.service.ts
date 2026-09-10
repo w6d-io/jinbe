@@ -301,15 +301,6 @@ export class RbacService {
     }
   }
 
-  /**
-   * Non-throwing global super_admin check (same OPA signal as requireSuperAdmin:
-   * a global role resolving to "*"). Used where super_admin status changes the
-   * RESPONSE rather than gating a mutation — e.g. /me/organizations returns ALL
-   * mapped orgs to a super_admin instead of just their membership.
-   *
-   * FAIL-CLOSED: returns false on missing email or any OPA error, so an
-   * unreachable OPA never widens visibility.
-   */
   // `isSuperAdmin` lived here and asked the previous model — Kratos read through a cache — for a
   // `*` permission this model deliberately does not define. So what an administrator could see was
   // decided by metadata nobody enforces, keyed on an address. Its one caller now asks

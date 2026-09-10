@@ -62,10 +62,11 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 // The gate reads the MODEL, not an engine: it asks whether the actor holds a group granting in
 // every organisation, from the same ConfigMaps the artefact carries.
-vi.mock('../../../services/authorization-model.service.js', () => ({
+// The gates the J1 case drives read the model. See the helper for why they read a model rather than
+// a set of predicates each of which could be mocked into agreeing.
+vi.mock('../../../services/authorization-model.service.js', async () => ({
+  ...(await import('../../helpers/authorization-model-mock.js')).authorizationModelMock(),
   holdsPlatformPermission: vi.fn(),
-  ASSIGN_MEMBERSHIP: 'admin.membership:write',
-  AuthorizationModelUnavailableError: class extends Error {},
 }))
 
 vi.mock('../../../services/opa.service.js', () => ({

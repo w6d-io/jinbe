@@ -4,6 +4,11 @@ import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
 import { addToGroup, removeFromGroup } from './organisation-store.js'
+import {
+  AuthorizationModelUnavailableError,
+  groupFacts,
+  type GroupFacts,
+} from './authorization-model.service.js'
 
 /** Actor threaded from a request — audit fields (A4) + the R2 step-up state. */
 export type GroupUpdateActor = {
@@ -181,16 +186,59 @@ class UserGroupsService {
     //    redefined base group is still put to can_grant — on add AND remove.
     //  - global (`super_admin_required`): only admin-power groups need the
     //    super_admin authority check; the endpoint is super_admin-gated.
+    // ONE read of the model, for every question the gates below ask of it. What this replaces asked
+    // Redis — the retired model — and got `false` for exactly the groups that had become the
+    // powerful ones, so the escalation gate, the target's second factor and the actor's step-up all
+    // quietly decided they were not needed.
+    let facts: Map<string, GroupFacts>
+    try {
+      facts = await groupFacts([...newlyAdded, ...removed])
+    } catch (error) {
+      if (!(error instanceof AuthorizationModelUnavailableError)) throw error
+      // "Confers nothing" and "I could not tell what it confers" are opposite facts, and the second
+      // one must never quietly hand out a group unguarded.
+      return {
+        ok: false,
+        status: 503,
+        body: {
+          error: 'authorization_model_unavailable',
+          message:
+            'The authorization model could not be read, so this change could not be checked; no change was made. Please retry.',
+          targetEmail: identity.email,
+        },
+      }
+    }
+    const factsFor = (group: string): GroupFacts =>
+      facts.get(group) ?? { declared: false, everyOrganisation: false, empty: true }
+
+    // A group the model does not declare confers nothing, so recording it would write a membership
+    // the engine never reads — an assignment that looks applied and grants nothing. Only ADDITIONS
+    // are checked: a group predating the model must stay removable. The base group is jinbe's own
+    // bookkeeping rather than an operator's choice, and it is exempt for that reason.
+    const undeclared = newlyAdded.filter((g) => g !== BASE_GROUP && !factsFor(g).declared)
+    if (undeclared.length > 0) {
+      this.emitDenied('group_not_in_model', identity, actor, undeclared[0], 400)
+      return {
+        ok: false,
+        status: 400,
+        body: {
+          error: 'Bad Request',
+          message: `Not in the authorization model: ${undeclared.join(', ')}. Assignable groups come from GET /admin/assignable-groups.`,
+          targetEmail: identity.email,
+        },
+      }
+    }
+
     const gated: Array<{ group: string; op: 'add' | 'remove' }> = []
     for (const { group: g, op } of toCheck) {
       const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
-        ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
-        : (await rbacService.isAdminPowerGroup(g)) || g === ORG_ADMIN_FLAG_GROUP
+        ? !(g === BASE_GROUP && factsFor(g).empty)
+        : factsFor(g).everyOrganisation || g === ORG_ADMIN_FLAG_GROUP
       if (mustCheck) gated.push({ group: g, op })
     }
 
     for (const { group: g, op } of gated) {
-      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
+      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op, factsFor(g).everyOrganisation)
       if (denial) {
         // Emit the currently-silent denied write (highest-signal audit event).
         // checkPrivilegeEscalation only ever returns the ok:false variant.
@@ -199,8 +247,11 @@ class UserGroupsService {
       }
     }
 
-    if (newlyAdded.length > 0) {
-      const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identity.id)
+    // The target's own second factor, required before receiving a platform-wide grant. Keyed on the
+    // same scope predicate as the gate above so the two cannot drift apart.
+    const platformGrants = newlyAdded.filter((g) => factsFor(g).everyOrganisation)
+    if (platformGrants.length > 0) {
+      const blocker = (await this.hasSecondFactor(identity.id)) ? null : platformGrants[0]
       if (blocker) {
         this.emitDenied('mfa_required', identity, actor, blocker, 422)
         return {
@@ -210,7 +261,7 @@ class UserGroupsService {
             error: 'mfa_required',
             message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
             targetEmail: identity.email,
-            targetGroups: newlyAdded,
+            targetGroups: platformGrants,
             hint: 'Have the user complete /settings → Authenticator app, then retry.',
           },
         }
@@ -289,6 +340,18 @@ class UserGroupsService {
    * events (an attempted privilege change that was refused) and were previously
    * silent. Fail-open on the emit — never block the denial itself.
    */
+  /**
+   * Whether the target has a second factor enrolled. A lookup failure answers NO — refusing a
+   * privileged grant we could not verify is the safe way to be wrong.
+   */
+  private async hasSecondFactor(identityId: string): Promise<boolean> {
+    try {
+      return await kratosService.hasMFA(identityId)
+    } catch {
+      return false
+    }
+  }
+
   private emitDenied(
     reason: string,
     identity: ResolvedIdentity,
@@ -353,6 +416,7 @@ class UserGroupsService {
     actor: { id?: string | null; email?: string | null; ip?: string | null },
     policy: ActorPrivilegePolicy,
     op: 'add' | 'remove' = 'add',
+    platformWide = false,
   ): Promise<ApplyGroupUpdateResult | null> {
     if (policy.kind === 'super_admin_required') {
       try {
@@ -406,14 +470,10 @@ class UserGroupsService {
       },
     }
 
-    // Defense-in-depth: independently refuse a GLOBAL-power group so it is denied
-    // here even if OPA misbehaves (J1 — an org-scoped actor must never mint a
-    // global super_admin). OPA `can_grant` ALSO denies every global-bound group
-    // (`not group_has_global`) and is the authoritative, broader guard — this
-    // local check only catches wildcard globals, so it is NOT the sole global
-    // guard, just a safety net. Global groups go through the global admin
-    // endpoint, never here — for everyone, super_admins included.
-    if (await rbacService.groupGrantsGlobalPower(groupName)) return blocked
+    // J1: an org-scoped actor must never mint a platform-wide grant. Both branches refuse, so this
+    // only decides WHICH refusal the caller reads — but the two say different things, and a screen
+    // that reports "not managed here" for a global group is telling the operator where to go.
+    if (platformWide) return blocked
 
     return {
       ok: false,
