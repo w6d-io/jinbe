@@ -1,6 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
-import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
@@ -100,7 +99,8 @@ export async function meRoutes(fastify: FastifyInstance) {
               // only knows identifiers keeps working, and one that shows them to a person no longer has
               // to display a UUID nobody can tell from another.
               names: { type: 'object', additionalProperties: { type: 'string' } },
-              scope: { type: 'string', enum: ['all', 'delegated'] },
+              // Where the answer came from — the directory or the token — never how wide it is.
+              scope: { type: 'string', enum: ['delegated', 'claim'] },
             },
           },
           401: {
@@ -133,14 +133,13 @@ export async function meRoutes(fastify: FastifyInstance) {
         })
       }
 
-      // A global super_admin manages EVERY org — return all mapped orgs, not just
-      // the ones they happen to be a member of (manageable_orgs). The enforcement
-      // layers already admit them to any org via their global "*".
-      if (await rbacService.isSuperAdmin({ email })) {
-        const organizations = await allOrganizations()
-        return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })
-      }
-
+      // MINE, whoever asks. This used to answer with EVERY organisation when the caller was a
+      // super admin, so the same URL meant two different things depending on who called it — and
+      // the `scope` field existed to tell the caller which of the two they had received. A screen
+      // asking for everything and getting less could not tell a short answer from a complete one.
+      //
+      // Every organisation is a separate question with a separate answer: GET /admin/organizations,
+      // which refuses with a 403 rather than narrowing.
       const organizations = await callerOrganisations(request)
       return reply.send({
         organizations,

@@ -15,9 +15,6 @@ vi.mock('../../../services/organisation-store.js', () => ({
   heldOrganisations: vi.fn().mockResolvedValue([]),
 }))
 
-vi.mock('../../../services/rbac.service.js', () => ({
-  rbacService: { isSuperAdmin: vi.fn().mockResolvedValue(false) },
-}))
 
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: { getOrgServiceMap: vi.fn().mockResolvedValue({}) },
@@ -25,7 +22,6 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
 
 import { meRoutes } from '../../../routes/me.routes.js'
 import { organisationsForSubject } from '../../../services/organisation-store.js'
-import { rbacService } from '../../../services/rbac.service.js'
 import { redisRbacRepository } from '../../../services/redis-rbac.repository.js'
 
 function createMockRequest(options: {
@@ -73,7 +69,6 @@ describe('meRoutes — GET /me/organizations', () => {
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
     vi.mocked(organisationsForSubject).mockResolvedValue([])
-    vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(false)
     vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({})
     const fastify = createMockFastify()
     await meRoutes(fastify)
@@ -90,15 +85,17 @@ describe('meRoutes — GET /me/organizations', () => {
     expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], names: {}, scope: 'delegated' })
   })
 
-  it('returns ALL mapped orgs with scope=all for a global super_admin', async () => {
-    vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(true)
-    vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({ 'org-a': ['kuma'], 'org-b': ['fleet'] })
-    const reply = createMockReply()
-    await handler(createMockRequest({ validatedSession: { email: 'super@b.io' } }), reply)
+  it('answers with MINE, whoever asks — even an administrator', async () => {
+    // It used to answer with every organisation for a super admin, so the same URL meant two things
+    // depending on the caller, and a `scope` field existed to say which. Every organisation is a
+    // separate question now: GET /admin/organizations, which refuses rather than narrowing.
+    vi.mocked(organisationsForSubject).mockResolvedValue(['mine'])
 
-    expect(reply._body).toEqual({ organizations: ['org-a', 'org-b'], names: {}, scope: 'all' })
-    // super_admin path does not consult the delegated manageable_orgs
-    expect(organisationsForSubject).not.toHaveBeenCalled()
+    const reply = createMockReply()
+    await handler(createMockRequest({ validatedSession: { email: 'root@example.com' } }), reply)
+
+    expect(reply._body).toMatchObject({ organizations: ['mine'] })
+    expect((reply._body as { scope?: string }).scope).not.toBe('all')
   })
 
   it('falls back to userContext email when no validated session', async () => {
