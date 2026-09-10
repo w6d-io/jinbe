@@ -28,6 +28,14 @@ export interface HeldRights {
 }
 
 /**
+ * What a request carries about its caller: the resolution, plus the address for a log or a trail.
+ *
+ * Lives here rather than beside a client for some engine, because it is the shape of an answer about
+ * the model and not the shape of one engine's reply — which is what it used to be.
+ */
+export type UserRbacInfo = HeldRights & { email: string }
+
+/**
  * Mirrors `carried_roles` and `permissions` in `strada.authz`: a group gives roles in a named
  * organisation OR in every one, both are read because `*` is a second source rather than a fallback
  * for the absence of the other, and then each role carries its permissions.

@@ -106,7 +106,9 @@ export const envSchema = z.object({
   // and a write here would land in a store nothing reads. Reported to the console so it can stop
   // offering an edit that cannot take effect; it changes nothing this service does.
   RULES_SOURCE: z.enum(['service', 'gitops']).default('service'),
-  ORGANISATION_SOURCE: z.enum(['local', 'directory', 'claim']).default('local'),
+  // `local` is gone: it asked an engine for a path the model no longer has, so as the DEFAULT it
+  // scoped every caller to nothing unless a deployment overrode it.
+  ORGANISATION_SOURCE: z.enum(['directory', 'claim']).default('directory'),
 
   // Where organisations live when this service owns them. Absent, the `directory` source has
   // nowhere to read from and start-up refuses rather than answering that nobody belongs anywhere.
@@ -193,8 +195,6 @@ export const envSchema = z.object({
     .pipe(z.number().int().nonnegative())
     .default('60000'),
 
-  // OPAL/OPA Client
-  OPA_URL: z.string().url().default('http://opal-client:8181'),
 
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
@@ -205,8 +205,6 @@ export const envSchema = z.object({
   // Set to the in-cluster service URL in production.
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),
 
-  // OPA Data API (direct push — replaces OPAL data sync)
-  OPA_DATA_URL: z.string().url().default('http://opal-client:8181'),
 
   // Redis (RBAC data store + audit streams)
   REDIS_URL: z.string().default('redis://redis:6379'),
@@ -234,8 +232,6 @@ export const envSchema = z.object({
   APP_DOMAIN: fqdnSchema.optional(),
   API_DOMAIN: fqdnSchema.optional(),
 
-  // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
-  OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
   // Oathkeeper enabled handler sets (comma-separated → string[]). These are the
   // handlers actually REGISTERED in the gateway's Oathkeeper config. jinbe

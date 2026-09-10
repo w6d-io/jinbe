@@ -179,7 +179,10 @@ describe('RbacService - Access Rules', () => {
       const { rule } = await service.getAccessRule('payments')
       expect(rule.authorizer.handler).toBe('remote_json')
       const cfg = rule.authorizer.config as { remote?: string; payload?: string }
-      expect(cfg.remote).toBe(env.OPA_AUTHZ_REMOTE)
+      // Deliberately unreachable, like the rules it belongs to: the proxy reads its rules from the
+      // ConfigMap a controller owns, so nothing this generates reaches it. `.invalid` can never
+      // resolve, which is what keeps a dead rule from looking live.
+      expect(cfg.remote).toBe('http://retired.invalid:8080/v1/data/strada/authz/decision')
       expect(cfg.payload).toContain('"app":"payments"')
     })
 
@@ -194,7 +197,10 @@ describe('RbacService - Access Rules', () => {
 
       const { rule } = await service.getAccessRule('payments')
       const cfg = rule.authorizer.config as { remote?: string; payload?: string }
-      expect(cfg.remote).toBe(env.OPA_AUTHZ_REMOTE)
+      // Deliberately unreachable, like the rules it belongs to: the proxy reads its rules from the
+      // ConfigMap a controller owns, so nothing this generates reaches it. `.invalid` can never
+      // resolve, which is what keeps a dead rule from looking live.
+      expect(cfg.remote).toBe('http://retired.invalid:8080/v1/data/strada/authz/decision')
       expect(cfg.payload).toContain('"app":"payments"')
     })
 

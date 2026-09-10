@@ -57,7 +57,7 @@ export function requireManageableOrg(paramName = 'organizationId') {
 
     // Resolved server-side — never trusted from input. From this service own model, or from the
     // verified token when the deployment has delegated who belongs where to its issuer.
-    const manageable = await callerOrganisations(request, email)
+    const manageable = await callerOrganisations(request)
 
     if (!manageable.includes(organizationId)) {
       request.log.warn(

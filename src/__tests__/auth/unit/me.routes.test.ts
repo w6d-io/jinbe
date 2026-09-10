@@ -7,8 +7,12 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock('../../../config/env.js', () => ({ env: mockState.env }))
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: { manageableOrgs: vi.fn().mockResolvedValue([]) },
+vi.mock('../../../services/organisation-store.js', () => ({
+  organisationsForSubject: vi.fn().mockResolvedValue([]),
+  organisationStoreConfigured: vi.fn().mockReturnValue(true),
+  organisationsById: vi.fn().mockResolvedValue([]),
+  allOrganisations: vi.fn().mockResolvedValue([]),
+  heldOrganisations: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../../../services/rbac.service.js', () => ({
@@ -20,7 +24,7 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
 }))
 
 import { meRoutes } from '../../../routes/me.routes.js'
-import { opaService } from '../../../services/opa.service.js'
+import { organisationsForSubject } from '../../../services/organisation-store.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { redisRbacRepository } from '../../../services/redis-rbac.repository.js'
 
@@ -28,9 +32,16 @@ function createMockRequest(options: {
   validatedSession?: { email: string } | null
   userContext?: { email: string } | null
 } = {}): FastifyRequest {
+  const address = options.userContext?.email ?? options.validatedSession?.email
   return {
     validatedSession: options.validatedSession || undefined,
-    userContext: options.userContext || undefined,
+    // The identity travels with the context in a real session, and the directory is keyed on it —
+    // a fixture carrying only an address would answer nothing and say nothing about why.
+    userContext: options.userContext
+      ? { ...options.userContext, id: `subject-of-${options.userContext.email}` }
+      : address
+        ? ({ email: address, id: `subject-of-${address}` } as never)
+        : undefined,
   } as unknown as FastifyRequest
 }
 
@@ -61,7 +72,7 @@ describe('meRoutes — GET /me/organizations', () => {
     vi.clearAllMocks()
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue([])
+    vi.mocked(organisationsForSubject).mockResolvedValue([])
     vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(false)
     vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({})
     const fastify = createMockFastify()
@@ -71,11 +82,11 @@ describe('meRoutes — GET /me/organizations', () => {
   })
 
   it('returns the delegated manageable orgs for a non-super-admin', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-1', 'org-2'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-1', 'org-2'])
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'a@b.io' } }), reply)
 
-    expect(opaService.manageableOrgs).toHaveBeenCalledWith('a@b.io')
+    expect(organisationsForSubject).toHaveBeenCalled()
     expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], names: {}, scope: 'delegated' })
   })
 
@@ -87,15 +98,15 @@ describe('meRoutes — GET /me/organizations', () => {
 
     expect(reply._body).toEqual({ organizations: ['org-a', 'org-b'], names: {}, scope: 'all' })
     // super_admin path does not consult the delegated manageable_orgs
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('falls back to userContext email when no validated session', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-9'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-9'])
     const reply = createMockReply()
     await handler(createMockRequest({ userContext: { email: 'c@d.io' } }), reply)
 
-    expect(opaService.manageableOrgs).toHaveBeenCalledWith('c@d.io')
+    expect(organisationsForSubject).toHaveBeenCalled()
     expect(reply._body).toEqual({ organizations: ['org-9'], names: {}, scope: 'delegated' })
   })
 
@@ -104,7 +115,7 @@ describe('meRoutes — GET /me/organizations', () => {
     await handler(createMockRequest({}), reply)
 
     expect(reply._statusCode).toBe(401)
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('ignores the sentinel "unknown" userContext email as unauthenticated', async () => {
@@ -121,6 +132,6 @@ describe('meRoutes — GET /me/organizations', () => {
     await handler(createMockRequest({ validatedSession: { email: 'dev@b.io' } }), reply)
 
     expect(reply._body).toEqual({ organizations: [], names: {}, scope: 'all' })
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 })
