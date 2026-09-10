@@ -26,7 +26,7 @@ import {
   notFoundResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
-import { assignableGroupsFor } from '../services/authorization-model.service.js'
+import { assignableGroupsFor, authorizationModel } from '../services/authorization-model.service.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
 import { allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 
@@ -213,6 +213,52 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return reply.status(503).send({
           error: 'Service Unavailable',
           message: 'The organisation directory could not be read.',
+        })
+      }
+    },
+  )
+
+  /**
+   * The authorization model the engine decides against: what each group grants, and where.
+   *
+   * The screen showing this read a catalogue from Redis, laid out as a column per SERVICE — the
+   * previous model's shape. It listed groups the policy does not define and omitted every group it
+   * does, and it offered to EDIT them, which wrote where nothing reads.
+   */
+  fastify.get(
+    '/authorization-model',
+    {
+      preHandler: requirePlatformPermission('admin:read'),
+      schema: {
+        description: 'What each group grants, per organisation, and what each role carries.',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              groups: { type: 'object', additionalProperties: true },
+              roles: { type: 'object', additionalProperties: true },
+            },
+          },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          503: {
+            type: 'object',
+            properties: { error: { type: 'string' }, message: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        return reply.send(await authorizationModel())
+      } catch (err) {
+        // An empty model and an unreadable one look the same on a screen, and only one of them
+        // means "nobody grants anything".
+        request.log.error({ err }, 'The authorization model could not be read')
+        return reply.status(503).send({
+          error: 'authorization_model_unavailable',
+          message: 'The authorization model could not be read.',
         })
       }
     },
