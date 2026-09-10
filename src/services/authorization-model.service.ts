@@ -60,7 +60,66 @@ export async function holdsGlobalPower(subjectId: string): Promise<boolean> {
   return (held.get(subjectId) ?? []).some((group) => powerful.has(group))
 }
 
+/** What somebody holds, resolved the way the policy resolves it. */
+export interface HeldRights {
+  groups: string[]
+  roles: string[]
+  permissions: string[]
+}
+
+/**
+ * What this subject holds IN one organisation.
+ *
+ * Resolved exactly as the policy resolves it, from the same two documents: a group gives roles in a
+ * named organisation OR in every one, and `*` is a second source rather than a fallback for the
+ * absence of the other — so both are read and unioned. Then each role carries its permissions.
+ *
+ * The organisation is its identifier, not a service name. What this replaces resolved the id to a
+ * registered service name through Redis first, because the retired model keyed grants per service;
+ * this one keys them per organisation, so there is nothing to translate and one store fewer to be up.
+ */
+export async function rightsOf(subjectId: string, organisationId: string): Promise<HeldRights> {
+  if (!subjectId) return { groups: [], roles: [], permissions: [] }
+
+  const [documents, membership] = await Promise.all([
+    policyDocuments(),
+    groupsForSubjects([subjectId]),
+  ])
+  const groups = membership.get(subjectId) ?? []
+
+  const roles = new Set<string>()
+  for (const group of groups) {
+    const byOrganisation = documents.groups[group] ?? {}
+    for (const role of byOrganisation[organisationId] ?? []) roles.add(role)
+    for (const role of byOrganisation[EVERY_ORGANISATION] ?? []) roles.add(role)
+  }
+
+  const permissions = new Set<string>()
+  for (const role of roles) {
+    for (const permission of documents.roles[role] ?? []) permissions.add(permission)
+  }
+
+  return { groups, roles: [...roles].sort(), permissions: [...permissions].sort() }
+}
+
+/**
+ * The groups this subject may hand out.
+ *
+ * Everything the model declares, or nothing: holding a group that grants in every organisation is
+ * the only authority this model expresses over assignment, so there is no middle set to compute. A
+ * picker offering more than the mutation would accept is worse than a short one — it turns a refusal
+ * into a surprise.
+ */
+export async function assignableGroupsFor(subjectId: string): Promise<string[]> {
+  if (!(await holdsGlobalPower(subjectId))) return []
+  return Object.keys((await policyDocuments()).groups).sort()
+}
+
 async function groupsModel(): Promise<Groups> {
+  return (await policyDocuments()).groups
+}
+
+async function policyDocuments(): Promise<{ groups: Groups; roles: Record<string, string[]> }> {
   const namespace = await ownNamespace()
   let items: k8s.V1ConfigMap[]
   try {
@@ -78,20 +137,26 @@ async function groupsModel(): Promise<Groups> {
   }
 
   const groups: Groups = {}
+  const roles: Record<string, string[]> = {}
   for (const item of items) {
-    const held = item.data?.['groups.json']
-    if (!held) continue
-    let parsed: Groups
-    try {
-      parsed = JSON.parse(held) as Groups
-    } catch (err) {
-      throw new AuthorizationModelUnavailableError(
-        `${item.metadata?.name ?? 'a ConfigMap'}/groups.json is not a document: ${(err as Error).message}`,
-      )
-    }
-    Object.assign(groups, parsed)
+    Object.assign(groups, parse<Groups>(item, 'groups.json') ?? {})
+    Object.assign(roles, parse<Record<string, string[]>>(item, 'roles.json') ?? {})
   }
-  return groups
+  return { groups, roles }
+}
+
+function parse<T>(item: k8s.V1ConfigMap, key: string): T | undefined {
+  const held = item.data?.[key]
+  if (!held) return undefined
+  try {
+    return JSON.parse(held) as T
+  } catch (err) {
+    // Raises rather than reading past it: a document that cannot be parsed is not an empty one, and
+    // treating it as empty would quietly take away every right it granted.
+    throw new AuthorizationModelUnavailableError(
+      `${item.metadata?.name ?? 'a ConfigMap'}/${key} is not a document: ${(err as Error).message}`,
+    )
+  }
 }
 
 async function ownNamespace(): Promise<string> {

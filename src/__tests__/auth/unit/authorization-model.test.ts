@@ -83,6 +83,66 @@ describe('who may hand out rights', () => {
     expect(core.listNamespacedConfigMap).not.toHaveBeenCalled()
   })
 
+  it('resolves rights the way the policy resolves them: named organisation UNION every organisation', async () => {
+    // `*` is a second source, not a fallback for the absence of the other. A holder of both must get
+    // both, or the resolution here would disagree with the one that enforces.
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz' },
+          data: {
+            'groups.json': JSON.stringify({
+              here: { 'org-1': ['local'] },
+              everywhere: { '*': ['global'] },
+            }),
+            'roles.json': JSON.stringify({ local: ['thing:read'], global: ['other:write'] }),
+          },
+        },
+      ],
+    })
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['here', 'everywhere']]]))
+
+    expect(await model.rightsOf('subject-a', 'org-1')).toEqual({
+      groups: ['here', 'everywhere'],
+      roles: ['global', 'local'],
+      permissions: ['other:write', 'thing:read'],
+    })
+  })
+
+  it('does not carry an organisation-scoped role into another organisation', async () => {
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz' },
+          data: {
+            'groups.json': JSON.stringify({ here: { 'org-1': ['local'] } }),
+            'roles.json': JSON.stringify({ local: ['thing:read'] }),
+          },
+        },
+      ],
+    })
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['here']]]))
+
+    expect(await model.rightsOf('subject-a', 'org-2')).toEqual({
+      groups: ['here'],
+      roles: [],
+      permissions: [],
+    })
+  })
+
+  it('offers every declared group to somebody with global power, and nothing to anybody else', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-operator']]]))
+    expect(await model.assignableGroupsFor('subject-a')).toEqual([
+      'empty-everywhere',
+      'named-like-an-admin',
+      'platform-operator',
+      'premium-operator',
+    ])
+
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-b', ['premium-operator']]]))
+    expect(await model.assignableGroupsFor('subject-b')).toEqual([])
+  })
+
   it('raises when the model cannot be read, rather than answering "nobody is powerful"', async () => {
     // The two are opposite facts. Answering false here would refuse every assignment with a message
     // that reads like a missing right; the caller must be able to tell them apart.
