@@ -93,7 +93,9 @@ describe('the policy bundle', () => {
     const { body } = await service.policyBundle()
     const files = await entriesOf(body)
 
-    expect(JSON.parse(files['.manifest']).roots).toEqual(['ory'])
+    // Both the facts and the package of the rule: a root governs rule packages too, and a manifest
+    // declaring only the data root has the whole bundle refused at every poll.
+    expect(JSON.parse(files['.manifest']).roots).toEqual(['ory', 'strada/authz'])
     const data = JSON.parse(files['data.json'])
     // Shaped exactly as the loader it replaces shaped it, key suffix included — the policy addresses
     // it that way, and reshaping it here would silently rewrite every rule.
@@ -132,6 +134,26 @@ describe('the policy bundle', () => {
     expect(after.revision).not.toBe(before.revision)
   })
 
+  it('does not serve a cached bundle after a rule changed', async () => {
+    // The regression this exists for: the revision was compared to the cache BEFORE the rules were
+    // read, so a bundle cached once could never gain a rule — the engine kept deciding with rules
+    // that were no longer anywhere in the repository, and the deployment reported success. Note the
+    // absence of forgetPolicyBundle() below: every other test clears the cache first, which is
+    // exactly why none of them saw it.
+    const before = await service.policyBundle()
+    expect(before.revision).toBeTruthy()
+
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: [{ metadata: { name: 'authz-policy' }, data: { 'strada.rego': 'package strada.authz\n\nallow := true\n' } }] }
+        : { items: MODEL },
+    )
+    const after = await service.policyBundle()
+
+    expect(after.revision).not.toBe(before.revision)
+    expect((await entriesOf(after.body))['authz-policy.strada.rego']).toContain('allow := true')
+  })
+
   it('names a rule after where it came from, so a collision is visible', async () => {
     service.forgetPolicyBundle()
     core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
@@ -148,6 +170,45 @@ describe('the policy bundle', () => {
 
     expect(Object.keys(files)).toContain('a.x.rego')
     expect(Object.keys(files)).toContain('b.x.rego')
+  })
+
+  it('claims a root for every package it carries', async () => {
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? {
+            items: [
+              { metadata: { name: 'a' }, data: { 'x.rego': 'package strada.authz\n' } },
+              { metadata: { name: 'b' }, data: { 'y.rego': 'package strada.shared.time\n' } },
+            ],
+          }
+        : { items: MODEL },
+    )
+    const files = await entriesOf((await service.policyBundle()).body)
+
+    expect(JSON.parse(files['.manifest']).roots).toEqual(['ory', 'strada/authz', 'strada/shared/time'])
+  })
+
+  it('drops a root already covered by another, which the engine would refuse', async () => {
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: [{ metadata: { name: 'a' }, data: { 'x.rego': 'package ory.helpers\n' } }] }
+        : { items: MODEL },
+    )
+    const files = await entriesOf((await service.policyBundle()).body)
+
+    expect(JSON.parse(files['.manifest']).roots).toEqual(['ory'])
+  })
+
+  it('refuses a rule that declares no package rather than have the bundle refused whole', async () => {
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: [{ metadata: { name: 'a' }, data: { 'x.rego': 'default allow := false\n' } }] }
+        : { items: MODEL },
+    )
+    await expect(service.policyBundle()).rejects.toThrow(/declares no package/)
   })
 
   it('refuses an empty rule rather than publish it', async () => {

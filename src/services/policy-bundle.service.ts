@@ -19,10 +19,15 @@ import { allGroupMemberships } from './organisation-store.js'
  * then need to watch the API server and hold a read grant of its own. Fetching one bundle over HTTP
  * needs neither.
  *
- * THE ROOT IS `ory`, so this bundle owns everything the engine decides against. That is only safe
- * because it carries everything: a bundle that owned the root while missing one service's table
- * would delete that table, and every route of that service would answer "no such route" — a refusal
- * indistinguishable from a missing right.
+ * THE ROOTS COVER EVERYTHING THIS BUNDLE CARRIES — `ory` for the facts, and the package of every
+ * rule it ships. A root governs data paths AND rule packages alike, so a bundle that declared only
+ * the data root would be REFUSED whole, at every poll, the moment it also carried a rule: measured,
+ * and the engine went on answering from the copy it had while reporting nothing but a 200 on
+ * /health.
+ *
+ * Owning a root is also owning what is missing from it: a bundle that owned `ory` while missing one
+ * service's table would delete that table, and every route of that service would answer "no such
+ * route" — a refusal indistinguishable from a missing right.
  *
  * Which is why a ConfigMap that cannot be read RAISES. There is no partial bundle: the engine treats
  * what it receives as the whole truth for the root it owns.
@@ -77,29 +82,57 @@ export async function policyBundle(): Promise<PolicyBundle> {
   }
 
   const payload = JSON.stringify(data, null, 2)
-  const revision = createHash('sha256').update(payload).digest('hex').slice(0, 16)
-  if (cached?.revision === revision) return cached
-
   const rules = await rulesFrom(namespace)
-  // The revision covers the rules as well: a policy change has to move it, or the engine answers 304
-  // and keeps deciding with the previous rules while the repository says otherwise.
-  const fullRevision = createHash('sha256')
+
+  // ONE revision, computed over everything the bundle carries. There was briefly a second, earlier
+  // check against a revision computed from the data alone: it matched the cache before the rules had
+  // even been read, so a bundle cached without rules could never gain them — and the engine kept
+  // deciding with rules that were no longer anywhere in the repository.
+  const revision = createHash('sha256')
     .update(payload)
     .update(rules.map((r) => `${r.name}\n${r.content}`).join('\n'))
     .digest('hex')
     .slice(0, 16)
-  if (cached?.revision === fullRevision) return cached
+  if (cached?.revision === revision) return cached
 
-  const manifest = JSON.stringify({ revision: fullRevision, roots: [ROOT] }, null, 2)
+  const manifest = JSON.stringify({ revision, roots: rootsFor(rules) }, null, 2)
   cached = {
     body: await archive([
       { name: '.manifest', content: manifest },
       { name: 'data.json', content: payload },
       ...rules,
     ]),
-    revision: fullRevision,
+    revision,
   }
   return cached
+}
+
+/**
+ * What this bundle claims ownership of: the facts, plus the package of every rule it carries.
+ *
+ * Derived rather than listed, because a listed root is a second place to remember: a rule added in a
+ * new package would be refused, and the refusal names the manifest rather than the rule. Read off
+ * the modules instead, so the claim and the content cannot disagree.
+ *
+ * A root that sits under another is dropped — the engine refuses a manifest whose roots overlap, and
+ * `ory` already covers `ory/anything`.
+ */
+function rootsFor(rules: { name: string; content: string }[]): string[] {
+  const claimed = new Set([ROOT])
+  for (const rule of rules) {
+    claimed.add(packageOf(rule))
+  }
+  const roots = [...claimed].sort()
+  return roots.filter((root) => !roots.some((other) => other !== root && root.startsWith(`${other}/`)))
+}
+
+/** The module's package, as a bundle root. Absent, the engine would refuse the whole bundle. */
+function packageOf(rule: { name: string; content: string }): string {
+  const declared = /^\s*package\s+([A-Za-z0-9_.]+)/m.exec(rule.content)
+  if (!declared) {
+    throw new PolicyBundleUnavailableError(`${rule.name} declares no package; refusing to publish it.`)
+  }
+  return declared[1].split('.').join('/')
 }
 
 /**
