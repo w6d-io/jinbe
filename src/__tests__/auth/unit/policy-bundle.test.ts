@@ -64,7 +64,11 @@ const MODEL = [
     metadata: { name: 'strada-demo-api', namespace: 'ory' },
     data: {
       'permissions.json': JSON.stringify({
-        routes: { GET: { context: { segments: ['api', 'v1', 'context'], class: 'authorized' } } },
+        routes: {
+          GET: {
+            context: { segments: ['api', 'v1', 'context'], class: 'authorized', permission: 'context:read' },
+          },
+        },
       }),
     },
   },
@@ -251,6 +255,66 @@ describe('the policy bundle', () => {
         : { items: [{ metadata: { name: 'authz' }, data: { 'roles.json': '{ not json' } }] },
     )
     await expect(service.policyBundle()).rejects.toThrow(/is not a document/)
+  })
+
+  describe('a table the policy could not decide against', () => {
+    function withRoutes(routes: Record<string, unknown>) {
+      return [
+        MODEL[0],
+        { metadata: { name: 'strada-demo-api' }, data: { 'permissions.json': JSON.stringify({ routes: { GET: routes } }) } },
+      ]
+    }
+
+    function serving(routes: Record<string, unknown>) {
+      core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+        labelSelector === 'openpolicyagent.org/policy=rego' ? { items: RULES } : { items: withRoutes(routes) },
+      )
+    }
+
+    beforeEach(() => service.forgetPolicyBundle())
+
+    it('refuses two routes of equal specificity, which make the winner produce two outputs', async () => {
+      // Measured against the engine: this state does not pick one and does not refuse — evaluation
+      // fails, and the adapter turns that into a 500 on the route. Refused here instead, it is a
+      // bundle that does not publish and a rollout that does not complete.
+      serving({
+        left: { segments: ['api', '{v}', 'context'], class: 'public' },
+        right: { segments: ['api', 'v1', '{what}'], class: 'public' },
+      })
+      await expect(service.policyBundle()).rejects.toThrow(/equal specificity/)
+    })
+
+    it('accepts two routes that overlap with DIFFERENT specificity, because one wins', async () => {
+      serving({
+        vehicle: { segments: ['api', 'v1', 'vehicles', '{id}'], class: 'authenticated' },
+        summary: { segments: ['api', 'v1', 'vehicles', 'summary'], class: 'authenticated' },
+      })
+      await expect(service.policyBundle()).resolves.toBeDefined()
+    })
+
+    it('accepts two routes of equal specificity that cannot match the same path', async () => {
+      serving({
+        one: { segments: ['api', 'v1', 'context'], class: 'authenticated' },
+        two: { segments: ['api', 'v1', 'audit'], class: 'authenticated' },
+      })
+      await expect(service.policyBundle()).resolves.toBeDefined()
+    })
+
+    it('refuses a class no rule implements', async () => {
+      serving({ weird: { segments: ['api', 'v1', 'context'], class: 'internal' } })
+      await expect(service.policyBundle()).rejects.toThrow(/no rule implements/)
+    })
+
+    it('refuses an authorized route that names no permission', async () => {
+      // The hole the previous model had: a route without a permission authorized everybody.
+      serving({ naked: { segments: ['api', 'v1', 'context'], class: 'authorized' } })
+      await expect(service.policyBundle()).rejects.toThrow(/names no permission/)
+    })
+
+    it('refuses a route with no segments rather than match it against everything', async () => {
+      serving({ empty: { class: 'authenticated' } })
+      await expect(service.policyBundle()).rejects.toThrow(/declares no segments/)
+    })
   })
 
   it('refuses when the cluster cannot be read', async () => {
