@@ -265,6 +265,11 @@ paths:
                     type: array
                     items:
                       type: string
+                  rules_source:
+                    type: string
+                    enum:
+                      - service
+                      - gitops
   /api/me/organizations:
     get:
       tags:
@@ -281,6 +286,10 @@ paths:
                   organizations:
                     type: array
                     items:
+                      type: string
+                  names:
+                    type: object
+                    additionalProperties:
                       type: string
                   scope:
                     type: string
@@ -2718,6 +2727,16 @@ paths:
                           items:
                             type: string
                           description: User permissions from OPAL RBAC
+                        organizations:
+                          type: array
+                          items:
+                            type: string
+                          description: Organisations this identity belongs to, where this service owns
+                            membership
+                        rbacUnavailable:
+                          type: boolean
+                          description: Set when what this identity holds could not be resolved — empty is
+                            not the same fact
                         credentials:
                           type: object
                           additionalProperties: true
@@ -2887,6 +2906,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3000,6 +3029,125 @@ paths:
                   error:
                     type: string
                     example: Forbidden
+                  message:
+                    type: string
+  /api/admin/enforced-config:
+    get:
+      tags:
+        - admin
+      description: The enforced authorization configuration as YAML, read from the
+        cluster objects the engines load. Read-only.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                        decides:
+                          type: string
+                        yaml:
+                          type: string
+                        routes:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              method:
+                                type: string
+                              path:
+                                type: string
+                              class:
+                                type: string
+                              permission:
+                                type: string
+                        roles:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              role:
+                                type: string
+                              permissions:
+                                type: array
+                                items:
+                                  type: string
+                        grants:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              subject:
+                                type: string
+                              email:
+                                type: string
+                              held:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    organisation:
+                                      type: string
+                                    organisationName:
+                                      type: string
+                                    roles:
+                                      type: array
+                                      items:
+                                        type: string
+                                    viaGroups:
+                                      type: array
+                                      items:
+                                        type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
                   message:
                     type: string
   /api/admin/users/search:
@@ -3141,6 +3289,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3288,6 +3446,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3462,6 +3630,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3598,6 +3776,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3734,6 +3922,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -8018,6 +8216,78 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/directory/organisations:
+    get:
+      tags:
+        - directory
+      description: The organisations a subject belongs to — for a caller acting on
+        nobody's behalf
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+          in: query
+          name: subject
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: string
+                  organisations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        tenant:
+                          type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/opa/policy:
+    get:
+      tags:
+        - opa
+      description: Everything the policy engine decides against, as an OPA bundle
+        (tar.gz) rooted at ory
+      responses:
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
   /api/organizations/{organizationId}/assignable-groups:
     get:
       tags:
@@ -8182,6 +8452,16 @@ paths:
                           items:
                             type: string
                           description: User permissions from OPAL RBAC
+                        organizations:
+                          type: array
+                          items:
+                            type: string
+                          description: Organisations this identity belongs to, where this service owns
+                            membership
+                        rbacUnavailable:
+                          type: boolean
+                          description: Set when what this identity holds could not be resolved — empty is
+                            not the same fact
                         credentials:
                           type: object
                           additionalProperties: true
@@ -8331,6 +8611,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -8464,6 +8754,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -8624,6 +8924,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true

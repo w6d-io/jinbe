@@ -23,6 +23,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import {
   allOrganisations,
@@ -57,8 +58,13 @@ const Record_ = z
 
 const Document_ = z.object({ organisations: z.array(Record_).min(1) }).strict()
 
-/** What the input would do to something already held, refused before anything is written. */
-function contradictions(records: readonly OrganisationRecord[]): string[] {
+/**
+ * What the input would do to something already held, refused before anything is written.
+ *
+ * Exported so the refusals can be tested: an import is judged on what it refuses, and every one of
+ * these was a real defect before it was a rule.
+ */
+export function contradictions(records: readonly OrganisationRecord[]): string[] {
   const problems: string[] = []
 
   const seen = new Map<string, OrganisationRecord>()
@@ -75,6 +81,16 @@ function contradictions(records: readonly OrganisationRecord[]): string[] {
   }
 
   for (const record of records) {
+    if (record.name.trim() === record.id) {
+      // Not a name: the absence of one, disguised as one. Stored, it reaches every screen that lists
+      // organisations as a raw identifier — measured, five of eight rows in dev arrived this way and
+      // the list read as duplicates of the three real ones. An input that does not know the name
+      // must say so and be refused, not fill the field with the key.
+      problems.push(
+        `${record.id} is named after its own identifier — the source did not know its name`,
+      )
+    }
+
     if (record.members?.some((member) => member.subjectId.includes('@'))) {
       // An address is a trait its owner can change. Keyed on one, an entitlement moves with it and
       // a reused address inherits the last holder's.
@@ -193,13 +209,18 @@ async function main(): Promise<number> {
   }
 }
 
-main()
-  .then(async (code) => {
-    await closeOrganisationStore()
-    process.exit(code)
-  })
-  .catch(async (failure: unknown) => {
-    console.error(String(failure))
-    await closeOrganisationStore()
-    process.exit(EXIT.STORE)
-  })
+// Only when run, never on import. A module that acts at import time cannot be reasoned about and
+// cannot be tested: importing it to check one pure function opened a database connection and exited
+// the process.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then(async (code) => {
+      await closeOrganisationStore()
+      process.exit(code)
+    })
+    .catch(async (failure: unknown) => {
+      console.error(String(failure))
+      await closeOrganisationStore()
+      process.exit(EXIT.STORE)
+    })
+}

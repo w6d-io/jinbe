@@ -37,8 +37,12 @@ vi.mock('../../../services/kratos.service.js', () => ({
 vi.mock('../../../services/organisation-store.js', () => ({
   organisationStoreConfigured: vi.fn(() => true),
   organisationsById: vi.fn(async () => [{ id: 'org-a', name: 'Business', tenant: 'business', attributes: {} }]),
+  // Who is in a group. Joined with what a group gives, because the model owns those two halves
+  // separately: the groups change at a release, the memberships change daily.
+  allGroupMemberships: vi.fn(async () => new Map<string, string[]>()),
 }))
 
+const store = await import('../../../services/organisation-store.js')
 const service = await import('../../../services/enforced-config.service.js')
 
 const RULE = {
@@ -171,17 +175,25 @@ describe('the enforced configuration', () => {
   })
 
   it('names the person and the organisation behind a grant, and keeps the identifier when it cannot', async () => {
-    // The last link of the chain a reader follows. A subject present in a grant and absent from the
-    // directory is the case worth seeing, so it is shown by its identifier rather than dropped.
+    // The last links of the chain a reader follows, joined from the two halves the model keeps apart:
+    // `groups.json` says what a group gives per organisation, the directory says who is in it. A
+    // subject present in the directory and absent from Kratos is the case worth seeing, so it is
+    // shown by its identifier rather than dropped.
+    vi.mocked(store.allGroupMemberships).mockResolvedValue(
+      new Map([
+        ['known', ['operators']],
+        ['gone-from-the-directory', ['other-operators']],
+      ]),
+    )
     core.listNamespacedConfigMap.mockResolvedValue({
       items: [
         {
           metadata: { name: 'authz', namespace: 'ory' },
           data: {
             'roles.json': JSON.stringify({ operator: ['context:read'] }),
-            'grants.json': JSON.stringify({
-              known: { 'org-a': ['operator'] },
-              'gone-from-the-directory': { 'org-b': ['operator'] },
+            'groups.json': JSON.stringify({
+              operators: { 'org-a': ['operator'] },
+              'other-operators': { 'org-b': ['operator'] },
             }),
           },
         },
@@ -191,13 +203,93 @@ describe('the enforced configuration', () => {
     const [, data] = await service.enforcedConfiguration()
 
     expect(data.grants).toEqual([
-      { subject: 'gone-from-the-directory', held: [{ organisation: 'org-b', roles: ['operator'] }] },
+      {
+        subject: 'gone-from-the-directory',
+        held: [{ organisation: 'org-b', roles: ['operator'], viaGroups: ['other-operators'] }],
+      },
       {
         subject: 'known',
         email: 'somebody@strada.eu',
-        held: [{ organisation: 'org-a', organisationName: 'Business', roles: ['operator'] }],
+        held: [
+          { organisation: 'org-a', organisationName: 'Business', roles: ['operator'], viaGroups: ['operators'] },
+        ],
       },
     ])
+  })
+
+  it('shows the group a role came through, and every organisation for a group that grants in all', async () => {
+    // Without the group a reader sees that somebody holds a role and cannot tell why, nor what to
+    // change to take it away. `*` is the model's own way of saying "every organisation", so it is
+    // shown as it is written rather than expanded into a guess.
+    vi.mocked(store.allGroupMemberships).mockResolvedValue(new Map([['known', ['platform-operator']]]))
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz', namespace: 'ory' },
+          data: { 'groups.json': JSON.stringify({ 'platform-operator': { '*': ['operator'] } }) },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.grants).toEqual([
+      {
+        subject: 'known',
+        email: 'somebody@strada.eu',
+        held: [{ organisation: '*', roles: ['operator'], viaGroups: ['platform-operator'] }],
+      },
+    ])
+  })
+
+  it('unions two groups granting in the same organisation, and names both', async () => {
+    vi.mocked(store.allGroupMemberships).mockResolvedValue(new Map([['known', ['readers', 'writers']]]))
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz', namespace: 'ory' },
+          data: {
+            'groups.json': JSON.stringify({
+              readers: { 'org-a': ['reader'] },
+              writers: { 'org-a': ['writer'] },
+            }),
+          },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.grants?.[0].held).toEqual([
+      {
+        organisation: 'org-a',
+        organisationName: 'Business',
+        roles: ['reader', 'writer'],
+        viaGroups: ['readers', 'writers'],
+      },
+    ])
+  })
+
+  it('costs the last hop and never the answer when the directory cannot be read', async () => {
+    // A document that cannot be read means nobody knows what is enforced; a directory that cannot
+    // answer costs a reader one column. Those are not the same failure.
+    vi.mocked(store.allGroupMemberships).mockRejectedValue(new Error('the store is down'))
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'authz', namespace: 'ory' },
+          data: {
+            'roles.json': JSON.stringify({ operator: ['context:read'] }),
+            'groups.json': JSON.stringify({ operators: { 'org-a': ['operator'] } }),
+          },
+        },
+      ],
+    })
+
+    const [, data] = await service.enforcedConfiguration()
+
+    expect(data.roles).toEqual([{ role: 'operator', permissions: ['context:read'] }])
+    expect(data.grants).toEqual([])
   })
 
   it('raises rather than answering a short list when the cluster cannot be read', async () => {
