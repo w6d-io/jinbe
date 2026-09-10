@@ -33,6 +33,10 @@ const PUBLIC_ROUTES = [
   // Its own credential, checked by its own hook: a machine token, hashed at rest. Listed here for
   // the same reason the SCIM prefix is — the session gate would refuse it before that hook runs.
   '/api/directory',
+  // Same arrangement, and the same trap: the policy engine presents a machine token, which this
+  // gate refuses before the route's own hook is ever reached. Listing it here does not make it
+  // public — it makes it guarded by the credential it actually takes.
+  '/api/opa',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed
@@ -56,7 +60,7 @@ const PUBLIC_ROUTE_PATTERNS = [
 /**
  * Check if a path matches any public route
  */
-function isPublicRoute(path: string): boolean {
+export function isPublicRoute(path: string): boolean {
   if (PUBLIC_ROUTES.some((route) => path === route || path.startsWith(`${route}/`))) {
     return true
   }
