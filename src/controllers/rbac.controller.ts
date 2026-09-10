@@ -1,9 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { rbacService, SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { faviconService } from '../services/favicon.service.js'
-import { opaService } from '../services/opa.service.js'
 import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
-import { impactPreviewService } from '../services/impact-preview.service.js'
 import { previewImport } from '../services/openapi-import/importer.js'
 import {
   createGroupBodySchema,
@@ -363,80 +361,19 @@ export class RbacController {
     })
   }
 
-  // ===========================================================================
-  // Impact preview
-  // ===========================================================================
-
-  async impactPreview(
-    request: FastifyRequest<{ Body: Record<string, unknown> }>,
-    reply: FastifyReply
-  ) {
-    const rolesMap = z.record(z.record(z.array(z.string())))
-    const proposed = z
-      .object({
-        groups: rolesMap.optional(),
-        roles: rolesMap.optional(),
-        routeMaps: z
-          .record(z.object({ rules: z.array(z.object({ method: z.string(), path: z.string(), permission: z.string().optional() }).passthrough()) }))
-          .optional(),
-        groupMembership: z.record(z.array(z.string())).optional(),
-      })
-      .parse(request.body ?? {})
-    const result = await impactPreviewService.preview(proposed)
-    return reply.send(result)
-  }
-
-  // ===========================================================================
-  // Permission Simulator
-  // ===========================================================================
-
-  async simulate(
-    request: FastifyRequest<{
-      Body: { email: string; service: string; method: string; path: string }
-    }>,
-    reply: FastifyReply
-  ) {
-    const body = z
-      .object({
-        email: z.string().email(),
-        service: z.string().min(1),
-        method: z.string().min(1),
-        path: z.string().min(1),
-      })
-      .parse(request.body)
-
-    // Single round-trip to OPA — same code path as oathkeeper request-time
-    // authorization, so the simulator can never drift from production decisions.
-    const result = await opaService.simulate(
-      body.email,
-      body.service,
-      body.method.toUpperCase(),
-      body.path,
-    )
-
-    if (!result) {
-      return reply.code(503).send({
-        error: 'opa_unreachable',
-        message: 'Could not query OPA for live decision',
-      })
-    }
-
-    const matchedRule = result.matching_rules[0]
-    const requiredPermission = matchedRule?.permission
-
-    return reply.send({
-      allowed: result.allow,
-      matchedRule: matchedRule ?? undefined,
-      requiredPermission,
-      superAdmin: result.super_admin,
-      userInfo: {
-        email: body.email,
-        groups: result.groups,
-        roles: result.roles,
-        permissions: result.permissions,
-      },
-    })
-  }
+  // Impact preview and the decision simulator lived here. Both asked an engine for `data.rbac.*`,
+  // a path that stopped existing when the model became `strada.authz` — they answered nothing, so
+  // the screens over them showed an error whatever was asked.
+  //
+  // Replaying a real decision is worth having back: it answers "would this person be allowed to
+  // call that", which the enforced-configuration screen cannot — it shows the chain, not the
+  // verdict. It needs an engine this service can reach, and the one that enforces listens on the
+  // loopback of the proxy pod. A preview engine of its own, off the request path, is the shape.
+  //
+  // The hypothetical half is not: `impact-preview` asked "what changes if I edit the model", and
+  // the artefact's roots are read-only, so it would need either a parameterised policy — which
+  // means an override inside the policy that enforces — or a second evaluation of a world that
+  // exists nowhere. Not worth its price.
 }
 
 export const rbacController = new RbacController()

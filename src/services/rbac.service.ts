@@ -244,6 +244,13 @@ export class SystemResourceImmutable extends Error {
 // RBAC Service — Redis-backed
 // =============================================================================
 
+/**
+ * Where a generated access rule would send its authorization question, if anything read those rules.
+ * `.invalid` can never resolve (RFC 2606), so it reads as intended rather than as a hostname
+ * somebody forgot to update.
+ */
+const RETIRED_AUTHORIZER = 'http://retired.invalid:8080/v1/data/strada/authz/decision'
+
 export class RbacService {
   // ===========================================================================
   // Private Helpers
@@ -1241,13 +1248,26 @@ export class RbacService {
    * persisted with a bare or app-less remote_json config that would silently
    * authorize against the wrong service.
    */
+  /**
+   * The authorizer an access rule generated here would carry.
+   *
+   * DELIBERATELY UNREACHABLE, like the rules it belongs to. The proxy reads its rules from the
+   * ConfigMap a controller owns, rendered from Git — so nothing this generates reaches it, and the
+   * address it used to name (an adapter Service, then a chart default naming a component that never
+   * existed here) only made a dead rule look live.
+   *
+   * The generation itself is not removed here: it is reachable from more places than one commit
+   * should touch, and `RULES_SOURCE` — the flag that says where rules come from — gates NOTHING
+   * today. It is only reported to the console, which greys the screen while the machinery underneath
+   * still runs. Making it gate is the next step, and it is what lets all of this go.
+   */
   private buildRemoteJsonConfig(service: string): { remote: string; payload: string } {
     const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
     // Go templates need a literal "email" key (unescaped); JSON.stringify handles
     // escaping when the rule is stored.
     const q = '"'
     const payload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${service}"}}`
-    return { remote: env.OPA_AUTHZ_REMOTE, payload }
+    return { remote: RETIRED_AUTHORIZER, payload }
   }
 
   /**

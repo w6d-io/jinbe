@@ -2,10 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { UserRbacInfo } from '../../../services/opa.service.js'
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: {
-    manageableOrgs: vi.fn().mockResolvedValue([]),
-  },
+vi.mock('../../../services/organisation-store.js', () => ({
+  organisationsForSubject: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../../../services/audit-event.service.js', () => ({
@@ -15,7 +13,7 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 }))
 
 import { requireManageableOrg } from '../../../middleware/require-manageable-org.js'
-import { opaService } from '../../../services/opa.service.js'
+import { organisationsForSubject } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
 
 function createMockRequest(
@@ -24,7 +22,9 @@ function createMockRequest(
   rbacInfo?: UserRbacInfo
 ): FastifyRequest {
   return {
-    userContext: email ? { email } : undefined,
+    // The directory is keyed on the identity, so a context without one can answer nothing —
+    // exactly as a real session, which always carries the Kratos identityId.
+    userContext: email ? { email, id: `subject-of-${email}` } : undefined,
     rbacInfo,
     method: 'GET',
     url: '/api/organizations/org-1/users',
@@ -61,7 +61,7 @@ const RBAC = (permissions: string[]): UserRbacInfo => ({
 describe('requireManageableOrg middleware', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue([])
+    vi.mocked(organisationsForSubject).mockResolvedValue([])
   })
 
   it('returns 500 when rbacInfo is missing (requireServiceAdmin not run first)', async () => {
@@ -71,7 +71,7 @@ describe('requireManageableOrg middleware', () => {
     await requireManageableOrg()(request, reply)
 
     expect(reply._statusCode).toBe(500)
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('grants a wildcard * caller unrestricted reach without consulting OPA (legacy)', async () => {
@@ -81,11 +81,11 @@ describe('requireManageableOrg middleware', () => {
     await requireManageableOrg()(request, reply)
 
     expect(reply.send).not.toHaveBeenCalled()
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('grants a non-wildcard caller when the org is in their manageable set', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-1', 'org-2'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-1', 'org-2'])
     const request = createMockRequest(
       'orgadmin@example.com',
       { organizationId: 'org-1' },
@@ -96,11 +96,11 @@ describe('requireManageableOrg middleware', () => {
     await requireManageableOrg()(request, reply)
 
     expect(reply.send).not.toHaveBeenCalled()
-    expect(opaService.manageableOrgs).toHaveBeenCalledWith('orgadmin@example.com')
+    expect(organisationsForSubject).toHaveBeenCalled()
   })
 
   it('returns 403 when the org is not in the manageable set (tenant isolation)', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-2'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-2'])
     const request = createMockRequest(
       'orgadmin@example.com',
       { organizationId: 'org-1' },
@@ -118,7 +118,7 @@ describe('requireManageableOrg middleware', () => {
   })
 
   it('fail-closed: 403 when manageableOrgs is empty (OPA error/unreachable)', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue([])
+    vi.mocked(organisationsForSubject).mockResolvedValue([])
     const request = createMockRequest(
       'orgadmin@example.com',
       { organizationId: 'org-1' },
@@ -138,11 +138,11 @@ describe('requireManageableOrg middleware', () => {
     await requireManageableOrg()(request, reply)
 
     expect(reply._statusCode).toBe(401)
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('respects a custom paramName', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['svc-7'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['svc-7'])
     const request = createMockRequest('orgadmin@example.com', { customId: 'svc-7' }, RBAC(['org:manage_users']))
     const reply = createMockReply()
 

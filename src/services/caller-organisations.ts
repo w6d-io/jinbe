@@ -1,6 +1,5 @@
 import type { FastifyRequest } from 'fastify'
 import { env } from '../config/index.js'
-import { opaService } from './opa.service.js'
 import { organisationsForSubject } from './organisation-store.js'
 
 /**
@@ -21,28 +20,23 @@ import { organisationsForSubject } from './organisation-store.js'
  * Whether the caller may *administer* those organisations is a separate question, and it stays
  * where it was: the roles and permissions this service resolves for the route being called.
  */
-export async function callerOrganisations(
-  request: FastifyRequest,
-  email: string | undefined,
-): Promise<string[]> {
+export async function callerOrganisations(request: FastifyRequest): Promise<string[]> {
   if (env.ORGANISATION_SOURCE === 'claim') {
     return [...(request.userContext?.organisations ?? [])]
   }
 
-  if (env.ORGANISATION_SOURCE === 'directory') {
-    // The subject, never the address: an address is a trait its owner can change, and a changed one
-    // must not move an entitlement — nor a reused one inherit the last holder's. A store that
-    // cannot answer throws rather than answering nothing, because "cannot tell" and "belongs to
-    // nothing" are opposite facts and only one of them may authorise.
-    const subject = request.userContext?.id
-    if (!subject) return []
-    return organisationsForSubject(subject)
-  }
-  // The address is passed in rather than read here: a caller can be identified through a session or
-  // through a token, and which one answered is already settled where this is called from. Resolving
-  // it twice is how the two answers drift.
-  if (!email) return []
-  return opaService.manageableOrgs(email)
+  // The subject, never the address: an address is a trait its owner can change, and a changed one
+  // must not move an entitlement — nor a reused one inherit the last holder's. A store that cannot
+  // answer throws rather than answering nothing, because "cannot tell" and "belongs to nothing" are
+  // opposite facts and only one of them may authorise.
+  const subject = request.userContext?.id
+  if (!subject) return []
+  // There was a third source, `local`, and it was the DEFAULT: it asked an engine for
+  // `data.rbac.delegation.manageable_orgs`, a path that stopped existing when the model became
+  // `strada.authz`. It answered nothing, so it scoped every caller to no organisation at all — and
+  // being the default, any deployment that did not set this variable fell into it. Removed, and the
+  // default is now the directory that actually holds them.
+  return organisationsForSubject(request.userContext?.id ?? '')
 }
 
 /**

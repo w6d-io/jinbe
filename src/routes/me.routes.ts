@@ -141,7 +141,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })
       }
 
-      const organizations = await callerOrganisations(request, email)
+      const organizations = await callerOrganisations(request)
       return reply.send({
         organizations,
         names: await namesFor(organizations),
