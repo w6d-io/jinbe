@@ -15,7 +15,7 @@ import {
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
 import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
-import { platformRightsOf } from '../services/authorization-model.service.js'
+import { declaredGroups, platformRightsOf } from '../services/authorization-model.service.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -313,11 +313,6 @@ export class AdminController {
     const desiredGroups = requestedGroups && requestedGroups.length > 0 ? requestedGroups : ['users']
     const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
 
-    // Validate group existence BEFORE creating so a bad request never orphans a user.
-    if (needsGrantCheck) {
-      await rbacService.validateGroups(desiredGroups)
-    }
-
     const identity = await kratosService.createIdentity(kratosBody)
 
     // A new identity bumps total/active (and perGroup['users'] via the default)
@@ -549,8 +544,9 @@ export class AdminController {
       // Get user's current groups from Kratos
       const groups = await kratosService.getUserGroups(email)
 
-      // Get available groups from RBAC service
-      const availableGroups = await rbacService.getAvailableGroups()
+      // The model the engine decides against, not the retired catalogue: a screen offering a group
+      // the mutation refuses turns a refusal into a surprise.
+      const availableGroups = await declaredGroups()
 
       return reply.send({
         email,
@@ -588,8 +584,9 @@ export class AdminController {
     )
 
     try {
-      await rbacService.validateGroups(groups)
-
+      // The groups are checked against the model inside applyGroupUpdate, under the same lock that
+      // computes which of them are actually being ADDED. What this replaces checked the retired
+      // model's catalogue here, and refused every group the engine now decides against.
       // Fail-closed identity resolution. Previously this was wrapped in a
       // try/catch that silently set identityId=null on failure, which let
       // the MFA gate fall through (`if (identityId)`) and allowed group
@@ -618,12 +615,6 @@ export class AdminController {
       if (!result.ok) return reply.status(result.status).send(result.body)
       return reply.send(result.response)
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Invalid groups')) {
-        return reply.status(400).send({
-          error: 'Bad Request',
-          message: error.message,
-        })
-      }
       if (error instanceof KratosApiError && error.statusCode === 404) {
         return reply.status(404).send({
           error: 'Not Found',

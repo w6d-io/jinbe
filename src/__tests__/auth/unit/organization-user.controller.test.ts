@@ -4,6 +4,10 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 // Redis mutex is infrastructure — passthrough so these units need no Redis.
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
+// The model the gates read. See the helper for why they read a model rather than predicates.
+vi.mock('../../../services/authorization-model.service.js', async () =>
+  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
   removeFromGroup: vi.fn().mockResolvedValue(undefined),
@@ -102,7 +106,6 @@ describe('OrganizationUserController.getUserGroups', () => {
   it('returns email + groups + availableGroups for in-org user', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users'])
-    vi.mocked(rbacService.getAvailableGroups).mockResolvedValue(['users', 'admins'])
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -114,7 +117,16 @@ describe('OrganizationUserController.getUserGroups', () => {
     expect(reply.send).toHaveBeenCalledWith({
       email: 'user@example.com',
       groups: ['users'],
-      availableGroups: ['users', 'admins'],
+      availableGroups: [
+        'admins',
+        'devs',
+        'kuma-viewers',
+        'operators',
+        'org_admins',
+        'super_admins',
+        'users',
+        'viewers',
+      ],
     })
   })
 

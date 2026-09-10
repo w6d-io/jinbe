@@ -65,10 +65,7 @@ export async function platformPermissions(subjectId: string): Promise<string[]> 
  */
 export async function platformRightsOf(subjectId: string): Promise<HeldRights> {
   if (!subjectId) return { groups: [], roles: [], permissions: [] }
-  const [documents, membership] = await Promise.all([
-    policyDocuments(),
-    groupsForSubjects([subjectId]),
-  ])
+  const { documents, membership } = await readModelAndMembership(subjectId)
   const groups = membership.get(subjectId) ?? []
 
   const roles = new Set<string>()
@@ -109,10 +106,7 @@ export async function holdsPlatformPermission(
 export async function rightsOf(subjectId: string, organisationId: string): Promise<HeldRights> {
   if (!subjectId) return { groups: [], roles: [], permissions: [] }
 
-  const [documents, membership] = await Promise.all([
-    policyDocuments(),
-    groupsForSubjects([subjectId]),
-  ])
+  const { documents, membership } = await readModelAndMembership(subjectId)
   return resolveRights(documents, membership.get(subjectId) ?? [], organisationId)
 }
 
@@ -126,7 +120,32 @@ export async function rightsOf(subjectId: string, organisationId: string): Promi
  */
 export async function assignableGroupsFor(subjectId: string): Promise<string[]> {
   if (!(await holdsPlatformPermission(subjectId, ASSIGN_MEMBERSHIP))) return []
+  return declaredGroups()
+}
+
+/** Every group the model declares. Anything else confers nothing, wherever it is written. */
+export async function declaredGroups(): Promise<string[]> {
   return Object.keys((await policyDocuments()).groups).sort()
+}
+
+/**
+ * The model and this subject's memberships, read together.
+ *
+ * `Promise.all` rejects on the first failure and leaves a second one unobserved — and with no
+ * `unhandledRejection` handler that ends the process, so a moment where BOTH the ConfigMaps and the
+ * database are unreachable would kill the service instead of answering the 503 its callers build.
+ * Settling both and then raising the first observes each one.
+ */
+async function readModelAndMembership(
+  subjectId: string,
+): Promise<{ documents: { groups: Groups; roles: Roles }; membership: Map<string, string[]> }> {
+  const [documents, membership] = await Promise.allSettled([
+    policyDocuments(),
+    groupsForSubjects([subjectId]),
+  ])
+  if (documents.status === 'rejected') throw documents.reason
+  if (membership.status === 'rejected') throw membership.reason
+  return { documents: documents.value, membership: membership.value }
 }
 
 async function policyDocuments(): Promise<{ groups: Groups; roles: Roles }> {
@@ -178,4 +197,52 @@ async function ownNamespace(): Promise<string> {
       'Not running in a cluster: the authorization model cannot be read.',
     )
   }
+}
+
+/**
+ * What the write path needs to know about a set of groups, in ONE read of the model.
+ *
+ * The predicates this replaces each asked Redis a separate question per group, and for a group the
+ * retired model never held they all answered "no": not a catalogue entry (refused with 400), not an
+ * admin-power group (escalation gate skipped), not a system group (the target's second factor
+ * skipped). Only the first of those three was audible.
+ */
+export type GroupFacts = {
+  /** The model declares it. Anything else confers nothing, wherever it is written. */
+  declared: boolean
+  /** Confers a role in EVERY organisation — a platform grant rather than a tenant one. */
+  everyOrganisation: boolean
+  /** Confers no role in any organisation. */
+  empty: boolean
+}
+
+/**
+ * Read the model once and answer for every group at once.
+ *
+ * `everyOrganisation` is what replaces the retired model's "carries the `*` permission". The tree
+ * has no `*` by design, so power can no longer be spotted by a wildcard; what distinguishes a
+ * platform grant from a tenant one is the SCOPE it is given in. A group held in every organisation
+ * at once is not an ordinary tenant role whatever it carries, so handing one out goes through the
+ * escalation gate, the target's second factor and the actor's.
+ *
+ * An undeclared group confers nothing — that is a fact of this model, not a fallback. Adding one is
+ * refused before these predicates are consulted; removing one takes nothing away.
+ */
+export async function groupFacts(names: readonly string[]): Promise<Map<string, GroupFacts>> {
+  const { groups } = await policyDocuments()
+  const facts = new Map<string, GroupFacts>()
+  for (const name of names) {
+    const definition = groups[name]
+    if (!definition) {
+      facts.set(name, { declared: false, everyOrganisation: false, empty: true })
+      continue
+    }
+    const grants = Object.values(definition).filter((roles) => (roles ?? []).length > 0)
+    facts.set(name, {
+      declared: true,
+      everyOrganisation: (definition[EVERY_ORGANISATION] ?? []).length > 0,
+      empty: grants.length === 0,
+    })
+  }
+  return facts
 }

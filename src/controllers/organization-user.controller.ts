@@ -20,7 +20,7 @@ import {
 } from '../schemas/organization-user.schema.js'
 import { env } from '../config/index.js'
 import { addMember, removeMemberEverywhere } from '../services/organisation-store.js'
-import { assignableGroupsFor } from '../services/authorization-model.service.js'
+import { assignableGroupsFor, declaredGroups } from '../services/authorization-model.service.js'
 
 function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
   const orgId = (identity as Record<string, unknown>).organization_id as string | null | undefined
@@ -125,12 +125,6 @@ export class OrganizationUserController {
     // other group is validated + containment-checked through the shared guard.
     const desiredGroups = groups && groups.length > 0 ? groups : ['users']
     const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
-
-    // Validate group existence BEFORE creating the identity so a bad request
-    // never leaves an orphaned user.
-    if (needsGrantCheck) {
-      await rbacService.validateGroups(desiredGroups)
-    }
 
     const kratosBody: KratosIdentityCreate = {
       schema_id: 'default',
@@ -267,7 +261,7 @@ export class OrganizationUserController {
 
     const email = identity.traits?.email as string
     const groups = await kratosService.getUserGroups(email)
-    const availableGroups = await rbacService.getAvailableGroups()
+    const availableGroups = await declaredGroups()
 
     return reply.send({ email, groups, availableGroups })
   }
@@ -290,8 +284,6 @@ export class OrganizationUserController {
     assertOrganizationMatch(identity, organizationId)
 
     const email = identity.traits?.email as string
-
-    await rbacService.validateGroups(groups)
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: { id, email, organizationId },

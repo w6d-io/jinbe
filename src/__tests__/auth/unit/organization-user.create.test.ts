@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
+// The model the gates read. See the helper for why they read a model rather than predicates.
+vi.mock('../../../services/authorization-model.service.js', async () =>
+  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
     createIdentity: vi.fn(),
@@ -94,20 +98,24 @@ describe('OrganizationUserController.createUser — group assignment', () => {
     expect(reply._statusCode).toBe(201)
   })
 
-  it('validates BEFORE create and does not create when the group is invalid', async () => {
-    vi.mocked(rbacService.validateGroups).mockRejectedValueOnce(
-      Object.assign(new Error('unknown group'), { statusCode: 400 })
-    )
+  it('rolls the identity back when the requested group is not in the model', async () => {
+    // The group is checked where the ADDITIONS are known — inside the guard, under the same lock —
+    // rather than by a pre-flight read of a catalogue nothing decides against. A refusal therefore
+    // arrives after the identity exists, and the rollback is what stops it stranding one.
+    vi.mocked(userGroupsService.applyGroupUpdate).mockResolvedValue({
+      ok: false,
+      status: 400,
+      body: { error: 'Bad Request', message: 'Not in the authorization model: ghost.' },
+    } as never)
     const reply = createReply()
 
-    await expect(
-      organizationUserController.createUser(
-        req({ email: 'new@example.com', groups: ['ghost'] }) as never,
-        reply
-      )
-    ).rejects.toBeTruthy()
+    await organizationUserController.createUser(
+      req({ email: 'new@example.com', groups: ['ghost'] }) as never,
+      reply
+    )
 
-    expect(kratosService.createIdentity).not.toHaveBeenCalled()
+    expect(reply.status).toHaveBeenCalledWith(400)
+    expect(kratosService.deleteIdentity).toHaveBeenCalled()
   })
 
   it('assigns a contained group through the guard and returns 201', async () => {
