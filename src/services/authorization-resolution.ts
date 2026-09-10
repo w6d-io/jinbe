@@ -59,3 +59,26 @@ export function resolveRights(
 
   return { groups: [...heldGroups], roles: [...roles].sort(), permissions: [...permissions].sort() }
 }
+
+/**
+ * Whether a held permission covers a required one — the twin of `covers` in `strada.authz`.
+ *
+ * ONE implication: the verbs must be equal and the held resource must be the required resource or an
+ * ancestor of it, ancestors separated by dots. `admin:write` covers `admin.membership:write`;
+ * `admin.membership:write` covers nothing else.
+ *
+ * The dot matters. `admin.member` is a string prefix of `admin.membership` and is NOT an ancestor of
+ * it — matching the raw prefix would grant a permission nobody wrote.
+ */
+export function covers(held: string, required: string): boolean {
+  if (held === required) return true
+  const [heldResource, heldVerb] = held.split(':')
+  const [requiredResource, requiredVerb] = required.split(':')
+  if (heldVerb !== requiredVerb) return false
+  return requiredResource.startsWith(`${heldResource}.`)
+}
+
+/** Whether any of these permissions covers the required one. */
+export function permits(heldPermissions: readonly string[], required: string): boolean {
+  return heldPermissions.some((held) => covers(held, required))
+}

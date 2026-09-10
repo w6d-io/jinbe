@@ -27,15 +27,32 @@ vi.mock('node:fs/promises', () => ({ readFile: vi.fn().mockResolvedValue('ory\n'
 const model = await import('../../../services/authorization-model.service.js')
 
 const GROUPS = {
-  'platform-operator': { '*': ['operator'] },
+  'platform-admin': { '*': ['platform-admin'] },
+  'membership-admin': { '*': ['membership-admin'] },
+  'platform-auditor': { '*': ['platform-auditor'] },
   'premium-operator': { 'org-premium': ['operator'] },
+  // Grants membership writes INSIDE one organisation. Administering the platform is not an act
+  // inside a company, so this must not let its holder hand out a group anywhere.
+  'premium-membership': { 'org-premium': ['membership-admin'] },
   'named-like-an-admin': {},
   'empty-everywhere': { '*': [] },
 }
 
-function serving(groups: unknown) {
+const ROLES = {
+  'platform-admin': ['admin:read', 'admin:write'],
+  'membership-admin': ['admin:read', 'admin.membership:write'],
+  'platform-auditor': ['admin:read'],
+  operator: ['context:read'],
+}
+
+function serving(groups: unknown, roles: unknown = ROLES) {
   core.listNamespacedConfigMap.mockResolvedValue({
-    items: [{ metadata: { name: 'authz' }, data: { 'groups.json': JSON.stringify(groups) } }],
+    items: [
+      {
+        metadata: { name: 'authz' },
+        data: { 'groups.json': JSON.stringify(groups), 'roles.json': JSON.stringify(roles) },
+      },
+    ],
   })
 }
 
@@ -46,41 +63,37 @@ describe('who may hand out rights', () => {
     serving(GROUPS)
   })
 
-  it('reads global power off the shape, not off the name', async () => {
-    // A group called `named-like-an-admin` that grants nothing is not powerful, and one called
-    // anything at all that grants under `*` is. Keying on names is how a same-named but powerless
-    // group waves somebody through.
-    expect([...(await model.globalPowerGroups())]).toEqual(['platform-operator'])
+  it('reads what somebody may do across the platform from the roles their groups give under *', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-admin']]]))
+    expect(await model.platformPermissions('subject-a')).toEqual(['admin:read', 'admin:write'])
   })
 
-  it('does not count a group that names every organisation but no role', async () => {
-    expect((await model.globalPowerGroups()).has('empty-everywhere')).toBe(false)
+  it('admits an ancestor for a descendant, which is the model\'s one implication', async () => {
+    // `platform-admin` holds `admin:write`; handing out a group needs `admin.membership:write`.
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-admin']]]))
+    expect(await model.holdsPlatformPermission('subject-a', model.ASSIGN_MEMBERSHIP)).toBe(true)
   })
 
-  it('does not count a group scoped to one organisation', async () => {
-    expect((await model.globalPowerGroups()).has('premium-operator')).toBe(false)
+  it('admits the exact permission', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-m', ['membership-admin']]]))
+    expect(await model.holdsPlatformPermission('subject-m', model.ASSIGN_MEMBERSHIP)).toBe(true)
   })
 
-  it('says yes for a subject holding such a group', async () => {
-    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-operator']]]))
-    expect(await model.holdsGlobalPower('subject-a')).toBe(true)
-    expect(store.groupsForSubjects).toHaveBeenCalledWith(['subject-a'])
+  it('refuses a sibling: reading everything is not writing memberships', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-v', ['platform-auditor']]]))
+    expect(await model.holdsPlatformPermission('subject-v', model.ASSIGN_MEMBERSHIP)).toBe(false)
   })
 
-  it('says no for a subject holding only an organisation-scoped group', async () => {
-    store.groupsForSubjects.mockResolvedValue(new Map([['subject-b', ['premium-operator']]]))
-    expect(await model.holdsGlobalPower('subject-b')).toBe(false)
+  it('IGNORES an organisation-scoped grant, because administering the platform is not an act in one', async () => {
+    // The distinction the previous predicate could not make: holding membership writes inside one
+    // company must not let somebody hand out a group everywhere.
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-p', ['premium-membership']]]))
+    expect(await model.holdsPlatformPermission('subject-p', model.ASSIGN_MEMBERSHIP)).toBe(false)
   })
 
-  it('says no for a subject in no group, without asking the model twice', async () => {
-    store.groupsForSubjects.mockResolvedValue(new Map())
-    expect(await model.holdsGlobalPower('stranger')).toBe(false)
-  })
-
-  it('refuses an empty identity before reading anything', async () => {
-    expect(await model.holdsGlobalPower('')).toBe(false)
-    expect(store.groupsForSubjects).not.toHaveBeenCalled()
-    expect(core.listNamespacedConfigMap).not.toHaveBeenCalled()
+  it('is not fooled by a group that grants everywhere but carries nothing', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-e', ['empty-everywhere', 'named-like-an-admin']]]))
+    expect(await model.holdsPlatformPermission('subject-e', model.ASSIGN_MEMBERSHIP)).toBe(false)
   })
 
   it('resolves rights the way the policy resolves them: named organisation UNION every organisation', async () => {
@@ -130,17 +143,13 @@ describe('who may hand out rights', () => {
     })
   })
 
-  it('offers every declared group to somebody with global power, and nothing to anybody else', async () => {
-    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-operator']]]))
-    expect(await model.assignableGroupsFor('subject-a')).toEqual([
-      'empty-everywhere',
-      'named-like-an-admin',
-      'platform-operator',
-      'premium-operator',
-    ])
+  it('offers every declared group to somebody who may hand one out, and nothing to anybody else', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-m', ['membership-admin']]]))
+    expect(await model.assignableGroupsFor('subject-m')).toEqual(Object.keys(GROUPS).sort())
 
-    store.groupsForSubjects.mockResolvedValue(new Map([['subject-b', ['premium-operator']]]))
-    expect(await model.assignableGroupsFor('subject-b')).toEqual([])
+    // An auditor reads everything and hands out nothing.
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-v', ['platform-auditor']]]))
+    expect(await model.assignableGroupsFor('subject-v')).toEqual([])
   })
 
   it('raises when the model cannot be read, rather than answering "nobody is powerful"', async () => {
@@ -148,7 +157,7 @@ describe('who may hand out rights', () => {
     // that reads like a missing right; the caller must be able to tell them apart.
     core.listNamespacedConfigMap.mockRejectedValue(new Error('configmaps is forbidden'))
     store.groupsForSubjects.mockResolvedValue(new Map())
-    await expect(model.holdsGlobalPower('subject-a')).rejects.toThrow(
+    await expect(model.holdsPlatformPermission('subject-a', model.ASSIGN_MEMBERSHIP)).rejects.toThrow(
       model.AuthorizationModelUnavailableError,
     )
   })
@@ -157,16 +166,20 @@ describe('who may hand out rights', () => {
     core.listNamespacedConfigMap.mockResolvedValue({
       items: [{ metadata: { name: 'authz' }, data: { 'groups.json': '{ not json' } }],
     })
-    await expect(model.globalPowerGroups()).rejects.toThrow(/is not a document/)
+    await expect(model.platformPermissions('subject-a')).rejects.toThrow(/is not a document/)
   })
 
   it('ignores a ConfigMap that carries no groups at all', async () => {
+    store.groupsForSubjects.mockResolvedValue(new Map([['subject-a', ['platform-admin']]]))
     core.listNamespacedConfigMap.mockResolvedValue({
       items: [
         { metadata: { name: 'strada-demo-api' }, data: { 'permissions.json': '{}' } },
-        { metadata: { name: 'authz' }, data: { 'groups.json': JSON.stringify(GROUPS) } },
+        {
+          metadata: { name: 'authz' },
+          data: { 'groups.json': JSON.stringify(GROUPS), 'roles.json': JSON.stringify(ROLES) },
+        },
       ],
     })
-    expect([...(await model.globalPowerGroups())]).toEqual(['platform-operator'])
+    expect(await model.platformPermissions('subject-a')).toEqual(['admin:read', 'admin:write'])
   })
 })
