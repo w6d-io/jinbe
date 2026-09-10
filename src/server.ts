@@ -38,7 +38,6 @@ import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
-import { rbacService } from './services/rbac.service.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
 import { realtimeService } from './services/realtime.service.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
@@ -225,9 +224,6 @@ async function start() {
       // race where opal-server booted first, hit a 503 from us, and ended
       // up with an empty OPA dataset. Non-fatal — opal-server may also be
       // unreachable here, in which case the next admin mutation re-pushes.
-      rbacService.refreshAllDataSources('jinbe-startup').catch(err => {
-        fastify.log.warn({ err: err.message }, 'OPAL data refresh on startup failed (non-fatal)')
-      })
 
       // Scheduled RBAC-bundle backup, run by jinbe itself (self-authenticated +
       // holds S3 creds). No-op unless backup is enabled. Replaces the external

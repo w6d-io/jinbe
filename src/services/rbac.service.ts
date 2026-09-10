@@ -510,7 +510,10 @@ export class RbacService {
     realtimeService.publish(eventType ?? 'rbac')
 
     // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
-    this.notifyOpal(eventType).catch(() => {})
+    // The OPAL push that used to be here is gone: no OPAL runs in this namespace, and the engine
+    // pulls a bundle instead of being pushed data. It failed on every mutation, logging a DNS
+    // error for a component that never existed here. The etag invalidation and the real-time
+    // notification above DO serve, and stay.
 
     if (eventType) {
       auditEventService.emit({
@@ -524,89 +527,8 @@ export class RbacService {
     }
   }
 
-  /**
-   * Push a full datasource refresh to opal-server, covering bindings,
-   * groups, plus per-service roles + route_map. Mirrors the entries returned
-   * by GET /api/admin/rbac/opal-datasource so opal-server has no excuse for
-   * a stale dataset.
-   *
-   * Called from server.ts post-waitForBootstrap so that even if opal-server
-   * booted first and got a 503 on its initial fetch, this push refills OPA's
-   * dataset within seconds — without requiring an opal-server pod restart.
-   */
-  async refreshAllDataSources(reason: string = 'jinbe-startup'): Promise<void> {
-    try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL
-      const services = await redisRbacRepository.getServices()
 
-      const entries = [
-        { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-        { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-        // Global roles are always part of OPA's dataset even though "global"
-        // is not in the services registry (getServices()), so the loop below
-        // never emits it. Push it explicitly, matching GET /opal-datasource:
-        // data.roles.global holds the platform-wide "*" wildcard the
-        // super_admin role resolves to. If a dataset is ever rebuilt solely
-        // from a push (e.g. opal-client's initial pull 503s and this refresh
-        // back-fills the store), omitting it would drop the wildcard and 403
-        // every privileged operation with no recovery path.
-        { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
-        // Keep in lock-step with GET /opal-datasource so an org_service_map
-        // mutation re-publishes data.org_service_map to OPA (else it goes stale).
-        { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
-        // Org → admin roster (data.org_admin_map): per-org list of admin emails;
-        // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
-        { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
-      ]
-      for (const svc of services) {
-        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-        const routeMap = await redisRbacRepository.getRouteMap(svc)
-        if (routeMap) {
-          entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-        }
-      }
 
-      const res = await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries, reason }),
-      })
-      if (!res.ok) throw new Error(`opal-server ${res.status}`)
-      console.log(`[opal-refresh] ${entries.length} entries pushed (${reason})`)
-    } catch (err) {
-      console.error('[opal-refresh] Failed:', err)
-      throw err
-    }
-  }
-
-  private async notifyOpal(reason?: string): Promise<void> {
-    // Delegate to refreshAllDataSources so every mutation re-publishes
-    // the full entries list (/bindings, /bindings/groups, /roles/{svc}
-    // AND /route_map/{svc} for every service). The slim previous
-    // payload pushed only /bindings + /bindings/groups, which meant
-    // adding or editing a route_map entry never propagated to OPA —
-    // OPA only picked it up after an opal-client restart pulled all
-    // sources at boot. Over-publishing is cheap (OPAL clients
-    // re-fetch the same URLs they already know) and the alternative
-    // (per-mutation entry mapping) is brittle: every new RBAC path
-    // would need a matching publish call somewhere.
-    try {
-      await this.refreshAllDataSources(reason || 'rbac-mutation')
-    } catch (err) {
-      console.error('[opal-notify] Failed:', err)
-    }
-  }
-
-  private async notifyOpalRoles(serviceName: string): Promise<void> {
-    // Same reasoning as notifyOpal — full refresh keeps OPA's view in
-    // sync without per-path bookkeeping. serviceName is preserved in
-    // the reason string for traceability in OPAL server logs.
-    try {
-      await this.refreshAllDataSources(`roles.updated.${serviceName}`)
-    } catch (err) {
-      console.error('[opal-notify-roles] Failed:', err)
-    }
-  }
 
   // ===========================================================================
   // Users & Bindings
@@ -1195,7 +1117,6 @@ export class RbacService {
     }
     const before = await redisRbacRepository.getRoles(serviceName)
     await redisRbacRepository.setRoles(serviceName, roles)
-    this.notifyOpalRoles(serviceName).catch(() => {})
     const changes = diffRoles(serviceName, before, roles)
     await this.invalidateBundle('roles.updated', { type: 'service', id: serviceName, service: serviceName }, actor, changes)
     return this.result(`Roles updated for ${serviceName}`)
