@@ -43,6 +43,15 @@ export interface OrganisationMember {
  * `tenant` carries no unique constraint on purpose: a namespace is measured to host more than one
  * organisation, and a constraint that assumed otherwise would merge two of them into one on import
  * — silently, and with the memberships of both.
+ *
+ * `group_members` holds the one fact that grows with the company: which groups a person is in. What
+ * a group GIVES — roles, per organisation — is deliberately not here: it changes at a release, it
+ * must be reviewed, and a diff of it is the only way anybody can see a permission change coming. So
+ * it lives in the repository, and this table stays one row per person per group, whatever the number
+ * of organisations.
+ *
+ * Keyed on the subject, never the address: an address is a trait its owner can change, and a changed
+ * one must not move an entitlement — nor a reused one inherit the last holder's.
  */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS organisations (
@@ -69,6 +78,15 @@ CREATE TABLE IF NOT EXISTS organisation_members (
   PRIMARY KEY (organisation_id, subject_id, role)
 );
 CREATE INDEX IF NOT EXISTS organisation_members_subject_idx ON organisation_members (subject_id);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  subject_id  text NOT NULL,
+  group_name  text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  text,
+  PRIMARY KEY (subject_id, group_name)
+);
+CREATE INDEX IF NOT EXISTS group_members_group_idx ON group_members (group_name);
 `
 
 let pool: Pool | null = null
@@ -166,6 +184,106 @@ export async function membershipsForSubjects(
     else held.set(row.subject_id, [row.organisation_id])
   }
   return held
+}
+
+/**
+ * Which groups a person is in.
+ *
+ * The whole page in one query, for the same reason as the memberships above: asking per row is how
+ * a list becomes slow enough that somebody caches it and then shows a stale one.
+ *
+ * A subject with no group is ABSENT from the map rather than present with an empty list — the caller
+ * decides what "belongs to no group" should look like on its screen, and defaulting here would make
+ * "has none" and "was not asked about" the same answer.
+ */
+export async function groupsForSubjects(
+  subjectIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const held = new Map<string, string[]>()
+  if (subjectIds.length === 0) return held
+
+  const rows = await query<{ subject_id: string; group_name: string }>(
+    `SELECT subject_id, group_name
+     FROM group_members
+     WHERE subject_id = ANY($1::text[])
+     ORDER BY group_name`,
+    [subjectIds],
+  )
+
+  for (const row of rows) {
+    const already = held.get(row.subject_id)
+    if (already) already.push(row.group_name)
+    else held.set(row.subject_id, [row.group_name])
+  }
+  return held
+}
+
+/**
+ * Everybody's groups, for building the artefact the authorization engine decides against.
+ *
+ * One query and no paging: this is the fact that grows with the company, and it is exactly the thing
+ * that must be read whole — a partial answer here would silently remove somebody's access rather
+ * than fail.
+ */
+export async function allGroupMemberships(): Promise<Map<string, string[]>> {
+  const held = new Map<string, string[]>()
+  const rows = await query<{ subject_id: string; group_name: string }>(
+    'SELECT subject_id, group_name FROM group_members ORDER BY subject_id, group_name',
+    [],
+  )
+  for (const row of rows) {
+    const already = held.get(row.subject_id)
+    if (already) already.push(row.group_name)
+    else held.set(row.subject_id, [row.group_name])
+  }
+  return held
+}
+
+/** Who is in one group, for the screen that administers it. */
+export async function membersOfGroup(groupName: string): Promise<string[]> {
+  const rows = await query<{ subject_id: string }>(
+    'SELECT subject_id FROM group_members WHERE group_name = $1 ORDER BY subject_id',
+    [groupName],
+  )
+  return rows.map((row) => row.subject_id)
+}
+
+/**
+ * Put somebody in a group.
+ *
+ * Idempotent: assigning twice is not an error, so a repair can be re-run and a double click cannot
+ * fail. `created_by` is recorded because "who granted this" is the first question asked when
+ * somebody turns out to hold more than expected.
+ */
+export async function addToGroup(
+  subjectId: string,
+  groupName: string,
+  createdBy?: string,
+): Promise<void> {
+  await query(
+    `INSERT INTO group_members (subject_id, group_name, created_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (subject_id, group_name) DO NOTHING`,
+    [subjectId, groupName, createdBy ?? null],
+  )
+}
+
+/** Take somebody out of a group. Removing what is not there is not an error either. */
+export async function removeFromGroup(subjectId: string, groupName: string): Promise<void> {
+  await query('DELETE FROM group_members WHERE subject_id = $1 AND group_name = $2', [
+    subjectId,
+    groupName,
+  ])
+}
+
+/**
+ * Clear every group of a subject that no longer exists.
+ *
+ * A row left behind names a subject nobody can look up, and would grant to whoever is issued that
+ * identifier next.
+ */
+export async function forgetGroupsOf(subjectId: string): Promise<void> {
+  await query('DELETE FROM group_members WHERE subject_id = $1', [subjectId])
 }
 
 /** Members of one organisation, for the screens that administer it. */
