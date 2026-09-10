@@ -69,11 +69,22 @@ const MODEL = [
   },
 ]
 
+const RULES = [
+  {
+    metadata: { name: 'authz-policy', namespace: 'ory' },
+    data: { 'strada.rego': 'package strada.authz\n\ndefault allow := false\n' },
+  },
+]
+
 describe('the policy bundle', () => {
   beforeEach(() => {
     service.forgetPolicyBundle()
     core.listNamespacedConfigMap.mockReset()
-    core.listNamespacedConfigMap.mockResolvedValue({ items: MODEL })
+    // Deux sélecteurs, deux réponses : les faits et les règles ne vivent pas dans les mêmes
+    // ConfigMaps, et un mock qui répondrait la même chose aux deux ne prouverait rien.
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego' ? { items: RULES } : { items: MODEL },
+    )
     storeState.allGroupMemberships.mockReset()
     storeState.allGroupMemberships.mockResolvedValue(new Map([['subject-a', ['platform-operator']]]))
   })
@@ -93,34 +104,108 @@ describe('the policy bundle', () => {
 
   it('selects on the label the engine loader itself uses', async () => {
     await service.policyBundle()
-    expect(core.listNamespacedConfigMap.mock.calls[0][0].labelSelector).toBe('openpolicyagent.org/data=opa')
+    const selectors = core.listNamespacedConfigMap.mock.calls.map((c: [{ labelSelector: string }]) => c[0].labelSelector)
+    expect(selectors).toContain('openpolicyagent.org/data=opa')
+    expect(selectors).toContain('openpolicyagent.org/policy=rego')
+  })
+
+  it('carries the rules alongside the facts', async () => {
+    const { body } = await service.policyBundle()
+    const files = await entriesOf(body)
+
+    expect(files['authz-policy.strada.rego']).toContain('package strada.authz')
+  })
+
+  it('moves the revision when a rule changes, not only when a fact does', async () => {
+    // A revision that ignored the rules would have the engine answer 304 and keep deciding with the
+    // previous ones while the repository says otherwise.
+    const before = await service.policyBundle()
+
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: [{ metadata: { name: 'authz-policy' }, data: { 'strada.rego': 'package strada.authz\n\ndefault allow := true\n' } }] }
+        : { items: MODEL },
+    )
+    const after = await service.policyBundle()
+
+    expect(after.revision).not.toBe(before.revision)
+  })
+
+  it('names a rule after where it came from, so a collision is visible', async () => {
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? {
+            items: [
+              { metadata: { name: 'a' }, data: { 'x.rego': 'package a' } },
+              { metadata: { name: 'b' }, data: { 'x.rego': 'package b' } },
+            ],
+          }
+        : { items: MODEL },
+    )
+    const files = await entriesOf((await service.policyBundle()).body)
+
+    expect(Object.keys(files)).toContain('a.x.rego')
+    expect(Object.keys(files)).toContain('b.x.rego')
+  })
+
+  it('refuses an empty rule rather than publish it', async () => {
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: [{ metadata: { name: 'authz-policy' }, data: { 'strada.rego': '   ' } }] }
+        : { items: MODEL },
+    )
+    await expect(service.policyBundle()).rejects.toThrow(/refusing to publish/)
+  })
+
+  it('accepts a deployment that keeps its rules on disk', async () => {
+    // Absent is allowed for the rules, unlike the model: both arrangements have to coexist while
+    // this is being adopted.
+    service.forgetPolicyBundle()
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego' ? { items: [] } : { items: MODEL },
+    )
+    const files = await entriesOf((await service.policyBundle()).body)
+
+    expect(Object.keys(files).filter((f) => f.endsWith('.rego'))).toHaveLength(0)
+    expect(files['data.json']).toBeDefined()
   })
 
   it('refuses to publish an empty model rather than delete every route table', async () => {
-    core.listNamespacedConfigMap.mockResolvedValue({ items: [] })
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego' ? { items: RULES } : { items: [] },
+    )
     await expect(service.policyBundle()).rejects.toThrow(service.PolicyBundleUnavailableError)
   })
 
   it('refuses the whole bundle when one document is malformed', async () => {
     // Publishing without it would remove what it granted, and the refusal that follows names a route
     // rather than a broken file.
-    core.listNamespacedConfigMap.mockResolvedValue({
-      items: [{ metadata: { name: 'authz' }, data: { 'roles.json': '{ not json' } }],
-    })
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: RULES }
+        : { items: [{ metadata: { name: 'authz' }, data: { 'roles.json': '{ not json' } }] },
+    )
     await expect(service.policyBundle()).rejects.toThrow(/is not a document/)
   })
 
   it('refuses when the cluster cannot be read', async () => {
-    core.listNamespacedConfigMap.mockRejectedValue(new Error('configmaps is forbidden'))
+    core.listNamespacedConfigMap.mockImplementation(async () => {
+      throw new Error('configmaps is forbidden')
+    })
     await expect(service.policyBundle()).rejects.toThrow(service.PolicyBundleUnavailableError)
   })
 
   it('refuses a ConfigMap that would collide with the memberships', async () => {
     // Named `membership`, it would overwrite the people with the model or the reverse depending on
     // iteration order. Refused rather than resolved by luck.
-    core.listNamespacedConfigMap.mockResolvedValue({
-      items: [...MODEL, { metadata: { name: 'membership' }, data: {} }],
-    })
+    core.listNamespacedConfigMap.mockImplementation(async ({ labelSelector }: { labelSelector: string }) =>
+      labelSelector === 'openpolicyagent.org/policy=rego'
+        ? { items: RULES }
+        : { items: [...MODEL, { metadata: { name: 'membership' }, data: {} }] },
+    )
     await expect(service.policyBundle()).rejects.toThrow(/collides/)
   })
 

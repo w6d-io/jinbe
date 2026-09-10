@@ -39,6 +39,16 @@ export interface PolicyBundle {
 const ROOT = 'ory'
 /** The label the engine's own loader selects on; kept so the ConfigMaps need no second marker. */
 const POLICY_DATA_SELECTOR = 'openpolicyagent.org/data=opa'
+/**
+ * The rules, selected by the loader's other label.
+ *
+ * They travel in the same bundle as the facts, and that is a transport decision rather than a
+ * governance one: they still live in the repository and still change by merge request. What it buys
+ * is that the engine needs no mounted file — a file mounted from a ConfigMap is read at startup and
+ * stays stale after an edit, with the deployment reporting success, and one copy per replica makes
+ * that worse rather than better.
+ */
+const POLICY_RULES_SELECTOR = 'openpolicyagent.org/policy=rego'
 const NAMESPACE_FILE = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
 /** Where the memberships land. Not a ConfigMap, so it cannot collide with one. */
 const MEMBERSHIP_KEY = 'membership'
@@ -70,15 +80,65 @@ export async function policyBundle(): Promise<PolicyBundle> {
   const revision = createHash('sha256').update(payload).digest('hex').slice(0, 16)
   if (cached?.revision === revision) return cached
 
-  const manifest = JSON.stringify({ revision, roots: [ROOT] }, null, 2)
+  const rules = await rulesFrom(namespace)
+  // The revision covers the rules as well: a policy change has to move it, or the engine answers 304
+  // and keeps deciding with the previous rules while the repository says otherwise.
+  const fullRevision = createHash('sha256')
+    .update(payload)
+    .update(rules.map((r) => `${r.name}\n${r.content}`).join('\n'))
+    .digest('hex')
+    .slice(0, 16)
+  if (cached?.revision === fullRevision) return cached
+
+  const manifest = JSON.stringify({ revision: fullRevision, roots: [ROOT] }, null, 2)
   cached = {
     body: await archive([
       { name: '.manifest', content: manifest },
       { name: 'data.json', content: payload },
+      ...rules,
     ]),
-    revision,
+    revision: fullRevision,
   }
   return cached
+}
+
+/**
+ * The rules, as `.rego` entries of the bundle.
+ *
+ * Absent is allowed here, unlike the model: a deployment can legitimately keep its rules on disk
+ * while this is being adopted, and answering an empty list lets both arrangements coexist. What is
+ * NOT allowed is a rule that cannot be read — see below.
+ */
+async function rulesFrom(namespace: string): Promise<{ name: string; content: string }[]> {
+  let items: k8s.V1ConfigMap[]
+  try {
+    const kc = new k8s.KubeConfig()
+    kc.loadFromCluster()
+    const core = kc.makeApiClient(k8s.CoreV1Api)
+    const answer = await core.listNamespacedConfigMap({ namespace, labelSelector: POLICY_RULES_SELECTOR })
+    items = answer.items ?? []
+  } catch (err) {
+    // Not "no rules": the difference between "none declared" and "cannot tell" is the difference
+    // between a deployment that keeps its rules on disk and one that is about to lose them.
+    throw new PolicyBundleUnavailableError(
+      `Could not read the policy ConfigMaps in ${namespace}: ${(err as Error).message}`,
+    )
+  }
+
+  const rules: { name: string; content: string }[] = []
+  for (const item of items) {
+    const from = item.metadata?.name ?? 'unnamed'
+    for (const [key, content] of Object.entries(item.data ?? {})) {
+      if (!key.endsWith('.rego')) continue
+      if (!content.trim()) {
+        throw new PolicyBundleUnavailableError(`${from}/${key} is empty; refusing to publish it.`)
+      }
+      // Named after where it came from, so a conflict between two ConfigMaps is visible in the
+      // bundle rather than resolved by whichever was read last.
+      rules.push({ name: `${from}.${key}`, content })
+    }
+  }
+  return rules.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** Emptied between tests; nothing else may call it. */
