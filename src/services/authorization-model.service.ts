@@ -49,22 +49,37 @@ export const ASSIGN_MEMBERSHIP = 'admin.membership:write'
  * it, and the same rule that enforces a route decides it.
  */
 export async function platformPermissions(subjectId: string): Promise<string[]> {
-  if (!subjectId) return []
+  return (await platformRightsOf(subjectId)).permissions
+}
+
+/**
+ * What this subject holds across the platform: their groups, and what those give under `*`.
+ *
+ * The groups come from the store the artefact carries, which is the only place that says what is
+ * ENFORCED. A screen showing groups from anywhere else shows something nobody decides against — and
+ * an editing screen that saves one truth while displaying another turns a bad read into a bad write.
+ *
+ * Roles and permissions are the organisation-independent part only. Anything scoped to one company
+ * cannot be stated in a list that is not about a company, and stating it anyway would read as a
+ * right the holder has everywhere.
+ */
+export async function platformRightsOf(subjectId: string): Promise<HeldRights> {
+  if (!subjectId) return { groups: [], roles: [], permissions: [] }
   const [documents, membership] = await Promise.all([
     policyDocuments(),
     groupsForSubjects([subjectId]),
   ])
+  const groups = membership.get(subjectId) ?? []
 
   const roles = new Set<string>()
-  for (const group of membership.get(subjectId) ?? []) {
+  for (const group of groups) {
     for (const role of documents.groups[group]?.[EVERY_ORGANISATION] ?? []) roles.add(role)
   }
-
   const permissions = new Set<string>()
   for (const role of roles) {
     for (const permission of documents.roles[role] ?? []) permissions.add(permission)
   }
-  return [...permissions].sort()
+  return { groups: [...groups].sort(), roles: [...roles].sort(), permissions: [...permissions].sort() }
 }
 
 /**

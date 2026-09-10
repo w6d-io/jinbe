@@ -70,23 +70,22 @@ vi.mock('../../../services/rbac.service.js', () => ({
   },
 }))
 
-// Mock rbacResolverService (new direct resolver)
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: {
-    resolveUserRbac: vi.fn().mockImplementation(async (email: string) => ({
-      email,
-      groups: mockState.opalUserInfo?.groups || [],
-      roles: mockState.opalUserInfo?.roles || [],
-      permissions: mockState.opalUserInfo?.permissions || [],
-    })),
-  },
+// What a person holds comes from the store the artefact carries, keyed on the immutable identity —
+// not from Kratos metadata read through a cache, which showed memberships nobody decides against.
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  platformRightsOf: vi.fn().mockImplementation(async () => ({
+    groups: mockState.opalUserInfo?.groups || [],
+    roles: mockState.opalUserInfo?.roles || [],
+    permissions: mockState.opalUserInfo?.permissions || [],
+  })),
+  AuthorizationModelUnavailableError: class extends Error {},
 }))
 
 // Import after mocking
 import { AdminController } from '../../../controllers/admin.controller.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { opalService } from '../../../services/opa.service.js'
-import { rbacResolverService } from '../../../services/rbac-resolver.service.js'
+import { platformRightsOf } from '../../../services/authorization-model.service.js'
 
 // Helper to create mock request
 function createMockRequest<T extends object = object>(
@@ -259,7 +258,7 @@ describe('AdminController', () => {
       expect(kratosService.getIdentity).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440001')
     })
 
-    it('should enrich identity with RBAC info from OPAL', async () => {
+    it('should enrich identity from the enforced store', async () => {
       mockState.opalUserInfo = {
         email: 'admin@example.com',
         groups: ['developers'],
@@ -480,10 +479,10 @@ describe('AdminController', () => {
       const body = reply._body as { data: Array<{ groups: string[] }> }
       expect(body.data[0].groups).toEqual([])
       // Resolver should not be called for users without email
-      expect(rbacResolverService.resolveUserRbac).not.toHaveBeenCalled()
+      expect(platformRightsOf).not.toHaveBeenCalled()
     })
 
-    it('should call rbacResolverService with correct app name', async () => {
+    it('asks the model about the IDENTITY, never the address', async () => {
       const request = createMockRequest({
         params: { id: '550e8400-e29b-41d4-a716-446655440001' },
       })
@@ -494,7 +493,7 @@ describe('AdminController', () => {
         reply
       )
 
-      expect(rbacResolverService.resolveUserRbac).toHaveBeenCalledWith('admin@example.com', 'jinbe')
+      expect(platformRightsOf).toHaveBeenCalledWith(expect.not.stringContaining('@'))
     })
   })
 })

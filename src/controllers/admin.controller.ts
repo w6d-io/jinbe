@@ -1,6 +1,5 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
-import { rbacResolverService } from '../services/rbac-resolver.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
@@ -16,6 +15,7 @@ import {
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
 import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
+import { platformRightsOf } from '../services/authorization-model.service.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -158,14 +158,17 @@ export class AdminController {
     }
 
     try {
-      // Direct resolution from Kratos (groups) + Redis (definitions)
-      const rbacInfo = await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
+      // From the store the artefact carries, keyed on the immutable identity — the only place that
+      // says what is ENFORCED. It used to resolve groups from Kratos metadata and their meaning from
+      // a cache, so a screen showed memberships nobody decides against: an editing screen that saves
+      // one truth while displaying another turns a bad read into a bad write.
+      const held = await platformRightsOf(identity.id)
 
       return {
         ...identity,
-        groups: rbacInfo.groups,
-        roles: rbacInfo.roles,
-        permissions: rbacInfo.permissions,
+        groups: held.groups,
+        roles: held.roles,
+        permissions: held.permissions,
       }
     } catch (err) {
       // Empty is not the same as unknown, and a screen must be able to tell them apart: this row
