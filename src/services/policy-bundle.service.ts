@@ -230,7 +230,86 @@ async function modelFrom(namespace: string): Promise<Record<string, Record<strin
     }
     model[name] = entries
   }
+  for (const [name, entries] of Object.entries(model)) {
+    const table = entries['permissions.json']
+    if (table) assertDecidable(name, table)
+  }
   return model
+}
+
+/** One route of a service's table, as the generator emits it. */
+interface RouteDefinition {
+  segments: string[]
+  class: string
+  permission?: string
+}
+
+const ROUTE_CLASSES = new Set(['public', 'authenticated', 'authorized'])
+const PLACEHOLDER = '{'
+
+/**
+ * Refuses a route table the policy could not decide against.
+ *
+ * TWO ROUTES OF EQUAL SPECIFICITY do not make the policy pick one, and do not make it refuse: the
+ * winner is a complete rule, two winners make it produce two outputs, and evaluation FAILS. At the
+ * edge the adapter turns anything that is neither a grant nor a refusal into a fault, so the caller
+ * reads 500 on that route — measured. Caught here instead, it is a bundle that does not publish,
+ * which the engine's readiness turns into a rollout that does not complete.
+ *
+ * The other two refusals are of the same kind: a class nobody implements, and an `authorized` route
+ * naming no permission, both decide "no" for a reason no operator can read off the verdict.
+ */
+function assertDecidable(service: string, table: unknown): void {
+  const routes = (table as { routes?: Record<string, Record<string, RouteDefinition>> }).routes
+  if (!routes) return
+
+  for (const [method, byName] of Object.entries(routes)) {
+    for (const [name, definition] of Object.entries(byName)) {
+      if (!Array.isArray(definition.segments)) {
+        throw new PolicyBundleUnavailableError(
+          `${service}: route ${method} ${name} declares no segments; refusing to publish it.`,
+        )
+      }
+      if (!ROUTE_CLASSES.has(definition.class)) {
+        throw new PolicyBundleUnavailableError(
+          `${service}: route ${method} ${name} has class "${definition.class}", which no rule implements; refusing to publish it.`,
+        )
+      }
+      if (definition.class === 'authorized' && !definition.permission) {
+        throw new PolicyBundleUnavailableError(
+          `${service}: route ${method} ${name} is authorized but names no permission; refusing to publish it.`,
+        )
+      }
+    }
+
+    const named = Object.entries(byName)
+    for (let i = 0; i < named.length; i += 1) {
+      for (let j = i + 1; j < named.length; j += 1) {
+        const [leftName, left] = named[i]
+        const [rightName, right] = named[j]
+        if (!overlap(left, right)) continue
+        if (literals(left) !== literals(right)) continue
+        throw new PolicyBundleUnavailableError(
+          `${service}: routes ${method} ${leftName} and ${rightName} match the same paths with equal specificity, ` +
+            `so neither can win; refusing to publish the table.`,
+        )
+      }
+    }
+  }
+}
+
+/** Whether some path exists that both definitions would match. */
+function overlap(left: RouteDefinition, right: RouteDefinition): boolean {
+  if (left.segments.length !== right.segments.length) return false
+  return left.segments.every((segment, index) => {
+    const other = right.segments[index]
+    return segment.startsWith(PLACEHOLDER) || other.startsWith(PLACEHOLDER) || segment === other
+  })
+}
+
+/** How specific a definition is: the policy lets the one with more literal segments win. */
+function literals(definition: RouteDefinition): number {
+  return definition.segments.filter((segment) => !segment.startsWith(PLACEHOLDER)).length
 }
 
 async function ownNamespace(): Promise<string> {
