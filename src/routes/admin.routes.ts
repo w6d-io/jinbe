@@ -211,6 +211,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
                                 organisation: { type: 'string' },
                                 organisationName: { type: 'string' },
                                 roles: { type: 'array', items: { type: 'string' } },
+                                // The hop that explains the rest. Declared, or the serializer drops
+                                // it without a word.
+                                viaGroups: { type: 'array', items: { type: 'string' } },
                               },
                             },
                           },

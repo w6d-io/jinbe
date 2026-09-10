@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises'
 import * as k8s from '@kubernetes/client-node'
 import { stringify } from 'yaml'
 import { kratosService } from './kratos.service.js'
-import { organisationsById, organisationStoreConfigured } from './organisation-store.js'
+import {
+  allGroupMemberships,
+  organisationsById,
+  organisationStoreConfigured,
+} from './organisation-store.js'
 
 /**
  * What actually decides, read from where it actually lives.
@@ -53,8 +57,19 @@ export interface EnforcedGrant {
   subject: string
   /** The address that identity carries today, for a reader. Absent when it cannot be resolved. */
   email?: string
-  /** What this subject holds, per organisation. */
-  held: { organisation: string; organisationName?: string; roles: string[] }[]
+  /**
+   * What this subject holds, per organisation — and THROUGH WHICH GROUP.
+   *
+   * The group is the hop that explains the rest: without it a reader sees that somebody holds a role
+   * and has no way to know why, nor what to change to take it away. `*` as the organisation is the
+   * model's own way of saying "every one".
+   */
+  held: {
+    organisation: string
+    organisationName?: string
+    roles: string[]
+    viaGroups: string[]
+  }[]
 }
 
 export interface EnforcedRoute {
@@ -132,6 +147,16 @@ function client(): k8s.KubeConfig {
 async function policyData(kc: k8s.KubeConfig, namespace: string): Promise<EnforcedDocument[]> {
   const core = kc.makeApiClient(k8s.CoreV1Api)
   const answer = await core.listNamespacedConfigMap({ namespace, labelSelector: POLICY_DATA_SELECTOR })
+
+  // Who is in a group, to join with what a group gives. Fail-soft on purpose and unlike the
+  // documents: a directory that cannot answer costs the reader the last hop of the chain, while a
+  // document that cannot be read means nobody knows what is enforced. Those are not the same
+  // failure and must not have the same consequence.
+  let memberships: Map<string, string[]> = new Map()
+  if (organisationStoreConfigured()) {
+    memberships = await allGroupMemberships().catch(() => new Map<string, string[]>())
+  }
+
   return (answer.items ?? []).map((item) => ({
     kind: 'ConfigMap',
     name: item.metadata?.name ?? '(unnamed)',
@@ -140,7 +165,7 @@ async function policyData(kc: k8s.KubeConfig, namespace: string): Promise<Enforc
     yaml: asYaml(item as unknown as Record<string, unknown>, 'ConfigMap'),
     routes: routesIn(item),
     roles: rolesIn(item),
-    grants: grantsIn(item),
+    grants: grantsIn(item, memberships),
   }))
 }
 
@@ -152,22 +177,60 @@ async function policyData(kc: k8s.KubeConfig, namespace: string): Promise<Enforc
  * name is still shown by its identifier: a grant that cannot be attributed is more interesting than
  * one that can, not less.
  */
-function grantsIn(item: k8s.V1ConfigMap): EnforcedGrant[] | undefined {
-  const held = item.data?.['grants.json']
-  if (!held) return undefined
+/**
+ * Who holds which role, where, and through which group.
+ *
+ * Joined here rather than read from one file, because the two halves are owned by different people
+ * on purpose: `groups.json` is the MODEL — what a group gives, per organisation — and changes at a
+ * release by merge request; the memberships are the DIRECTORY — who is in a group — and change daily
+ * from the console. A screen that showed only one of them would answer half the question.
+ *
+ * This used to read `grants.json`, a single file holding both. That file was retired when the model
+ * split, and this kept reading it — so the last two hops of the chain silently disappeared from the
+ * screen, which is how a route table and a role catalogue came to be shown with nobody holding
+ * anything.
+ */
+function grantsIn(
+  item: k8s.V1ConfigMap,
+  memberships: Map<string, string[]>,
+): EnforcedGrant[] | undefined {
+  const declared = item.data?.['groups.json']
+  if (!declared) return undefined
+
+  let groups: Record<string, Record<string, string[]>>
   try {
-    const parsed = JSON.parse(held) as Record<string, Record<string, string[]>>
-    return Object.entries(parsed)
-      .map(([subject, byOrganisation]) => ({
-        subject,
-        held: Object.entries(byOrganisation ?? {})
-          .map(([organisation, roles]) => ({ organisation, roles: roles ?? [] }))
-          .sort((a, b) => a.organisation.localeCompare(b.organisation)),
-      }))
-      .sort((a, b) => a.subject.localeCompare(b.subject))
+    groups = JSON.parse(declared) as Record<string, Record<string, string[]>>
   } catch {
     return undefined
   }
+
+  const bySubject = new Map<string, Map<string, { roles: Set<string>; groups: Set<string> }>>()
+  for (const [subject, held] of memberships) {
+    for (const group of held) {
+      for (const [organisation, roles] of Object.entries(groups[group] ?? {})) {
+        if (!roles?.length) continue
+        const perOrganisation = bySubject.get(subject) ?? new Map()
+        const entry = perOrganisation.get(organisation) ?? { roles: new Set(), groups: new Set() }
+        for (const role of roles) entry.roles.add(role)
+        entry.groups.add(group)
+        perOrganisation.set(organisation, entry)
+        bySubject.set(subject, perOrganisation)
+      }
+    }
+  }
+
+  return [...bySubject.entries()]
+    .map(([subject, perOrganisation]) => ({
+      subject,
+      held: [...perOrganisation.entries()]
+        .map(([organisation, entry]) => ({
+          organisation,
+          roles: [...entry.roles].sort(),
+          viaGroups: [...entry.groups].sort(),
+        }))
+        .sort((a, b) => a.organisation.localeCompare(b.organisation)),
+    }))
+    .sort((a, b) => a.subject.localeCompare(b.subject))
 }
 
 /**
@@ -220,7 +283,7 @@ function describePolicyData(item: k8s.V1ConfigMap): string {
   const parts: string[] = []
   if (keys.some((k) => k.startsWith('permissions'))) parts.push('which permission each route requires')
   if (keys.some((k) => k.startsWith('roles'))) parts.push('what each role carries')
-  if (keys.some((k) => k.startsWith('grants'))) parts.push('who holds which role, per organisation')
+  if (keys.some((k) => k.startsWith('groups'))) parts.push('what each group gives, per organisation')
   return parts.length > 0 ? parts.join(' · ') : 'policy data'
 }
 
