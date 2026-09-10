@@ -1,8 +1,6 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacService } from '../services/rbac.service.js'
-import { opaService } from '../services/opa.service.js'
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -22,6 +20,7 @@ import {
 } from '../schemas/organization-user.schema.js'
 import { env } from '../config/index.js'
 import { addMember, removeMemberEverywhere } from '../services/organisation-store.js'
+import { assignableGroupsFor } from '../services/authorization-model.service.js'
 
 function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
   const orgId = (identity as Record<string, unknown>).organization_id as string | null | undefined
@@ -315,70 +314,41 @@ export class OrganizationUserController {
    * `assignable_groups` (delegation) scoped to the org's mapped service.
    * GET /api/organizations/:organizationId/assignable-groups
    *
-   * The set is resolved by OPA from the caller's email (containment-bounded,
-   * single-service, never global) and then narrowed to groups whose single
-   * service is the one backing this org, so the UI can only ever offer groups
-   * that the mutation guard (can_grant) would also accept. Fail-closed: OPA
-   * error → []; org with no service mapping → [].
+   * Resolved from the model the engine decides against, so the UI can only offer what the mutation
+   * guard would also accept. The organisation in the route is not consulted: assignment authority in
+   * this model is global or nothing, so it cannot vary by organisation.
    */
   async listAssignableGroups(
     request: FastifyRequest<{ Params: { organizationId: string } }>,
     reply: FastifyReply
   ) {
-    const { organizationId } = request.params
-    const email = request.userContext?.email
-    if (!email || email === 'unknown') {
+
+    // What the picker offers must be exactly what the mutation would accept, no more: a picker that
+    // offers a group the guard then refuses turns a refusal into a surprise.
+    //
+    // In this model that set is all-or-nothing. Holding a group that grants in every organisation is
+    // the only authority over assignment it expresses — there is no delegated, containment-bounded
+    // middle tier any more, so there is no middle set to compute either.
+    //
+    // What this replaced resolved the organisation to a registered service name through Redis, asked
+    // an engine for the actor's permissions, then filtered group definitions by their single service.
+    // All three belonged to the retired model: the engine path stopped answering, and grants are no
+    // longer keyed per service.
+    const subject = request.userContext?.id
+    if (!subject) {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
     }
 
-    const service = await redisRbacRepository.getServiceForOrg(organizationId)
-    if (!service) {
-      return reply.send({ groups: [] })
+    try {
+      return reply.send({ groups: await assignableGroupsFor(subject) })
+    } catch (err) {
+      // An empty list would read as "you may assign nothing"; this says the model could not be read.
+      request.log.warn({ subject, err }, '[organization-user] the authorization model could not be read')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Unable to list the assignable groups. Please try again later.',
+      })
     }
-
-    // A service-wildcard actor (a global super_admin, or a service admin whose
-    // role resolves to `*` in this org's service) is admitted by can_grant Tier B
-    // for ANY non-global single-service group in the service — but they are not an
-    // org MEMBER, so the membership-based `assignable_groups` set is empty for
-    // them. Mirror Tier B here so the picker offers exactly what the mutation
-    // guard would accept. We positively confirm `*` in the org's service (the same
-    // condition can_grant Tier B checks); a global `*` from super_admins is
-    // included because user_permissions resolves global ∪ service. FAIL-CLOSED:
-    // an OPA error yields no `*` → the delegated (containment-bounded) path.
-    const actorInfo = await opaService.getUserInfo(email, service)
-    const isServiceWildcard = actorInfo?.permissions?.includes('*') ?? false
-
-    const defs = await redisRbacRepository.getGroups()
-    // Candidate set: Tier B → every group (narrowed below to the org's single
-    // service); Tier A (delegated) → the containment-bounded assignable set.
-    const candidates = isServiceWildcard
-      ? Object.keys(defs)
-      : await opaService.assignableGroups(email)
-    if (candidates.length === 0) {
-      return reply.send({ groups: [] })
-    }
-
-    // Narrow to groups whose single service is this org's service. Defence in
-    // depth: independently reject any group with a non-empty `global` binding —
-    // OPA's assignable_groups already excludes globals and can_grant blocks them
-    // for BOTH tiers, but this fails the feed closed under OPA/Redis drift rather
-    // than trusting OPA alone.
-    const groups = candidates.filter((g) => {
-      const def = defs[g]
-      if (!def) return false
-      // Reject any group carrying a `global` binding at all — even an empty `[]`.
-      // can_grant's grant_target_service requires EVERY key of the group def to
-      // equal the org's service (`every svc,_ in groups[g] { svc == ts }`), so a
-      // group with a `global` key (empty or not) is denied by the mutation guard;
-      // excluding it here keeps the feed in exact lock-step with can_grant.
-      if (def.global !== undefined) return false
-      const svcs = Object.keys(def).filter(
-        (s) => s !== 'global' && Array.isArray(def[s]) && def[s].length > 0
-      )
-      return svcs.length === 1 && svcs[0] === service
-    })
-
-    return reply.send({ groups })
   }
 
   /**

@@ -1,29 +1,33 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { opaService } from '../services/opa.service.js'
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { rightsOf, type HeldRights } from '../services/authorization-model.service.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
 
 /**
- * Middleware factory: requires the caller to have permissions for the
- * service identified by the route parameter `paramName`.
+ * Middleware factory: requires the caller to hold at least one permission IN the organisation named
+ * by the route parameter `paramName`.
  *
- * Uses OPA/OPAL to resolve RBAC — passes organizationId as the `app` param
- * so OPA resolves groups → roles → permissions for that specific service.
+ * Resolved from the same two documents the engine decides against — a group gives roles in a named
+ * organisation or in every one, and each role carries permissions. No role list is written here.
  *
- * Access is granted when OPA returns at least one permission for the user
- * on the target service. Role/permission definitions live entirely in OPA
- * policy — no hardcoded role list here.
+ * What this replaced asked an engine for `data.rbac.user_info`, a path that stopped existing when the
+ * model became `strada.authz`; it answered nothing, so every route behind this gate refused with a
+ * 503 that read like an outage. It also resolved the organisation's id to a registered service name
+ * through Redis first, because the retired model keyed grants per service. This one keys them per
+ * organisation, so there is nothing to translate and one store fewer to be up.
  */
 export function requireServiceAdmin(paramName = 'organizationId') {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
+    // The immutable identity is what rights are keyed on; the address is carried for the log and the
+    // audit trail only.
+    const subject = request.userContext?.id
     const route = `${request.method} ${(request.url || '').split('?')[0]}`
 
-    request.log.debug({ email, route }, '[requireServiceAdmin] start')
+    request.log.debug({ email, subject, route }, '[requireServiceAdmin] start')
 
-    if (!email || email === 'unknown') {
-      request.log.debug('[requireServiceAdmin] no email — 401')
+    if (!subject || subject === 'unknown') {
+      request.log.debug('[requireServiceAdmin] no identity — 401')
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Authentication required',
@@ -32,9 +36,9 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     // DEV MODE: bypass
     if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-      request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — skipping OPA')
+      request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — model not read')
       request.rbacInfo = {
-        email,
+        email: email ?? subject,
         groups: ['super_admins', 'admins'],
         roles: ['super_admin', 'admin'],
         permissions: ['*'],
@@ -44,27 +48,23 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
-    // Resolve org UUID → RBAC service name so OPA gets a registered service
-    // (service names must match ^[a-z0-9_]+$ — UUIDs with hyphens are rejected)
-    const serviceName = await redisRbacRepository.getServiceForOrg(organizationId) ?? organizationId
-
-    request.log.debug(
-      { email, organizationId, serviceName, paramName },
-      '[requireServiceAdmin] querying OPA with resolved service name'
-    )
-
-    const rbacInfo = await opaService.getUserInfo(email, serviceName)
-
-    if (!rbacInfo) {
+    let held: HeldRights
+    try {
+      held = await rightsOf(subject, organizationId)
+    } catch (err) {
+      // "Holds nothing" and "I could not tell" are opposite facts. Refusing with 403 here would read
+      // as a missing right; 503 says the model could not be read, which is what happened.
       request.log.warn(
-        { email, organizationId },
-        '[requireServiceAdmin] OPA returned null — service unavailable'
+        { subject, organizationId, err },
+        '[requireServiceAdmin] the authorization model could not be read'
       )
       return reply.status(503).send({
         error: 'Service Unavailable',
         message: 'Unable to verify authorization. Please try again later.',
       })
     }
+
+    const rbacInfo = { email: email ?? subject, ...held }
 
     request.log.debug(
       {
@@ -93,7 +93,8 @@ export function requireServiceAdmin(paramName = 'organizationId') {
           target: route,
           result: 'denied',
           actor: {
-            email,
+            id: subject,
+            email: email ?? null,
             ip: request.ip,
             ua: (request.headers['user-agent'] as string) || null,
           },
