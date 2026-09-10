@@ -1,17 +1,13 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { rbacResolverService } from '../services/rbac-resolver.service.js'
+import { platformRightsOf } from '../services/authorization-model.service.js'
+import { permits } from '../services/authorization-resolution.js'
+
+/** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
+const READ_ADMIN = 'admin:read'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 
-/**
- * Admin groups that grant access to protected routes.
- *
- * Canonical names from groups.json: "admins", "super_admins"
- * Also accept legacy/shorthand variants for robustness.
- * Comparison is case-insensitive (see hasAnyGroup).
- */
-const ADMIN_GROUPS = ['admins', 'super_admins', 'admin', 'superadmin']
 
 /**
  * Extend FastifyRequest to include RBAC info
@@ -43,15 +39,19 @@ function hasAnyGroup(userGroups: string[], requiredGroups: string[]): boolean {
  * In DEV mode with DEV_BYPASS_AUTH=true, skips OPAL check and grants admin access.
  */
 /**
- * What the caller holds, or null when that could not be established.
+ * What the caller holds across the platform, or null when that could not be established.
  *
  * The distinction is the whole point of this file: "holds nothing" is a decision and answers 403,
  * "cannot be established" is an outage and answers 503. Letting the second pass as the first would
  * turn every failure of the model into a permission somebody would go and ask about.
+ *
+ * Read from the model the engine decides against, keyed on the immutable identity. It used to come
+ * from Kratos metadata through a cache — the previous model — so what let somebody into the console
+ * was decided by something nobody enforces.
  */
-async function resolveOrNull(email: string): Promise<UserRbacInfo | null> {
+async function resolveOrNull(subjectId: string, email: string): Promise<UserRbacInfo | null> {
   try {
-    return await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
+    return { email, ...(await platformRightsOf(subjectId)) }
   } catch {
     return null
   }
@@ -79,15 +79,22 @@ export async function requireAdmin(
     )
     request.rbacInfo = {
       email,
-      groups: ['super_admins', 'admins'],
-      roles: ['super_admin', 'admin'],
-      permissions: ['*'],
+      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
+      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
+      // have been refused by the very gate this bypass exists to skip.
+      groups: ['platform-admin'],
+      roles: ['platform-admin'],
+      permissions: ['admin:read', 'admin:write'],
     }
     return
   }
 
-  // Fetch RBAC info from OPAL
-  const rbacInfo = await resolveOrNull(email)
+  const subject = request.userContext?.id
+  if (!subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
+
+  const rbacInfo = await resolveOrNull(subject, email)
 
   if (!rbacInfo) {
     request.log.warn(
@@ -103,15 +110,19 @@ export async function requireAdmin(
   // Attach RBAC info to request for downstream use
   request.rbacInfo = rbacInfo
 
-  // Check if user is in admin or superadmin group
-  if (!hasAnyGroup(rbacInfo.groups, ADMIN_GROUPS)) {
+  // A DECLARED PERMISSION, not a list of group names. This matched `super_admins` or `admins` by
+  // name, so a group named like an admin group waved somebody through whatever it granted, and a
+  // group granting everything under another name did not. Reading the administration API needs
+  // `admin:read`, and the coverage rule admits `admin:read` held on any ancestor.
+  if (!permits(rbacInfo.permissions, READ_ADMIN)) {
     request.log.warn(
       {
         email,
-        groups: rbacInfo.groups,
-        requiredGroups: ADMIN_GROUPS,
+        subject,
+        permissions: rbacInfo.permissions,
+        required: READ_ADMIN,
       },
-      'Access denied - user not in admin group'
+      'Access denied — the caller does not hold the permission this API requires'
     )
     auditEventService.emit({
       category: 'access',
@@ -151,8 +162,9 @@ export async function requireAdmin(
 export function requireGroups(allowedGroups: string[]) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
+    const subject = request.userContext?.id
 
-    if (!email || email === 'unknown') {
+    if (!subject || subject === 'unknown' || !email || email === 'unknown') {
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Authentication required',
@@ -161,7 +173,7 @@ export function requireGroups(allowedGroups: string[]) {
 
     // Fetch RBAC info from OPAL if not already fetched
     if (!request.rbacInfo) {
-      const rbacInfo = await resolveOrNull(email)
+      const rbacInfo = await resolveOrNull(subject, email)
 
       if (!rbacInfo) {
         request.log.warn(
@@ -177,7 +189,9 @@ export function requireGroups(allowedGroups: string[]) {
       request.rbacInfo = rbacInfo
     }
 
-    // Check if user is in any of the allowed groups
+    // Named groups still, because this factory is CALLED with a list of names by its callers. The
+    // holder's groups now come from the model, so the names it matches are the model's — but naming
+    // a group is still weaker than naming a permission, and this is the last gate that does it.
     if (!hasAnyGroup(request.rbacInfo.groups, allowedGroups)) {
       request.log.warn(
         {
@@ -210,7 +224,8 @@ export function requireGroups(allowedGroups: string[]) {
  * Canonical name from groups.json: "super_admins"
  * Also accept legacy/shorthand variants for robustness.
  */
-const SUPER_ADMIN_GROUPS = ['super_admins', 'superadmin', 'superadmins']
+/** Writing the administration API. Verbs do not imply one another, so this is not `admin:read`. */
+const WRITE_ADMIN = 'admin:write'
 
 /**
  * Middleware requiring super_admin group membership
@@ -239,15 +254,22 @@ export async function requireSuperAdmin(
     )
     request.rbacInfo = {
       email,
-      groups: ['super_admins', 'admins'],
-      roles: ['super_admin', 'admin'],
-      permissions: ['*'],
+      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
+      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
+      // have been refused by the very gate this bypass exists to skip.
+      groups: ['platform-admin'],
+      roles: ['platform-admin'],
+      permissions: ['admin:read', 'admin:write'],
     }
     return
   }
 
-  // Fetch RBAC info from OPAL
-  const rbacInfo = await resolveOrNull(email)
+  const subject = request.userContext?.id
+  if (!subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
+
+  const rbacInfo = await resolveOrNull(subject, email)
 
   if (!rbacInfo) {
     request.log.warn(
@@ -262,15 +284,16 @@ export async function requireSuperAdmin(
 
   request.rbacInfo = rbacInfo
 
-  // Check if user is in super_admin group specifically
-  if (!hasAnyGroup(rbacInfo.groups, SUPER_ADMIN_GROUPS)) {
+  // Writing the administration API. `admin:write` covers every write under it, and the roles that
+  // carry it are declared in the model rather than matched by name.
+  if (!permits(rbacInfo.permissions, WRITE_ADMIN)) {
     request.log.warn(
       {
         email,
-        groups: rbacInfo.groups,
-        requiredGroups: SUPER_ADMIN_GROUPS,
+        permissions: rbacInfo.permissions,
+        required: WRITE_ADMIN,
       },
-      'Access denied - user not in super_admin group'
+      'Access denied — the caller does not hold the permission this write requires'
     )
     auditEventService.emit({
       category: 'access',

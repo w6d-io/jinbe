@@ -5,7 +5,6 @@ import { auditEventService, type AuditActorInput, type AuditChanges } from './au
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP, holdsPlatformPermission } from './authorization-model.service.js'
-import { rbacResolverService } from './rbac-resolver.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {
@@ -311,17 +310,11 @@ export class RbacService {
    * FAIL-CLOSED: returns false on missing email or any OPA error, so an
    * unreachable OPA never widens visibility.
    */
-  /**
-   * Whether somebody may do anything here.
-   *
-   * The wildcard is the test, not a role name: a deployment renames its groups and its roles, and a
-   * check written against one name would quietly stop being true.
-   */
-  async isSuperAdmin(actor: { email?: string | null }): Promise<boolean> {
-    if (!actor?.email) return false
-    const held = await rbacResolverService.resolveUserRbac(actor.email, 'jinbe')
-    return held.permissions.includes('*')
-  }
+  // `isSuperAdmin` lived here and asked the previous model — Kratos read through a cache — for a
+  // `*` permission this model deliberately does not define. So what an administrator could see was
+  // decided by metadata nobody enforces, keyed on an address. Its one caller now asks
+  // `holdsPlatformPermission` for the permission it actually needs, on the immutable identity.
+
 
   /**
    * Returns true when the resource is flagged `system: true` in its

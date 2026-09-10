@@ -27,6 +27,8 @@ import {
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
 import { assignableGroupsFor } from '../services/authorization-model.service.js'
+import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
+import { allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -145,6 +147,74 @@ export async function adminRoutes(fastify: FastifyInstance) {
     async (_request, reply) => {
       const data = await accessReviewService.getAccessReview()
       return reply.send(data)
+    },
+  )
+
+  /**
+   * Every organisation, for the screen that administers them.
+   *
+   * A SEPARATE ROUTE FROM `/me/organizations`, deliberately. That one used to return every
+   * organisation when the caller was a super admin and only theirs otherwise, so the same URL meant
+   * two different things depending on who asked — and it shipped a `scope` field whose only job was
+   * to tell the caller which of the two they had received. A screen asking for everything and
+   * getting less had no way to tell a short answer from a complete one.
+   *
+   * Here the question is unambiguous and the refusal is a 403.
+   */
+  fastify.get(
+    '/organizations',
+    {
+      preHandler: requirePlatformPermission('admin.organisation:read'),
+      schema: {
+        description: 'Every organisation the directory holds. Needs admin.organisation:read.',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              organizations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    name: { type: 'string' },
+                    tenant: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          503: {
+            type: 'object',
+            properties: { error: { type: 'string' }, message: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!organisationStoreConfigured()) {
+        return reply.status(503).send({
+          error: 'Service Unavailable',
+          message: 'No organisation directory is configured.',
+        })
+      }
+      try {
+        const organizations = await allOrganisations()
+        return reply.send({
+          organizations: organizations.map(({ id, name, tenant }) => ({ id, name, tenant })),
+        })
+      } catch (err) {
+        // Never a short list: a screen showing four of eight organisations says the other four do
+        // not exist, which is the one thing that is certainly false.
+        request.log.error({ err }, 'The organisation directory could not be read')
+        return reply.status(503).send({
+          error: 'Service Unavailable',
+          message: 'The organisation directory could not be read.',
+        })
+      }
     },
   )
 
