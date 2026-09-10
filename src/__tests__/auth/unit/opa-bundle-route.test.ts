@@ -7,7 +7,7 @@ import { isPublicRoute } from '../../../middleware/require-auth.js'
 
 describe('the routes that carry their own credential', () => {
   it('lets the bundle route reach its own hook', () => {
-    expect(isPublicRoute('/api/opa/membership-bundle')).toBe(true)
+    expect(isPublicRoute('/api/opa/policy')).toBe(true)
   })
 
   it('lets the directory route reach its own hook', () => {
