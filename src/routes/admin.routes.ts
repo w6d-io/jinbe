@@ -26,6 +26,7 @@ import {
   notFoundResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+import { assignableGroupsFor } from '../services/authorization-model.service.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -144,6 +145,59 @@ export async function adminRoutes(fastify: FastifyInstance) {
     async (_request, reply) => {
       const data = await accessReviewService.getAccessReview()
       return reply.send(data)
+    },
+  )
+
+  /**
+   * The groups this caller may hand out, from the model the engine decides against.
+   *
+   * The screen that assigns groups was offering a catalogue from the previous model — names the
+   * policy does not define, so assigning one wrote a membership that granted nothing while looking
+   * like it had worked. And it greyed the privileged ones by asking whether the session carried a
+   * role literally called `super_admin`, a name this model does not have: global power is a group
+   * granting in EVERY organisation, read off the shape.
+   *
+   * Both answers come from here now, so the screen offers exactly what the mutation would accept.
+   */
+  fastify.get(
+    '/assignable-groups',
+    {
+      schema: {
+        description: 'The groups the caller may assign, and whether they may assign at all.',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              groups: { type: 'array', items: { type: 'string' } },
+              mayAssign: { type: 'boolean' },
+            },
+          },
+          401: unauthorizedResponseSchema,
+          503: {
+            type: 'object',
+            properties: { error: { type: 'string' }, message: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const subject = request.userContext?.id
+      if (!subject || subject === 'unknown') {
+        return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+      }
+      try {
+        const groups = await assignableGroupsFor(subject)
+        return reply.send({ groups, mayAssign: groups.length > 0 })
+      } catch (err) {
+        // An empty list reads as "you may assign nothing", which is a legitimate answer. "I could
+        // not read the model" is not, and must not look like one.
+        request.log.error({ err }, 'The authorization model could not be read')
+        return reply.status(503).send({
+          error: 'Service Unavailable',
+          message: 'Unable to read the authorization model. Please try again later.',
+        })
+      }
     },
   )
 
