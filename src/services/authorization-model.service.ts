@@ -123,6 +123,18 @@ export async function assignableGroupsFor(subjectId: string): Promise<string[]> 
   return declaredGroups()
 }
 
+/**
+ * The model itself, for the screen that shows what a group grants before somebody hands it out.
+ *
+ * Read-only on purpose. This lives in Git and changes at a release, because a diff of it is the
+ * only way anybody sees a permission change coming — so the console reports it rather than editing
+ * it. What it replaces rendered a catalogue from a database, editable in place, with a column per
+ * SERVICE: a shape this model does not have.
+ */
+export async function authorizationModel(): Promise<{ groups: Groups; roles: Roles }> {
+  return policyDocuments()
+}
+
 /** Every group the model declares. Anything else confers nothing, wherever it is written. */
 export async function declaredGroups(): Promise<string[]> {
   return Object.keys((await policyDocuments()).groups).sort()
