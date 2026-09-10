@@ -1,10 +1,10 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { scimTokenService } from '../services/scim-token.service.js'
-import { membershipBundle } from '../services/membership-bundle.service.js'
+import { policyBundle, PolicyBundleUnavailableError } from '../services/policy-bundle.service.js'
 import { organisationStoreConfigured } from '../services/organisation-store.js'
 
 /**
- * The bundle the authorization engine pulls: who is in which group.
+ * The bundle the authorization engine pulls: everything it decides against.
  *
  * Pulled rather than pushed, so nothing here has to know how many engine replicas exist, and one
  * that starts late catches up by itself. The engine keeps the last bundle it activated, which is
@@ -12,16 +12,16 @@ import { organisationStoreConfigured } from '../services/organisation-store.js'
  *
  * Guarded by a machine credential, and that is not ceremony: this service answers on
  * `/admin/api/...` through the edge, so an unguarded route here is an internet-reachable listing of
- * who holds what.
+ * every rule and everybody who satisfies one.
  */
-export async function opaMembershipRoutes(fastify: FastifyInstance) {
+export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', machineOnly)
 
   fastify.get(
-    '/membership-bundle',
+    '/policy',
     {
       schema: {
-        description: 'Group memberships as an OPA bundle (tar.gz), rooted at ory/membership',
+        description: 'Everything the policy engine decides against, as an OPA bundle (tar.gz) rooted at ory',
         tags: ['opa'],
         response: { 401: { type: 'object', properties: { error: { type: 'string' } } } },
       },
@@ -34,7 +34,7 @@ export async function opaMembershipRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const bundle = await membershipBundle()
+        const bundle = await policyBundle()
 
         // The revision doubles as the ETag: unchanged data means an unchanged hash, so a poll costs
         // a 304 and the revision the engine reports stays meaningful.
@@ -50,8 +50,12 @@ export async function opaMembershipRoutes(fastify: FastifyInstance) {
       } catch (err) {
         // 503 and never an empty bundle, for the same reason as above: the engine treats what it
         // receives as the whole truth for this subtree.
-        request.log.error({ err }, 'Could not build the membership bundle')
-        return reply.status(503).send({ error: 'The membership store could not be read.' })
+        request.log.error({ err }, 'Could not build the policy bundle')
+        const why =
+          err instanceof PolicyBundleUnavailableError
+            ? err.message
+            : 'The policy data could not be read.'
+        return reply.status(503).send({ error: why })
       }
     },
   )

@@ -31,7 +31,7 @@ import { auditRoutes } from './routes/audit.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
-import { opaMembershipRoutes } from './routes/opa-membership.routes.js'
+import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
@@ -153,7 +153,7 @@ export async function buildServer() {
       // Answers about a named subject rather than about its caller, so it takes a machine
       // credential and nothing else — its own hook, registered inside the plugin.
       await api.register(directoryRoutes, { prefix: '/directory' })
-      await api.register(opaMembershipRoutes, { prefix: '/opa' })
+      await api.register(opaPolicyBundleRoutes, { prefix: '/opa' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
