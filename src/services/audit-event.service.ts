@@ -32,6 +32,7 @@ export type AuditSeverity = 'info' | 'warn' | 'high'
 export type AuditFlag     = 'opened_to_public' | 'auth_disabled' | 'grants_super_admin' | 'wildcard_permission'
 
 export interface AuditActor {
+  id?:       string | null    // the immutable identity; an address changes hands, this does not
   email:     string | null    // email, "system", or null (unauthenticated)
   name?:     string | null
   ip?:       string | null
@@ -45,6 +46,7 @@ export interface AuditActor {
  * sessionId for the audit trail and `requestId` for cross-event correlation.
  */
 export interface AuditActorInput {
+  id?:        string | null
   email?:     string | null
   name?:      string | null
   ip?:        string | null

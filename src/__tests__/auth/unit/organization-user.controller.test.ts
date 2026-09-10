@@ -2,6 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 // Redis mutex is infrastructure — passthrough so these units need no Redis.
+// The store the engine actually reads. Group changes land here, so a test that left it real
+// would reach for Postgres.
+vi.mock('../../../services/organisation-store.js', () => ({
+  addToGroup: vi.fn().mockResolvedValue(undefined),
+  removeFromGroup: vi.fn().mockResolvedValue(undefined),
+  groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
+  organisationStoreConfigured: vi.fn().mockReturnValue(true),
+}))
+
 vi.mock('../../../services/redis-lock.js', () => ({
   withRedisLock: (_name: string, fn: () => unknown) => fn(),
 }))
@@ -154,106 +163,30 @@ describe('OrganizationUserController.updateUserGroups', () => {
     ).rejects.toMatchObject({ statusCode: 404 })
   })
 
-  it('blocks privilege escalation (422) when OPA denies delegation of an admin-power group', async () => {
-    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockImplementation(async (g: string) => g === 'admins')
-    // OPA delegation policy refuses (default beforeEach deny); the guard blocks.
-
-    const request = {
-      params: { organizationId: ORG, id: USER_ID },
-      body: { groups: ['admins'] },
-      ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'actor@example.com',
-        groups: ['admins'],
-        roles: ['admin'],
-        permissions: ['rbac:write'],
-      },
-    } as unknown as FastifyRequest
-
-    const reply = createReply()
-
-    await organizationUserController.updateUserGroups(request as never, reply)
-
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'privilege_escalation_blocked',
-      blockingGroup: 'admins',
-    })
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-  })
-
-  it('allows OPA-permitted delegation by a non-wildcard org admin (MFA gate still applies)', async () => {
+  it('refuses an org-scoped group change, because this model defines no delegation', async () => {
+    // These three cases used to describe an OPA delegation policy deciding whether an org admin
+    // could hand out a group inside their organisation. `strada.authz` has no such concept — no
+    // permission expresses it — so the endpoint refuses and names the authority that is missing,
+    // instead of asking an engine that stopped answering when the model changed.
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
-    // Non-wildcard org admin → the decision is the OPA delegation policy, which
-    // allows the grant (containment holds); the MFA gate is downstream and still
-    // blocks until the target enrols a second factor.
-    vi.mocked(opaService.canGrant).mockResolvedValue(true)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue('admins')
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['admins'] },
       ip: '127.0.0.1',
-      userContext: { email: 'orgadmin@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'orgadmin@example.com',
-        groups: ['org-admins'],
-        roles: ['organization_admin'],
-        permissions: ['org:manage_users', 'users:read'],
-      },
+      userContext: { id: 'subject-actor', email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
+      rbacInfo: { email: 'actor@example.com', groups: [], roles: [], permissions: [] },
     } as unknown as FastifyRequest
 
     const reply = createReply()
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(opaService.canGrant).toHaveBeenCalled()
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'mfa_required',
-      targetEmail: 'user@example.com',
-    })
-  })
-
-  it('routes a wildcard (*) caller through can_grant on the org endpoint (rego is authoritative)', async () => {
-    // No client-side bypass: even a `*` caller is subject to OPA can_grant. The
-    // rego decides (its service-admin tier), so a single-service grant it allows
-    // succeeds and canGrant IS consulted.
-    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
-    vi.mocked(opaService.canGrant).mockResolvedValue(true)
-    vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
-
-    const request = {
-      params: { organizationId: ORG, id: USER_ID },
-      body: { groups: ['kuma-viewers'] },
-      ip: '127.0.0.1',
-      userContext: { email: 'super@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'super@example.com',
-        groups: ['super_admins'],
-        roles: ['super_admin'],
-        permissions: ['*'],
-      },
-    } as unknown as FastifyRequest
-
-    const reply = createReply()
-
-    await organizationUserController.updateUserGroups(request as never, reply)
-
-    expect(opaService.canGrant).toHaveBeenCalledWith({
-      actor: { email: 'super@example.com' },
-      target_group: 'kuma-viewers',
-      target_org: ORG,
-    })
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['kuma-viewers'])
+    expect(reply.status).toHaveBeenCalledWith(422)
+    expect(reply._body).toMatchObject({ error: 'delegation_not_defined' })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {

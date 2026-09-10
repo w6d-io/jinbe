@@ -60,7 +60,13 @@ vi.mock('../../../services/kratos.service.js', () => ({
   },
 }))
 
-// Mock OPA — assertSuperAdmin/requireSuperAdmin lookups go through this.
+// The gate reads the MODEL, not an engine: it asks whether the actor holds a group granting in
+// every organisation, from the same ConfigMaps the artefact carries.
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  holdsGlobalPower: vi.fn(),
+  AuthorizationModelUnavailableError: class extends Error {},
+}))
+
 vi.mock('../../../services/opa.service.js', () => ({
   opaService: {
     simulate: vi.fn(),
@@ -70,6 +76,7 @@ vi.mock('../../../services/opa.service.js', () => ({
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { opaService } from '../../../services/opa.service.js'
+import { holdsGlobalPower } from '../../../services/authorization-model.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 
@@ -136,72 +143,52 @@ describe('RbacService - security helpers', () => {
   // src/services/rbac.service.ts:165-176, 213-215
   // ===========================================================================
   describe('assertSuperAdmin (rbac.service.ts:213-215, 165-176)', () => {
-    it('throws 401 when the actor email is missing (rbac.service.ts:166-168)', async () => {
+    it('throws 401 when the actor has no immutable identity', async () => {
+      // Keyed on the identity, never on the address: an address can be changed by its owner and
+      // reused by somebody else, and this gate decides who may hand out rights.
       await expect(service.assertSuperAdmin('do something dangerous')).rejects.toMatchObject({
         message: 'Authentication required for this operation',
         statusCode: 401,
       })
-      // OPA must not be queried without an actor — saves a round-trip and
-      // prevents an unauthenticated path from reaching the policy engine.
-      expect(opaService.simulate).not.toHaveBeenCalled()
+      expect(holdsGlobalPower).not.toHaveBeenCalled()
     })
 
-    it('throws 401 when the actor object is present but email is empty (rbac.service.ts:166)', async () => {
+    it('throws 401 when only an address is presented', async () => {
       await expect(
-        service.assertSuperAdmin('reason', { email: '' }),
+        service.assertSuperAdmin('reason', { email: 'root@example.com' }),
       ).rejects.toMatchObject({ statusCode: 401 })
-      expect(opaService.simulate).not.toHaveBeenCalled()
+      expect(holdsGlobalPower).not.toHaveBeenCalled()
     })
 
-    it('resolves silently when OPA reports super_admin: true (rbac.service.ts:169-175)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce({
-        allow: true,
-        matching_rules: [],
-        groups: ['super_admins'],
-        roles: ['super_admin'],
-        permissions: ['*'],
-        super_admin: true,
-      })
+    it('resolves when the actor holds a group granting in every organisation', async () => {
+      vi.mocked(holdsGlobalPower).mockResolvedValueOnce(true)
 
       await expect(
-        service.assertSuperAdmin('do x', { email: 'root@example.com' }),
+        service.assertSuperAdmin('do x', { id: 'subject-root', email: 'root@example.com' }),
       ).resolves.toBeUndefined()
 
-      expect(opaService.simulate).toHaveBeenCalledWith(
-        'root@example.com',
-        'jinbe',
-        'POST',
-        '/api/admin/rbac/groups',
-      )
+      expect(holdsGlobalPower).toHaveBeenCalledWith('subject-root')
     })
 
-    it('throws 403 when OPA reports super_admin: false (rbac.service.ts:170-174)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce({
-        allow: true,
-        matching_rules: [],
-        groups: ['admins'],
-        roles: ['admin'],
-        permissions: ['*'],
-        super_admin: false,
-      })
+    it('throws 403 when the actor holds no such group', async () => {
+      vi.mocked(holdsGlobalPower).mockResolvedValueOnce(false)
 
       await expect(
-        service.assertSuperAdmin('elevate role', { email: 'admin@example.com' }),
+        service.assertSuperAdmin('elevate role', { id: 'subject-admin' }),
       ).rejects.toMatchObject({
         statusCode: 403,
-        message: 'Only super_admins may elevate role',
+        message: 'Only a group granting in every organisation may elevate role',
       })
     })
 
-    it('throws 403 when OPA returns null (no result) (rbac.service.ts:170)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce(null)
+    it('throws 503 when the model cannot be read, rather than deciding without it', async () => {
+      // "Nobody is powerful" and "I could not tell" are opposite facts. Answering 403 here would
+      // read as a missing right; answering 200 would authorize on ignorance.
+      vi.mocked(holdsGlobalPower).mockRejectedValueOnce(new Error('configmaps is forbidden'))
 
       await expect(
-        service.assertSuperAdmin('do y', { email: 'someone@example.com' }),
-      ).rejects.toMatchObject({
-        statusCode: 403,
-        message: 'Only super_admins may do y',
-      })
+        service.assertSuperAdmin('do y', { id: 'subject-someone' }),
+      ).rejects.toMatchObject({ statusCode: 503 })
     })
   })
 
