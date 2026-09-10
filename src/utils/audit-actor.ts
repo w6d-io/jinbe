@@ -18,6 +18,10 @@ export function auditActor(request: FastifyRequest): AuditActor & { requestId: s
   const email = uc?.email && uc.email !== 'unknown' ? uc.email : null
   const name = uc?.name && uc.name !== 'unknown' ? uc.name : null
   return {
+    // The IMMUTABLE identity, first. An address can be changed by its owner and reused by somebody
+    // else, so a trail keyed on one says less every year — and the gates that read this actor decide
+    // who may hand out rights, which must not follow an address around.
+    id: uc?.id && uc.id !== 'unknown' ? uc.id : null,
     email,
     name,
     ip: request.ip ?? null,

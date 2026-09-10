@@ -18,6 +18,15 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
 // The Redis mutex is infrastructure; these units validate the group-update
 // guard/MFA logic, not locking. Passthrough so no Redis is required (the lock
 // has its own test).
+// The store the engine actually reads. Group changes land here, so a test that left it real
+// would reach for Postgres.
+vi.mock('../../../services/organisation-store.js', () => ({
+  addToGroup: vi.fn().mockResolvedValue(undefined),
+  removeFromGroup: vi.fn().mockResolvedValue(undefined),
+  groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
+  organisationStoreConfigured: vi.fn().mockReturnValue(true),
+}))
+
 vi.mock('../../../services/redis-lock.js', () => ({
   withRedisLock: (_name: string, fn: () => unknown) => fn(),
 }))

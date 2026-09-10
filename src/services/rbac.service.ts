@@ -4,7 +4,7 @@ import { withRedisLock } from './redis-lock.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { opaService } from './opa.service.js'
+import { holdsGlobalPower } from './authorization-model.service.js'
 import { rbacResolverService } from './rbac-resolver.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
@@ -254,18 +254,41 @@ export class RbacService {
   }
 
   /**
-   * Privilege escalation guard: refuses the mutation unless the actor holds
-   * a global wildcard role (super_admin). Lookup goes through OPA so the
-   * decision matches request-time authorization exactly.
+   * Privilege escalation guard: refuses the mutation unless the actor holds a group that grants in
+   * EVERY organisation.
+   *
+   * Decided from the same ConfigMaps the engine decides against, and keyed on the IMMUTABLE identity
+   * rather than an address — this is the gate that says who may hand out rights, so it must not move
+   * when somebody changes their email, nor follow a reused one.
+   *
+   * What this replaces asked an engine for `data.rbac.simulate`, a path that stopped existing when
+   * the model became `strada.authz`. It answered nothing, so every group assignment had been refused
+   * since — a 403 that read like a missing right rather than a broken query.
+   *
+   * FAIL-CLOSED on every uncertainty: no identity, or a model that cannot be read, both refuse.
    */
-  private async requireSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
-    if (!actor?.email) {
-      throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
-    }
-    const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
-    if (!result?.super_admin) {
+  private async requireSuperAdmin(
+    reason: string,
+    actor?: { id?: string | null; email?: string | null },
+  ): Promise<void> {
+    if (!actor?.id) {
       throw Object.assign(
-        new Error(`Only super_admins may ${reason}`),
+        new Error('Authentication required for this operation'),
+        { statusCode: 401 },
+      )
+    }
+    let powerful: boolean
+    try {
+      powerful = await holdsGlobalPower(actor.id)
+    } catch (err) {
+      throw Object.assign(
+        new Error(`The authorization model could not be read, so nobody may ${reason}: ${(err as Error).message}`),
+        { statusCode: 503 },
+      )
+    }
+    if (!powerful) {
+      throw Object.assign(
+        new Error(`Only a group granting in every organisation may ${reason}`),
         { statusCode: 403 },
       )
     }
@@ -327,7 +350,10 @@ export class RbacService {
    * Public wrapper exposing the super_admin authority check used internally
    * by mutation guards. Throws 403 if the actor is not a super_admin.
    */
-  async assertSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
+  async assertSuperAdmin(
+    reason: string,
+    actor?: { id?: string | null; email?: string | null },
+  ): Promise<void> {
     return this.requireSuperAdmin(reason, actor)
   }
 

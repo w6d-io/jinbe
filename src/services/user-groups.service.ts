@@ -1,12 +1,14 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
-import { opaService } from './opa.service.js'
 import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
+import { addToGroup, removeFromGroup } from './organisation-store.js'
 
 /** Actor threaded from a request — audit fields (A4) + the R2 step-up state. */
 export type GroupUpdateActor = {
+  /** The immutable identity. The gate that decides who may hand out rights reads THIS, not the address. */
+  id?: string | null
   email?: string | null
   ip?: string | null
   name?: string | null
@@ -229,7 +231,27 @@ class UserGroupsService {
       }
     }
 
+    // Two stores, and the ORDER between them is a safety property rather than a detail.
+    //
+    // `group_members` in this database is what the engine decides against — the artefact carries it.
+    // Kratos metadata is a display copy nothing enforces; both are written from the SAME value so a
+    // screen that edits still saves what it shows, until every reader moves off it.
+    //
+    // REVOCATIONS GO TO THE ENFORCED STORE FIRST. Taking a group away in the display and then
+    // failing to take it away where it counts would leave a right that is still enforced and no
+    // longer visible — the one failure nobody would notice.
+    //
+    // GRANTS GO TO THE ENFORCED STORE LAST, for the mirror reason: a right that is enforced before
+    // anything shows it is a silent privilege. Shown-but-not-yet-enforced is merely broken, and
+    // visibly so.
+    const revoked = oldGroups.filter((g) => !finalGroups.includes(g))
+    const granted = finalGroups.filter((g) => !oldGroups.includes(g))
+
+    for (const group of revoked) await removeFromGroup(identity.id, group)
+
     await kratosService.updateUserGroups(identity.email, finalGroups)
+
+    for (const group of granted) await addToGroup(identity.id, group, actor.email ?? undefined)
 
     // Fire-and-forget: OPAL cache invalidation. On failure, OPA stays
     // stale until its next poll (~30s). Mutation is already persisted in
@@ -238,7 +260,7 @@ class UserGroupsService {
 
     auditEventService.emit({
       type: auditEventType,
-      actor: { email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
       requestId: actor.requestId,
       target: { type: 'user', id: identity.id },
       // Keep oldGroups/newGroups in details for back-compat; the structural
@@ -282,7 +304,7 @@ class UserGroupsService {
       result: 'denied',
       severity: 'warn',
       reason,
-      actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
       requestId: actor.requestId,
       targetId: identity.id,
       targetType: 'user',
@@ -328,7 +350,7 @@ class UserGroupsService {
   private async checkPrivilegeEscalation(
     groupName: string,
     targetEmail: string,
-    actor: { email?: string | null; ip?: string | null },
+    actor: { id?: string | null; email?: string | null; ip?: string | null },
     policy: ActorPrivilegePolicy,
     op: 'add' | 'remove' = 'add',
   ): Promise<ApplyGroupUpdateResult | null> {
@@ -336,7 +358,7 @@ class UserGroupsService {
       try {
         await rbacService.assertSuperAdmin(
           `assign group '${groupName}' (grants admin privileges)`,
-          { email: actor.email },
+          { id: actor.id, email: actor.email },
         )
         return null
       } catch (e) {
@@ -355,6 +377,13 @@ class UserGroupsService {
       }
     }
 
+    // Org-scoped grant. NOT AVAILABLE in this model, and refused with a reason that says so rather
+    // than through a query that answers nothing: `strada.authz` has no delegation concept — no
+    // permission expresses "may hand out this group here", so there is nothing to check against.
+    // Assignment therefore goes through the global gate above until that permission is designed.
+    //
+    // Below is what it asked before, kept for what it documents about the intent.
+    //
     // Org-scoped grant. OPA `can_grant` is the SOLE authority: it enforces the
     // single-service tenant boundary (non-global, confined to the org's service)
     // and the authority tier (delegated org admin with containment, OR a
@@ -386,14 +415,19 @@ class UserGroupsService {
     // endpoint, never here — for everyone, super_admins included.
     if (await rbacService.groupGrantsGlobalPower(groupName)) return blocked
 
-    if (!actor.email) return blocked
-    const allowed = await opaService.canGrant({
-      actor: { email: actor.email },
-      target_group: groupName,
-      target_org: policy.orgId,
-    })
-    if (!allowed) return blocked
-    return null
+    return {
+      ok: false,
+      status: 422,
+      body: {
+        error: 'delegation_not_defined',
+        message:
+          'This model defines no delegated authority to assign a group within one organisation. ' +
+          'A group granting in every organisation can make this change.',
+        targetEmail,
+        blockingGroup: groupName,
+        hint: 'Use the global assignment endpoint, or define a permission that expresses this delegation.',
+      },
+    }
   }
 }
 
