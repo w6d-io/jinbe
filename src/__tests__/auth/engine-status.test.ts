@@ -72,3 +72,26 @@ describe('engine status', () => {
     expect(propagation(null, T0).settled).toBe(false)
   })
 })
+
+describe('who may read the propagation', () => {
+  it('answers a signed-in operator, and refuses an anonymous caller', async () => {
+    const { opaPolicyBundleRoutes } = await import('../../routes/opa-bundle-policy.routes.js')
+    const routes: Array<{ url: string; method: string; hasOwnGuard: boolean }> = []
+    const fastify = {
+      addHook: () => {},
+      get: (url: string, opts: { preHandler?: unknown }) =>
+        routes.push({ url, method: 'GET', hasOwnGuard: !!opts?.preHandler }),
+      post: (url: string, opts: { preHandler?: unknown }) =>
+        routes.push({ url, method: 'POST', hasOwnGuard: !!opts?.preHandler }),
+    }
+    await opaPolicyBundleRoutes(fastify as never)
+
+    // The bundle and the status report take the machine credential from the group hook.
+    // `/propagation` carries its OWN guard, which is what lets the console — which holds no machine
+    // credential — ask whether the change it just made has landed.
+    const propagation = routes.find((r) => r.url === '/propagation')
+    expect(propagation).toBeDefined()
+    expect(propagation?.hasOwnGuard).toBe(true)
+    expect(routes.find((r) => r.url === '/policy')?.hasOwnGuard).toBe(false)
+  })
+})

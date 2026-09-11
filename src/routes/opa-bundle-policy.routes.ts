@@ -16,7 +16,12 @@ import { recordEngineStatus, propagation } from '../services/engine-status.servi
  * every rule and everybody who satisfies one.
  */
 export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', machineOnly)
+  // The machine credential guards what only a machine asks for. `/propagation` is the exception and
+  // is guarded per-route below: it answers the question an OPERATOR asks right after a write, and a
+  // route only a machine can read cannot be read by the person the answer is for.
+  fastify.addHook('preHandler', (request, reply) =>
+    request.url.includes('/propagation') ? Promise.resolve() : machineOnly(request, reply),
+  )
 
   fastify.get(
     '/policy',
@@ -98,6 +103,7 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/propagation',
     {
+      preHandler: machineOrOperator,
       schema: {
         description: 'The revision this service serves, and the revision each engine reports',
         tags: ['opa'],
@@ -132,6 +138,19 @@ const STATUS_BODY_LIMIT = 4 * 1024 * 1024
  * Fail-closed and deliberately uninformative: a caller learns that its credential was not accepted
  * and never why.
  */
+/**
+ * A signed-in operator, or a machine. Whether a change has reached the engines is not a secret from
+ * the person who just made it — and the console has no machine credential, so a machine-only route
+ * is one the screen that needs it cannot call.
+ *
+ * Still not public: it names the engines and what they hold.
+ */
+async function machineOrOperator(request: FastifyRequest, reply: FastifyReply) {
+  // Populated by the identity extractor for a session or a bearer token, before any route runs.
+  if (request.userContext?.id && request.userContext.email !== 'unknown') return
+  return machineOnly(request, reply)
+}
+
 async function machineOnly(request: FastifyRequest, reply: FastifyReply) {
   const header = request.headers.authorization
   const presented = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
