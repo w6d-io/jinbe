@@ -211,6 +211,8 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
+    // The body asked for `users`, so `users` is written. The base group is only special in that
+    // nothing forces it back any more.
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['users'])
     expect(reply.send).toHaveBeenCalled()
     const body = reply._body as Record<string, unknown>
@@ -223,7 +225,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
     expect(typeof body.updatedAt).toBe('string')
   })
 
-  it('defaults to ["users"] when body groups is empty', async () => {
+  it('takes the last group away instead of putting the base one back', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
@@ -244,7 +246,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['users'])
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', [])
   })
 })
 

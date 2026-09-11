@@ -232,7 +232,7 @@ describe('AdminController - User Groups', () => {
       expect((reply._body as { updatedAt: string }).updatedAt).toBeDefined()
     })
 
-    it('should default to ["users"] when empty groups array', async () => {
+    it('takes the last group away instead of putting the base one back', async () => {
       vi.mocked(kratosService.updateUserGroups).mockResolvedValueOnce({
         id: 'user-123',
         schema_id: 'default',
@@ -249,8 +249,9 @@ describe('AdminController - User Groups', () => {
 
       await controller.updateUserGroups(request, reply)
 
-      expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['users'])
-      expect((reply._body as { groups: string[] }).groups).toEqual(['users'])
+      expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', [])
+      // What the caller asked for, and therefore what they now hold: nothing.
+      expect((reply._body as { groups: string[] }).groups).toEqual([])
     })
 
     it('should return 400 when a group is not in the authorization model', async () => {
