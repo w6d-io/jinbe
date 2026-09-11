@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { holdsPlatformPermission } from '../services/authorization-model.service.js'
+import { enforcing } from '../policy/declared-routes.js'
 
 /**
  * Requires a permission ACROSS the platform, from the model the engine decides against.
@@ -14,7 +15,8 @@ import { holdsPlatformPermission } from '../services/authorization-model.service
  * complete one.
  */
 export function requirePlatformPermission(required: string) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  // Marked so the published route table is READ OFF the guard rather than written beside it.
+  return enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
     const subject = request.userContext?.id
     if (!subject || subject === 'unknown') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
@@ -39,5 +41,5 @@ export function requirePlatformPermission(required: string) {
         message: `This needs ${required}.`,
       })
     }
-  }
+  }, required)
 }

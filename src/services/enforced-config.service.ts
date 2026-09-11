@@ -7,6 +7,7 @@ import {
   organisationsById,
   organisationStoreConfigured,
 } from './organisation-store.js'
+import { declaredRoutes } from '../policy/declared-routes.js'
 
 /**
  * What actually decides, read from where it actually lives.
@@ -391,7 +392,10 @@ export async function enforcedConfiguration(): Promise<EnforcedDocument[]> {
     if (edge.status === 'rejected') throw edge.reason
     if (policy.status === 'rejected') throw policy.reason
 
-    return await named(withTableCoverage(edge.value, policy.value))
+    // This service's OWN table, alongside the ones the cluster holds. It is not a ConfigMap: it is
+    // read off the guards this process attached, so it ships with the code that enforces it and a
+    // deployment cannot end up with a table describing a different build.
+    return await named(withTableCoverage(edge.value, [...policy.value, ownRouteTable(namespace)]))
   } catch (err) {
     throw new EnforcedConfigUnavailableError(
       `Could not read the enforced configuration in namespace ${namespace}: ${(err as Error).message}`,
@@ -506,5 +510,31 @@ async function organisationNamesFor(ids: readonly string[]): Promise<Map<string,
     return new Map((await organisationsById(ids)).map((o) => [o.id, o.name]))
   } catch {
     return new Map()
+  }
+}
+
+/**
+ * What THIS service requires on its own routes.
+ *
+ * jinbe does not sit behind the gateway — it is the thing an operator reaches to repair a broken
+ * authorization state, and a component used to fix authorization must not be gated by authorization
+ * it serves. So nothing looks this table up to decide. It is published because the console could
+ * not otherwise say what `admin:read` opens, and because the rows that used to say it were seeded
+ * into a store nothing reads, in a vocabulary the model no longer knows.
+ */
+function ownRouteTable(namespace: string): EnforcedDocument {
+  const routes = declaredRoutes().filter((r) => r.class === 'authorized')
+  return {
+    kind: 'ConfigMap',
+    name: 'jinbe',
+    namespace,
+    decides: 'What this service requires on its own routes. Enforced in-process, not at the edge.',
+    yaml: '',
+    routes: routes.map((r) => ({
+      method: r.method,
+      path: r.path,
+      class: r.class,
+      ...(r.permission ? { permission: r.permission } : {}),
+    })),
   }
 }

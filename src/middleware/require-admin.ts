@@ -4,6 +4,7 @@ import { auditEventService } from '../services/audit-event.service.js'
 import { platformRightsOf } from '../services/authorization-model.service.js'
 import { permits } from '../services/authorization-resolution.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
+import { enforcing } from '../policy/declared-routes.js'
 
 /** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
 const READ_ADMIN = 'admin:read'
@@ -58,7 +59,7 @@ async function resolveOrNull(subjectId: string, email: string): Promise<UserRbac
   }
 }
 
-export async function requireAdmin(
+async function requireAdminHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
@@ -234,7 +235,7 @@ const WRITE_ADMIN = 'admin:write'
  * Use for sensitive operations like changing user groups.
  * More restrictive than requireAdmin - only super_admins allowed.
  */
-export async function requireSuperAdmin(
+async function requireSuperAdminHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
@@ -384,3 +385,8 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
     })
   }
 }
+
+// The two fixed gates, marked with what they require so the published route table is read off the
+// guard rather than written beside it. Two spellings of one rule are two rules.
+export const requireAdmin = enforcing(requireAdminHandler, READ_ADMIN)
+export const requireSuperAdmin = enforcing(requireSuperAdminHandler, WRITE_ADMIN)
