@@ -295,8 +295,8 @@ class UserGroupsService {
     if (gated.length > 0) {
       const stale = this.stepUpDenial(actor, identity.email)
       if (stale) {
-        const reason = (stale.ok ? '' : (stale.body as { error?: string }).error) || 'reauth_required'
-        this.emitDenied(reason, identity, actor, gated[0]?.group, 422)
+        const body = stale.ok ? {} : (stale.body as { error?: string; stepUp?: { observed?: unknown } })
+        this.emitDenied(body.error || 'reauth_required', identity, actor, gated[0]?.group, 422, body.stepUp?.observed)
         return stale
       }
     }
@@ -380,6 +380,7 @@ class UserGroupsService {
     actor: GroupUpdateActor,
     blockingGroup: string | undefined,
     status: number,
+    observed?: unknown,
   ): void {
     auditEventService.emit({
       category: 'access',
@@ -394,7 +395,7 @@ class UserGroupsService {
       targetId: identity.id,
       targetType: 'user',
       statusCode: status,
-      details: { blockingGroup, targetEmail: identity.email },
+      details: { blockingGroup, targetEmail: identity.email, ...(observed ? { observed } : {}) },
       source: 'jinbe-api',
     }).catch(() => {})
   }
@@ -406,9 +407,23 @@ class UserGroupsService {
   // ingress does not strip the body/headers) when the second factor is absent or
   // stale; null when satisfied. Fail-closed: an unknown level or time denies.
   private stepUpDenial(
-    actor: { aal?: string; secondFactorAt?: Date | string | null; authVia?: 'session' | 'bearer' | 'machine' | 'dev' },
+    actor: {
+      aal?: string
+      secondFactorAt?: Date | string | null
+      authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+      sessionId?: string | null
+    },
     targetEmail: string,
   ): ApplyGroupUpdateResult | null {
+    // What the gate actually READ is part of the refusal. Without it, a refusal that repeats after a
+    // successful re-verification is indistinguishable from one that never looked — and the operator
+    // is left proving a factor over and over with nothing to go on.
+    const observed = {
+      aal: actor.aal ?? null,
+      secondFactorAt: actor.secondFactorAt ? new Date(actor.secondFactorAt).toISOString() : null,
+      authVia: actor.authVia ?? null,
+      sessionId: actor.sessionId ?? null,
+    }
     const reauth = (message: string): ApplyGroupUpdateResult => ({
       ok: false,
       status: 422,
@@ -417,7 +432,7 @@ class UserGroupsService {
         error: 'reauth_required',
         message,
         targetEmail,
-        stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000 },
+        stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000, observed },
         hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
       },
     })
