@@ -4,6 +4,8 @@ import { requireAdmin } from '../middleware/require-admin.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { unauthorizedResponseSchema, forbiddenResponseSchema } from '../schemas/response-schemas.js'
 import type { AuditCategory, AuditKind, AuditResult, FrontendAuditEvent } from '../services/audit-event.service.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 
 /**
  * Audit Events endpoint — admin only
@@ -57,7 +59,7 @@ export async function auditRoutes(fastify: FastifyInstance) {
   })
 
   // All remaining routes require admin
-  fastify.addHook('preHandler', requireAdmin)
+  guardAll(fastify, requireAdmin, isPublicRoute)
 
   fastify.get('/events', {
     schema: {
