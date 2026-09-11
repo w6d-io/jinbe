@@ -1,3 +1,4 @@
+import { allGroupMemberships } from './organisation-store.js'
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
@@ -512,10 +513,15 @@ export class RbacService {
     // it while we compute, our bindings pre-image is stale and we must NOT cache.
     const startEpoch = this.statsEpoch
     const p = (async (): Promise<DirectoryStats> => {
-      const [bindings, wildGroups, groupDefs] = await Promise.all([
+      // Who is in which group comes from the store the ENGINE reads. It used to be counted off
+      // Kratos metadata — the display copy — so every group the model declares showed `0 members`
+      // while the memberships that decide requests sat in `group_members`, uncounted. A screen
+      // saying nobody holds a group is the one answer that is certainly wrong.
+      const [bindings, wildGroups, groupDefs, memberships] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings(),
         this.wildcardGroupNames(),
         redisRbacRepository.getGroups(),
+        allGroupMemberships().catch(() => null),
       ])
       // group → the services it grants roles on (for per-service reach counts)
       const groupServices: Record<string, string[]> = {}
@@ -529,9 +535,8 @@ export class RbacService {
       const perService: Record<string, number> = {}
       for (const b of bindings.values()) {
         if (b.active) active++
-        // Raw metadata group names (may include orphans not in rbac:groups).
-        // The UI reads only the groups it knows, so reporting raw keys is safe.
-        for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
+        // Only when the enforced store could not be read — see below.
+        if (!memberships) for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
         if (b.primaryOrganization) perOrg[b.primaryOrganization] = (perOrg[b.primaryOrganization] ?? 0) + 1
         // Only the default 'users' membership → can't reach anything.
         if (b.groups.every((g) => g === 'users')) unassigned++
@@ -541,6 +546,15 @@ export class RbacService {
         for (const g of b.groups) for (const s of groupServices[g] ?? []) svcs.add(s)
         for (const s of svcs) perService[s] = (perService[s] ?? 0) + 1
       }
+      // Counted from the enforced store when it answers. Falling back to the display copy rather
+      // than to zero: a count that is merely out of date is worse than nothing only if it is
+      // mistaken for the truth, and zero is a stronger claim than either.
+      if (memberships) {
+        for (const groups of memberships.values()) {
+          for (const g of groups) perGroup[g] = (perGroup[g] ?? 0) + 1
+        }
+      }
+
       const stats: DirectoryStats = {
         total: bindings.size,
         active,
