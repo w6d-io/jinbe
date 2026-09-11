@@ -54,7 +54,7 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
-import { addToGroup, removeFromGroup } from '../../../services/organisation-store.js'
+import { addToGroup, groupsForSubjects, removeFromGroup } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
 import {
   AuthorizationModelUnavailableError,
@@ -64,6 +64,11 @@ import {
   authorizationModel,
   resetAuthorizationModel,
 } from '../../helpers/authorization-model-mock.js'
+
+/** Seed what the ENFORCED store says this identity holds — the pre-image the diff is taken against. */
+function holds(...groups: string[]) {
+  vi.mocked(groupsForSubjects).mockResolvedValue(new Map([['user-123', groups]]))
+}
 
 const IDENTITY: ResolvedIdentity = {
   id: 'user-123',
@@ -78,7 +83,7 @@ const ACTOR = { email: 'actor@example.com', ip: '127.0.0.1', aal: 'aal2', authen
 describe('userGroupsService.applyGroupUpdate — happy path', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('returns ok=true with enriched response shape and persists groups', async () => {
@@ -151,7 +156,7 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
   })
 
   it('skips priv-escalation and MFA gates when newlyAdded is empty (groups unchanged)', async () => {
-    vi.mocked(kratosService.getUserGroups).mockResolvedValueOnce(['users'])
+    holds('users')
 
     await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -170,7 +175,7 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
 describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
   })
 
@@ -228,7 +233,7 @@ describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
 describe('userGroupsService.applyGroupUpdate — org_admins flag gate', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
     // The flag group is EMPTY → NOT admin-power. Without the explicit guard the
     // global path (isAdminPowerGroup) would skip the super_admin check for it.
   })
@@ -295,7 +300,7 @@ describe('userGroupsService.applyGroupUpdate — org_admins flag gate', () => {
 describe('userGroupsService.applyGroupUpdate — super_admin_required policy', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('returns 422 privilege_escalation_blocked when assertSuperAdmin throws 403', async () => {
@@ -367,7 +372,7 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
     // A super_admin drops a privileged group. Removals are not gated here — the
     // endpoint is super_admin-gated at the route and a super_admin can remove
     // anything. Only *added* admin-power groups reach assertSuperAdmin.
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['admins', 'users'])
+    holds('admins', 'users')
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -389,7 +394,7 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
   // change made on screen was never enforced.
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('writes a grant where the engine reads it, keyed on the identity', async () => {
@@ -411,7 +416,7 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
     // The order is a safety property. Removing from the display and then failing to remove where it
     // counts leaves a right that is still enforced and no longer visible — the failure nobody would
     // notice. So revocations go to the enforced store first.
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users', 'operators'])
+    holds('users', 'operators')
     const order: string[] = []
     vi.mocked(removeFromGroup).mockImplementation(async () => {
       order.push('store')
@@ -458,7 +463,7 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
   it('touches neither store for a group that did not change', async () => {
     // `group_members` is keyed on (subject, group), so rewriting an unchanged row would lose
     // `created_by` and `created_at` — the two columns that answer "who granted this, and when".
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users', 'operators'])
+    holds('users', 'operators')
 
     await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -484,7 +489,7 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
   // and every assignment had been refused since — a 403 indistinguishable from a missing right.
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('refuses an org-scoped grant, and names what is missing', async () => {
@@ -507,7 +512,7 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
     // The property the old block guarded and which must survive its removal: a replace-PUT through
     // the org endpoint must not be able to take a group away either. Refusing the whole path is a
     // stronger guarantee than checking each group, not a weaker one.
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['admins'])
+    holds('admins')
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -540,7 +545,7 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
 describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('returns 422 mfa_required when the target of a platform grant has no second factor', async () => {
@@ -570,7 +575,7 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
 describe('applyGroupUpdate — denied writes emit an audit event (A2)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
   })
 
   it('emits a denied event when a privilege escalation is blocked', async () => {
@@ -606,7 +611,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
   beforeEach(() => {
     vi.clearAllMocks()
     resetAuthorizationModel()
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+    holds()
     vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
   })
@@ -688,7 +693,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
   it('still lets an undeclared group be REMOVED, so a legacy one can be cleaned up', async () => {
     // Only additions are checked. A group predating the model confers nothing, and refusing to take
     // it away would leave the rows nobody can explain exactly where they are.
-    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['kuma-admin', 'users'])
+    holds('kuma-admin', 'users')
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -720,5 +725,69 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     expect(result).toMatchObject({ ok: false, status: 503 })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
     expect(addToGroup).not.toHaveBeenCalled()
+  })
+})
+
+describe('userGroupsService.applyGroupUpdate — a membership the display copy never had', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetAuthorizationModel()
+    vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
+    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
+  })
+
+  it('revokes it, even though Kratos never mentioned it', async () => {
+    // Measured on a real account: `group_members` held `platform-operator`, Kratos metadata held
+    // `users`. Taken against the metadata, the diff never saw the group — so it was never in
+    // `removed`, never revoked, and the screen reported a removal that did not happen.
+    holds('platform-operator')
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users'])
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'platform-operator')
+  })
+
+  it('does not re-grant what the display copy is merely missing', async () => {
+    // The mirror: a group the enforced store already holds is not an ADDITION, so it must not be put
+    // through the gates again — nor written twice, which would lose who granted it and when.
+    holds('super_admins')
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['super_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(addToGroup).not.toHaveBeenCalled()
+    expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
+  })
+
+  it('reports the enforced pre-image in the audit trail, not the copy', async () => {
+    holds('platform-operator')
+    vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users'])
+
+    await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    const emitted = vi.mocked(auditEventService.emit).mock.calls.map(([event]) => event)
+    const change = emitted.find((event) => event.type === 'user.groups_changed')
+    expect(change?.details).toMatchObject({ oldGroups: ['platform-operator'] })
   })
 })

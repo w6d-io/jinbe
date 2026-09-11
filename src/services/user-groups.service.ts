@@ -3,7 +3,7 @@ import { rbacService } from './rbac.service.js'
 import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
-import { addToGroup, removeFromGroup } from './organisation-store.js'
+import { addToGroup, groupsForSubjects, removeFromGroup } from './organisation-store.js'
 import {
   AuthorizationModelUnavailableError,
   groupFacts,
@@ -138,10 +138,16 @@ class UserGroupsService {
     // Residual: Kratos itself has no ETag/CAS, so a group write originating
     // OUTSIDE jinbe could still race; within jinbe the per-user lock above
     // serializes every writer, so the pre-image is authoritative here.
+    //
+    // READ FROM THE STORE THAT DECIDES, not from the copy. It used to come from Kratos metadata, and
+    // that made a membership held ONLY in the enforced store invisible to the diff: never in
+    // `oldGroups`, therefore never in `removed`, therefore never revoked. The screen offered to take
+    // a group away, reported success, and left it deciding — the exact failure the write order below
+    // exists to prevent, arriving through the read instead.
     let oldGroups: string[]
     try {
-      const fetched = await kratosService.getUserGroups(identity.email)
-      oldGroups = Array.isArray(fetched) ? fetched : []
+      const held = await groupsForSubjects([identity.id])
+      oldGroups = held.get(identity.id) ?? []
     } catch {
       return {
         ok: false,

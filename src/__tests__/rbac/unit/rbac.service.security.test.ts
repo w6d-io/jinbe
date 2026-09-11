@@ -69,6 +69,17 @@ vi.mock('../../../services/authorization-model.service.js', async () => ({
   holdsPlatformPermission: vi.fn(),
 }))
 
+// The pre-image of a group change comes from the store that decides, so the J1 case below needs it
+// mocked: unmocked, the guard it exercises is never reached — the read fails closed first.
+vi.mock('../../../services/organisation-store.js', () => ({
+  groupsForSubjects: vi.fn(async () => new Map([['target-1', []]])),
+  addToGroup: vi.fn(async () => {}),
+  removeFromGroup: vi.fn(async () => {}),
+  allGroupMemberships: vi.fn(async () => new Map()),
+  allEntitlements: vi.fn(async () => new Map()),
+  organisationStoreConfigured: vi.fn(() => true),
+}))
+
 vi.mock('../../../services/opa.service.js', () => ({
   opaService: {
     simulate: vi.fn(),
