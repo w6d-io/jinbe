@@ -3,7 +3,7 @@ import { rbacService } from './rbac.service.js'
 import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
-import { addToGroup, groupsForSubjects, removeFromGroup } from './organisation-store.js'
+import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
 import {
   AuthorizationModelUnavailableError,
   groupFacts,
@@ -153,6 +153,7 @@ class UserGroupsService {
         ok: false,
         status: 422,
         body: {
+          applied: false,
           error: 'groups_precondition_failed',
           message:
             "Could not read the user's current groups to verify this change is within your authority; no change was made. Please retry.",
@@ -213,6 +214,7 @@ class UserGroupsService {
         ok: false,
         status: 503,
         body: {
+          applied: false,
           error: 'authorization_model_unavailable',
           message:
             'The authorization model could not be read, so this change could not be checked; no change was made. Please retry.',
@@ -234,6 +236,7 @@ class UserGroupsService {
         ok: false,
         status: 400,
         body: {
+          applied: false,
           error: 'Bad Request',
           message: `Not in the authorization model: ${undeclared.join(', ')}. Assignable groups come from GET /admin/assignable-groups.`,
           targetEmail: identity.email,
@@ -270,6 +273,7 @@ class UserGroupsService {
           ok: false,
           status: 422,
           body: {
+            applied: false,
             error: 'mfa_required',
             message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
             targetEmail: identity.email,
@@ -310,11 +314,14 @@ class UserGroupsService {
     const revoked = oldGroups.filter((g) => !finalGroups.includes(g))
     const granted = finalGroups.filter((g) => !oldGroups.includes(g))
 
-    for (const group of revoked) await removeFromGroup(identity.id, group)
+    // The revocations first and in ONE transaction. Applied a statement at a time, a failure halfway
+    // left somebody holding part of what was asked and part of what was not — a state nobody
+    // requested, that no gate decided, and that the screen would then read back as the truth.
+    await applyGroupChange(identity.id, revoked, [], actor.email ?? undefined)
 
     await kratosService.updateUserGroups(identity.email, finalGroups)
 
-    for (const group of granted) await addToGroup(identity.id, group, actor.email ?? undefined)
+    await applyGroupChange(identity.id, [], granted, actor.email ?? undefined)
 
     // Fire-and-forget: OPAL cache invalidation. On failure, OPA stays
     // stale until its next poll (~30s). Mutation is already persisted in
@@ -401,6 +408,7 @@ class UserGroupsService {
       ok: false,
       status: 422,
       body: {
+        applied: false,
         error: 'reauth_required',
         message,
         targetEmail,
@@ -491,6 +499,7 @@ class UserGroupsService {
       ok: false,
       status: 422,
       body: {
+        applied: false,
         error: 'delegation_not_defined',
         message:
           'This model defines no delegated authority to assign a group within one organisation. ' +

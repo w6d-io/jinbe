@@ -10,6 +10,7 @@ vi.mock('../../../services/authorization-model.service.js', async () =>
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
+  applyGroupChange: vi.fn().mockResolvedValue(undefined),
   removeFromGroup: vi.fn().mockResolvedValue(undefined),
   groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
   organisationStoreConfigured: vi.fn().mockReturnValue(true),
@@ -54,7 +55,7 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
-import { addToGroup, groupsForSubjects, removeFromGroup } from '../../../services/organisation-store.js'
+import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
 import {
   AuthorizationModelUnavailableError,
@@ -64,6 +65,12 @@ import {
   authorizationModel,
   resetAuthorizationModel,
 } from '../../helpers/authorization-model-mock.js'
+
+/** What one call to the atomic write took away, and what it gave. */
+const revokedIn = (call: unknown[]) => call[1] as string[]
+const grantedIn = (call: unknown[]) => call[2] as string[]
+const allRevoked = () => vi.mocked(applyGroupChange).mock.calls.flatMap(revokedIn)
+const allGranted = () => vi.mocked(applyGroupChange).mock.calls.flatMap(grantedIn)
 
 /** Seed what the ENFORCED store says this identity holds — the pre-image the diff is taken against. */
 function holds(...groups: string[]) {
@@ -123,8 +130,8 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
     })
 
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', [])
-    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'platform-operator')
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allRevoked()).toContain('platform-operator')
+    expect(allGranted()).toEqual([])
   })
 
   it('emits audit event with extra details merged into details object', async () => {
@@ -416,7 +423,7 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
     expect(result.ok).toBe(true)
     // The identity, not the address: an address changes hands, a membership pointing at one would
     // follow whoever holds it next.
-    expect(addToGroup).toHaveBeenCalledWith(IDENTITY.id, 'operators', ACTOR.email)
+    expect(allGranted()).toContain('operators')
   })
 
   it('takes a revocation away BEFORE the display forgets it', async () => {
@@ -425,8 +432,8 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
     // notice. So revocations go to the enforced store first.
     holds('users', 'operators')
     const order: string[] = []
-    vi.mocked(removeFromGroup).mockImplementation(async () => {
-      order.push('store')
+    vi.mocked(applyGroupChange).mockImplementation(async (_id, revoked) => {
+      if (revoked.length > 0) order.push('store')
     })
     vi.mocked(kratosService.updateUserGroups).mockImplementation(async () => {
       order.push('kratos')
@@ -440,14 +447,14 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       auditEventType: 'user.groups_changed',
     })
 
-    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'operators')
+    expect(allRevoked()).toContain('operators')
     expect(order).toEqual(['store', 'kratos'])
   })
 
   it('grants only AFTER the display shows it, so nothing is enforced invisibly', async () => {
     const order: string[] = []
-    vi.mocked(addToGroup).mockImplementation(async () => {
-      order.push('store')
+    vi.mocked(applyGroupChange).mockImplementation(async (_id, _revoked, granted) => {
+      if (granted.length > 0) order.push('store')
     })
     vi.mocked(kratosService.updateUserGroups).mockImplementation(async () => {
       order.push('kratos')
@@ -480,8 +487,8 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       auditEventType: 'user.groups_changed',
     })
 
-    expect(addToGroup).not.toHaveBeenCalled()
-    expect(removeFromGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
+    expect(allRevoked()).toEqual([])
   })
 })
 
@@ -531,7 +538,7 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
 
     expect(result).toMatchObject({ ok: false, status: 422 })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(removeFromGroup).not.toHaveBeenCalled()
+    expect(allRevoked()).toEqual([])
   })
 
   it('writes nothing at all when it refuses', async () => {
@@ -543,8 +550,8 @@ describe('userGroupsService.applyGroupUpdate — the org-scoped path has no dele
       auditEventType: 'organization_user.groups_changed',
     })
 
-    expect(addToGroup).not.toHaveBeenCalled()
-    expect(removeFromGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
+    expect(allRevoked()).toEqual([])
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })
@@ -643,7 +650,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
 
     expect(result).toMatchObject({ ok: false, status: 422 })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
   })
 
   it('requires the target of that grant to hold a second factor', async () => {
@@ -659,7 +666,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     })
 
     expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'mfa_required' } })
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
   })
 
   it('does NOT gate a grant scoped to one organisation', async () => {
@@ -694,7 +701,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
       body: { message: expect.stringContaining('Not in the authorization model: kuma-admin') },
     })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
   })
 
   it('still lets an undeclared group be REMOVED, so a legacy one can be cleaned up', async () => {
@@ -711,7 +718,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     })
 
     expect(result.ok).toBe(true)
-    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'kuma-admin')
+    expect(allRevoked()).toContain('kuma-admin')
   })
 
   it('refuses with 503 when the model cannot be read, rather than deciding without it', async () => {
@@ -731,7 +738,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
 
     expect(result).toMatchObject({ ok: false, status: 503 })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
   })
 })
 
@@ -759,7 +766,7 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
     })
 
     expect(result.ok).toBe(true)
-    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'platform-operator')
+    expect(allRevoked()).toContain('platform-operator')
   })
 
   it('does not re-grant what the display copy is merely missing', async () => {
@@ -777,7 +784,7 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
     })
 
     expect(result.ok).toBe(true)
-    expect(addToGroup).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
     expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
   })
 
@@ -796,5 +803,57 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
     const emitted = vi.mocked(auditEventService.emit).mock.calls.map(([event]) => event)
     const change = emitted.find((event) => event.type === 'user.groups_changed')
     expect(change?.details).toMatchObject({ oldGroups: ['platform-operator'] })
+  })
+})
+
+describe('userGroupsService.applyGroupUpdate — a change lands whole or not at all', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetAuthorizationModel()
+    vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
+    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
+  })
+
+  it('hands every revocation to one call, and every grant to one call', async () => {
+    // Applied a statement at a time, a failure halfway leaves somebody holding part of what was
+    // asked and part of what was not — a state no gate decided and nothing records.
+    holds('admins', 'devs')
+
+    await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['viewers', 'operators'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    const calls = vi.mocked(applyGroupChange).mock.calls
+    expect(calls).toHaveLength(2)
+    expect(revokedIn(calls[0]).sort()).toEqual(['admins', 'devs'])
+    expect(grantedIn(calls[0])).toEqual([])
+    expect(revokedIn(calls[1])).toEqual([])
+    expect(grantedIn(calls[1]).sort()).toEqual(['operators', 'viewers'])
+  })
+
+  it('refuses without touching either store when a gate says no', async () => {
+    // The five-group change measured in dev: refused on the actor's step-up, and the screen then
+    // showed the PREVIOUS state — which reads as "three of five failed" unless the refusal says it
+    // applied nothing.
+    authorizationModel.groups['platform-admin'] = { '*': ['platform-admin'] }
+    holds('premium-operator')
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['platform-admin', 'premium-operator'],
+      actor: { email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() },
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(result).toMatchObject({ ok: false, body: { error: 'reauth_required' } })
+    expect(applyGroupChange).not.toHaveBeenCalled()
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+    // And it says so, rather than leaving the caller to infer it from a screen that did not change.
+    if (!result.ok) expect(result.body).toMatchObject({ applied: false })
   })
 })
