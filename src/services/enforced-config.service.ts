@@ -433,8 +433,14 @@ async function configuredPayloadService(
   namespace: string,
 ): Promise<string | undefined> {
   const core = kc.makeApiClient(k8s.CoreV1Api)
-  const item = await core.readNamespacedConfigMap({ name: EDGE_CONFIG, namespace })
-  const config = Object.values(item.data ?? {}).join('\n')
+  // LISTED by name rather than read: the grant this pod holds on ConfigMaps is `list` and nothing
+  // else, so a `get` is refused — and the fail-soft above would have turned that refusal into a
+  // permanently missing annotation nobody would have questioned.
+  const answer = await core.listNamespacedConfigMap({
+    namespace,
+    fieldSelector: `metadata.name=${EDGE_CONFIG}`,
+  })
+  const config = Object.values(answer.items?.[0]?.data ?? {}).join('\n')
   return serviceInPayload(config)
 }
 
