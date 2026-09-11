@@ -10,6 +10,7 @@ vi.mock('../../../services/authorization-model.service.js', async () =>
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
+  applyGroupChange: vi.fn().mockResolvedValue(undefined),
   removeFromGroup: vi.fn().mockResolvedValue(undefined),
   groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
   organisationStoreConfigured: vi.fn().mockReturnValue(true),

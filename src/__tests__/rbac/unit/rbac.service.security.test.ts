@@ -74,6 +74,7 @@ vi.mock('../../../services/authorization-model.service.js', async () => ({
 vi.mock('../../../services/organisation-store.js', () => ({
   groupsForSubjects: vi.fn(async () => new Map([['target-1', []]])),
   addToGroup: vi.fn(async () => {}),
+  applyGroupChange: vi.fn(async () => {}),
   removeFromGroup: vi.fn(async () => {}),
   allGroupMemberships: vi.fn(async () => new Map()),
   allEntitlements: vi.fn(async () => new Map()),

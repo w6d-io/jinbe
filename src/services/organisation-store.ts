@@ -268,6 +268,56 @@ export async function addToGroup(
   )
 }
 
+/**
+ * Apply a whole group change at once, or none of it.
+ *
+ * The revocations and the grants of one change belong together: applied one statement at a time, a
+ * failure halfway leaves a person holding some of what was asked for and some of what was not — a
+ * state nobody requested and nothing records. The gates upstream decide the change as a whole, so
+ * the store commits it as a whole.
+ *
+ * The ORDER inside the transaction still matters for a reader of the audit trail, and it is the same
+ * one the caller relies on: what is taken away goes first.
+ */
+export async function applyGroupChange(
+  subjectId: string,
+  revoked: readonly string[],
+  granted: readonly string[],
+  createdBy?: string,
+): Promise<void> {
+  if (revoked.length === 0 && granted.length === 0) return
+  await ready()
+  const client = await connection()
+    .connect()
+    .catch((failure: unknown) => {
+      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
+    })
+
+  try {
+    await client.query('BEGIN')
+    for (const groupName of revoked) {
+      await client.query('DELETE FROM group_members WHERE subject_id = $1 AND group_name = $2', [
+        subjectId,
+        groupName,
+      ])
+    }
+    for (const groupName of granted) {
+      await client.query(
+        `INSERT INTO group_members (subject_id, group_name, created_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (subject_id, group_name) DO NOTHING`,
+        [subjectId, groupName, createdBy ?? null],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (failure) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw new OrganisationStoreUnavailableError(`The groups were not changed: ${String(failure)}`)
+  } finally {
+    client.release()
+  }
+}
+
 /** Take somebody out of a group. Removing what is not there is not an error either. */
 export async function removeFromGroup(subjectId: string, groupName: string): Promise<void> {
   await query('DELETE FROM group_members WHERE subject_id = $1 AND group_name = $2', [
