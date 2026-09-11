@@ -328,6 +328,31 @@ export async function deploymentsOf(organisationId: string): Promise<Organisatio
 }
 
 /**
+ * Which applications every organisation is entitled to, for the engine.
+ *
+ * The second dimension of the model, and a COMMERCIAL fact rather than a personal one: what a role
+ * gives says what somebody may do, this says which applications their organisation has at all. The
+ * two are kept apart because they change for different reasons — one when somebody is promoted, the
+ * other when a contract or a deployment changes.
+ *
+ * Only what is ON. A row with `enabled = false` is a deployment somebody turned off, and reading it
+ * as an entitlement would let a subscription that has lapsed keep deciding.
+ */
+export async function allEntitlements(): Promise<Map<string, string[]>> {
+  const held = new Map<string, string[]>()
+  const rows = await query<{ organisation_id: string; application: string }>(
+    'SELECT organisation_id, application FROM organisation_deployments WHERE enabled = true ORDER BY organisation_id, application',
+    [],
+  )
+  for (const row of rows) {
+    const already = held.get(row.organisation_id)
+    if (already) already.push(row.application)
+    else held.set(row.organisation_id, [row.application])
+  }
+  return held
+}
+
+/**
  * Record that somebody belongs to an organisation.
  *
  * Idempotent on the three together, so assigning a role twice is not an error and re-running a

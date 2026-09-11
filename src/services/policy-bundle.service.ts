@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createGzip } from 'node:zlib'
 import * as k8s from '@kubernetes/client-node'
 import { pack } from 'tar-stream'
-import { allGroupMemberships } from './organisation-store.js'
+import { allEntitlements, allGroupMemberships } from './organisation-store.js'
 
 /**
  * Everything the authorization engine decides against, in one bundle it fetches for itself.
@@ -57,27 +57,36 @@ const POLICY_RULES_SELECTOR = 'openpolicyagent.org/policy=rego'
 const NAMESPACE_FILE = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
 /** Where the memberships land. Not a ConfigMap, so it cannot collide with one. */
 const MEMBERSHIP_KEY = 'membership'
+/** Where the entitlements land — which applications each organisation has at all. */
+const ENTITLEMENT_KEY = 'entitlements'
 
 let cached: PolicyBundle | null = null
 
 export async function policyBundle(): Promise<PolicyBundle> {
   const namespace = await ownNamespace()
-  const [model, memberships] = await Promise.all([modelFrom(namespace), allGroupMemberships()])
+  const [model, memberships, entitlements] = await Promise.all([
+    modelFrom(namespace),
+    allGroupMemberships(),
+    allEntitlements(),
+  ])
 
-  if (Object.prototype.hasOwnProperty.call(model, MEMBERSHIP_KEY)) {
-    // A ConfigMap named `membership` would silently overwrite the people with the model, or the
-    // other way round depending on order. Refused rather than resolved by luck.
+  for (const key of [MEMBERSHIP_KEY, ENTITLEMENT_KEY]) {
+    if (!Object.prototype.hasOwnProperty.call(model, key)) continue
+    // A ConfigMap under one of these names would silently overwrite what this bundle carries, or be
+    // overwritten by it depending on order. Refused rather than resolved by luck.
     throw new PolicyBundleUnavailableError(
-      `A ConfigMap named "${MEMBERSHIP_KEY}" collides with the memberships this bundle carries.`,
+      `A ConfigMap named "${key}" collides with what this bundle carries under the same name.`,
     )
   }
+
+  const sorted = (held: Map<string, string[]>) =>
+    Object.fromEntries([...held.entries()].sort(([a], [b]) => a.localeCompare(b)))
 
   const data = {
     [ROOT]: {
       ...model,
-      [MEMBERSHIP_KEY]: Object.fromEntries(
-        [...memberships.entries()].sort(([a], [b]) => a.localeCompare(b)),
-      ),
+      [MEMBERSHIP_KEY]: sorted(memberships),
+      [ENTITLEMENT_KEY]: sorted(entitlements),
     },
   }
 

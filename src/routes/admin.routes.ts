@@ -28,7 +28,7 @@ import {
 } from '../schemas/response-schemas.js'
 import { assignableGroupsFor, authorizationModel } from '../services/authorization-model.service.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
-import { allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
+import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -180,6 +180,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     id: { type: 'string' },
                     name: { type: 'string' },
                     tenant: { type: 'string' },
+                    applications: { type: 'array', items: { type: 'string' } },
                   },
                 },
               },
@@ -202,9 +203,17 @@ export async function adminRoutes(fastify: FastifyInstance) {
         })
       }
       try {
-        const organizations = await allOrganisations()
+        // Which applications each one has, alongside who it is. The screen showing this read a map
+        // from Redis that nothing populates any more and reported "no services bundled" for every
+        // organisation — while the directory held the answer in `organisation_deployments` all along.
+        const [organizations, entitlements] = await Promise.all([allOrganisations(), allEntitlements()])
         return reply.send({
-          organizations: organizations.map(({ id, name, tenant }) => ({ id, name, tenant })),
+          organizations: organizations.map(({ id, name, tenant }) => ({
+            id,
+            name,
+            tenant,
+            applications: entitlements.get(id) ?? [],
+          })),
         })
       } catch (err) {
         // Never a short list: a screen showing four of eight organisations says the other four do
