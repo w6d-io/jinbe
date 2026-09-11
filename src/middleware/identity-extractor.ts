@@ -24,6 +24,8 @@ export interface UserContext {
   aal?: string
   authenticatedAt?: Date
   secondFactorAt?: Date | null
+  // How the caller was proven. Only a session carries a readable second factor.
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
   /**
    * The organisations the caller's token asserts, when the deployment reads them from the token
    * rather than from this service's own model. Empty in `local` mode, where the model answers —
@@ -88,6 +90,7 @@ export async function extractIdentity(
       aal: 'aal2',
       authenticatedAt: new Date(),
       secondFactorAt: new Date(),
+      authVia: 'dev',
     }
     request.log.warn(
       { email: devEmail },
@@ -116,6 +119,7 @@ export async function extractIdentity(
         // The real API-server username, so audit records name the actual
         // ServiceAccount and not just its synthetic email.
         name: principal.username,
+        authVia: 'machine',
       }
       request.log.debug(
         {
@@ -147,6 +151,7 @@ export async function extractIdentity(
         id: principal.subject,
         name: principal.name ?? 'unknown',
         organisations: principal.organisations,
+        authVia: 'bearer',
       }
       request.log.debug(
         {
@@ -199,6 +204,7 @@ export async function extractIdentity(
       aal: validatedSession.aal,
       authenticatedAt: validatedSession.authenticatedAt,
       secondFactorAt: validatedSession.secondFactorAt,
+      authVia: 'session',
     }
     request.log.debug(
       {

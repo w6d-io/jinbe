@@ -24,6 +24,7 @@ export type GroupUpdateActor = {
   aal?: string
   authenticatedAt?: Date | string
   secondFactorAt?: Date | string | null
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
 }
 
 /**
@@ -294,7 +295,8 @@ class UserGroupsService {
     if (gated.length > 0) {
       const stale = this.stepUpDenial(actor, identity.email)
       if (stale) {
-        this.emitDenied('reauth_required', identity, actor, gated[0]?.group, 422)
+        const reason = (stale.ok ? '' : (stale.body as { error?: string }).error) || 'reauth_required'
+        this.emitDenied(reason, identity, actor, gated[0]?.group, 422)
         return stale
       }
     }
@@ -404,7 +406,7 @@ class UserGroupsService {
   // ingress does not strip the body/headers) when the second factor is absent or
   // stale; null when satisfied. Fail-closed: an unknown level or time denies.
   private stepUpDenial(
-    actor: { aal?: string; secondFactorAt?: Date | string | null },
+    actor: { aal?: string; secondFactorAt?: Date | string | null; authVia?: 'session' | 'bearer' | 'machine' | 'dev' },
     targetEmail: string,
   ): ApplyGroupUpdateResult | null {
     const reauth = (message: string): ApplyGroupUpdateResult => ({
@@ -420,6 +422,23 @@ class UserGroupsService {
       },
     })
     const failure = stepUpFailure(actor)
+    // A caller proven by a token asserts no second factor this service can read, so sending them to
+    // prove one would loop: the answer cannot change. Said under its own name so the console does
+    // not offer a step-up that leads nowhere.
+    if (failure === 'unprovable') {
+      return {
+        ok: false,
+        status: 422,
+        body: {
+          applied: false,
+          error: 'step_up_unavailable',
+          message:
+            'This change assigns privileged access, which requires a second factor proven in a browser session. The credential you presented cannot carry one.',
+          targetEmail,
+          hint: 'Sign in to the console in a browser and make the change there.',
+        },
+      }
+    }
     if (failure === 'absent') {
       return reauth(
         'This change assigns privileged access and requires two-factor authentication (TOTP). Complete 2FA and retry.',

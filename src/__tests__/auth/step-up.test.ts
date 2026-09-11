@@ -77,3 +77,22 @@ describe('stepUpFailure', () => {
     expect(stepUpFailure({ aal: 'aal2' }, NOW)).toBe('absent')
   })
 })
+
+describe('a credential that cannot carry a second factor', () => {
+  it('is refused under its own name, never as something a step-up would lift', () => {
+    // A bearer-proven caller asserts no factor this service reads. Answering `absent` would send
+    // an operator to prove one, and the answer would not change — a loop with no exit.
+    expect(stepUpFailure({ authVia: 'bearer', aal: 'aal2', secondFactorAt: new Date() }, NOW)).toBe('unprovable')
+    expect(stepUpFailure({ authVia: 'machine' }, NOW)).toBe('unprovable')
+  })
+
+  it('is never fresh, whatever the token claims', () => {
+    expect(secondFactorIsFresh({ authVia: 'bearer', aal: 'aal2', secondFactorAt: new Date(NOW) }, NOW)).toBe(false)
+  })
+
+  it('leaves a session — and a context predating the field — judged on its factor', () => {
+    expect(secondFactorIsFresh({ authVia: 'session', aal: 'aal2', secondFactorAt: ago(60_000) }, NOW)).toBe(true)
+    expect(secondFactorIsFresh({ aal: 'aal2', secondFactorAt: ago(60_000) }, NOW)).toBe(true)
+    expect(stepUpFailure({ authVia: 'session', aal: 'aal1' }, NOW)).toBe('absent')
+  })
+})

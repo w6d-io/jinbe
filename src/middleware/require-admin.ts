@@ -3,7 +3,7 @@ import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { platformRightsOf } from '../services/authorization-model.service.js'
 import { permits } from '../services/authorization-resolution.js'
-import { STEP_UP_MAX_AGE_MS, secondFactorIsFresh } from '../services/step-up.js'
+import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 
 /** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
 const READ_ADMIN = 'admin:read'
@@ -339,7 +339,13 @@ export async function requireSuperAdmin(
 // documents the engine decides against.
 
 export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
-  if (!secondFactorIsFresh({ aal: request.userContext?.aal, secondFactorAt: request.userContext?.secondFactorAt })) {
+  const stepUp = {
+    aal: request.userContext?.aal,
+    secondFactorAt: request.userContext?.secondFactorAt,
+    authVia: request.userContext?.authVia,
+  }
+  if (!secondFactorIsFresh(stepUp)) {
+    const unprovable = !canProveSecondFactor(stepUp)
     // Emit the currently-silent step-up denial (A2).
     auditEventService.emit({
       category: 'access',
@@ -348,7 +354,7 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
       target:   `${request.method} ${(request.url || '').split('?')[0]}`,
       result:   'denied',
       severity: 'warn',
-      reason:   'reauth_required',
+      reason:   unprovable ? 'step_up_unavailable' : 'reauth_required',
       actor:    {
         email: request.userContext?.email ?? null,
         ip: request.ip,
@@ -361,6 +367,14 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
       statusCode: 422,
       source:   'jinbe-api',
     }).catch(() => {})
+    if (unprovable) {
+      return reply.status(422).send({
+        error: 'step_up_unavailable',
+        message:
+          'This action requires a second factor proven in a browser session. The credential you presented cannot carry one.',
+        hint: 'Sign in to the console in a browser and retry there.',
+      })
+    }
     return reply.status(422).send({
       error: 'reauth_required',
       message:
