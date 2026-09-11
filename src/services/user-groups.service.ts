@@ -460,8 +460,12 @@ class UserGroupsService {
       )
     }
     if (failure === 'stale') {
+      // Says HOW stale, not just that it is. "Older than 15 minutes" moments after a successful
+      // re-verification reads as a broken gate; "verified 16 minutes ago, the limit is 15" reads
+      // as the answer it is.
+      const ageMinutes = Math.round((Date.now() - new Date(actor.secondFactorAt as Date | string).getTime()) / 60000)
       return reauth(
-        `Your two-factor verification is older than ${STEP_UP_MAX_AGE_MS / 60000} minutes; re-verify (TOTP) to assign privileged access.`,
+        `Your second factor was verified ${ageMinutes} minute${ageMinutes === 1 ? '' : 's'} ago and the limit is ${STEP_UP_MAX_AGE_MS / 60000}; re-verify (TOTP) to assign privileged access.`,
       )
     }
     return null
