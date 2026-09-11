@@ -85,7 +85,7 @@ const IDENTITY: ResolvedIdentity = {
 
 // A freshly-2FA'd actor: passes the R2 step-up gate so the pre-existing privilege
 // tests exercise their intended paths. Step-up-specific cases override this.
-const ACTOR = { email: 'actor@example.com', ip: '127.0.0.1', aal: 'aal2', authenticatedAt: new Date() }
+const ACTOR = { email: 'actor@example.com', ip: '127.0.0.1', aal: 'aal2', authenticatedAt: new Date(), secondFactorAt: new Date() }
 
 describe('userGroupsService.applyGroupUpdate — happy path', () => {
   beforeEach(() => {
@@ -214,10 +214,41 @@ describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
 
   it('blocks when the AAL2 factor is older than the 15-minute step-up window', async () => {
     const stale = new Date(Date.now() - 20 * 60 * 1000)
-    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: stale })
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: stale, secondFactorAt: stale })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.body).toMatchObject({ error: 'reauth_required' })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  it('measures the SECOND factor, not the first — an hours-old login with a fresh TOTP passes', async () => {
+    // The live shape that made the gate unsatisfiable: Kratos stamps authenticated_at from the
+    // password and leaves it there when the second factor is proven afterwards.
+    const result = await assignPrivileged({
+      email: 'a@x.io',
+      ip: '1',
+      aal: 'aal2',
+      authenticatedAt: new Date(Date.now() - 8 * 60 * 60 * 1000),
+      secondFactorAt: new Date(),
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('a fresh first factor does NOT stand in for a stale second one', async () => {
+    const result = await assignPrivileged({
+      email: 'a@x.io',
+      ip: '1',
+      aal: 'aal2',
+      authenticatedAt: new Date(),
+      secondFactorAt: new Date(Date.now() - 20 * 60 * 1000),
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.body).toMatchObject({ error: 'reauth_required' })
+  })
+
+  it('fails closed when AAL2 is claimed but no second factor carries a time', async () => {
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: new Date() })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.body).toMatchObject({ error: 'reauth_required' })
   })
 
   it('fails closed when AAL is absent', async () => {
@@ -227,7 +258,7 @@ describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
   })
 
   it('allows a privileged assignment with a fresh AAL2 factor', async () => {
-    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: new Date() })
+    const result = await assignPrivileged({ email: 'a@x.io', ip: '1', aal: 'aal2', authenticatedAt: new Date(), secondFactorAt: new Date() })
     expect(result.ok).toBe(true)
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['super_admins'])
   })
@@ -602,7 +633,7 @@ describe('applyGroupUpdate — denied writes emit an audit event (A2)', () => {
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: ['super_admins'],
-      actor: { email: 'attacker@x.io', ip: '9.9.9.9', aal: 'aal2', authenticatedAt: new Date() },
+      actor: { email: 'attacker@x.io', ip: '9.9.9.9', aal: 'aal2', authenticatedAt: new Date(), secondFactorAt: new Date() },
       privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })

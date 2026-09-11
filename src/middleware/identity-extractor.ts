@@ -23,6 +23,7 @@ export interface UserContext {
   // Second-factor state for the privileged-action step-up gate (R2).
   aal?: string
   authenticatedAt?: Date
+  secondFactorAt?: Date | null
   /**
    * The organisations the caller's token asserts, when the deployment reads them from the token
    * rather than from this service's own model. Empty in `local` mode, where the model answers —
@@ -86,6 +87,7 @@ export async function extractIdentity(
       name: 'Dev User',
       aal: 'aal2',
       authenticatedAt: new Date(),
+      secondFactorAt: new Date(),
     }
     request.log.warn(
       { email: devEmail },
@@ -196,6 +198,7 @@ export async function extractIdentity(
       expiresAt: validatedSession.expiresAt,
       aal: validatedSession.aal,
       authenticatedAt: validatedSession.authenticatedAt,
+      secondFactorAt: validatedSession.secondFactorAt,
     }
     request.log.debug(
       {

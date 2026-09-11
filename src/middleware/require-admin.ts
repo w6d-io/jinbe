@@ -3,6 +3,7 @@ import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { platformRightsOf } from '../services/authorization-model.service.js'
 import { permits } from '../services/authorization-resolution.js'
+import { STEP_UP_MAX_AGE_MS, secondFactorIsFresh } from '../services/step-up.js'
 
 /** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
 const READ_ADMIN = 'admin:read'
@@ -323,8 +324,8 @@ export async function requireSuperAdmin(
 
 /**
  * Step-up gate (R2), reused by the org-admin roster endpoint: the actor must
- * hold a SECOND FACTOR proven within the last 15 minutes (AAL2 + a fresh
- * authenticated_at from the Kratos session, surfaced on request.userContext).
+ * hold a SECOND FACTOR proven within the last 15 minutes — measured on the aal2
+ * method's own completed_at, not the session's first-factor authenticated_at.
  * Returns 422 reauth_required (status pinned to 422 so cluster ingress does not
  * strip the body) when the factor is absent or stale. Fail-closed on missing
  * AAL/timestamp. The dev-bypass identity is stamped AAL2, so local dev passes.
@@ -337,17 +338,8 @@ export async function requireSuperAdmin(
 // What decides who may hand out rights now is `rbacService.assertSuperAdmin`, which reads the same
 // documents the engine decides against.
 
-const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
-  const aal = request.userContext?.aal
-  const authAt = request.userContext?.authenticatedAt
-  const authedMs = authAt ? new Date(authAt).getTime() : 0
-  const fresh =
-    aal === 'aal2' &&
-    !!authedMs &&
-    !Number.isNaN(authedMs) &&
-    Date.now() - authedMs <= STEP_UP_MAX_AGE_MS
-  if (!fresh) {
+  if (!secondFactorIsFresh({ aal: request.userContext?.aal, secondFactorAt: request.userContext?.secondFactorAt })) {
     // Emit the currently-silent step-up denial (A2).
     auditEventService.emit({
       category: 'access',

@@ -24,13 +24,39 @@ export interface KratosSessionIdentity {
 /**
  * Kratos Session response from /sessions/whoami
  */
+export interface KratosAuthenticationMethod {
+  method?: string
+  aal?: string
+  completed_at?: string
+}
+
 export interface KratosSession {
   id: string
   active: boolean
   expires_at: string
   authenticated_at: string
   authenticator_assurance_level: string
+  authentication_methods?: KratosAuthenticationMethod[]
   identity: KratosSessionIdentity
+}
+
+/**
+ * When the SECOND factor was last proven, which is a different clock from the session's
+ * `authenticated_at`.
+ *
+ * `authenticated_at` is stamped by the FIRST factor and a plain aal2 step-up does not move it —
+ * measured on a live session: password at 08:17:06, TOTP at 08:17:45, `authenticated_at` still
+ * 08:17:06. A step-up gate reading it therefore keeps refusing a factor that was just proven.
+ *
+ * Returns null when no aal2 method carries a timestamp, so the gate fails closed rather than
+ * treating an unknown age as fresh.
+ */
+export function secondFactorProvenAt(session: KratosSession): Date | null {
+  const proofs = (session.authentication_methods ?? [])
+    .filter((m) => m.aal === 'aal2' && !!m.completed_at)
+    .map((m) => new Date(m.completed_at as string).getTime())
+    .filter((t) => Number.isFinite(t))
+  return proofs.length > 0 ? new Date(Math.max(...proofs)) : null
 }
 
 /**
@@ -46,7 +72,8 @@ export interface ValidatedSession {
   active: boolean
   // Second-factor state, used by the privileged-action step-up gate (R2).
   aal: string // authenticator_assurance_level: "aal1" | "aal2"
-  authenticatedAt: Date // last authentication time; re-stamped by a refresh=true step-up
+  authenticatedAt: Date // FIRST-factor time; not moved by an aal2 step-up
+  secondFactorAt: Date | null // when aal2 was last proven; null when never
 }
 
 /**
@@ -121,6 +148,7 @@ export class KratosSessionService {
           active: session.active,
           aal: session.authenticator_assurance_level,
           authenticatedAt: new Date(session.authenticated_at),
+          secondFactorAt: secondFactorProvenAt(session),
         },
       }
     } catch (error) {
