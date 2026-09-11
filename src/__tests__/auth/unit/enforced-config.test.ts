@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 //   - a read failure raises: "nothing is enforced" and "I cannot tell" are opposite facts.
 
 const { core, custom, loadFromCluster } = vi.hoisted(() => ({
-  core: { listNamespacedConfigMap: vi.fn() },
+  core: { listNamespacedConfigMap: vi.fn(), readNamespacedConfigMap: vi.fn() },
   custom: { listNamespacedCustomObject: vi.fn() },
   loadFromCluster: vi.fn(),
 }))
@@ -70,11 +70,22 @@ const POLICY_DATA = {
   data: { 'permissions.json': '{\n  "routes": {}\n}\n' },
 }
 
+// Which route table a rule is decided against is NOT in the rule: the authorizer payload names a
+// service, and the policy selects the table by that name. Today every rule inherits one global
+// payload, so this single value decides all of them.
+const EDGE_CONFIG_YAML = `authorizers:
+  remote_json:
+    config:
+      remote: http://127.0.0.1:8080/v1/data/strada/authz/decision
+      payload: '{"input":{"service":"strada-demo-api","method":"GET"}}'
+`
+
 describe('the enforced configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     custom.listNamespacedCustomObject.mockResolvedValue({ items: [RULE] })
     core.listNamespacedConfigMap.mockResolvedValue({ items: [POLICY_DATA] })
+    core.readNamespacedConfigMap.mockResolvedValue({ data: { 'config.yaml': EDGE_CONFIG_YAML } })
   })
 
   it('shows only what the policy engine loads, selected by the loader label', async () => {
@@ -297,5 +308,100 @@ describe('the enforced configuration', () => {
     custom.listNamespacedCustomObject.mockRejectedValue(new Error('rules is forbidden'))
 
     await expect(service.enforcedConfiguration()).rejects.toThrow(service.EnforcedConfigUnavailableError)
+  })
+})
+
+describe('which table a rule is actually decided against', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    custom.listNamespacedCustomObject.mockResolvedValue({ items: [RULE] })
+    core.listNamespacedConfigMap.mockResolvedValue({ items: [POLICY_DATA] })
+    core.readNamespacedConfigMap.mockResolvedValue({ data: { 'config.yaml': EDGE_CONFIG_YAML } })
+  })
+
+  it('reads it from the engine configuration, because the rule does not carry it', async () => {
+    const [rule] = await service.enforcedConfiguration()
+
+    expect(rule.edge?.authorizesAs).toBe('strada-demo-api')
+  })
+
+  it('prefers a payload the rule carries itself over the configured one', async () => {
+    custom.listNamespacedCustomObject.mockResolvedValue({
+      items: [
+        {
+          ...RULE,
+          spec: {
+            ...RULE.spec,
+            authorizer: {
+              handler: 'remote_json',
+              config: { payload: '{"input":{"service":"another-api"}}' },
+            },
+          },
+        },
+      ],
+    })
+
+    const [rule] = await service.enforcedConfiguration()
+    expect(rule.edge?.authorizesAs).toBe('another-api')
+  })
+
+  it('says when the table that decides a rule declares no route', async () => {
+    // The failure this names: a well-formed rule authorizing against a service nothing declares.
+    // Every call is then refused for a reason nothing on the rule shows.
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [{ metadata: { name: 'somebody-else', namespace: 'ory' }, data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' } }],
+    })
+
+    const [rule] = await service.enforcedConfiguration()
+    expect(rule.edge?.tableDeclared).toBe(false)
+  })
+
+  it('says when it does', async () => {
+    core.listNamespacedConfigMap.mockResolvedValue({
+      items: [
+        {
+          metadata: { name: 'strada-demo-api', namespace: 'ory' },
+          data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' },
+        },
+      ],
+    })
+
+    const [rule] = await service.enforcedConfiguration()
+    expect(rule.edge?.tableDeclared).toBe(true)
+  })
+
+  it('costs the annotation and never the answer when the edge configuration cannot be read', async () => {
+    // Same trade as the directory below: a reader loses one line, not the answer to "what is
+    // enforced".
+    core.readNamespacedConfigMap.mockRejectedValue(new Error('forbidden'))
+
+    const documents = await service.enforcedConfiguration()
+    const rule = documents.find((d) => d.kind === 'Rule')!
+
+    expect(rule.edge?.authorizesAs).toBeUndefined()
+    expect(rule.edge?.url).toBeDefined()
+    expect(documents.length).toBeGreaterThan(1)
+  })
+
+  it('reads the rule into the terms a reader asks in', async () => {
+    custom.listNamespacedCustomObject.mockResolvedValue({
+      items: [
+        {
+          ...RULE,
+          spec: {
+            upstream: { url: 'http://strada-demo-api.ory.svc.cluster.local:8080' },
+            match: { methods: ['GET', 'POST'], url: '<http|https>://api.ory.dev.stradatms.net/<.*>' },
+            authenticators: [{ handler: 'jwt' }, { handler: 'anonymous' }],
+            authorizer: { handler: 'remote_json' },
+          },
+        },
+      ],
+    })
+
+    const [rule] = await service.enforcedConfiguration()
+    expect(rule.edge?.methods).toEqual(['GET', 'POST'])
+    expect(rule.edge?.authenticators).toEqual(['jwt', 'anonymous'])
+    expect(rule.edge?.authorizer).toBe('remote_json')
+    expect(rule.edge?.upstream).toContain('strada-demo-api')
   })
 })

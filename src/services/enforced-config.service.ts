@@ -42,6 +42,8 @@ export interface EnforcedDocument {
   routes?: EnforcedRoute[]
   /** What each role carries, when the document holds that instead. */
   roles?: EnforcedRole[]
+  /** For a `Rule`: what it matches, and which route table will decide it. */
+  edge?: EnforcedEdge
   /**
    * Who holds which role, and where — the last link of the chain a reader is actually following.
    *
@@ -72,6 +74,27 @@ export interface EnforcedGrant {
   }[]
 }
 
+/**
+ * What a `Rule` lets in, where it sends it, and — the part that is not in the rule — which route
+ * table the engine will consult for it.
+ *
+ * That last one is read from the authorizer's payload rather than from the rule, because that is
+ * where it lives: the payload names a service, and the policy selects the table by that name. A rule
+ * carries no such field, so a reader looking only at the rule cannot tell which table decides it.
+ */
+export interface EnforcedEdge {
+  methods: string[]
+  url: string
+  upstream?: string
+  /** How the caller is identified before anything is decided. */
+  authenticators: string[]
+  authorizer: string
+  /** The service the payload names, i.e. the route table the engine looks up. */
+  authorizesAs?: string
+  /** Whether a LOADED policy document declares routes for that service. */
+  tableDeclared?: boolean
+}
+
 export interface EnforcedRoute {
   method: string
   /** The path as called, rebuilt from the segments the engine matches on. */
@@ -92,6 +115,8 @@ const RULE_VERSION = 'v1alpha1'
 const RULE_PLURAL = 'rules'
 /** The label the policy engine's loader selects on: only what it loads is shown. */
 const POLICY_DATA_SELECTOR = 'openpolicyagent.org/data=opa'
+/** The edge's own configuration, where the decision payload — and so the table selection — lives. */
+const EDGE_CONFIG = 'oathkeeper-config'
 const NAMESPACE_FILE = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
 
 /**
@@ -288,7 +313,11 @@ function describePolicyData(item: k8s.V1ConfigMap): string {
 }
 
 /** The edge: which host and method reach which upstream, and how the caller is authenticated. */
-async function edgeRules(kc: k8s.KubeConfig, namespace: string): Promise<EnforcedDocument[]> {
+async function edgeRules(
+  kc: k8s.KubeConfig,
+  namespace: string,
+  defaultPayloadService?: string,
+): Promise<EnforcedDocument[]> {
   const custom = kc.makeApiClient(k8s.CustomObjectsApi)
   const answer = (await custom.listNamespacedCustomObject({
     group: RULE_GROUP,
@@ -302,7 +331,39 @@ async function edgeRules(kc: k8s.KubeConfig, namespace: string): Promise<Enforce
     namespace,
     decides: 'which requests reach this API, and how the caller is authenticated',
     yaml: asYaml(item, 'Rule'),
+    edge: edgeOf(item, defaultPayloadService),
   }))
+}
+
+/** The rule, read into the terms a reader asks in rather than the shape Oathkeeper stores. */
+function edgeOf(item: Record<string, unknown>, defaultPayloadService?: string): EnforcedEdge {
+  const spec = (item.spec as Record<string, unknown>) ?? {}
+  const match = (spec.match as Record<string, unknown>) ?? {}
+  const upstream = (spec.upstream as Record<string, unknown>) ?? {}
+  const authorizer = (spec.authorizer as Record<string, unknown>) ?? {}
+  const authenticators = (spec.authenticators as Record<string, unknown>[]) ?? []
+
+  // A rule may carry its own payload; otherwise the engine uses the one configured globally. Reading
+  // the rule alone would therefore answer the wrong table whenever the global one applies — which,
+  // today, is every rule.
+  const own = serviceInPayload(
+    ((authorizer.config as Record<string, unknown>)?.payload as string) ?? undefined,
+  )
+
+  return {
+    methods: (match.methods as string[]) ?? [],
+    url: (match.url as string) ?? '',
+    upstream: (upstream.url as string) ?? undefined,
+    authenticators: authenticators.map((a) => (a.handler as string) ?? '(unnamed)'),
+    authorizer: (authorizer.handler as string) ?? '(none)',
+    authorizesAs: own ?? defaultPayloadService,
+  }
+}
+
+/** The `service` a decision payload names. Absent rather than guessed when the shape is not that. */
+function serviceInPayload(payload?: string): string | undefined {
+  if (!payload) return undefined
+  return /"service"\s*:\s*"([^"]+)"/.exec(payload)?.[1]
 }
 
 /**
@@ -315,13 +376,66 @@ export async function enforcedConfiguration(): Promise<EnforcedDocument[]> {
   const namespace = await ownNamespace()
   try {
     const kc = client()
-    const [edge, policy] = await Promise.all([edgeRules(kc, namespace), policyData(kc, namespace)])
-    return await named([...edge, ...policy])
+    // Which table a rule is decided against is configured on the ENGINE side, so it is read before
+    // the rules and passed in. Fail-soft on purpose: an unreadable edge config costs the reader one
+    // annotation, never the answer to "what is enforced" — the same trade `named` makes below.
+    const defaultPayloadService = await configuredPayloadService(kc, namespace).catch(() => undefined)
+
+    // `Promise.all` rejects on the first failure and leaves a second one unobserved; with no
+    // `unhandledRejection` handler that ends the process, so a moment where BOTH reads fail would
+    // kill the service instead of raising the error this catch turns into a 503.
+    const [edge, policy] = await Promise.allSettled([
+      edgeRules(kc, namespace, defaultPayloadService),
+      policyData(kc, namespace),
+    ])
+    if (edge.status === 'rejected') throw edge.reason
+    if (policy.status === 'rejected') throw policy.reason
+
+    return await named(withTableCoverage(edge.value, policy.value))
   } catch (err) {
     throw new EnforcedConfigUnavailableError(
       `Could not read the enforced configuration in namespace ${namespace}: ${(err as Error).message}`,
     )
   }
+}
+
+/**
+ * Say, per rule, whether the table it is decided against is actually loaded.
+ *
+ * This is the failure the screen exists to name: a rule can be perfectly formed, authorize against a
+ * service, and that service declare no routes — in which case every call is refused for a reason
+ * nothing on the rule shows.
+ */
+function withTableCoverage(
+  edge: EnforcedDocument[],
+  policy: EnforcedDocument[],
+): EnforcedDocument[] {
+  const declared = new Set(policy.filter((d) => d.routes && d.routes.length > 0).map((d) => d.name))
+  const documents = [
+    ...edge.map((document) =>
+      document.edge?.authorizesAs
+        ? { ...document, edge: { ...document.edge, tableDeclared: declared.has(document.edge.authorizesAs) } }
+        : document,
+    ),
+    ...policy,
+  ]
+  return documents
+}
+
+/**
+ * The service the engine's own authorizer payload names, from the edge configuration.
+ *
+ * Read rather than assumed: today every rule inherits this one value, so it is the single thing that
+ * decides which route table applies to all of them.
+ */
+async function configuredPayloadService(
+  kc: k8s.KubeConfig,
+  namespace: string,
+): Promise<string | undefined> {
+  const core = kc.makeApiClient(k8s.CoreV1Api)
+  const item = await core.readNamespacedConfigMap({ name: EDGE_CONFIG, namespace })
+  const config = Object.values(item.data ?? {}).join('\n')
+  return serviceInPayload(config)
 }
 
 /**
