@@ -44,6 +44,8 @@ import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
 import { logBase, traceFields } from './telemetry/log-correlation.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
+import { isPublicRoute } from './middleware/require-auth.js'
+import { recordRoute } from './policy/declared-routes.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -97,6 +99,13 @@ export async function buildServer() {
 
   // Add request ID to all requests
   fastify.addHook('onRequest', requestIdMiddleware)
+
+  // The published route table, collected as Fastify registers each route. Read off the guards that
+  // were actually attached, so a row and the refusal behind it cannot disagree — and a route added
+  // without a guard is absent from the table rather than described as open.
+  fastify.addHook('onRoute', (route) => {
+    recordRoute(route.method, route.url, [route.preHandler, route.onRequest], isPublicRoute)
+  })
 
   // Extract user identity from Kratos session or proxy headers
   fastify.addHook('onRequest', extractIdentity)
