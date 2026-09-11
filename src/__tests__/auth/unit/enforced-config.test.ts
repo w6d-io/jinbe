@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 //   - a read failure raises: "nothing is enforced" and "I cannot tell" are opposite facts.
 
 const { core, custom, loadFromCluster } = vi.hoisted(() => ({
-  core: { listNamespacedConfigMap: vi.fn(), readNamespacedConfigMap: vi.fn() },
+  core: { listNamespacedConfigMap: vi.fn() },
   custom: { listNamespacedCustomObject: vi.fn() },
   loadFromCluster: vi.fn(),
 }))
@@ -84,15 +84,18 @@ describe('the enforced configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     custom.listNamespacedCustomObject.mockResolvedValue({ items: [RULE] })
-    core.listNamespacedConfigMap.mockResolvedValue({ items: [POLICY_DATA] })
-    core.readNamespacedConfigMap.mockResolvedValue({ data: { 'config.yaml': EDGE_CONFIG_YAML } })
+    core.listNamespacedConfigMap.mockImplementation((opts: { fieldSelector?: string }) =>
+      opts?.fieldSelector
+        ? Promise.resolve({ items: [{ data: { 'config.yaml': EDGE_CONFIG_YAML } }] })
+        : Promise.resolve({ items: [POLICY_DATA] }),
+    )
   })
 
   it('shows only what the policy engine loads, selected by the loader label', async () => {
     await service.enforcedConfiguration()
 
-    const [call] = core.listNamespacedConfigMap.mock.calls
-    expect(call[0].labelSelector).toBe('openpolicyagent.org/data=opa')
+    const call = core.listNamespacedConfigMap.mock.calls.find((c: [{ labelSelector?: string }]) => c[0].labelSelector)
+    expect(call![0].labelSelector).toBe('openpolicyagent.org/data=opa')
   })
 
   it('prunes what the API server owns, so the two lines that matter are readable', async () => {
@@ -315,8 +318,11 @@ describe('which table a rule is actually decided against', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     custom.listNamespacedCustomObject.mockResolvedValue({ items: [RULE] })
-    core.listNamespacedConfigMap.mockResolvedValue({ items: [POLICY_DATA] })
-    core.readNamespacedConfigMap.mockResolvedValue({ data: { 'config.yaml': EDGE_CONFIG_YAML } })
+    core.listNamespacedConfigMap.mockImplementation((opts: { fieldSelector?: string }) =>
+      opts?.fieldSelector
+        ? Promise.resolve({ items: [{ data: { 'config.yaml': EDGE_CONFIG_YAML } }] })
+        : Promise.resolve({ items: [POLICY_DATA] }),
+    )
   })
 
   it('reads it from the engine configuration, because the rule does not carry it', async () => {
@@ -348,23 +354,31 @@ describe('which table a rule is actually decided against', () => {
   it('says when the table that decides a rule declares no route', async () => {
     // The failure this names: a well-formed rule authorizing against a service nothing declares.
     // Every call is then refused for a reason nothing on the rule shows.
-    core.listNamespacedConfigMap.mockResolvedValue({
-      items: [{ metadata: { name: 'somebody-else', namespace: 'ory' }, data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' } }],
-    })
+    core.listNamespacedConfigMap.mockImplementation((opts: { fieldSelector?: string }) =>
+      opts?.fieldSelector
+        ? Promise.resolve({ items: [{ data: { 'config.yaml': EDGE_CONFIG_YAML } }] })
+        : Promise.resolve({
+            items: [{ metadata: { name: 'somebody-else', namespace: 'ory' }, data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' } }],
+          }),
+    )
 
     const [rule] = await service.enforcedConfiguration()
     expect(rule.edge?.tableDeclared).toBe(false)
   })
 
   it('says when it does', async () => {
-    core.listNamespacedConfigMap.mockResolvedValue({
-      items: [
-        {
-          metadata: { name: 'strada-demo-api', namespace: 'ory' },
-          data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' },
-        },
-      ],
-    })
+    core.listNamespacedConfigMap.mockImplementation((opts: { fieldSelector?: string }) =>
+      opts?.fieldSelector
+        ? Promise.resolve({ items: [{ data: { 'config.yaml': EDGE_CONFIG_YAML } }] })
+        : Promise.resolve({
+            items: [
+              {
+                metadata: { name: 'strada-demo-api', namespace: 'ory' },
+                data: { 'permissions.json': '{"routes":{"GET":{"x":{"segments":["x"],"class":"public"}}}}' },
+              },
+            ],
+          }),
+    )
 
     const [rule] = await service.enforcedConfiguration()
     expect(rule.edge?.tableDeclared).toBe(true)
@@ -373,7 +387,11 @@ describe('which table a rule is actually decided against', () => {
   it('costs the annotation and never the answer when the edge configuration cannot be read', async () => {
     // Same trade as the directory below: a reader loses one line, not the answer to "what is
     // enforced".
-    core.readNamespacedConfigMap.mockRejectedValue(new Error('forbidden'))
+    core.listNamespacedConfigMap.mockImplementation((opts: { fieldSelector?: string }) =>
+      opts?.fieldSelector
+        ? Promise.reject(new Error('forbidden'))
+        : Promise.resolve({ items: [POLICY_DATA] }),
+    )
 
     const documents = await service.enforcedConfiguration()
     const rule = documents.find((d) => d.kind === 'Rule')!
