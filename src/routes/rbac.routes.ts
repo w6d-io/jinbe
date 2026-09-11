@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { rbacController } from '../controllers/rbac.controller.js'
 import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -111,6 +112,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getGroups.bind(rbacController))
 
   fastify.post('/groups', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Create a new group.',
       tags: ['rbac'],
@@ -123,9 +125,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         409: conflictResponseSchema,
       },
     },
-  }, rbacController.createGroup.bind(rbacController))
+  }, rbacController.createGroup.bind(rbacController) as never)
 
   fastify.put('/groups/:name', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Update an existing group.',
       tags: ['rbac'],
@@ -139,9 +142,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateGroup.bind(rbacController))
+  }, rbacController.updateGroup.bind(rbacController) as never)
 
   fastify.delete('/groups/:name', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Delete a group.',
       tags: ['rbac'],
@@ -153,7 +157,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.deleteGroup.bind(rbacController))
+  }, rbacController.deleteGroup.bind(rbacController) as never)
 
   // ===========================================================================
   // Services
@@ -216,6 +220,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoles.bind(rbacController))
 
   fastify.put('/services/:name/roles', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace roles for a specific service.',
       tags: ['rbac'],
@@ -234,7 +239,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateServiceRoles.bind(rbacController))
+  }, rbacController.updateServiceRoles.bind(rbacController) as never)
 
   fastify.get('/services/:name/routes', {
     schema: {
@@ -251,6 +256,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoutes.bind(rbacController))
 
   fastify.put('/services/:name/routes', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace the route map for a specific service.',
       tags: ['rbac'],
@@ -280,9 +286,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateServiceRoutes.bind(rbacController))
+  }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
   fastify.post('/services/:name/routes/import/preview', {
+    preHandler: refuseWhenSourcedFromGit,
     bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
     schema: {
       description:
@@ -322,7 +329,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.importRoutesPreview.bind(rbacController))
+  }, rbacController.importRoutesPreview.bind(rbacController) as never)
 
   // ===========================================================================
   // Access Rules (Oathkeeper)
