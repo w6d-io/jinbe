@@ -16,18 +16,29 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: { getUserInfo: vi.fn().mockImplementation(async () => mockState.opalUserInfo) },
-  opalService: { getUserInfo: vi.fn().mockImplementation(async () => mockState.opalUserInfo) },
+// What the caller holds comes from the model the engine decides against, keyed on the immutable
+// identity. It used to be resolved from Kratos metadata through a cache, so what let somebody into
+// the console was decided by something nobody enforces.
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  platformRightsOf: vi.fn().mockImplementation(async () => {
+    const held = mockState.opalUserInfo
+    if (!held) throw new Error('the model could not be read')
+    return { groups: held.groups, roles: held.roles, permissions: held.permissions }
+  }),
+  AuthorizationModelUnavailableError: class extends Error {},
 }))
 
 import { requireAdmin, requireGroups } from '../../../middleware/require-admin.js'
-import { opaService as opalService } from '../../../services/opa.service.js'
+import { platformRightsOf } from '../../../services/authorization-model.service.js'
+
+/** The reader the guard consults. Named as before so the assertions read the same. */
+const opalService = { getUserInfo: platformRightsOf }
 
 // Helper to create mock request
 function createMockRequest(email?: string, rbacInfo?: UserRbacInfo): FastifyRequest {
   return {
-    userContext: email ? { email } : undefined,
+    // The gate keys on the identity; the address is for the log and the trail.
+    userContext: email ? { email, ...(email === 'unknown' ? {} : { id: `subject-of-${email}` }) } : undefined,
     rbacInfo,
     headers: { host: 'api.example.com' }, // Default to external host
     log: {
@@ -79,8 +90,9 @@ describe('requireAdmin middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
       // Should set rbacInfo with admin groups
       expect(request.rbacInfo).toBeDefined()
-      expect(request.rbacInfo?.groups).toContain('super_admins')
-      expect(request.rbacInfo?.groups).toContain('admins')
+      // What the bypass stamps must PASS the gate it skips: a permission, not a group name.
+      expect(request.rbacInfo?.permissions).toContain('admin:read')
+      expect(request.rbacInfo?.permissions).toContain('admin:write')
     })
 
     it('should set rbacInfo with superadmin and admin groups', async () => {
@@ -94,9 +106,9 @@ describe('requireAdmin middleware', () => {
 
       expect(request.rbacInfo).toEqual({
         email: 'dev@example.com',
-        groups: ['super_admins', 'admins'],
-        roles: ['super_admin', 'admin'],
-        permissions: ['*'],
+        groups: ['platform-admin'],
+        roles: ['platform-admin'],
+        permissions: ['admin:read', 'admin:write'],
       })
     })
 
@@ -155,7 +167,7 @@ describe('requireAdmin middleware', () => {
   })
 
   describe('OPAL unavailable', () => {
-    it('should return 503 when opalService.getUserInfo returns null', async () => {
+    it('should return 503 when what the caller holds cannot be resolved', async () => {
       mockState.opalUserInfo = null
 
       const request = createMockRequest('user@example.com')
@@ -172,12 +184,12 @@ describe('requireAdmin middleware', () => {
   })
 
   describe('authorization checks', () => {
-    it('should grant access when user in admin group', async () => {
+    it('grants access when the caller holds the permission exactly', async () => {
       mockState.opalUserInfo = {
         email: 'admin@example.com',
-        groups: ['admin'],
+        groups: ['platform-auditor'],
         roles: ['admin'],
-        permissions: ['*'],
+        permissions: ['admin:read'],
       }
 
       const request = createMockRequest('admin@example.com')
@@ -189,12 +201,12 @@ describe('requireAdmin middleware', () => {
       expect(request.rbacInfo).toBeDefined()
     })
 
-    it('should grant access when user in superadmin group', async () => {
+    it('grants access when the caller holds an ancestor of it', async () => {
       mockState.opalUserInfo = {
         email: 'superadmin@example.com',
-        groups: ['superadmin'],
+        groups: ['platform-admin'],
         roles: ['superadmin'],
-        permissions: ['*'],
+        permissions: ['admin:read', 'admin:write'],
       }
 
       const request = createMockRequest('superadmin@example.com')
@@ -205,10 +217,13 @@ describe('requireAdmin middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
-    it('should grant access with case-insensitive group matching', async () => {
+    it('refuses a group named like an admin group that grants nothing', async () => {
+      // The check this replaces matched group NAMES, case-insensitively — so a group called `Admin`
+      // waved somebody through whatever it granted. Reading the administration API needs
+      // `admin:read`, and a name is not a permission.
       mockState.opalUserInfo = {
         email: 'user@example.com',
-        groups: ['Admin'], // Capital A
+        groups: ['Admin'],
         roles: [],
         permissions: [],
       }
@@ -218,7 +233,7 @@ describe('requireAdmin middleware', () => {
 
       await requireAdmin(request, reply)
 
-      expect(reply.send).not.toHaveBeenCalled()
+      expect(reply._statusCode).toBe(403)
     })
 
     it('should return 403 when user not in admin groups', async () => {
@@ -329,7 +344,7 @@ describe('requireGroups factory function', () => {
     expect(reply.send).not.toHaveBeenCalled()
   })
 
-  it('should fetch rbacInfo from OPAL if not present', async () => {
+  it('should resolve what the caller holds when it is not already known', async () => {
     mockState.opalUserInfo = {
       email: 'user@example.com',
       groups: ['developers'],
@@ -343,7 +358,8 @@ describe('requireGroups factory function', () => {
 
     await middleware(request, reply)
 
-    expect(opalService.getUserInfo).toHaveBeenCalledWith('user@example.com', 'jinbe')
+    // The IDENTITY, and only it: an address can be changed by its owner and reused by somebody else.
+    expect(opalService.getUserInfo).toHaveBeenCalledWith('subject-of-user@example.com')
   })
 
   it('should return 503 when OPAL unavailable', async () => {

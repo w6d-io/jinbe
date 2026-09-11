@@ -30,17 +30,22 @@ import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
+import { directoryRoutes } from './routes/directory.routes.js'
+import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
-import { rbacService } from './services/rbac.service.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
 import { realtimeService } from './services/realtime.service.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
+import { logBase, traceFields } from './telemetry/log-correlation.js'
+import { telemetryRoutes } from './routes/telemetry.routes.js'
+import { isPublicRoute } from './middleware/require-auth.js'
+import { recordRoute } from './policy/declared-routes.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -67,11 +72,19 @@ export async function buildServer() {
               },
             }
           : undefined,
-      // Add base labels for Prometheus scraping
+      // Identity, and the two fields that let a line find its trace.
+      //
+      // `service` / `env` / `version` come from the SAME variables the trace SDK reads, so a line
+      // cannot be filed under a service the traces do not know. They fall back to what this service
+      // has always emitted when nothing is configured, so a deployment that wants no telemetry sees
+      // no change at all.
       base: {
         service: 'jinbe',
         environment: env.NODE_ENV,
+        ...logBase(),
       },
+      // Evaluated per line: the active span is a property of the moment, not of the logger.
+      mixin: traceFields,
     },
     requestIdLogLabel: 'requestId',
     disableRequestLogging: false,
@@ -86,6 +99,13 @@ export async function buildServer() {
 
   // Add request ID to all requests
   fastify.addHook('onRequest', requestIdMiddleware)
+
+  // The published route table, collected as Fastify registers each route. Read off the guards that
+  // were actually attached, so a row and the refusal behind it cannot disagree — and a route added
+  // without a guard is absent from the table rather than described as open.
+  fastify.addHook('onRoute', (route) => {
+    recordRoute(route.method, route.url, [route.preHandler, route.onRequest], isPublicRoute)
+  })
 
   // Extract user identity from Kratos session or proxy headers
   fastify.addHook('onRequest', extractIdentity)
@@ -133,6 +153,7 @@ export async function buildServer() {
 
   await fastify.register(
     async function (api) {
+      await api.register(telemetryRoutes)
       await api.register(whoamiRoutes)
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(clusterRoutes, { prefix: '/clusters' })
@@ -148,6 +169,10 @@ export async function buildServer() {
       await api.register(auditRoutes, { prefix: '/admin/audit' })
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
+      // Answers about a named subject rather than about its caller, so it takes a machine
+      // credential and nothing else — its own hook, registered inside the plugin.
+      await api.register(directoryRoutes, { prefix: '/directory' })
+      await api.register(opaPolicyBundleRoutes, { prefix: '/opa' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
@@ -219,9 +244,6 @@ async function start() {
       // race where opal-server booted first, hit a 503 from us, and ended
       // up with an empty OPA dataset. Non-fatal — opal-server may also be
       // unreachable here, in which case the next admin mutation re-pushes.
-      rbacService.refreshAllDataSources('jinbe-startup').catch(err => {
-        fastify.log.warn({ err: err.message }, 'OPAL data refresh on startup failed (non-fatal)')
-      })
 
       // Scheduled RBAC-bundle backup, run by jinbe itself (self-authenticated +
       // holds S3 creds). No-op unless backup is enabled. Replaces the external

@@ -1,10 +1,11 @@
+import { allGroupMemberships } from './organisation-store.js'
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { opaService } from './opa.service.js'
+import { ASSIGN_MEMBERSHIP, holdsPlatformPermission } from './authorization-model.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {
@@ -243,6 +244,13 @@ export class SystemResourceImmutable extends Error {
 // RBAC Service — Redis-backed
 // =============================================================================
 
+/**
+ * Where a generated access rule would send its authorization question, if anything read those rules.
+ * `.invalid` can never resolve (RFC 2606), so it reads as intended rather than as a hostname
+ * somebody forgot to update.
+ */
+const RETIRED_AUTHORIZER = 'http://retired.invalid:8080/v1/data/strada/authz/decision'
+
 export class RbacService {
   // ===========================================================================
   // Private Helpers
@@ -253,41 +261,52 @@ export class RbacService {
   }
 
   /**
-   * Privilege escalation guard: refuses the mutation unless the actor holds
-   * a global wildcard role (super_admin). Lookup goes through OPA so the
-   * decision matches request-time authorization exactly.
+   * Privilege escalation guard: refuses the mutation unless the actor holds `admin.membership:write`
+   * across the platform.
+   *
+   * A DECLARED PERMISSION, not a shape. What this held before asked whether the actor was in any
+   * group granting under `*` — which conflated "operator of one API everywhere" with "administrator
+   * of the platform", and was a predicate invented here rather than something the model says. The
+   * model says it now, and the coverage rule that admits `admin:write` for it is the same one the
+   * engine applies to a route.
+   *
+   * Keyed on the IMMUTABLE identity rather than an address: this is the gate that says who may hand
+   * out rights, so it must not move when somebody changes their email, nor follow a reused one.
+   *
+   * FAIL-CLOSED on every uncertainty: no identity, or a model that cannot be read, both refuse.
    */
-  private async requireSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
-    if (!actor?.email) {
-      throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
-    }
-    const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
-    if (!result?.super_admin) {
+  private async requireSuperAdmin(
+    reason: string,
+    actor?: { id?: string | null; email?: string | null },
+  ): Promise<void> {
+    if (!actor?.id) {
       throw Object.assign(
-        new Error(`Only super_admins may ${reason}`),
+        new Error('Authentication required for this operation'),
+        { statusCode: 401 },
+      )
+    }
+    let powerful: boolean
+    try {
+      powerful = await holdsPlatformPermission(actor.id, ASSIGN_MEMBERSHIP)
+    } catch (err) {
+      throw Object.assign(
+        new Error(`The authorization model could not be read, so nobody may ${reason}: ${(err as Error).message}`),
+        { statusCode: 503 },
+      )
+    }
+    if (!powerful) {
+      throw Object.assign(
+        new Error(`Only ${ASSIGN_MEMBERSHIP} may ${reason}`),
         { statusCode: 403 },
       )
     }
   }
 
-  /**
-   * Non-throwing global super_admin check (same OPA signal as requireSuperAdmin:
-   * a global role resolving to "*"). Used where super_admin status changes the
-   * RESPONSE rather than gating a mutation — e.g. /me/organizations returns ALL
-   * mapped orgs to a super_admin instead of just their membership.
-   *
-   * FAIL-CLOSED: returns false on missing email or any OPA error, so an
-   * unreachable OPA never widens visibility.
-   */
-  async isSuperAdmin(actor: { email?: string | null }): Promise<boolean> {
-    if (!actor?.email) return false
-    try {
-      const result = await opaService.simulate(actor.email, 'jinbe', 'POST', '/api/admin/rbac/groups')
-      return result?.super_admin === true
-    } catch {
-      return false
-    }
-  }
+  // `isSuperAdmin` lived here and asked the previous model — Kratos read through a cache — for a
+  // `*` permission this model deliberately does not define. So what an administrator could see was
+  // decided by metadata nobody enforces, keyed on an address. Its one caller now asks
+  // `holdsPlatformPermission` for the permission it actually needs, on the immutable identity.
+
 
   /**
    * Returns true when the resource is flagged `system: true` in its
@@ -305,147 +324,21 @@ export class RbacService {
   }
 
   /**
-   * Returns true when membership of `groupName` grants either the global
-   * super_admin role or a service-scoped admin role (i.e. holds the
-   * wildcard "*"). Such groups are considered "privileged" — adding a
-   * user to one of them is a privilege-escalation operation, so we
-   * gate it on the target identity having a second factor configured.
-   */
-  /**
-   * Public wrapper for the admin-power check — used by the user-group
-   * assignment endpoint to refuse privilege escalation by non-super_admin
-   * actors. Mirrors the private helper used by the MFA gate.
-   */
-  async isAdminPowerGroup(groupName: string): Promise<boolean> {
-    return this.groupGrantsAdminPower(groupName)
-  }
-
-  /**
    * Public wrapper exposing the super_admin authority check used internally
    * by mutation guards. Throws 403 if the actor is not a super_admin.
    */
-  async assertSuperAdmin(reason: string, actor?: { email?: string | null }): Promise<void> {
+  async assertSuperAdmin(
+    reason: string,
+    actor?: { id?: string | null; email?: string | null },
+  ): Promise<void> {
     return this.requireSuperAdmin(reason, actor)
   }
 
-  /**
-   * Public: returns true iff membership of `groupName` grants GLOBAL admin
-   * power — the literal global `super_admin` role, or a global role that
-   * resolves to the wildcard "*" permission. Strictly narrower than
-   * groupGrantsAdminPower, which ALSO returns true for a merely service-scoped
-   * wildcard role.
-   *
-   * The user-group assignment gate uses this as a hard backstop (finding J1):
-   * a global group must require the actor to BE a super_admin, so an
-   * org-scoped ("*"-in-org) admin cannot cross the tenant boundary and mint a
-   * global super_admin.
-   *
-   * Fail-closed: only affirmative global signals return true. A missing group
-   * returns false — and in the assignment flow that group never reaches the
-   * gate, because it would not have registered as admin-power in the first
-   * place. A Redis failure THROWS (getGroup/getRoles reject) rather than
-   * silently returning false, so it surfaces as a request-level deny, never a
-   * bypass.
-   */
-  async groupGrantsGlobalPower(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return false
-    return this.defGrantsGlobalPower(def)
-  }
-
-  /**
-   * True iff the group confers NO roles in any service (an empty definition,
-   * e.g. the reserved base `users` group `{}`). Lets a demotion to the base
-   * group skip the delegation gate WITHOUT trusting the group NAME: if a
-   * privileged actor ever redefined the base group to bind real roles this
-   * returns false, so the grant is re-subjected to can_grant rather than waved
-   * through. A missing group confers nothing → true.
-   */
-  async isEmptyGroup(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return true
-    return !Object.values(def).some((roles) => Array.isArray(roles) && roles.length > 0)
-  }
-
-  /**
-   * Shared "does this group definition grant GLOBAL power" predicate. Reused
-   * by both groupGrantsGlobalPower (the public assignment gate) and
-   * groupGrantsAdminPower (the MFA / admin-power gate) so the notion of
-   * "global" cannot drift between them.
-   */
-  private async defGrantsGlobalPower(def: GroupDefinition): Promise<boolean> {
-    const globalRoles = def.global ?? []
-    if (globalRoles.length === 0) return false
-    // The literal global super_admin role is the absolute trigger.
-    if (globalRoles.includes('super_admin')) return true
-    // Otherwise resolve the named global roles against the global roles map;
-    // any wildcard permission is global admin power.
-    const allGlobalRoles = await redisRbacRepository.getRoles('global')
-    if (!allGlobalRoles) return false
-    for (const role of globalRoles) {
-      if ((allGlobalRoles[role] ?? []).includes('*')) return true
-    }
-    return false
-  }
-
-  private async groupGrantsAdminPower(groupName: string): Promise<boolean> {
-    const def = await redisRbacRepository.getGroup(groupName)
-    if (!def) return false
-
-    // Global power (super_admin, or a global role resolving to "*") is the
-    // absolute trigger — reuse the shared predicate so it stays in lock-step
-    // with groupGrantsGlobalPower.
-    if (await this.defGrantsGlobalPower(def)) return true
-
-    // For each service the group binds, check whether any of its roles
-    // resolves to a wildcard permission (admin role typically has "*").
-    for (const [svc, roles] of Object.entries(def)) {
-      if (svc === 'global' || !roles?.length) continue
-      const allRoles = await redisRbacRepository.getRoles(svc)
-      if (!allRoles) continue
-      for (const role of roles) {
-        const perms = allRoles[role] ?? []
-        if (perms.includes('*')) return true
-      }
-    }
-    return false
-  }
-
-  /**
-   * Iterates `candidateGroups`; for each one that grants admin power AND
-   * is system-protected, returns the first group name that the target
-   * identity cannot currently join because they have no second factor.
-   * Returns null if no such gate trips.
-   *
-   * Used by the user-group assignment endpoint to refuse one-click
-   * elevation of a user without MFA — required for SOC2-style controls.
-   */
-  async findPrivilegedGroupRequiringMFA(
-    candidateGroups: string[],
-    targetIdentityId: string,
-  ): Promise<string | null> {
-    let mfaCheckResult: boolean | null = null
-
-    for (const groupName of candidateGroups) {
-      const isSystem = await this.isSystemGroup(groupName)
-      if (!isSystem) continue
-      const grantsAdmin = await this.groupGrantsAdminPower(groupName)
-      if (!grantsAdmin) continue
-
-      // Lazy-load MFA check — only pay the Kratos round-trip if at least
-      // one candidate group qualifies as privileged.
-      if (mfaCheckResult === null) {
-        try {
-          mfaCheckResult = await kratosService.hasMFA(targetIdentityId)
-        } catch {
-          // Treat lookup failure as "no MFA" — fail closed for safety.
-          mfaCheckResult = false
-        }
-      }
-      if (!mfaCheckResult) return groupName
-    }
-    return null
-  }
+  // The group predicates that used to live here — admin power, global power, emptiness, and the
+  // MFA gate built on them — read this store's group and role definitions. The engine decides
+  // against a model carried in the bundle, which this store does not hold, so for every group that
+  // model declares they answered "confers nothing". `authorization-model.service` answers them now,
+  // from the documents the bundle carries.
 
   // Public: call after any user-group mutation that bypasses rbacService methods
   async notifyBindingsChanged(reason: string, actor?: AuditActorInput): Promise<void> {
@@ -474,7 +367,10 @@ export class RbacService {
     realtimeService.publish(eventType ?? 'rbac')
 
     // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
-    this.notifyOpal(eventType).catch(() => {})
+    // The OPAL push that used to be here is gone: no OPAL runs in this namespace, and the engine
+    // pulls a bundle instead of being pushed data. It failed on every mutation, logging a DNS
+    // error for a component that never existed here. The etag invalidation and the real-time
+    // notification above DO serve, and stay.
 
     if (eventType) {
       auditEventService.emit({
@@ -488,89 +384,8 @@ export class RbacService {
     }
   }
 
-  /**
-   * Push a full datasource refresh to opal-server, covering bindings,
-   * groups, plus per-service roles + route_map. Mirrors the entries returned
-   * by GET /api/admin/rbac/opal-datasource so opal-server has no excuse for
-   * a stale dataset.
-   *
-   * Called from server.ts post-waitForBootstrap so that even if opal-server
-   * booted first and got a 503 on its initial fetch, this push refills OPA's
-   * dataset within seconds — without requiring an opal-server pod restart.
-   */
-  async refreshAllDataSources(reason: string = 'jinbe-startup'): Promise<void> {
-    try {
-      const jinbeUrl = env.JINBE_INTERNAL_URL
-      const services = await redisRbacRepository.getServices()
 
-      const entries = [
-        { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-        { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-        // Global roles are always part of OPA's dataset even though "global"
-        // is not in the services registry (getServices()), so the loop below
-        // never emits it. Push it explicitly, matching GET /opal-datasource:
-        // data.roles.global holds the platform-wide "*" wildcard the
-        // super_admin role resolves to. If a dataset is ever rebuilt solely
-        // from a push (e.g. opal-client's initial pull 503s and this refresh
-        // back-fills the store), omitting it would drop the wildcard and 403
-        // every privileged operation with no recovery path.
-        { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
-        // Keep in lock-step with GET /opal-datasource so an org_service_map
-        // mutation re-publishes data.org_service_map to OPA (else it goes stale).
-        { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
-        // Org → admin roster (data.org_admin_map): per-org list of admin emails;
-        // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
-        { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
-      ]
-      for (const svc of services) {
-        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-        const routeMap = await redisRbacRepository.getRouteMap(svc)
-        if (routeMap) {
-          entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-        }
-      }
 
-      const res = await fetch(`${env.OPAL_SERVER_URL}/data/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries, reason }),
-      })
-      if (!res.ok) throw new Error(`opal-server ${res.status}`)
-      console.log(`[opal-refresh] ${entries.length} entries pushed (${reason})`)
-    } catch (err) {
-      console.error('[opal-refresh] Failed:', err)
-      throw err
-    }
-  }
-
-  private async notifyOpal(reason?: string): Promise<void> {
-    // Delegate to refreshAllDataSources so every mutation re-publishes
-    // the full entries list (/bindings, /bindings/groups, /roles/{svc}
-    // AND /route_map/{svc} for every service). The slim previous
-    // payload pushed only /bindings + /bindings/groups, which meant
-    // adding or editing a route_map entry never propagated to OPA —
-    // OPA only picked it up after an opal-client restart pulled all
-    // sources at boot. Over-publishing is cheap (OPAL clients
-    // re-fetch the same URLs they already know) and the alternative
-    // (per-mutation entry mapping) is brittle: every new RBAC path
-    // would need a matching publish call somewhere.
-    try {
-      await this.refreshAllDataSources(reason || 'rbac-mutation')
-    } catch (err) {
-      console.error('[opal-notify] Failed:', err)
-    }
-  }
-
-  private async notifyOpalRoles(serviceName: string): Promise<void> {
-    // Same reasoning as notifyOpal — full refresh keeps OPA's view in
-    // sync without per-path bookkeeping. serviceName is preserved in
-    // the reason string for traceability in OPAL server logs.
-    try {
-      await this.refreshAllDataSources(`roles.updated.${serviceName}`)
-    } catch (err) {
-      console.error('[opal-notify-roles] Failed:', err)
-    }
-  }
 
   // ===========================================================================
   // Users & Bindings
@@ -698,10 +513,15 @@ export class RbacService {
     // it while we compute, our bindings pre-image is stale and we must NOT cache.
     const startEpoch = this.statsEpoch
     const p = (async (): Promise<DirectoryStats> => {
-      const [bindings, wildGroups, groupDefs] = await Promise.all([
+      // Who is in which group comes from the store the ENGINE reads. It used to be counted off
+      // Kratos metadata — the display copy — so every group the model declares showed `0 members`
+      // while the memberships that decide requests sat in `group_members`, uncounted. A screen
+      // saying nobody holds a group is the one answer that is certainly wrong.
+      const [bindings, wildGroups, groupDefs, memberships] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings(),
         this.wildcardGroupNames(),
         redisRbacRepository.getGroups(),
+        allGroupMemberships().catch(() => null),
       ])
       // group → the services it grants roles on (for per-service reach counts)
       const groupServices: Record<string, string[]> = {}
@@ -715,9 +535,8 @@ export class RbacService {
       const perService: Record<string, number> = {}
       for (const b of bindings.values()) {
         if (b.active) active++
-        // Raw metadata group names (may include orphans not in rbac:groups).
-        // The UI reads only the groups it knows, so reporting raw keys is safe.
-        for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
+        // Only when the enforced store could not be read — see below.
+        if (!memberships) for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
         if (b.primaryOrganization) perOrg[b.primaryOrganization] = (perOrg[b.primaryOrganization] ?? 0) + 1
         // Only the default 'users' membership → can't reach anything.
         if (b.groups.every((g) => g === 'users')) unassigned++
@@ -727,6 +546,15 @@ export class RbacService {
         for (const g of b.groups) for (const s of groupServices[g] ?? []) svcs.add(s)
         for (const s of svcs) perService[s] = (perService[s] ?? 0) + 1
       }
+      // Counted from the enforced store when it answers. Falling back to the display copy rather
+      // than to zero: a count that is merely out of date is worse than nothing only if it is
+      // mistaken for the truth, and zero is a stronger claim than either.
+      if (memberships) {
+        for (const groups of memberships.values()) {
+          for (const g of groups) perGroup[g] = (perGroup[g] ?? 0) + 1
+        }
+      }
+
       const stats: DirectoryStats = {
         total: bindings.size,
         active,
@@ -865,23 +693,6 @@ export class RbacService {
     const changes = diffGroupDefinition(name, before, {})
     await this.invalidateBundle('rbac.group_deleted', { type: 'group', id: name }, actor, changes)
     return this.result(`Group '${name}' deleted`)
-  }
-
-  // ===========================================================================
-  // Group Validation
-  // ===========================================================================
-
-  async getAvailableGroups(): Promise<string[]> {
-    const groups = await redisRbacRepository.getGroups()
-    return Object.keys(groups)
-  }
-
-  async validateGroups(groups: string[]): Promise<void> {
-    const available = await this.getAvailableGroups()
-    const invalid = groups.filter(g => !available.includes(g))
-    if (invalid.length > 0) {
-      throw new Error(`Invalid groups: ${invalid.join(', ')}. Available: ${available.join(', ')}`)
-    }
   }
 
   // ===========================================================================
@@ -1159,7 +970,6 @@ export class RbacService {
     }
     const before = await redisRbacRepository.getRoles(serviceName)
     await redisRbacRepository.setRoles(serviceName, roles)
-    this.notifyOpalRoles(serviceName).catch(() => {})
     const changes = diffRoles(serviceName, before, roles)
     await this.invalidateBundle('roles.updated', { type: 'service', id: serviceName, service: serviceName }, actor, changes)
     return this.result(`Roles updated for ${serviceName}`)
@@ -1212,13 +1022,26 @@ export class RbacService {
    * persisted with a bare or app-less remote_json config that would silently
    * authorize against the wrong service.
    */
+  /**
+   * The authorizer an access rule generated here would carry.
+   *
+   * DELIBERATELY UNREACHABLE, like the rules it belongs to. The proxy reads its rules from the
+   * ConfigMap a controller owns, rendered from Git — so nothing this generates reaches it, and the
+   * address it used to name (an adapter Service, then a chart default naming a component that never
+   * existed here) only made a dead rule look live.
+   *
+   * The generation itself is not removed here: it is reachable from more places than one commit
+   * should touch, and `RULES_SOURCE` — the flag that says where rules come from — gates NOTHING
+   * today. It is only reported to the console, which greys the screen while the machinery underneath
+   * still runs. Making it gate is the next step, and it is what lets all of this go.
+   */
   private buildRemoteJsonConfig(service: string): { remote: string; payload: string } {
     const groupsTemplate = `{{ $ma := index .Extra.identity "metadata_admin" }}{{ if $ma }}{{ if index $ma "groups" }}{{ toJson (index $ma "groups") }}{{ else }}[]{{ end }}{{ else }}[]{{ end }}`
     // Go templates need a literal "email" key (unescaped); JSON.stringify handles
     // escaping when the rule is stored.
     const q = '"'
     const payload = `{"input":{"sub":"{{ print .Subject }}","email":"{{ index .Extra.identity.traits ${q}email${q} }}","groups":${groupsTemplate},"object":"{{ .MatchContext.URL.Path }}","action":"{{ .MatchContext.Method }}","app":"${service}"}}`
-    return { remote: env.OPA_AUTHZ_REMOTE, payload }
+    return { remote: RETIRED_AUTHORIZER, payload }
   }
 
   /**

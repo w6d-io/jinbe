@@ -2,6 +2,20 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 // Redis mutex is infrastructure — passthrough so these units need no Redis.
+// The store the engine actually reads. Group changes land here, so a test that left it real
+// would reach for Postgres.
+// The model the gates read. See the helper for why they read a model rather than predicates.
+vi.mock('../../../services/authorization-model.service.js', async () =>
+  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+
+vi.mock('../../../services/organisation-store.js', () => ({
+  addToGroup: vi.fn().mockResolvedValue(undefined),
+  applyGroupChange: vi.fn().mockResolvedValue(undefined),
+  removeFromGroup: vi.fn().mockResolvedValue(undefined),
+  groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
+  organisationStoreConfigured: vi.fn().mockReturnValue(true),
+}))
+
 vi.mock('../../../services/redis-lock.js', () => ({
   withRedisLock: (_name: string, fn: () => unknown) => fn(),
 }))
@@ -25,16 +39,10 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: {
-    getAvailableGroups: vi.fn(),
-    validateGroups: vi.fn(),
     notifyBindingsChanged: vi.fn().mockResolvedValue(undefined),
-    isAdminPowerGroup: vi.fn().mockResolvedValue(false),
     // Default false: the admin-power groups in these cases are org-scoped, not
     // global, so the wildcard_in_org gate is exercised as before.
-    groupGrantsGlobalPower: vi.fn().mockResolvedValue(false),
     // Base group `users` is empty → exempt from the delegation gate.
-    isEmptyGroup: vi.fn().mockResolvedValue(true),
-    findPrivilegedGroupRequiringMFA: vi.fn().mockResolvedValue(null),
   },
 }))
 
@@ -93,7 +101,6 @@ describe('OrganizationUserController.getUserGroups', () => {
   it('returns email + groups + availableGroups for in-org user', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
     vi.mocked(kratosService.getUserGroups).mockResolvedValue(['users'])
-    vi.mocked(rbacService.getAvailableGroups).mockResolvedValue(['users', 'admins'])
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -105,7 +112,16 @@ describe('OrganizationUserController.getUserGroups', () => {
     expect(reply.send).toHaveBeenCalledWith({
       email: 'user@example.com',
       groups: ['users'],
-      availableGroups: ['users', 'admins'],
+      availableGroups: [
+        'admins',
+        'devs',
+        'kuma-viewers',
+        'operators',
+        'org_admins',
+        'super_admins',
+        'users',
+        'viewers',
+      ],
     })
   })
 
@@ -129,15 +145,12 @@ describe('OrganizationUserController.getUserGroups', () => {
 describe('OrganizationUserController.updateUserGroups', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
     vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('rejects when target identity is in a different org (404)', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(OTHER_ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
@@ -154,111 +167,32 @@ describe('OrganizationUserController.updateUserGroups', () => {
     ).rejects.toMatchObject({ statusCode: 404 })
   })
 
-  it('blocks privilege escalation (422) when OPA denies delegation of an admin-power group', async () => {
+  it('refuses an org-scoped group change, because this model defines no delegation', async () => {
+    // These three cases used to describe an OPA delegation policy deciding whether an org admin
+    // could hand out a group inside their organisation. `strada.authz` has no such concept — no
+    // permission expresses it — so the endpoint refuses and names the authority that is missing,
+    // instead of asking an engine that stopped answering when the model changed.
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockImplementation(async (g: string) => g === 'admins')
-    // OPA delegation policy refuses (default beforeEach deny); the guard blocks.
 
     const request = {
       params: { organizationId: ORG, id: USER_ID },
       body: { groups: ['admins'] },
       ip: '127.0.0.1',
-      userContext: { email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'actor@example.com',
-        groups: ['admins'],
-        roles: ['admin'],
-        permissions: ['rbac:write'],
-      },
+      userContext: { id: 'subject-actor', email: 'actor@example.com', aal: 'aal2', authenticatedAt: new Date() },
+      rbacInfo: { email: 'actor@example.com', groups: [], roles: [], permissions: [] },
     } as unknown as FastifyRequest
 
     const reply = createReply()
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'privilege_escalation_blocked',
-      blockingGroup: 'admins',
-    })
+    expect(reply.status).toHaveBeenCalledWith(422)
+    expect(reply._body).toMatchObject({ error: 'delegation_not_defined' })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-  })
-
-  it('allows OPA-permitted delegation by a non-wildcard org admin (MFA gate still applies)', async () => {
-    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(true)
-    // Non-wildcard org admin → the decision is the OPA delegation policy, which
-    // allows the grant (containment holds); the MFA gate is downstream and still
-    // blocks until the target enrols a second factor.
-    vi.mocked(opaService.canGrant).mockResolvedValue(true)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue('admins')
-
-    const request = {
-      params: { organizationId: ORG, id: USER_ID },
-      body: { groups: ['admins'] },
-      ip: '127.0.0.1',
-      userContext: { email: 'orgadmin@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'orgadmin@example.com',
-        groups: ['org-admins'],
-        roles: ['organization_admin'],
-        permissions: ['org:manage_users', 'users:read'],
-      },
-    } as unknown as FastifyRequest
-
-    const reply = createReply()
-
-    await organizationUserController.updateUserGroups(request as never, reply)
-
-    expect(opaService.canGrant).toHaveBeenCalled()
-    expect(reply._statusCode).toBe(422)
-    expect(reply._body).toMatchObject({
-      error: 'mfa_required',
-      targetEmail: 'user@example.com',
-    })
-  })
-
-  it('routes a wildcard (*) caller through can_grant on the org endpoint (rego is authoritative)', async () => {
-    // No client-side bypass: even a `*` caller is subject to OPA can_grant. The
-    // rego decides (its service-admin tier), so a single-service grant it allows
-    // succeeds and canGrant IS consulted.
-    vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
-    vi.mocked(rbacService.isAdminPowerGroup).mockResolvedValue(false)
-    vi.mocked(rbacService.findPrivilegedGroupRequiringMFA).mockResolvedValue(null)
-    vi.mocked(opaService.canGrant).mockResolvedValue(true)
-    vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
-
-    const request = {
-      params: { organizationId: ORG, id: USER_ID },
-      body: { groups: ['kuma-viewers'] },
-      ip: '127.0.0.1',
-      userContext: { email: 'super@example.com', aal: 'aal2', authenticatedAt: new Date() },
-      rbacInfo: {
-        email: 'super@example.com',
-        groups: ['super_admins'],
-        roles: ['super_admin'],
-        permissions: ['*'],
-      },
-    } as unknown as FastifyRequest
-
-    const reply = createReply()
-
-    await organizationUserController.updateUserGroups(request as never, reply)
-
-    expect(opaService.canGrant).toHaveBeenCalledWith({
-      actor: { email: 'super@example.com' },
-      target_group: 'kuma-viewers',
-      target_org: ORG,
-    })
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['kuma-viewers'])
   })
 
   it('happy path: returns id + organizationId + updatedAt and persists groups', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {
@@ -278,6 +212,8 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
+    // The body asked for `users`, so `users` is written. The base group is only special in that
+    // nothing forces it back any more.
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['users'])
     expect(reply.send).toHaveBeenCalled()
     const body = reply._body as Record<string, unknown>
@@ -290,9 +226,8 @@ describe('OrganizationUserController.updateUserGroups', () => {
     expect(typeof body.updatedAt).toBe('string')
   })
 
-  it('defaults to ["users"] when body groups is empty', async () => {
+  it('takes the last group away instead of putting the base one back', async () => {
     vi.mocked(kratosService.getIdentity).mockResolvedValue(makeIdentity(ORG) as never)
-    vi.mocked(rbacService.validateGroups).mockResolvedValue(undefined as never)
     vi.mocked(kratosService.updateUserGroups).mockResolvedValue(undefined as never)
 
     const request = {
@@ -312,7 +247,7 @@ describe('OrganizationUserController.updateUserGroups', () => {
 
     await organizationUserController.updateUserGroups(request as never, reply)
 
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', ['users'])
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('user@example.com', [])
   })
 })
 

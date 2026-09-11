@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { env } from '../config/index.js'
 import { rbacController } from '../controllers/rbac.controller.js'
-import { requireAdmin, requireSuperAdmin, requireSuperAdminRole, requireRecentMfa } from '../middleware/require-admin.js'
+import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -66,11 +66,22 @@ const oathkeeperHandlerCatalogJsonSchema = {
 
 export async function rbacRoutes(fastify: FastifyInstance) {
   // All RBAC admin routes require admin group membership
-  fastify.addHook('preHandler', requireAdmin)
+  guardAll(fastify, requireAdmin, isPublicRoute)
 
   // ===========================================================================
   // Users
   // ===========================================================================
+
+  // The writes that used to live here are gone, and so are /simulate and /impact-preview.
+  //
+  // The access-rule writes propagated to the gateway at runtime; the rules come from Git now, so a
+  // write here would be overwritten by the next reconcile at best. The service registry keyed
+  // grants per service, which this model does not: it keys them per organisation. And both replay
+  // screens asked an engine for `data.rbac.*`, a path that stopped existing when the model became
+  // `strada.authz` — they answered nothing.
+  //
+  // Reads are untouched: what exists is still listed. Only the ways to change it through a retired
+  // model are gone.
 
   fastify.get('/users', {
     schema: {
@@ -101,6 +112,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getGroups.bind(rbacController))
 
   fastify.post('/groups', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Create a new group.',
       tags: ['rbac'],
@@ -113,9 +125,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         409: conflictResponseSchema,
       },
     },
-  }, rbacController.createGroup.bind(rbacController))
+  }, rbacController.createGroup.bind(rbacController) as never)
 
   fastify.put('/groups/:name', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Update an existing group.',
       tags: ['rbac'],
@@ -129,9 +142,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateGroup.bind(rbacController))
+  }, rbacController.updateGroup.bind(rbacController) as never)
 
   fastify.delete('/groups/:name', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Delete a group.',
       tags: ['rbac'],
@@ -143,7 +157,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.deleteGroup.bind(rbacController))
+  }, rbacController.deleteGroup.bind(rbacController) as never)
 
   // ===========================================================================
   // Services
@@ -160,86 +174,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.getServices.bind(rbacController))
-
-  fastify.post('/services', {
-    // J11: authoring a service hot-creates its oathkeeper rules — gate to a
-    // resolved global super_admin (not a name-only match).
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Create a new service with default roles, route map, and oathkeeper rules.',
-      tags: ['rbac'],
-      body: {
-        type: 'object', required: ['name'],
-        properties: {
-          name: { type: 'string', pattern: SERVICE_NAME_PATTERN.source },
-          displayName: { type: 'string' },
-          upstreamUrl: { type: 'string', format: 'uri' },
-          matchUrl: { type: 'string' },
-          matchMethods: { type: 'array', items: { type: 'string' } },
-          stripPath: { type: 'string' },
-          // Ordered sign-in fallback: cookie → bearer → introspection.
-          // Empty array = public. Omitted = cookie (legacy default).
-          signIn: { type: 'array', items: { type: 'string', enum: ['cookie', 'bearer', 'introspection'] } },
-        },
-      },
-      response: {
-        201: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        400: badRequestResponseSchema,
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        409: conflictResponseSchema,
-      },
-    },
-    // as never: route-level preHandler collapses Fastify's RouteGeneric to the
-    // base interface, which the strictly-typed controller handler rejects —
-    // same cast the existing preHandler routes use (organization-user.routes).
-  }, rbacController.createService.bind(rbacController) as never)
-
-  fastify.delete('/services/:name', {
-    // J11: deleting a service tears down its oathkeeper rules (hot-propagated) —
-    // same gateway-affecting authoring write, so same super_admin gate.
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Delete a service and all associated roles, routes, and rules.',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.deleteService.bind(rbacController) as never)
-
-  fastify.patch('/services/:name', {
-    // J11: edits the service's oathkeeper rule config (hot-propagated) — gate to
-    // a resolved global super_admin.
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Update oathkeeper rule config for a service (upstream URL, match URL/methods, strip_path, sign-in methods).',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      body: {
-        type: 'object',
-        properties: {
-          upstreamUrl: { type: 'string', format: 'uri' },
-          matchUrl: { type: 'string' },
-          matchMethods: { type: 'array', items: { type: 'string' } },
-          stripPath: { type: ['string', 'null'] },
-          // Ordered sign-in fallback: cookie → bearer → introspection.
-          // Empty array = public.
-          signIn: { type: 'array', items: { type: 'string', enum: ['cookie', 'bearer', 'introspection'] } },
-        },
-      },
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.updateServiceConfig.bind(rbacController) as never)
 
   fastify.get('/services/:name/permissions', {
     schema: {
@@ -286,6 +220,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoles.bind(rbacController))
 
   fastify.put('/services/:name/roles', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace roles for a specific service.',
       tags: ['rbac'],
@@ -304,7 +239,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateServiceRoles.bind(rbacController))
+  }, rbacController.updateServiceRoles.bind(rbacController) as never)
 
   fastify.get('/services/:name/routes', {
     schema: {
@@ -321,6 +256,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoutes.bind(rbacController))
 
   fastify.put('/services/:name/routes', {
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace the route map for a specific service.',
       tags: ['rbac'],
@@ -350,9 +286,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.updateServiceRoutes.bind(rbacController))
+  }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
   fastify.post('/services/:name/routes/import/preview', {
+    preHandler: refuseWhenSourcedFromGit,
     bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
     schema: {
       description:
@@ -392,7 +329,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.importRoutesPreview.bind(rbacController))
+  }, rbacController.importRoutesPreview.bind(rbacController) as never)
 
   // ===========================================================================
   // Access Rules (Oathkeeper)
@@ -423,63 +360,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.getAccessRule.bind(rbacController))
-
-  fastify.post('/access-rules', {
-    // J11: an oathkeeper access rule (e.g. authorizer: allow) hot-propagates to
-    // the gateway — a non-super admin authoring one is an instant bypass.
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Create a new access rule.',
-      tags: ['rbac'],
-      body: oathkeeperRuleJsonSchema,
-      response: {
-        201: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        400: badRequestResponseSchema,
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        409: conflictResponseSchema,
-      },
-    },
-  }, rbacController.createAccessRule.bind(rbacController) as never)
-
-  fastify.put('/access-rules/:id', {
-    // J11: same hot-propagation bypass risk as create — gate to super_admin.
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Update an existing access rule.',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      body: oathkeeperRuleJsonSchema,
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        400: badRequestResponseSchema,
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.updateAccessRule.bind(rbacController) as never)
-
-  fastify.delete('/access-rules/:id', {
-    // J11: removing an access rule changes gateway enforcement (hot) — gate to
-    // super_admin.
-    preHandler: requireSuperAdminRole,
-    schema: {
-      description: 'Delete an access rule.',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.deleteAccessRule.bind(rbacController) as never)
-
-  // ===========================================================================
-  // Oathkeeper Handler Catalog
-  // ===========================================================================
 
   fastify.get('/oathkeeper/handlers', {
     schema: {
@@ -604,96 +484,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // Impact preview — "who gains/loses access if this change is applied?"
   // ===========================================================================
 
-  fastify.post('/impact-preview', {
-    schema: {
-      description:
-        'Evaluate a proposed RBAC change (groups / roles / route maps / user group assignment) against a sample of ' +
-        'real audit traffic + the declared route surface, and return every access decision that flips. ' +
-        'Evaluated by the live OPA policy via data overrides — the preview cannot drift from the gateway.',
-      tags: ['rbac'],
-      body: {
-        type: 'object',
-        properties: {
-          groups: { type: 'object', additionalProperties: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } },
-          roles: { type: 'object', additionalProperties: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } } },
-          routeMaps: { type: 'object', additionalProperties: { type: 'object', additionalProperties: true } },
-          groupMembership: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
-        },
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            losses: { type: 'array', items: { type: 'object', additionalProperties: true } },
-            gains: { type: 'array', items: { type: 'object', additionalProperties: true } },
-            unchanged: { type: 'number' },
-            sample: { type: 'object', additionalProperties: true },
-            evaluated: { type: 'boolean' },
-          },
-        },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-      },
-    },
-  }, rbacController.impactPreview.bind(rbacController))
-
-  // ===========================================================================
-  // Permission Simulator
-  // ===========================================================================
-
-  fastify.post('/simulate', {
-    schema: {
-      description: 'Simulate an authorization decision for a user, service, method, and path.',
-      tags: ['rbac'],
-      body: {
-        type: 'object',
-        required: ['email', 'service', 'method', 'path'],
-        properties: {
-          email: { type: 'string', format: 'email' },
-          service: { type: 'string', minLength: 1 },
-          method: { type: 'string', minLength: 1 },
-          path: { type: 'string', minLength: 1 },
-        },
-      },
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            allowed: { type: 'boolean' },
-            superAdmin: { type: 'boolean' },
-            matchedRule: {
-              type: 'object',
-              properties: {
-                method: { type: 'string' },
-                path: { type: 'string' },
-                permission: { type: 'string' },
-              },
-            },
-            requiredPermission: { type: 'string' },
-            userInfo: {
-              type: 'object',
-              properties: {
-                email: { type: 'string' },
-                groups: { type: 'array', items: { type: 'string' } },
-                roles: { type: 'array', items: { type: 'string' } },
-                permissions: { type: 'array', items: { type: 'string' } },
-              },
-            },
-          },
-        },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        503: {
-          type: 'object',
-          properties: {
-            error: { type: 'string' },
-            message: { type: 'string' },
-          },
-        },
-      },
-    },
-  }, rbacController.simulate.bind(rbacController))
-
   fastify.post('/health-check', async (_request, reply) => {
     return reply.send({ status: 'ok', redis: true, opa: true })
   })
@@ -727,8 +517,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 // OPAL Public Data Routes — no auth, called by OPAL server to sync policy data
 // =============================================================================
 
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { rbacService } from '../services/rbac.service.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // Bindings: user → groups + org membership (from Kratos). Routed through the
@@ -750,68 +541,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   })
 
   // Groups: group → service → roles
-  fastify.get('/opal/groups', async (_request, reply) => {
-    const groups = await redisRbacRepository.getGroups()
-    return reply.send(groups)
-  })
+  // Six routes lived here whose only caller was OPAL: the datasource manifest and the five
+  // documents it fetched. No OPAL runs in this namespace, and the engine pulls a bundle rather
+  // than being pushed data — so they answered nobody, and the push that used to name them logged
+  // a DNS error on every mutation for a component that never existed here.
 
-  // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
-  // Values are service bundles (arrays). Legacy scalar values in Redis are
-  // normalized to single-element arrays by the repository before serving.
-  fastify.get('/opal/org_service_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgServiceMap()
-    return reply.send(map)
-  })
-
-  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
-  fastify.get('/opal/org_admin_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgAdminMap()
-    return reply.send(map)
-  })
-
-  // Roles per service
-  fastify.get('/opal/roles/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const roles = await redisRbacRepository.getRoles(service)
-    return reply.send(roles || {})
-  })
-
-  // Route map per service
-  fastify.get('/opal/route_map/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const routeMap = await redisRbacRepository.getRouteMap(service)
-    return reply.send(routeMap || { rules: [] })
-  })
-
-  // OPAL datasource config (tells OPAL what to fetch)
-  fastify.get('/opal-datasource', async (_request, reply) => {
-    const services = await redisRbacRepository.getServices()
-    const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-
-    const entries = [
-      { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-      { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-      // Global roles are always part of OPA's dataset, even though "global"
-      // is not listed in the services registry — they hold the platform-wide
-      // wildcard ("*") used by the super_admin role and the rego super_admin
-      // detector relies on data.roles.global being populated.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
-      // Org → service map (data.org_service_map): the delegation rego resolves
-      // which service a target org's RBAC lives under from this.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
-      // Org → admin roster (data.org_admin_map): per-org list of admin emails;
-      // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
-    ]
-
-    for (const svc of services) {
-      entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-      const routeMap = await redisRbacRepository.getRouteMap(svc)
-      if (routeMap) {
-        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-      }
-    }
-
-    return reply.send({ entries })
-  })
 }

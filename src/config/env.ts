@@ -67,6 +67,63 @@ export const envSchema = z.object({
   DEV_USER_EMAIL: z.string().email().optional(),
 
   // Kratos APIs
+  // ─── Authentication methods ───
+  // Each way of proving who is calling is a switch, so a deployment takes the ones it wants and
+  // nothing else. Both default to what this service did before they existed: the Kratos session
+  // cookie on, the bearer off.
+  //
+  // A deployment whose console holds an OIDC token has no cookie to send, and one that turns the
+  // cookie off stops accepting session-based callers entirely — which is the point: an
+  // authentication method left on is an authentication method that can be used.
+  AUTH_COOKIE_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('true'),
+  AUTH_BEARER_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+
+  // ─── OIDC bearer ───
+  // Where a bearer token is verified against. No default: a wrong or missing issuer must fail the
+  // verification rather than quietly accept a token from somewhere else.
+  OIDC_ISSUER: z.string().url().optional(),
+  OIDC_JWKS_URL: z.string().url().optional(),
+  // The audience this service answers to. A token minted for another audience is not for us, and
+  // accepting it would let any holder of any token of that issuer in.
+  OIDC_AUDIENCE: z.string().optional(),
+
+  // ─── Where organisations come from ───
+  // `local` reads them from this service's own model, administered through the console. `claim`
+  // reads them from the verified token, so whoever issues it decides and this service asks nobody
+  // — which is how a deployment plugs its own directory in without this code knowing it exists.
+  // local     — inferred from group memberships by the policy, as this service has always done
+  // directory  — records this service owns, in ORGANISATION_DATABASE_URL
+  // claim      — whatever the verified token asserts; this service consults nothing
+  // Whether this service is still a rule source. `service` — the engines fetch the rules from here
+  // at runtime, so the console's editors change what is enforced. `gitops` — the edge is fed from
+  // Rule resources and the policy engine from labelled ConfigMaps, both synced from a repository,
+  // and a write here would land in a store nothing reads. Reported to the console so it can stop
+  // offering an edit that cannot take effect; it changes nothing this service does.
+  RULES_SOURCE: z.enum(['service', 'gitops']).default('service'),
+  // `local` is gone: it asked an engine for a path the model no longer has, so as the DEFAULT it
+  // scoped every caller to nothing unless a deployment overrode it.
+  ORGANISATION_SOURCE: z.enum(['directory', 'claim']).default('directory'),
+
+  // Where organisations live when this service owns them. Absent, the `directory` source has
+  // nowhere to read from and start-up refuses rather than answering that nobody belongs anywhere.
+  ORGANISATION_DATABASE_URL: z.string().optional(),
+  // The authority that signed the database's certificate, as PEM. A certificate authority is
+  // public by nature, so it belongs in configuration rather than in a secret store. Without it a
+  // private authority cannot be verified, and the choice is then between refusing the connection
+  // and trusting whatever answers — this makes the third option available.
+  ORGANISATION_DATABASE_CA: z.string().optional(),
+  ORGANISATION_DATABASE_POOL_MAX: z.coerce.number().int().positive().default(5),
+  ORGANISATION_DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  // The claim the organisations are read from in `claim` mode. Named rather than fixed: a claim
+  // name is a deployment's vocabulary, not this service's.
+  ORGANISATION_CLAIM: z.string().default('orgs'),
+
   KRATOS_PUBLIC_URL: z.string().url().default('http://kratos-public:80'),
   KRATOS_ADMIN_URL: z.string().url().default('http://kratos-admin:80'),
   // Per-request timeout (ms) for Kratos Admin directory calls. Bounds the
@@ -138,20 +195,14 @@ export const envSchema = z.object({
     .pipe(z.number().int().nonnegative())
     .default('60000'),
 
-  // OPAL/OPA Client
-  OPA_URL: z.string().url().default('http://opal-client:8181'),
 
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
 
-  // OPAL Server (for real-time RBAC update triggers)
-  OPAL_SERVER_URL: z.string().url().default('http://opal-server:7002'),
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),
 
-  // OPA Data API (direct push — replaces OPAL data sync)
-  OPA_DATA_URL: z.string().url().default('http://opal-client:8181'),
 
   // Redis (RBAC data store + audit streams)
   REDIS_URL: z.string().default('redis://redis:6379'),
@@ -179,8 +230,6 @@ export const envSchema = z.object({
   APP_DOMAIN: fqdnSchema.optional(),
   API_DOMAIN: fqdnSchema.optional(),
 
-  // OPA remote_json authorizer URL (used when generating per-service Oathkeeper rules)
-  OPA_AUTHZ_REMOTE: z.string().url().default('http://opa-authz-proxy:8080/v1/data/rbac/allow'),
 
   // Oathkeeper enabled handler sets (comma-separated → string[]). These are the
   // handlers actually REGISTERED in the gateway's Oathkeeper config. jinbe

@@ -7,30 +7,37 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock('../../../config/env.js', () => ({ env: mockState.env }))
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: { manageableOrgs: vi.fn().mockResolvedValue([]) },
+vi.mock('../../../services/organisation-store.js', () => ({
+  organisationsForSubject: vi.fn().mockResolvedValue([]),
+  organisationStoreConfigured: vi.fn().mockReturnValue(true),
+  organisationsById: vi.fn().mockResolvedValue([]),
+  allOrganisations: vi.fn().mockResolvedValue([]),
+  heldOrganisations: vi.fn().mockResolvedValue([]),
 }))
 
-vi.mock('../../../services/rbac.service.js', () => ({
-  rbacService: { isSuperAdmin: vi.fn().mockResolvedValue(false) },
-}))
 
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: { getOrgServiceMap: vi.fn().mockResolvedValue({}) },
 }))
 
 import { meRoutes } from '../../../routes/me.routes.js'
-import { opaService } from '../../../services/opa.service.js'
-import { rbacService } from '../../../services/rbac.service.js'
+import { organisationsForSubject } from '../../../services/organisation-store.js'
 import { redisRbacRepository } from '../../../services/redis-rbac.repository.js'
 
 function createMockRequest(options: {
   validatedSession?: { email: string } | null
   userContext?: { email: string } | null
 } = {}): FastifyRequest {
+  const address = options.userContext?.email ?? options.validatedSession?.email
   return {
     validatedSession: options.validatedSession || undefined,
-    userContext: options.userContext || undefined,
+    // The identity travels with the context in a real session, and the directory is keyed on it —
+    // a fixture carrying only an address would answer nothing and say nothing about why.
+    userContext: options.userContext
+      ? { ...options.userContext, id: `subject-of-${options.userContext.email}` }
+      : address
+        ? ({ email: address, id: `subject-of-${address}` } as never)
+        : undefined,
   } as unknown as FastifyRequest
 }
 
@@ -61,8 +68,7 @@ describe('meRoutes — GET /me/organizations', () => {
     vi.clearAllMocks()
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue([])
-    vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(false)
+    vi.mocked(organisationsForSubject).mockResolvedValue([])
     vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({})
     const fastify = createMockFastify()
     await meRoutes(fastify)
@@ -71,32 +77,34 @@ describe('meRoutes — GET /me/organizations', () => {
   })
 
   it('returns the delegated manageable orgs for a non-super-admin', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-1', 'org-2'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-1', 'org-2'])
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'a@b.io' } }), reply)
 
-    expect(opaService.manageableOrgs).toHaveBeenCalledWith('a@b.io')
-    expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], scope: 'delegated' })
+    expect(organisationsForSubject).toHaveBeenCalled()
+    expect(reply._body).toEqual({ organizations: ['org-1', 'org-2'], names: {}, scope: 'delegated' })
   })
 
-  it('returns ALL mapped orgs with scope=all for a global super_admin', async () => {
-    vi.mocked(rbacService.isSuperAdmin).mockResolvedValue(true)
-    vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({ 'org-a': ['kuma'], 'org-b': ['fleet'] })
-    const reply = createMockReply()
-    await handler(createMockRequest({ validatedSession: { email: 'super@b.io' } }), reply)
+  it('answers with MINE, whoever asks — even an administrator', async () => {
+    // It used to answer with every organisation for a super admin, so the same URL meant two things
+    // depending on the caller, and a `scope` field existed to say which. Every organisation is a
+    // separate question now: GET /admin/organizations, which refuses rather than narrowing.
+    vi.mocked(organisationsForSubject).mockResolvedValue(['mine'])
 
-    expect(reply._body).toEqual({ organizations: ['org-a', 'org-b'], scope: 'all' })
-    // super_admin path does not consult the delegated manageable_orgs
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    const reply = createMockReply()
+    await handler(createMockRequest({ validatedSession: { email: 'root@example.com' } }), reply)
+
+    expect(reply._body).toMatchObject({ organizations: ['mine'] })
+    expect((reply._body as { scope?: string }).scope).not.toBe('all')
   })
 
   it('falls back to userContext email when no validated session', async () => {
-    vi.mocked(opaService.manageableOrgs).mockResolvedValue(['org-9'])
+    vi.mocked(organisationsForSubject).mockResolvedValue(['org-9'])
     const reply = createMockReply()
     await handler(createMockRequest({ userContext: { email: 'c@d.io' } }), reply)
 
-    expect(opaService.manageableOrgs).toHaveBeenCalledWith('c@d.io')
-    expect(reply._body).toEqual({ organizations: ['org-9'], scope: 'delegated' })
+    expect(organisationsForSubject).toHaveBeenCalled()
+    expect(reply._body).toEqual({ organizations: ['org-9'], names: {}, scope: 'delegated' })
   })
 
   it('returns 401 when unauthenticated', async () => {
@@ -104,7 +112,7 @@ describe('meRoutes — GET /me/organizations', () => {
     await handler(createMockRequest({}), reply)
 
     expect(reply._statusCode).toBe(401)
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 
   it('ignores the sentinel "unknown" userContext email as unauthenticated', async () => {
@@ -120,7 +128,7 @@ describe('meRoutes — GET /me/organizations', () => {
     const reply = createMockReply()
     await handler(createMockRequest({ validatedSession: { email: 'dev@b.io' } }), reply)
 
-    expect(reply._body).toEqual({ organizations: [], scope: 'all' })
-    expect(opaService.manageableOrgs).not.toHaveBeenCalled()
+    expect(reply._body).toEqual({ organizations: [], names: {}, scope: 'all' })
+    expect(organisationsForSubject).not.toHaveBeenCalled()
   })
 })

@@ -60,7 +60,27 @@ vi.mock('../../../services/kratos.service.js', () => ({
   },
 }))
 
-// Mock OPA — assertSuperAdmin/requireSuperAdmin lookups go through this.
+// The gate reads the MODEL, not an engine: it asks whether the actor holds a group granting in
+// every organisation, from the same ConfigMaps the artefact carries.
+// The gates the J1 case drives read the model. See the helper for why they read a model rather than
+// a set of predicates each of which could be mocked into agreeing.
+vi.mock('../../../services/authorization-model.service.js', async () => ({
+  ...(await import('../../helpers/authorization-model-mock.js')).authorizationModelMock(),
+  holdsPlatformPermission: vi.fn(),
+}))
+
+// The pre-image of a group change comes from the store that decides, so the J1 case below needs it
+// mocked: unmocked, the guard it exercises is never reached — the read fails closed first.
+vi.mock('../../../services/organisation-store.js', () => ({
+  groupsForSubjects: vi.fn(async () => new Map([['target-1', []]])),
+  addToGroup: vi.fn(async () => {}),
+  applyGroupChange: vi.fn(async () => {}),
+  removeFromGroup: vi.fn(async () => {}),
+  allGroupMemberships: vi.fn(async () => new Map()),
+  allEntitlements: vi.fn(async () => new Map()),
+  organisationStoreConfigured: vi.fn(() => true),
+}))
+
 vi.mock('../../../services/opa.service.js', () => ({
   opaService: {
     simulate: vi.fn(),
@@ -70,6 +90,7 @@ vi.mock('../../../services/opa.service.js', () => ({
 
 import { RbacService } from '../../../services/rbac.service.js'
 import { opaService } from '../../../services/opa.service.js'
+import { holdsPlatformPermission } from '../../../services/authorization-model.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 
@@ -83,211 +104,56 @@ describe('RbacService - security helpers', () => {
   })
 
   // ===========================================================================
-  // groupGrantsAdminPower / isAdminPowerGroup
-  // src/services/rbac.service.ts:205-207, 217-236
-  // ===========================================================================
-  describe('isAdminPowerGroup (rbac.service.ts:205-207, 217-236)', () => {
-    it('returns true when the group has global super_admin (rbac.service.ts:222)', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'super_admins',
-        JSON.stringify({ global: ['super_admin'] }),
-      )
-
-      await expect(service.isAdminPowerGroup('super_admins')).resolves.toBe(true)
-    })
-
-    it('returns true when a service-scoped role grants the wildcard "*" permission (rbac.service.ts:226-234)', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'jinbe_admins',
-        JSON.stringify({ jinbe: ['admin'] }),
-      )
-      // role 'admin' resolves to the wildcard permission
-      await redisMock.set(
-        'rbac:roles:jinbe',
-        JSON.stringify({ admin: ['*'], viewer: ['read'] }),
-      )
-
-      await expect(service.isAdminPowerGroup('jinbe_admins')).resolves.toBe(true)
-    })
-
-    it('returns false when no service-scoped role contains "*" (rbac.service.ts:230-233)', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'jinbe_viewers',
-        JSON.stringify({ jinbe: ['viewer'] }),
-      )
-      await redisMock.set(
-        'rbac:roles:jinbe',
-        JSON.stringify({ admin: ['*'], viewer: ['read'] }),
-      )
-
-      await expect(service.isAdminPowerGroup('jinbe_viewers')).resolves.toBe(false)
-    })
-
-    it('returns false when the group does not exist (rbac.service.ts:218-219)', async () => {
-      await expect(service.isAdminPowerGroup('does_not_exist')).resolves.toBe(false)
-    })
-  })
-
-  // ===========================================================================
   // assertSuperAdmin / requireSuperAdmin
   // src/services/rbac.service.ts:165-176, 213-215
   // ===========================================================================
   describe('assertSuperAdmin (rbac.service.ts:213-215, 165-176)', () => {
-    it('throws 401 when the actor email is missing (rbac.service.ts:166-168)', async () => {
+    it('throws 401 when the actor has no immutable identity', async () => {
+      // Keyed on the identity, never on the address: an address can be changed by its owner and
+      // reused by somebody else, and this gate decides who may hand out rights.
       await expect(service.assertSuperAdmin('do something dangerous')).rejects.toMatchObject({
         message: 'Authentication required for this operation',
         statusCode: 401,
       })
-      // OPA must not be queried without an actor — saves a round-trip and
-      // prevents an unauthenticated path from reaching the policy engine.
-      expect(opaService.simulate).not.toHaveBeenCalled()
+      expect(holdsPlatformPermission).not.toHaveBeenCalled()
     })
 
-    it('throws 401 when the actor object is present but email is empty (rbac.service.ts:166)', async () => {
+    it('throws 401 when only an address is presented', async () => {
       await expect(
-        service.assertSuperAdmin('reason', { email: '' }),
+        service.assertSuperAdmin('reason', { email: 'root@example.com' }),
       ).rejects.toMatchObject({ statusCode: 401 })
-      expect(opaService.simulate).not.toHaveBeenCalled()
+      expect(holdsPlatformPermission).not.toHaveBeenCalled()
     })
 
-    it('resolves silently when OPA reports super_admin: true (rbac.service.ts:169-175)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce({
-        allow: true,
-        matching_rules: [],
-        groups: ['super_admins'],
-        roles: ['super_admin'],
-        permissions: ['*'],
-        super_admin: true,
-      })
+    it('resolves when the actor holds the permission to hand out a group', async () => {
+      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(true)
 
       await expect(
-        service.assertSuperAdmin('do x', { email: 'root@example.com' }),
+        service.assertSuperAdmin('do x', { id: 'subject-root', email: 'root@example.com' }),
       ).resolves.toBeUndefined()
 
-      expect(opaService.simulate).toHaveBeenCalledWith(
-        'root@example.com',
-        'jinbe',
-        'POST',
-        '/api/admin/rbac/groups',
-      )
+      expect(holdsPlatformPermission).toHaveBeenCalledWith('subject-root', 'admin.membership:write')
     })
 
-    it('throws 403 when OPA reports super_admin: false (rbac.service.ts:170-174)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce({
-        allow: true,
-        matching_rules: [],
-        groups: ['admins'],
-        roles: ['admin'],
-        permissions: ['*'],
-        super_admin: false,
-      })
+    it('throws 403 when the actor does not hold it', async () => {
+      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(false)
 
       await expect(
-        service.assertSuperAdmin('elevate role', { email: 'admin@example.com' }),
+        service.assertSuperAdmin('elevate role', { id: 'subject-admin' }),
       ).rejects.toMatchObject({
         statusCode: 403,
-        message: 'Only super_admins may elevate role',
+        message: 'Only admin.membership:write may elevate role',
       })
     })
 
-    it('throws 403 when OPA returns null (no result) (rbac.service.ts:170)', async () => {
-      vi.mocked(opaService.simulate).mockResolvedValueOnce(null)
+    it('throws 503 when the model cannot be read, rather than deciding without it', async () => {
+      // "Nobody is powerful" and "I could not tell" are opposite facts. Answering 403 here would
+      // read as a missing right; answering 200 would authorize on ignorance.
+      vi.mocked(holdsPlatformPermission).mockRejectedValueOnce(new Error('configmaps is forbidden'))
 
       await expect(
-        service.assertSuperAdmin('do y', { email: 'someone@example.com' }),
-      ).rejects.toMatchObject({
-        statusCode: 403,
-        message: 'Only super_admins may do y',
-      })
-    })
-  })
-
-  // ===========================================================================
-  // groupGrantsGlobalPower (rbac.service.ts)
-  // Distinct from groupGrantsAdminPower: TRUE only for GLOBAL power
-  // (global super_admin, or a global role resolving to "*"), FALSE for a
-  // merely service-scoped wildcard role.
-  // ===========================================================================
-  describe('groupGrantsGlobalPower', () => {
-    it('returns true when the group has the global super_admin role', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'super_admins',
-        JSON.stringify({ global: ['super_admin'] }),
-      )
-      await expect(service.groupGrantsGlobalPower('super_admins')).resolves.toBe(true)
-    })
-
-    it('returns true when a global role resolves to the wildcard "*"', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'global_admins',
-        JSON.stringify({ global: ['platform_admin'] }),
-      )
-      await redisMock.set(
-        'rbac:roles:global',
-        JSON.stringify({ platform_admin: ['*'], auditor: ['read'] }),
-      )
-      await expect(service.groupGrantsGlobalPower('global_admins')).resolves.toBe(true)
-    })
-
-    it('returns FALSE for a service-scoped wildcard role (org-scoped admin, not global)', async () => {
-      // jinbe_admins holds "*" for the jinbe SERVICE only — admin power, but
-      // NOT global. groupGrantsAdminPower would return true here; the global
-      // check must not.
-      await redisMock.hset(
-        'rbac:groups',
-        'jinbe_admins',
-        JSON.stringify({ jinbe: ['admin'] }),
-      )
-      await redisMock.set(
-        'rbac:roles:jinbe',
-        JSON.stringify({ admin: ['*'], viewer: ['read'] }),
-      )
-      await expect(service.groupGrantsGlobalPower('jinbe_admins')).resolves.toBe(false)
-      // sanity: it IS admin-power, just not global
-      await expect(service.isAdminPowerGroup('jinbe_admins')).resolves.toBe(true)
-    })
-
-    it('returns false when the group does not exist', async () => {
-      await expect(service.groupGrantsGlobalPower('nope')).resolves.toBe(false)
-    })
-
-    it('returns FALSE for an empty global array { global: [] }', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'empty_global',
-        JSON.stringify({ global: [] }),
-      )
-      await expect(service.groupGrantsGlobalPower('empty_global')).resolves.toBe(false)
-    })
-
-    it('returns FALSE for a named global role that resolves to non-wildcard perms', async () => {
-      await redisMock.hset(
-        'rbac:groups',
-        'global_auditors',
-        JSON.stringify({ global: ['auditor'] }),
-      )
-      await redisMock.set(
-        'rbac:roles:global',
-        JSON.stringify({ auditor: ['read'], platform_admin: ['*'] }),
-      )
-      await expect(service.groupGrantsGlobalPower('global_auditors')).resolves.toBe(false)
-    })
-
-    it('returns FALSE for a non-super_admin global role when getRoles("global") is null', async () => {
-      // No rbac:roles:global stored — a named (non-literal) global role cannot
-      // be resolved, so we must NOT claim global power. (The literal
-      // super_admin still trips earlier, without needing the roles map.)
-      await redisMock.hset(
-        'rbac:groups',
-        'unresolvable_global',
-        JSON.stringify({ global: ['platform_admin'] }),
-      )
-      await expect(service.groupGrantsGlobalPower('unresolvable_global')).resolves.toBe(false)
+        service.assertSuperAdmin('do y', { id: 'subject-someone' }),
+      ).rejects.toMatchObject({ statusCode: 503 })
     })
   })
 

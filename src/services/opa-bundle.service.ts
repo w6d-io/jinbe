@@ -59,6 +59,10 @@ class OpaBundleService {
     const data = {
       bindings: {
         group_membership: bindings.group_membership,
+        // Published alongside, not instead of: the policy still reads the email index today, and a
+        // subject keyed on a mutable trait is the one binding that cannot be corrected afterwards.
+        // The email index goes when the policy stops asking for it.
+        group_membership_by_id: bindings.group_membership_by_id,
         emails: bindings.emails,
         groups: rbacData.groups,
       },
@@ -79,17 +83,25 @@ class OpaBundleService {
   /**
    * Get bindings from Kratos
    */
-  private async getBindings(): Promise<{ group_membership: Record<string, string[]>; emails: Record<string, unknown> }> {
+  private async getBindings(): Promise<{
+    group_membership: Record<string, string[]>
+    group_membership_by_id: Record<string, string[]>
+    emails: Record<string, unknown>
+  }> {
     try {
-      const identitiesWithGroups = await kratosService.getAllIdentitiesWithGroups()
+      // The full bindings rather than getAllIdentitiesWithGroups: that projection drops the
+      // identity id, which is the one attribute a subject keeps across an email change.
+      const bindings = await kratosService.getAllIdentitiesWithBindings()
       const group_membership: Record<string, string[]> = {}
-      for (const [email, groups] of identitiesWithGroups) {
-        group_membership[email] = groups
+      const group_membership_by_id: Record<string, string[]> = {}
+      for (const [email, binding] of bindings) {
+        group_membership[email] = binding.groups
+        if (binding.id) group_membership_by_id[binding.id] = binding.groups
       }
-      return { group_membership, emails: {} }
+      return { group_membership, group_membership_by_id, emails: {} }
     } catch (err) {
       console.error('[opa-bundle] Failed to fetch Kratos bindings:', err)
-      return { group_membership: {}, emails: {} }
+      return { group_membership: {}, group_membership_by_id: {}, emails: {} }
     }
   }
 

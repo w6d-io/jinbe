@@ -1,6 +1,5 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
-import { rbacResolverService } from '../services/rbac-resolver.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
@@ -15,6 +14,8 @@ import {
   usersQuerySchema,
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
+import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
+import { declaredGroups, platformRightsOf } from '../services/authorization-model.service.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -23,6 +24,15 @@ interface IdentityWithRbac extends KratosIdentity {
   groups: string[]
   roles: string[]
   permissions: string[]
+  /** The organisations this identity belongs to, where this service owns membership. */
+  organizations?: string[]
+  /**
+   * Set when what this identity holds could not be read.
+   *
+   * Empty and unknown are different facts, and a screen showing no groups for both tells somebody
+   * an account has none when the truth is that nobody could find out.
+   */
+  rbacUnavailable?: boolean
 }
 
 /**
@@ -62,10 +72,83 @@ function sameGroups(requested: unknown, current: string[] | undefined): boolean 
  * Admin Controller
  * Handles user management via Kratos Admin API
  */
+/**
+ * Keep the membership records in step with the identity the screens just edited.
+ *
+ * The editors write the organisations onto the identity — a primary one and a list — because that
+ * is where the set used to be read back from. Where this service owns membership, that is no longer
+ * where anybody reads it, so the records are reconciled to the same set: otherwise assigning
+ * somebody in the console would change nothing that any service asks about.
+ *
+ * Nothing happens in the other modes, where the identity IS the answer and a second copy would be
+ * an answer nothing reconciles.
+ *
+ * A failure is reported and not swallowed, and it does not undo the identity: the two are allowed to
+ * disagree for as long as it takes to notice, where refusing after the write would leave them
+ * disagreeing AND report success.
+ */
+async function mirrorMemberships(identity: KratosIdentity, request: FastifyRequest): Promise<void> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return
+
+  const metadata = identity.metadata_admin as Record<string, unknown> | undefined
+  const listed = Array.isArray(metadata?.organizations) ? (metadata.organizations as string[]) : []
+  const primary = (identity as { organization_id?: string | null }).organization_id
+  // The effective set is the primary one plus the list, which is what the screens show and what
+  // anybody editing them believes they are setting.
+  const effective = [...new Set([...(primary ? [primary] : []), ...listed])].filter(
+    (id) => typeof id === 'string' && id.length > 0,
+  )
+
+  try {
+    await setMemberships(identity.id, effective)
+  } catch (err) {
+    request.log.error(
+      { err, subjectId: identity.id, effective },
+      'Updated the identity but could not reconcile its membership records'
+    )
+  }
+}
+
+/**
+ * Show the organisations each identity actually belongs to.
+ *
+ * The rows carried what was written on the identity, which stopped being where anybody reads it the
+ * moment this service started owning membership: the column showed nothing for people who belong to
+ * three. A screen that lists membership wrongly is worse than one that omits it, because somebody
+ * assigns from what it shows.
+ *
+ * One query for the whole page, not one per row. And a failure costs the column, never the list —
+ * the identities exist whether or not their memberships can be read.
+ */
+async function withMemberships(
+  identities: readonly IdentityWithRbac[],
+  request: FastifyRequest
+): Promise<IdentityWithRbac[]> {
+  if (env.ORGANISATION_SOURCE !== 'directory') return [...identities]
+
+  try {
+    const held = await membershipsForSubjects(identities.map((identity) => identity.id))
+    return identities.map((identity) => ({
+      ...identity,
+      organizations: held.get(identity.id) ?? [],
+    }))
+  } catch (err) {
+    request.log.error({ err }, 'Listed the identities but could not read their memberships')
+    return [...identities]
+  }
+}
+
 export class AdminController {
   /**
    * Enrich identity with RBAC info resolved directly from Kratos + Git
-   * (No OPAL dependency - uses rbacResolverService for direct resolution)
+   */
+  /**
+   * An identity, with what it holds where that can be resolved.
+   *
+   * Listing who exists is a directory read and must not depend on the permission model: one
+   * unresolvable identity used to take the whole list with it, and an empty screen says "nobody is
+   * here" — the one thing that is certainly false. So a failure costs that row's groups and never
+   * the row.
    */
   private async enrichWithRbac(identity: KratosIdentity): Promise<IdentityWithRbac> {
     const email = identity.traits?.email
@@ -73,14 +156,24 @@ export class AdminController {
       return { ...identity, groups: [], roles: [], permissions: [] }
     }
 
-    // Direct resolution from Kratos (groups) + Git (definitions)
-    const rbacInfo = await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
+    try {
+      // From the store the artefact carries, keyed on the immutable identity — the only place that
+      // says what is ENFORCED. It used to resolve groups from Kratos metadata and their meaning from
+      // a cache, so a screen showed memberships nobody decides against: an editing screen that saves
+      // one truth while displaying another turns a bad read into a bad write.
+      const held = await platformRightsOf(identity.id)
 
-    return {
-      ...identity,
-      groups: rbacInfo.groups,
-      roles: rbacInfo.roles,
-      permissions: rbacInfo.permissions,
+      return {
+        ...identity,
+        groups: held.groups,
+        roles: held.roles,
+        permissions: held.permissions,
+      }
+    } catch (err) {
+      // Empty is not the same as unknown, and a screen must be able to tell them apart: this row
+      // says its groups could not be read rather than showing none.
+      console.error(`[admin] Could not resolve what ${email} holds:`, err)
+      return { ...identity, groups: [], roles: [], permissions: [], rbacUnavailable: true }
     }
   }
 
@@ -111,7 +204,7 @@ export class AdminController {
     )
 
     return reply.send({
-      data: identitiesWithRbac,
+      data: await withMemberships(identitiesWithRbac, request),
       next_page_token: nextPageToken,
     })
   }
@@ -167,7 +260,12 @@ export class AdminController {
     const { id } = request.params
     const identity = await kratosService.getIdentity(id)
     const identityWithRbac = await this.enrichWithRbac(identity)
-    return reply.send(identityWithRbac)
+    // The memberships too, and this one is not cosmetic: the screen that EDITS them reads this
+    // route, computes its starting point from what it receives, and saves that. Answering without
+    // them would show an empty set to somebody who belongs to three, and saving would then reduce
+    // them to what the screen happened to show.
+    const [withOne] = await withMemberships([identityWithRbac], request)
+    return reply.send(withOne)
   }
 
   /**
@@ -214,11 +312,6 @@ export class AdminController {
     const desiredGroups = requestedGroups && requestedGroups.length > 0 ? requestedGroups : ['users']
     const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
 
-    // Validate group existence BEFORE creating so a bad request never orphans a user.
-    if (needsGrantCheck) {
-      await rbacService.validateGroups(desiredGroups)
-    }
-
     const identity = await kratosService.createIdentity(kratosBody)
 
     // A new identity bumps total/active (and perGroup['users'] via the default)
@@ -238,7 +331,7 @@ export class AdminController {
           organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: desiredGroups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -325,6 +418,7 @@ export class AdminController {
       action: 'updated', entity_type: 'user',
       payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
     })
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 
@@ -405,6 +499,7 @@ export class AdminController {
       action: 'updated', entity_type: 'user',
       payload: { id, email: identity.traits?.email, display_name: identity.traits?.name, status: identity.state },
     })
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 
@@ -448,8 +543,9 @@ export class AdminController {
       // Get user's current groups from Kratos
       const groups = await kratosService.getUserGroups(email)
 
-      // Get available groups from RBAC service
-      const availableGroups = await rbacService.getAvailableGroups()
+      // The model the engine decides against, not the retired catalogue: a screen offering a group
+      // the mutation refuses turns a refusal into a surprise.
+      const availableGroups = await declaredGroups()
 
       return reply.send({
         email,
@@ -487,8 +583,9 @@ export class AdminController {
     )
 
     try {
-      await rbacService.validateGroups(groups)
-
+      // The groups are checked against the model inside applyGroupUpdate, under the same lock that
+      // computes which of them are actually being ADDED. What this replaces checked the retired
+      // model's catalogue here, and refused every group the engine now decides against.
       // Fail-closed identity resolution. Previously this was wrapped in a
       // try/catch that silently set identityId=null on failure, which let
       // the MFA gate fall through (`if (identityId)`) and allowed group
@@ -509,7 +606,7 @@ export class AdminController {
           organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: groups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -517,12 +614,6 @@ export class AdminController {
       if (!result.ok) return reply.status(result.status).send(result.body)
       return reply.send(result.response)
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Invalid groups')) {
-        return reply.status(400).send({
-          error: 'Bad Request',
-          message: error.message,
-        })
-      }
       if (error instanceof KratosApiError && error.statusCode === 404) {
         return reply.status(404).send({
           error: 'Not Found',
@@ -561,6 +652,7 @@ export class AdminController {
       source: 'jinbe-api',
     }).catch(() => {})
 
+    await mirrorMemberships(identity, request)
     return reply.send(identity)
   }
 

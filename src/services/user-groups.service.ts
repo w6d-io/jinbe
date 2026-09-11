@@ -1,12 +1,20 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
-import { opaService } from './opa.service.js'
 import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
+import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
+import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
+import {
+  AuthorizationModelUnavailableError,
+  groupFacts,
+  type GroupFacts,
+} from './authorization-model.service.js'
 
 /** Actor threaded from a request — audit fields (A4) + the R2 step-up state. */
 export type GroupUpdateActor = {
+  /** The immutable identity. The gate that decides who may hand out rights reads THIS, not the address. */
+  id?: string | null
   email?: string | null
   ip?: string | null
   name?: string | null
@@ -15,6 +23,8 @@ export type GroupUpdateActor = {
   requestId?: string | null
   aal?: string
   authenticatedAt?: Date | string
+  secondFactorAt?: Date | string | null
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
 }
 
 /**
@@ -57,7 +67,7 @@ export type ActorPrivilegePolicy =
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
   newGroups: string[]
-  // `aal` / `authenticatedAt` carry the actor's second-factor state for the R2
+  // `aal` / `secondFactorAt` carry the actor's second-factor state for the R2
   // step-up gate; sourced from the Kratos-validated session (request.userContext).
   actor: GroupUpdateActor
   privilegePolicy: ActorPrivilegePolicy
@@ -90,7 +100,6 @@ const ORG_ADMIN_FLAG_GROUP = 'org_admins'
 // session cannot keep minting privileged access without re-verifying TOTP. The
 // window matches the operator-chosen 15 minutes; a refresh=true AAL2 login
 // re-stamps `authenticated_at`, resetting it.
-const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 
 /**
  * Shared core of "update a user's groups". Both the global admin endpoint
@@ -131,15 +140,22 @@ class UserGroupsService {
     // Residual: Kratos itself has no ETag/CAS, so a group write originating
     // OUTSIDE jinbe could still race; within jinbe the per-user lock above
     // serializes every writer, so the pre-image is authoritative here.
+    //
+    // READ FROM THE STORE THAT DECIDES, not from the copy. It used to come from Kratos metadata, and
+    // that made a membership held ONLY in the enforced store invisible to the diff: never in
+    // `oldGroups`, therefore never in `removed`, therefore never revoked. The screen offered to take
+    // a group away, reported success, and left it deciding — the exact failure the write order below
+    // exists to prevent, arriving through the read instead.
     let oldGroups: string[]
     try {
-      const fetched = await kratosService.getUserGroups(identity.email)
-      oldGroups = Array.isArray(fetched) ? fetched : []
+      const held = await groupsForSubjects([identity.id])
+      oldGroups = held.get(identity.id) ?? []
     } catch {
       return {
         ok: false,
         status: 422,
         body: {
+          applied: false,
           error: 'groups_precondition_failed',
           message:
             "Could not read the user's current groups to verify this change is within your authority; no change was made. Please retry.",
@@ -148,7 +164,13 @@ class UserGroupsService {
       }
     }
 
-    const finalGroups = newGroups.length > 0 ? newGroups : [BASE_GROUP]
+    // EMPTY MEANS EMPTY. This used to put the base group back whenever the caller asked for none,
+    // which came from the retired model where Kratos answered `['users']` for anybody without a
+    // special group. Here that group is not declared and confers nothing, so forcing it wrote a row
+    // granting nothing AND made "holds no group" unreachable: taking the last one away returned 200
+    // and left the person exactly where they were. Holding nothing is a legitimate state, and in the
+    // store that decides it is simply the absence of a row.
+    const finalGroups = newGroups
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
     // Groups this (replace-semantics) update REMOVES. Containment must be
     // SYMMETRIC — an org admin may only remove a group they could also grant.
@@ -179,16 +201,61 @@ class UserGroupsService {
     //    redefined base group is still put to can_grant — on add AND remove.
     //  - global (`super_admin_required`): only admin-power groups need the
     //    super_admin authority check; the endpoint is super_admin-gated.
+    // ONE read of the model, for every question the gates below ask of it. What this replaces asked
+    // Redis — the retired model — and got `false` for exactly the groups that had become the
+    // powerful ones, so the escalation gate, the target's second factor and the actor's step-up all
+    // quietly decided they were not needed.
+    let facts: Map<string, GroupFacts>
+    try {
+      facts = await groupFacts([...newlyAdded, ...removed])
+    } catch (error) {
+      if (!(error instanceof AuthorizationModelUnavailableError)) throw error
+      // "Confers nothing" and "I could not tell what it confers" are opposite facts, and the second
+      // one must never quietly hand out a group unguarded.
+      return {
+        ok: false,
+        status: 503,
+        body: {
+          applied: false,
+          error: 'authorization_model_unavailable',
+          message:
+            'The authorization model could not be read, so this change could not be checked; no change was made. Please retry.',
+          targetEmail: identity.email,
+        },
+      }
+    }
+    const factsFor = (group: string): GroupFacts =>
+      facts.get(group) ?? { declared: false, everyOrganisation: false, empty: true }
+
+    // A group the model does not declare confers nothing, so recording it would write a membership
+    // the engine never reads — an assignment that looks applied and grants nothing. Only ADDITIONS
+    // are checked: a group predating the model must stay removable. The base group is jinbe's own
+    // bookkeeping rather than an operator's choice, and it is exempt for that reason.
+    const undeclared = newlyAdded.filter((g) => g !== BASE_GROUP && !factsFor(g).declared)
+    if (undeclared.length > 0) {
+      this.emitDenied('group_not_in_model', identity, actor, undeclared[0], 400)
+      return {
+        ok: false,
+        status: 400,
+        body: {
+          applied: false,
+          error: 'Bad Request',
+          message: `Not in the authorization model: ${undeclared.join(', ')}. Assignable groups come from GET /admin/assignable-groups.`,
+          targetEmail: identity.email,
+        },
+      }
+    }
+
     const gated: Array<{ group: string; op: 'add' | 'remove' }> = []
     for (const { group: g, op } of toCheck) {
       const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
-        ? !(g === BASE_GROUP && await rbacService.isEmptyGroup(g))
-        : (await rbacService.isAdminPowerGroup(g)) || g === ORG_ADMIN_FLAG_GROUP
+        ? !(g === BASE_GROUP && factsFor(g).empty)
+        : factsFor(g).everyOrganisation || g === ORG_ADMIN_FLAG_GROUP
       if (mustCheck) gated.push({ group: g, op })
     }
 
     for (const { group: g, op } of gated) {
-      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op)
+      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op, factsFor(g).everyOrganisation)
       if (denial) {
         // Emit the currently-silent denied write (highest-signal audit event).
         // checkPrivilegeEscalation only ever returns the ok:false variant.
@@ -197,18 +264,22 @@ class UserGroupsService {
       }
     }
 
-    if (newlyAdded.length > 0) {
-      const blocker = await rbacService.findPrivilegedGroupRequiringMFA(newlyAdded, identity.id)
+    // The target's own second factor, required before receiving a platform-wide grant. Keyed on the
+    // same scope predicate as the gate above so the two cannot drift apart.
+    const platformGrants = newlyAdded.filter((g) => factsFor(g).everyOrganisation)
+    if (platformGrants.length > 0) {
+      const blocker = (await this.hasSecondFactor(identity.id)) ? null : platformGrants[0]
       if (blocker) {
         this.emitDenied('mfa_required', identity, actor, blocker, 422)
         return {
           ok: false,
           status: 422,
           body: {
+            applied: false,
             error: 'mfa_required',
             message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
             targetEmail: identity.email,
-            targetGroups: newlyAdded,
+            targetGroups: platformGrants,
             hint: 'Have the user complete /settings → Authenticator app, then retry.',
           },
         }
@@ -224,12 +295,36 @@ class UserGroupsService {
     if (gated.length > 0) {
       const stale = this.stepUpDenial(actor, identity.email)
       if (stale) {
-        this.emitDenied('reauth_required', identity, actor, gated[0]?.group, 422)
+        const body = stale.ok ? {} : (stale.body as { error?: string; stepUp?: { observed?: unknown } })
+        this.emitDenied(body.error || 'reauth_required', identity, actor, gated[0]?.group, 422, body.stepUp?.observed)
         return stale
       }
     }
 
+    // Two stores, and the ORDER between them is a safety property rather than a detail.
+    //
+    // `group_members` in this database is what the engine decides against — the artefact carries it.
+    // Kratos metadata is a display copy nothing enforces; both are written from the SAME value so a
+    // screen that edits still saves what it shows, until every reader moves off it.
+    //
+    // REVOCATIONS GO TO THE ENFORCED STORE FIRST. Taking a group away in the display and then
+    // failing to take it away where it counts would leave a right that is still enforced and no
+    // longer visible — the one failure nobody would notice.
+    //
+    // GRANTS GO TO THE ENFORCED STORE LAST, for the mirror reason: a right that is enforced before
+    // anything shows it is a silent privilege. Shown-but-not-yet-enforced is merely broken, and
+    // visibly so.
+    const revoked = oldGroups.filter((g) => !finalGroups.includes(g))
+    const granted = finalGroups.filter((g) => !oldGroups.includes(g))
+
+    // The revocations first and in ONE transaction. Applied a statement at a time, a failure halfway
+    // left somebody holding part of what was asked and part of what was not — a state nobody
+    // requested, that no gate decided, and that the screen would then read back as the truth.
+    await applyGroupChange(identity.id, revoked, [], actor.email ?? undefined)
+
     await kratosService.updateUserGroups(identity.email, finalGroups)
+
+    await applyGroupChange(identity.id, [], granted, actor.email ?? undefined)
 
     // Fire-and-forget: OPAL cache invalidation. On failure, OPA stays
     // stale until its next poll (~30s). Mutation is already persisted in
@@ -238,7 +333,7 @@ class UserGroupsService {
 
     auditEventService.emit({
       type: auditEventType,
-      actor: { email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
       requestId: actor.requestId,
       target: { type: 'user', id: identity.id },
       // Keep oldGroups/newGroups in details for back-compat; the structural
@@ -267,12 +362,25 @@ class UserGroupsService {
    * events (an attempted privilege change that was refused) and were previously
    * silent. Fail-open on the emit — never block the denial itself.
    */
+  /**
+   * Whether the target has a second factor enrolled. A lookup failure answers NO — refusing a
+   * privileged grant we could not verify is the safe way to be wrong.
+   */
+  private async hasSecondFactor(identityId: string): Promise<boolean> {
+    try {
+      return await kratosService.hasMFA(identityId)
+    } catch {
+      return false
+    }
+  }
+
   private emitDenied(
     reason: string,
     identity: ResolvedIdentity,
     actor: GroupUpdateActor,
     blockingGroup: string | undefined,
     status: number,
+    observed?: unknown,
   ): void {
     auditEventService.emit({
       category: 'access',
@@ -282,44 +390,82 @@ class UserGroupsService {
       result: 'denied',
       severity: 'warn',
       reason,
-      actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
       requestId: actor.requestId,
       targetId: identity.id,
       targetType: 'user',
       statusCode: status,
-      details: { blockingGroup, targetEmail: identity.email },
+      details: { blockingGroup, targetEmail: identity.email, ...(observed ? { observed } : {}) },
       source: 'jinbe-api',
     }).catch(() => {})
   }
 
-  // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE.
+  // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE,
+  // measured on the aal2 method's own completed_at (see ./step-up.ts for why the
+  // session's authenticated_at is the wrong clock).
   // Returns a 422 `reauth_required` denial (status pinned to 422 so cluster
   // ingress does not strip the body/headers) when the second factor is absent or
-  // stale; null when satisfied. Fail-closed: a missing aal/authenticatedAt denies.
+  // stale; null when satisfied. Fail-closed: an unknown level or time denies.
   private stepUpDenial(
-    actor: { aal?: string; authenticatedAt?: Date | string },
+    actor: {
+      aal?: string
+      secondFactorAt?: Date | string | null
+      authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+      sessionId?: string | null
+    },
     targetEmail: string,
   ): ApplyGroupUpdateResult | null {
+    // What the gate actually READ is part of the refusal. Without it, a refusal that repeats after a
+    // successful re-verification is indistinguishable from one that never looked — and the operator
+    // is left proving a factor over and over with nothing to go on.
+    const observed = {
+      aal: actor.aal ?? null,
+      secondFactorAt: actor.secondFactorAt ? new Date(actor.secondFactorAt).toISOString() : null,
+      authVia: actor.authVia ?? null,
+      sessionId: actor.sessionId ?? null,
+    }
     const reauth = (message: string): ApplyGroupUpdateResult => ({
       ok: false,
       status: 422,
       body: {
+        applied: false,
         error: 'reauth_required',
         message,
         targetEmail,
-        stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000 },
+        stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000, observed },
         hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
       },
     })
-    if (actor.aal !== 'aal2') {
+    const failure = stepUpFailure(actor)
+    // A caller proven by a token asserts no second factor this service can read, so sending them to
+    // prove one would loop: the answer cannot change. Said under its own name so the console does
+    // not offer a step-up that leads nowhere.
+    if (failure === 'unprovable') {
+      return {
+        ok: false,
+        status: 422,
+        body: {
+          applied: false,
+          error: 'step_up_unavailable',
+          message:
+            'This change assigns privileged access, which requires a second factor proven in a browser session. The credential you presented cannot carry one.',
+          targetEmail,
+          hint: 'Sign in to the console in a browser and make the change there.',
+        },
+      }
+    }
+    if (failure === 'absent') {
       return reauth(
         'This change assigns privileged access and requires two-factor authentication (TOTP). Complete 2FA and retry.',
       )
     }
-    const authedAt = actor.authenticatedAt ? new Date(actor.authenticatedAt).getTime() : 0
-    if (!authedAt || Number.isNaN(authedAt) || Date.now() - authedAt > STEP_UP_MAX_AGE_MS) {
+    if (failure === 'stale') {
+      // Says HOW stale, not just that it is. "Older than 15 minutes" moments after a successful
+      // re-verification reads as a broken gate; "verified 16 minutes ago, the limit is 15" reads
+      // as the answer it is.
+      const ageMinutes = Math.round((Date.now() - new Date(actor.secondFactorAt as Date | string).getTime()) / 60000)
       return reauth(
-        `Your two-factor verification is older than ${STEP_UP_MAX_AGE_MS / 60000} minutes; re-verify (TOTP) to assign privileged access.`,
+        `Your second factor was verified ${ageMinutes} minute${ageMinutes === 1 ? '' : 's'} ago and the limit is ${STEP_UP_MAX_AGE_MS / 60000}; re-verify (TOTP) to assign privileged access.`,
       )
     }
     return null
@@ -328,15 +474,16 @@ class UserGroupsService {
   private async checkPrivilegeEscalation(
     groupName: string,
     targetEmail: string,
-    actor: { email?: string | null; ip?: string | null },
+    actor: { id?: string | null; email?: string | null; ip?: string | null },
     policy: ActorPrivilegePolicy,
     op: 'add' | 'remove' = 'add',
+    platformWide = false,
   ): Promise<ApplyGroupUpdateResult | null> {
     if (policy.kind === 'super_admin_required') {
       try {
         await rbacService.assertSuperAdmin(
           `assign group '${groupName}' (grants admin privileges)`,
-          { email: actor.email },
+          { id: actor.id, email: actor.email },
         )
         return null
       } catch (e) {
@@ -355,6 +502,13 @@ class UserGroupsService {
       }
     }
 
+    // Org-scoped grant. NOT AVAILABLE in this model, and refused with a reason that says so rather
+    // than through a query that answers nothing: `strada.authz` has no delegation concept — no
+    // permission expresses "may hand out this group here", so there is nothing to check against.
+    // Assignment therefore goes through the global gate above until that permission is designed.
+    //
+    // Below is what it asked before, kept for what it documents about the intent.
+    //
     // Org-scoped grant. OPA `can_grant` is the SOLE authority: it enforces the
     // single-service tenant boundary (non-global, confined to the org's service)
     // and the authority tier (delegated org admin with containment, OR a
@@ -377,23 +531,25 @@ class UserGroupsService {
       },
     }
 
-    // Defense-in-depth: independently refuse a GLOBAL-power group so it is denied
-    // here even if OPA misbehaves (J1 — an org-scoped actor must never mint a
-    // global super_admin). OPA `can_grant` ALSO denies every global-bound group
-    // (`not group_has_global`) and is the authoritative, broader guard — this
-    // local check only catches wildcard globals, so it is NOT the sole global
-    // guard, just a safety net. Global groups go through the global admin
-    // endpoint, never here — for everyone, super_admins included.
-    if (await rbacService.groupGrantsGlobalPower(groupName)) return blocked
+    // J1: an org-scoped actor must never mint a platform-wide grant. Both branches refuse, so this
+    // only decides WHICH refusal the caller reads — but the two say different things, and a screen
+    // that reports "not managed here" for a global group is telling the operator where to go.
+    if (platformWide) return blocked
 
-    if (!actor.email) return blocked
-    const allowed = await opaService.canGrant({
-      actor: { email: actor.email },
-      target_group: groupName,
-      target_org: policy.orgId,
-    })
-    if (!allowed) return blocked
-    return null
+    return {
+      ok: false,
+      status: 422,
+      body: {
+        applied: false,
+        error: 'delegation_not_defined',
+        message:
+          'This model defines no delegated authority to assign a group within one organisation. ' +
+          'A group granting in every organisation can make this change.',
+        targetEmail,
+        blockingGroup: groupName,
+        hint: 'Use the global assignment endpoint, or define a permission that expresses this delegation.',
+      },
+    }
   }
 }
 

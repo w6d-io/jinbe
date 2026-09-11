@@ -41,6 +41,197 @@ paths:
       responses:
         "200":
           description: Default Response
+  /scim/v2/ServiceProviderConfig:
+    get:
+      tags:
+        - scim
+      description: SCIM 2.0 service provider configuration (RFC 7643 §5).
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /scim/v2/ResourceTypes:
+    get:
+      tags:
+        - scim
+      description: SCIM 2.0 resource types (RFC 7643 §6). Users only in phase 1.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /scim/v2/Schemas:
+    get:
+      tags:
+        - scim
+      description: SCIM 2.0 schema definitions (RFC 7643 §7).
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /scim/v2/Users:
+    get:
+      tags:
+        - scim
+      description: List/filter SCIM users. Supports filter=userName eq "..." /
+        externalId eq "..." and startIndex/count pagination.
+      parameters:
+        - schema:
+            type: string
+          in: query
+          name: filter
+          required: false
+        - schema:
+            type: integer
+          in: query
+          name: startIndex
+          required: false
+        - schema:
+            type: integer
+          in: query
+          name: count
+          required: false
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      tags:
+        - scim
+      description: Create a SCIM user (Kratos identity, default group [users],
+        scim.managed marking). 409 uniqueness on existing email.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /scim/v2/Users/{id}:
+    get:
+      tags:
+        - scim
+      description: Get a SCIM user by Kratos identity id.
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    put:
+      tags:
+        - scim
+      description: Replace a SCIM user (traits + active state; groups preserved).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    patch:
+      tags:
+        - scim
+      description: "PATCH a SCIM user (RFC 7644 PatchOp): active true/false at
+        minimum, plus userName/name/externalId. active=false revokes sessions."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    delete:
+      tags:
+        - scim
+      description: "Soft-delete a SCIM user: state → inactive + all sessions revoked.
+        The Kratos identity is NEVER deleted (audit/grant provenance)."
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/telemetry:
+    get:
+      tags:
+        - health
+      description: Browser telemetry settings. Empty when none is configured.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  faroUrl:
+                    type: string
+                  serviceName:
+                    type: string
+                  version:
+                    type: string
+                  environment:
+                    type: string
   /api/whoami:
     get:
       tags:
@@ -95,6 +286,11 @@ paths:
                     type: array
                     items:
                       type: string
+                  rules_source:
+                    type: string
+                    enum:
+                      - service
+                      - gitops
   /api/me/organizations:
     get:
       tags:
@@ -112,11 +308,15 @@ paths:
                     type: array
                     items:
                       type: string
+                  names:
+                    type: object
+                    additionalProperties:
+                      type: string
                   scope:
                     type: string
                     enum:
-                      - all
                       - delegated
+                      - claim
         "401":
           description: Default Response
           content:
@@ -2548,6 +2748,16 @@ paths:
                           items:
                             type: string
                           description: User permissions from OPAL RBAC
+                        organizations:
+                          type: array
+                          items:
+                            type: string
+                          description: Organisations this identity belongs to, where this service owns
+                            membership
+                        rbacUnavailable:
+                          type: boolean
+                          description: Set when what this identity holds could not be resolved — empty is
+                            not the same fact
                         credentials:
                           type: object
                           additionalProperties: true
@@ -2717,6 +2927,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -2830,6 +3050,299 @@ paths:
                   error:
                     type: string
                     example: Forbidden
+                  message:
+                    type: string
+  /api/admin/organizations:
+    get:
+      tags:
+        - admin
+      description: Every organisation the directory holds. Needs admin.organisation:read.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        tenant:
+                          type: string
+                        applications:
+                          type: array
+                          items:
+                            type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/authorization-model:
+    get:
+      tags:
+        - admin
+      description: What each group grants, per organisation, and what each role carries.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: object
+                    additionalProperties: true
+                  roles:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/assignable-groups:
+    get:
+      tags:
+        - admin
+      description: The groups the caller may assign, and whether they may assign at all.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                  mayAssign:
+                    type: boolean
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/enforced-config:
+    get:
+      tags:
+        - admin
+      description: The enforced authorization configuration as YAML, read from the
+        cluster objects the engines load. Read-only.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                        decides:
+                          type: string
+                        yaml:
+                          type: string
+                        routes:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              method:
+                                type: string
+                              path:
+                                type: string
+                              class:
+                                type: string
+                              permission:
+                                type: string
+                        roles:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              role:
+                                type: string
+                              permissions:
+                                type: array
+                                items:
+                                  type: string
+                        grants:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              subject:
+                                type: string
+                              email:
+                                type: string
+                              held:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    organisation:
+                                      type: string
+                                    organisationName:
+                                      type: string
+                                    roles:
+                                      type: array
+                                      items:
+                                        type: string
+                                    viaGroups:
+                                      type: array
+                                      items:
+                                        type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
                   message:
                     type: string
   /api/admin/users/search:
@@ -2971,6 +3484,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3118,6 +3641,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3292,6 +3825,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3428,6 +3971,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3564,6 +4117,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -3970,48 +4533,6 @@ paths:
       responses:
         "200":
           description: Default Response
-  /api/admin/rbac/opal/groups:
-    get:
-      responses:
-        "200":
-          description: Default Response
-  /api/admin/rbac/opal/org_service_map:
-    get:
-      responses:
-        "200":
-          description: Default Response
-  /api/admin/rbac/opal/org_admin_map:
-    get:
-      responses:
-        "200":
-          description: Default Response
-  /api/admin/rbac/opal/roles/{service}:
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: service
-          required: true
-      responses:
-        "200":
-          description: Default Response
-  /api/admin/rbac/opal/route_map/{service}:
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: service
-          required: true
-      responses:
-        "200":
-          description: Default Response
-  /api/admin/rbac/opal-datasource:
-    get:
-      responses:
-        "200":
-          description: Default Response
   /api/admin/rbac/users:
     get:
       tags:
@@ -4409,263 +4930,6 @@ paths:
                   error:
                     type: string
                     example: Forbidden
-                  message:
-                    type: string
-    post:
-      tags:
-        - rbac
-      description: Create a new service with default roles, route map, and oathkeeper rules.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-                  pattern: ^[a-z0-9_-]+$
-                displayName:
-                  type: string
-                upstreamUrl:
-                  type: string
-                  format: uri
-                matchUrl:
-                  type: string
-                matchMethods:
-                  type: array
-                  items:
-                    type: string
-                stripPath:
-                  type: string
-                signIn:
-                  type: array
-                  items:
-                    type: string
-                    enum:
-                      - cookie
-                      - bearer
-                      - introspection
-        required: true
-      responses:
-        "201":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "409":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Conflict
-                  message:
-                    type: string
-  /api/admin/rbac/services/{name}:
-    delete:
-      tags:
-        - rbac
-      description: Delete a service and all associated roles, routes, and rules.
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: name
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    patch:
-      tags:
-        - rbac
-      description: Update oathkeeper rule config for a service (upstream URL, match
-        URL/methods, strip_path, sign-in methods).
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                upstreamUrl:
-                  type: string
-                  format: uri
-                matchUrl:
-                  type: string
-                matchMethods:
-                  type: array
-                  items:
-                    type: string
-                stripPath:
-                  type:
-                    - string
-                    - "null"
-                signIn:
-                  type: array
-                  items:
-                    type: string
-                    enum:
-                      - cookie
-                      - bearer
-                      - introspection
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: name
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
                   message:
                     type: string
   /api/admin/rbac/services/{name}/permissions:
@@ -5235,6 +5499,7 @@ paths:
                                 enum:
                                   - noop
                                   - cookie_session
+                                  - bearer_token
                                   - jwt
                                   - oauth2_introspection
                                   - oauth2_client_credentials
@@ -5322,187 +5587,6 @@ paths:
                     example: Forbidden
                   message:
                     type: string
-    post:
-      tags:
-        - rbac
-      description: Create a new access rule.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                id:
-                  type: string
-                  minLength: 1
-                upstream:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                      format: uri
-                    preserve_host:
-                      type: boolean
-                    strip_path:
-                      type: string
-                  required:
-                    - url
-                match:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    methods:
-                      type: array
-                      items:
-                        type: string
-                        enum:
-                          - GET
-                          - POST
-                          - PUT
-                          - PATCH
-                          - DELETE
-                          - OPTIONS
-                          - HEAD
-                  required:
-                    - url
-                    - methods
-                authenticators:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                        enum:
-                          - noop
-                          - cookie_session
-                          - jwt
-                          - oauth2_introspection
-                          - oauth2_client_credentials
-                          - anonymous
-                          - unauthorized
-                      config:
-                        type: object
-                    required:
-                      - handler
-                authorizer:
-                  type: object
-                  properties:
-                    handler:
-                      type: string
-                      enum:
-                        - allow
-                        - deny
-                        - remote_json
-                        - keto_engine_acp_ory
-                    config:
-                      type: object
-                  required:
-                    - handler
-                mutators:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                        enum:
-                          - noop
-                          - header
-                          - cookie
-                          - id_token
-                          - hydrator
-                      config:
-                        type: object
-                    required:
-                      - handler
-                errors:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                      config:
-                        type: object
-                    required:
-                      - handler
-              required:
-                - id
-                - upstream
-                - match
-                - authenticators
-                - authorizer
-                - mutators
-        required: true
-      responses:
-        "201":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "409":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Conflict
-                  message:
-                    type: string
   /api/admin/rbac/access-rules/{id}:
     get:
       tags:
@@ -5570,6 +5654,7 @@ paths:
                               enum:
                                 - noop
                                 - cookie_session
+                                - bearer_token
                                 - jwt
                                 - oauth2_introspection
                                 - oauth2_client_credentials
@@ -5628,252 +5713,6 @@ paths:
                       - authenticators
                       - authorizer
                       - mutators
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    put:
-      tags:
-        - rbac
-      description: Update an existing access rule.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                id:
-                  type: string
-                  minLength: 1
-                upstream:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                      format: uri
-                    preserve_host:
-                      type: boolean
-                    strip_path:
-                      type: string
-                  required:
-                    - url
-                match:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    methods:
-                      type: array
-                      items:
-                        type: string
-                        enum:
-                          - GET
-                          - POST
-                          - PUT
-                          - PATCH
-                          - DELETE
-                          - OPTIONS
-                          - HEAD
-                  required:
-                    - url
-                    - methods
-                authenticators:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                        enum:
-                          - noop
-                          - cookie_session
-                          - jwt
-                          - oauth2_introspection
-                          - oauth2_client_credentials
-                          - anonymous
-                          - unauthorized
-                      config:
-                        type: object
-                    required:
-                      - handler
-                authorizer:
-                  type: object
-                  properties:
-                    handler:
-                      type: string
-                      enum:
-                        - allow
-                        - deny
-                        - remote_json
-                        - keto_engine_acp_ory
-                    config:
-                      type: object
-                  required:
-                    - handler
-                mutators:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                        enum:
-                          - noop
-                          - header
-                          - cookie
-                          - id_token
-                          - hydrator
-                      config:
-                        type: object
-                    required:
-                      - handler
-                errors:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      handler:
-                        type: string
-                      config:
-                        type: object
-                    required:
-                      - handler
-              required:
-                - id
-                - upstream
-                - match
-                - authenticators
-                - authorizer
-                - mutators
-        required: true
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    delete:
-      tags:
-        - rbac
-      description: Delete an access rule.
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  timestamp:
-                    type: string
         "401":
           description: Default Response
           content:
@@ -6480,115 +6319,6 @@ paths:
                 properties:
                   message:
                     type: string
-  /api/admin/rbac/simulate:
-    post:
-      tags:
-        - rbac
-      description: Simulate an authorization decision for a user, service, method, and path.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - email
-                - service
-                - method
-                - path
-              properties:
-                email:
-                  type: string
-                  format: email
-                service:
-                  type: string
-                  minLength: 1
-                method:
-                  type: string
-                  minLength: 1
-                path:
-                  type: string
-                  minLength: 1
-        required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  allowed:
-                    type: boolean
-                  superAdmin:
-                    type: boolean
-                  matchedRule:
-                    type: object
-                    properties:
-                      method:
-                        type: string
-                      path:
-                        type: string
-                      permission:
-                        type: string
-                  requiredPermission:
-                    type: string
-                  userInfo:
-                    type: object
-                    properties:
-                      email:
-                        type: string
-                      groups:
-                        type: array
-                        items:
-                          type: string
-                      roles:
-                        type: array
-                        items:
-                          type: string
-                      permissions:
-                        type: array
-                        items:
-                          type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "503":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                  message:
-                    type: string
   /api/admin/rbac/health-check:
     post:
       responses:
@@ -6764,7 +6494,7 @@ paths:
       tags:
         - auth-config
       description: Current Kratos self-service auth method state (enabled/configured
-        per method), read from kratos.yml.
+        per method) and the self-registration switch, read from kratos.yml.
       responses:
         "200":
           description: Default Response
@@ -6857,12 +6587,19 @@ paths:
                             type: boolean
                           passwordlessEnabled:
                             type: boolean
+                  registration:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
     put:
       tags:
         - auth-config
-      description: Toggle Kratos self-service auth methods. Partial patch; Kratos
-        hot-reloads the change (no restart). webauthn/passkey/oidc can only be
-        enabled when their config block already exists in kratos.yml.
+      description: Toggle Kratos self-service auth methods and self-registration.
+        Partial patch; Kratos hot-reloads (no restart). webauthn/passkey/oidc
+        can only be enabled when their config block already exists in
+        kratos.yml. registration.enabled=false makes account creation admin-only
+        (kuma Users → create + invite).
       requestBody:
         content:
           application/json:
@@ -6942,6 +6679,12 @@ paths:
                       type: boolean
                     passwordlessEnabled:
                       type: boolean
+                registration:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    enabled:
+                      type: boolean
       responses:
         "200":
           description: Default Response
@@ -7034,6 +6777,11 @@ paths:
                             type: boolean
                           passwordlessEnabled:
                             type: boolean
+                  registration:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
   /api/admin/audit/metrics:
     get:
       tags:
@@ -7391,6 +7139,312 @@ paths:
                     example: Forbidden
                   message:
                     type: string
+  /api/admin/recert/campaigns:
+    post:
+      tags:
+        - recert
+      description: "Create a recertification campaign (draft). Phase 1: explicit
+        reviewer emails, one-shot schedule."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - reviewers
+                - deadline
+                - onExpiry
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                scope:
+                  type: object
+                  properties:
+                    groups:
+                      type: array
+                      items:
+                        type: string
+                  additionalProperties: false
+                reviewers:
+                  type: array
+                  items:
+                    type: string
+                    format: email
+                  minItems: 1
+                deadline:
+                  type: string
+                onExpiry:
+                  type: string
+                  enum:
+                    - revoke
+                    - flag
+        required: true
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    get:
+      tags:
+        - recert
+      description: List recertification campaigns with item progress (newest first).
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaigns:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+  /api/admin/recert/campaigns/{id}:
+    get:
+      tags:
+        - recert
+      description: Get a campaign with its review items.
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaign:
+                    type: object
+                    additionalProperties: true
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+    delete:
+      tags:
+        - recert
+      description: Delete a campaign. Draft/archived only — completed campaigns and
+        their frozen reports are audit evidence.
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/recert/campaigns/{id}/activate:
+    post:
+      tags:
+        - recert
+      description: "Activate a draft campaign: walk groups→members via Kratos and
+        generate one review item per (user, group) in scope."
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaign:
+                    type: object
+                    additionalProperties: true
+                  itemCount:
+                    type: number
+  /api/admin/recert/campaigns/{id}/close:
+    post:
+      tags:
+        - recert
+      description: "Close an active campaign now: pending items get the onExpiry
+        consequence (revoke → membership removed in Kratos, flag → marked) and
+        the completion report is frozen."
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaign:
+                    type: object
+                    additionalProperties: true
+  /api/admin/recert/campaigns/{id}/items:
+    get:
+      tags:
+        - recert
+      description: List a campaign's review items. Optional ?decision= and ?reviewer=
+        filters; offset/limit pagination.
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - pending
+              - approved
+              - revoked
+          in: query
+          name: decision
+          required: false
+        - schema:
+            type: string
+          in: query
+          name: reviewer
+          required: false
+        - schema:
+            type: number
+            minimum: 0
+            default: 0
+          in: query
+          name: offset
+          required: false
+        - schema:
+            type: number
+            minimum: 1
+            maximum: 500
+            default: 100
+          in: query
+          name: limit
+          required: false
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  total:
+                    type: number
+  /api/admin/recert/campaigns/{id}/report:
+    get:
+      tags:
+        - recert
+      description: Frozen completion report (written once at close) — counters,
+        per-reviewer completion, full item list, compliance header (ISO 27001
+        A.9.2.5 / SOC 2 CC6.2–CC6.3).
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - json
+          in: query
+          name: format
+          required: false
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/admin/recert/inbox:
+    get:
+      tags:
+        - recert
+      description: "The caller's pending review items across active campaigns. No
+        admin gate: reviewers are arbitrary identities."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+  /api/admin/recert/items/{campaignId}/{itemId}/decision:
+    post:
+      tags:
+        - recert
+      description: Record a decision on a review item (assigned reviewer or admin).
+        revoke requires a comment and is applied immediately (membership removed
+        in Kratos). Self-review is blocked.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - decision
+              properties:
+                decision:
+                  type: string
+                  enum:
+                    - approved
+                    - revoked
+                comment:
+                  type: string
+                  maxLength: 2000
+        required: true
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: campaignId
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: itemId
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    type: object
+                    additionalProperties: true
   /api/webhooks/kratos:
     post:
       tags:
@@ -7424,6 +7478,103 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/directory/organisations:
+    get:
+      tags:
+        - directory
+      description: The organisations a subject belongs to — for a caller acting on
+        nobody's behalf
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+          in: query
+          name: subject
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: string
+                  organisations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        tenant:
+                          type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/opa/policy:
+    get:
+      tags:
+        - opa
+      description: Everything the policy engine decides against, as an OPA bundle
+        (tar.gz) rooted at ory
+      responses:
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+  /api/opa/status:
+    post:
+      tags:
+        - opa
+      description: Where an authorization engine reports the bundle revision it activated
+      responses:
+        "204":
+          description: Default Response
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+  /api/opa/propagation:
+    get:
+      tags:
+        - opa
+      description: The revision this service serves, and the revision each engine reports
+      responses:
+        "200":
+          description: Default Response
   /api/organizations/{organizationId}/assignable-groups:
     get:
       tags:
@@ -7588,6 +7739,16 @@ paths:
                           items:
                             type: string
                           description: User permissions from OPAL RBAC
+                        organizations:
+                          type: array
+                          items:
+                            type: string
+                          description: Organisations this identity belongs to, where this service owns
+                            membership
+                        rbacUnavailable:
+                          type: boolean
+                          description: Set when what this identity holds could not be resolved — empty is
+                            not the same fact
                         credentials:
                           type: object
                           additionalProperties: true
@@ -7737,6 +7898,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -7870,6 +8041,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true
@@ -8030,6 +8211,16 @@ paths:
                     items:
                       type: string
                     description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
                   credentials:
                     type: object
                     additionalProperties: true

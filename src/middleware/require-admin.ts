@@ -1,16 +1,15 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { opaService as opalService, type UserRbacInfo } from '../services/opa.service.js'
 import { env } from '../config/env.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { platformRightsOf } from '../services/authorization-model.service.js'
+import { permits } from '../services/authorization-resolution.js'
+import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
+import { enforcing } from '../policy/declared-routes.js'
 
-/**
- * Admin groups that grant access to protected routes.
- *
- * Canonical names from groups.json: "admins", "super_admins"
- * Also accept legacy/shorthand variants for robustness.
- * Comparison is case-insensitive (see hasAnyGroup).
- */
-const ADMIN_GROUPS = ['admins', 'super_admins', 'admin', 'superadmin']
+/** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
+const READ_ADMIN = 'admin:read'
+import type { UserRbacInfo } from '../services/authorization-resolution.js'
+
 
 /**
  * Extend FastifyRequest to include RBAC info
@@ -41,7 +40,26 @@ function hasAnyGroup(userGroups: string[], requiredGroups: string[]): boolean {
  *
  * In DEV mode with DEV_BYPASS_AUTH=true, skips OPAL check and grants admin access.
  */
-export async function requireAdmin(
+/**
+ * What the caller holds across the platform, or null when that could not be established.
+ *
+ * The distinction is the whole point of this file: "holds nothing" is a decision and answers 403,
+ * "cannot be established" is an outage and answers 503. Letting the second pass as the first would
+ * turn every failure of the model into a permission somebody would go and ask about.
+ *
+ * Read from the model the engine decides against, keyed on the immutable identity. It used to come
+ * from Kratos metadata through a cache — the previous model — so what let somebody into the console
+ * was decided by something nobody enforces.
+ */
+async function resolveOrNull(subjectId: string, email: string): Promise<UserRbacInfo | null> {
+  try {
+    return { email, ...(await platformRightsOf(subjectId)) }
+  } catch {
+    return null
+  }
+}
+
+async function requireAdminHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
@@ -63,20 +81,27 @@ export async function requireAdmin(
     )
     request.rbacInfo = {
       email,
-      groups: ['super_admins', 'admins'],
-      roles: ['super_admin', 'admin'],
-      permissions: ['*'],
+      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
+      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
+      // have been refused by the very gate this bypass exists to skip.
+      groups: ['platform-admin'],
+      roles: ['platform-admin'],
+      permissions: ['admin:read', 'admin:write'],
     }
     return
   }
 
-  // Fetch RBAC info from OPAL
-  const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+  const subject = request.userContext?.id
+  if (!subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
+
+  const rbacInfo = await resolveOrNull(subject, email)
 
   if (!rbacInfo) {
     request.log.warn(
       { email },
-      'Failed to fetch RBAC info from OPAL - access denied'
+      'Could not resolve what this caller holds — refusing rather than guessing'
     )
     return reply.status(503).send({
       error: 'Service Unavailable',
@@ -87,15 +112,19 @@ export async function requireAdmin(
   // Attach RBAC info to request for downstream use
   request.rbacInfo = rbacInfo
 
-  // Check if user is in admin or superadmin group
-  if (!hasAnyGroup(rbacInfo.groups, ADMIN_GROUPS)) {
+  // A DECLARED PERMISSION, not a list of group names. This matched `super_admins` or `admins` by
+  // name, so a group named like an admin group waved somebody through whatever it granted, and a
+  // group granting everything under another name did not. Reading the administration API needs
+  // `admin:read`, and the coverage rule admits `admin:read` held on any ancestor.
+  if (!permits(rbacInfo.permissions, READ_ADMIN)) {
     request.log.warn(
       {
         email,
-        groups: rbacInfo.groups,
-        requiredGroups: ADMIN_GROUPS,
+        subject,
+        permissions: rbacInfo.permissions,
+        required: READ_ADMIN,
       },
-      'Access denied - user not in admin group'
+      'Access denied — the caller does not hold the permission this API requires'
     )
     auditEventService.emit({
       category: 'access',
@@ -135,8 +164,9 @@ export async function requireAdmin(
 export function requireGroups(allowedGroups: string[]) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
+    const subject = request.userContext?.id
 
-    if (!email || email === 'unknown') {
+    if (!subject || subject === 'unknown' || !email || email === 'unknown') {
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Authentication required',
@@ -145,12 +175,12 @@ export function requireGroups(allowedGroups: string[]) {
 
     // Fetch RBAC info from OPAL if not already fetched
     if (!request.rbacInfo) {
-      const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+      const rbacInfo = await resolveOrNull(subject, email)
 
       if (!rbacInfo) {
         request.log.warn(
           { email },
-          'Failed to fetch RBAC info from OPAL - access denied'
+          'Could not resolve what this caller holds — refusing rather than guessing'
         )
         return reply.status(503).send({
           error: 'Service Unavailable',
@@ -161,7 +191,9 @@ export function requireGroups(allowedGroups: string[]) {
       request.rbacInfo = rbacInfo
     }
 
-    // Check if user is in any of the allowed groups
+    // Named groups still, because this factory is CALLED with a list of names by its callers. The
+    // holder's groups now come from the model, so the names it matches are the model's — but naming
+    // a group is still weaker than naming a permission, and this is the last gate that does it.
     if (!hasAnyGroup(request.rbacInfo.groups, allowedGroups)) {
       request.log.warn(
         {
@@ -194,7 +226,8 @@ export function requireGroups(allowedGroups: string[]) {
  * Canonical name from groups.json: "super_admins"
  * Also accept legacy/shorthand variants for robustness.
  */
-const SUPER_ADMIN_GROUPS = ['super_admins', 'superadmin', 'superadmins']
+/** Writing the administration API. Verbs do not imply one another, so this is not `admin:read`. */
+const WRITE_ADMIN = 'admin:write'
 
 /**
  * Middleware requiring super_admin group membership
@@ -202,7 +235,7 @@ const SUPER_ADMIN_GROUPS = ['super_admins', 'superadmin', 'superadmins']
  * Use for sensitive operations like changing user groups.
  * More restrictive than requireAdmin - only super_admins allowed.
  */
-export async function requireSuperAdmin(
+async function requireSuperAdminHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
@@ -223,20 +256,27 @@ export async function requireSuperAdmin(
     )
     request.rbacInfo = {
       email,
-      groups: ['super_admins', 'admins'],
-      roles: ['super_admin', 'admin'],
-      permissions: ['*'],
+      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
+      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
+      // have been refused by the very gate this bypass exists to skip.
+      groups: ['platform-admin'],
+      roles: ['platform-admin'],
+      permissions: ['admin:read', 'admin:write'],
     }
     return
   }
 
-  // Fetch RBAC info from OPAL
-  const rbacInfo = await opalService.getUserInfo(email, env.APP_NAME)
+  const subject = request.userContext?.id
+  if (!subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
+
+  const rbacInfo = await resolveOrNull(subject, email)
 
   if (!rbacInfo) {
     request.log.warn(
       { email },
-      'Failed to fetch RBAC info from OPAL - access denied'
+      'Could not resolve what this caller holds — refusing rather than guessing'
     )
     return reply.status(503).send({
       error: 'Service Unavailable',
@@ -246,15 +286,16 @@ export async function requireSuperAdmin(
 
   request.rbacInfo = rbacInfo
 
-  // Check if user is in super_admin group specifically
-  if (!hasAnyGroup(rbacInfo.groups, SUPER_ADMIN_GROUPS)) {
+  // Writing the administration API. `admin:write` covers every write under it, and the roles that
+  // carry it are declared in the model rather than matched by name.
+  if (!permits(rbacInfo.permissions, WRITE_ADMIN)) {
     request.log.warn(
       {
         email,
-        groups: rbacInfo.groups,
-        requiredGroups: SUPER_ADMIN_GROUPS,
+        permissions: rbacInfo.permissions,
+        required: WRITE_ADMIN,
       },
-      'Access denied - user not in super_admin group'
+      'Access denied — the caller does not hold the permission this write requires'
     )
     auditEventService.emit({
       category: 'access',
@@ -284,101 +325,28 @@ export async function requireSuperAdmin(
 
 /**
  * Step-up gate (R2), reused by the org-admin roster endpoint: the actor must
- * hold a SECOND FACTOR proven within the last 15 minutes (AAL2 + a fresh
- * authenticated_at from the Kratos session, surfaced on request.userContext).
+ * hold a SECOND FACTOR proven within the last 15 minutes — measured on the aal2
+ * method's own completed_at, not the session's first-factor authenticated_at.
  * Returns 422 reauth_required (status pinned to 422 so cluster ingress does not
  * strip the body) when the factor is absent or stale. Fail-closed on missing
  * AAL/timestamp. The dev-bypass identity is stamped AAL2, so local dev passes.
  */
-/**
- * ROBUST super-admin gate (finding J11). Authorizes ONLY callers whose
- * RESOLVED RBAC confers the global super_admin role — a global role that
- * resolves to the "*" wildcard. It reads the flag straight from OPA's
- * super_admin detector (data.rbac.simulate.super_admin) — the SAME rego signal
- * request-time authorization uses, and the same one rbacService.isSuperAdmin
- * reads, so the notion of "super_admin" cannot drift between them. The
- * super_admin flag is derived from data.roles.global (the global wildcard) and
- * is app-independent; the app/action/object below only pick a policy path.
- *
- * Deliberately NOT requireSuperAdmin: that gate matches group NAME shorthands
- * ('super_admins' | 'superadmin' | 'superadmins') and would wave through a
- * group that is merely NAMED like an admin group but grants no resolved power
- * (finding J8). This gate reads the resolved DECISION, so a same-named but
- * powerless group cannot pass, and a genuinely-powerful group under a different
- * name still can.
- *
- * Use on authoring writes that hot-propagate to the gateway (service create/
- * patch/delete, oathkeeper access-rule create/update/delete): a non-super admin
- * editing an `authorizer: allow` rule would otherwise be an instant gateway
- * bypass the moment it syncs.
- *
- * FAIL-CLOSED: opaService.simulate returns null on any error / non-2xx /
- * missing result, and `!result?.super_admin` then denies (403) — an
- * unreachable or erroring OPA never authorizes an authoring write. Mirrors the
- * DEV_BYPASS_AUTH escape hatch the other gates use so local dev (no OPA) works.
- */
-export async function requireSuperAdminRole(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const email = request.userContext?.email
+// The super-admin gate that read a resolved flag from an engine is gone with the routes it kept:
+// the access-rule and service writes that propagated to the gateway at runtime. It asked
+// `data.rbac.simulate`, a path that stopped existing when the model became `strada.authz`, so it
+// had been refusing every one of those writes in silence.
+//
+// What decides who may hand out rights now is `rbacService.assertSuperAdmin`, which reads the same
+// documents the engine decides against.
 
-  if (!email || email === 'unknown') {
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Authentication required',
-    })
-  }
-
-  // DEV MODE: bypass OPA and grant (mirrors requireSuperAdmin/requireServiceAdmin).
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    request.log.warn(
-      { email },
-      '⚠️  DEV MODE: Super admin (resolved-role) authorization bypassed'
-    )
-    return
-  }
-
-  const result = await opalService.simulate(
-    email,
-    env.APP_NAME,
-    'POST',
-    '/api/admin/rbac/groups'
-  )
-  if (!result?.super_admin) {
-    request.log.warn(
-      { email },
-      'Access denied - actor is not a resolved global super_admin'
-    )
-    auditEventService.emit({
-      category: 'access',
-      verb:     'deny',
-      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
-      result:   'denied',
-      actor:    { email, ip: request.ip, ua: request.headers['user-agent'] as string || null },
-      method:   request.method,
-      path:     (request.url || '').split('?')[0],
-      reason:   'not_super_admin_role',
-      source:   'jinbe-api',
-    }).catch(() => {})
-    return reply.status(403).send({
-      error: 'Forbidden',
-      message: 'Super admin role required to author gateway rules/services',
-    })
-  }
-}
-
-const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
-  const aal = request.userContext?.aal
-  const authAt = request.userContext?.authenticatedAt
-  const authedMs = authAt ? new Date(authAt).getTime() : 0
-  const fresh =
-    aal === 'aal2' &&
-    !!authedMs &&
-    !Number.isNaN(authedMs) &&
-    Date.now() - authedMs <= STEP_UP_MAX_AGE_MS
-  if (!fresh) {
+  const stepUp = {
+    aal: request.userContext?.aal,
+    secondFactorAt: request.userContext?.secondFactorAt,
+    authVia: request.userContext?.authVia,
+  }
+  if (!secondFactorIsFresh(stepUp)) {
+    const unprovable = !canProveSecondFactor(stepUp)
     // Emit the currently-silent step-up denial (A2).
     auditEventService.emit({
       category: 'access',
@@ -387,7 +355,7 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
       target:   `${request.method} ${(request.url || '').split('?')[0]}`,
       result:   'denied',
       severity: 'warn',
-      reason:   'reauth_required',
+      reason:   unprovable ? 'step_up_unavailable' : 'reauth_required',
       actor:    {
         email: request.userContext?.email ?? null,
         ip: request.ip,
@@ -400,6 +368,14 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
       statusCode: 422,
       source:   'jinbe-api',
     }).catch(() => {})
+    if (unprovable) {
+      return reply.status(422).send({
+        error: 'step_up_unavailable',
+        message:
+          'This action requires a second factor proven in a browser session. The credential you presented cannot carry one.',
+        hint: 'Sign in to the console in a browser and retry there.',
+      })
+    }
     return reply.status(422).send({
       error: 'reauth_required',
       message:
@@ -409,3 +385,8 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
     })
   }
 }
+
+// The two fixed gates, marked with what they require so the published route table is read off the
+// guard rather than written beside it. Two spellings of one rule are two rules.
+export const requireAdmin = enforcing(requireAdminHandler, READ_ADMIN)
+export const requireSuperAdmin = enforcing(requireSuperAdminHandler, WRITE_ADMIN)

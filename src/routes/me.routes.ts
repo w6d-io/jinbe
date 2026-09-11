@@ -1,13 +1,19 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
-import { opaService } from '../services/opa.service.js'
-import { rbacService } from '../services/rbac.service.js'
+import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
+import {
+  allOrganisations as heldOrganisations,
+  organisationsById,
+  organisationStoreConfigured,
+} from '../services/organisation-store.js'
 
 /**
- * The full org universe a global super_admin administers. Organizations are
- * NOT a first-class entity — they are implied by two independent sources:
+ * The full org universe a global super_admin administers. The union of three sources, because each
+ * one alone hides organisations the others hold:
+ *   0. the records this service owns, where it owns them — the only source that knows about an
+ *      organisation nobody belongs to yet, which is exactly the one somebody is about to assign,
  *   1. org_service_map keys (orgs that have a service mapping), and
  *   2. the org ids identities carry (native organization_id + any
  *      metadata_admin.organizations).
@@ -21,6 +27,17 @@ async function allOrganizations(): Promise<string[]> {
   const orgs = new Set<string>(
     Object.keys(await redisRbacRepository.getOrgServiceMap()),
   )
+  // The records this service owns, first: since it took ownership of organisations, an organisation
+  // with members but no service mapping and nobody carrying it on their identity existed only here.
+  // It was therefore absent from the one list the console offers when somebody assigns — so the
+  // organisations that actually exist could not be assigned, only the ones already in use.
+  if (organisationStoreConfigured()) {
+    try {
+      for (const held of await heldOrganisations()) orgs.add(held.id)
+    } catch {
+      // A store that cannot answer costs its own entries and never the rest of the list.
+    }
+  }
   try {
     const bindings = await kratosService.getAllIdentitiesWithBindings()
     for (const b of bindings.values()) {
@@ -28,7 +45,7 @@ async function allOrganizations(): Promise<string[]> {
       for (const o of b.organizations) if (o) orgs.add(o)
     }
   } catch {
-    // Kratos directory scan failed — degrade to the mapped orgs only.
+    // Kratos directory scan failed — degrade to whatever the other sources gave.
   }
   return [...orgs]
 }
@@ -49,6 +66,23 @@ async function allOrganizations(): Promise<string[]> {
  *   Requires a valid session (401 otherwise). FAIL-CLOSED: OPA error → empty
  *   list (the UI then offers nothing).
  */
+/**
+ * What to call each organisation on screen.
+ *
+ * Only this service's own records carry a label, so nothing is invented when there are none: the
+ * caller falls back to the identifier, which is worse to read and still correct. A store that
+ * cannot answer costs a label and never the list — losing the list would turn a display problem
+ * into somebody appearing to belong nowhere.
+ */
+async function namesFor(ids: readonly string[]): Promise<Record<string, string>> {
+  if (!organisationStoreConfigured() || ids.length === 0) return {}
+  try {
+    return Object.fromEntries((await organisationsById(ids)).map((o) => [o.id, o.name]))
+  } catch {
+    return {}
+  }
+}
+
 export async function meRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organizations',
@@ -61,7 +95,12 @@ export async function meRoutes(fastify: FastifyInstance) {
             type: 'object',
             properties: {
               organizations: { type: 'array', items: { type: 'string' } },
-              scope: { type: 'string', enum: ['all', 'delegated'] },
+              // What to call each one on screen, keyed by the identifier above. Additive: a caller that
+              // only knows identifiers keeps working, and one that shows them to a person no longer has
+              // to display a UUID nobody can tell from another.
+              names: { type: 'object', additionalProperties: { type: 'string' } },
+              // Where the answer came from — the directory or the token — never how wide it is.
+              scope: { type: 'string', enum: ['delegated', 'claim'] },
             },
           },
           401: {
@@ -77,7 +116,8 @@ export async function meRoutes(fastify: FastifyInstance) {
       // (scope: 'all') rather than an empty delegated list, which was hiding
       // every org from the local console.
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-        return reply.send({ organizations: await allOrganizations(), scope: 'all' })
+        const organizations = await allOrganizations()
+        return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })
       }
 
       const email =
@@ -93,15 +133,19 @@ export async function meRoutes(fastify: FastifyInstance) {
         })
       }
 
-      // A global super_admin manages EVERY org — return all mapped orgs, not just
-      // the ones they happen to be a member of (manageable_orgs). The enforcement
-      // layers already admit them to any org via their global "*".
-      if (await rbacService.isSuperAdmin({ email })) {
-        return reply.send({ organizations: await allOrganizations(), scope: 'all' })
-      }
-
-      const organizations = await opaService.manageableOrgs(email)
-      return reply.send({ organizations, scope: 'delegated' })
+      // MINE, whoever asks. This used to answer with EVERY organisation when the caller was a
+      // super admin, so the same URL meant two different things depending on who called it — and
+      // the `scope` field existed to tell the caller which of the two they had received. A screen
+      // asking for everything and getting less could not tell a short answer from a complete one.
+      //
+      // Every organisation is a separate question with a separate answer: GET /admin/organizations,
+      // which refuses with a 403 rather than narrowing.
+      const organizations = await callerOrganisations(request)
+      return reply.send({
+        organizations,
+        names: await namesFor(organizations),
+        scope: callerOrganisationsScope(),
+      })
     }
   )
 }

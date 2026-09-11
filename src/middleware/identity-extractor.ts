@@ -9,6 +9,7 @@ import {
   k8sTokenReviewService,
   type K8sServiceAccountPrincipal,
 } from '../services/k8s-token-review.service.js'
+import { oidcBearerService } from '../services/oidc-bearer.service.js'
 
 /**
  * User context derived from the validated Kratos session.
@@ -22,6 +23,16 @@ export interface UserContext {
   // Second-factor state for the privileged-action step-up gate (R2).
   aal?: string
   authenticatedAt?: Date
+  secondFactorAt?: Date | null
+  // How the caller was proven. Only a session carries a readable second factor.
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+  /**
+   * The organisations the caller's token asserts, when the deployment reads them from the token
+   * rather than from this service's own model. Empty in `local` mode, where the model answers —
+   * never a merge of the two, because two authorities on one question cannot be told apart when
+   * they disagree.
+   */
+  organisations?: readonly string[]
 }
 
 declare module 'fastify' {
@@ -78,6 +89,8 @@ export async function extractIdentity(
       name: 'Dev User',
       aal: 'aal2',
       authenticatedAt: new Date(),
+      secondFactorAt: new Date(),
+      authVia: 'dev',
     }
     request.log.warn(
       { email: devEmail },
@@ -85,6 +98,26 @@ export async function extractIdentity(
     )
     return
   }
+
+/**
+ * The second-factor evidence carried by the Kratos session accompanying a token, when it names the
+ * same subject. Null when there is no session, it does not validate, or it belongs to somebody
+ * else — in which case the caller is judged on the token alone and the gate refuses under
+ * `step_up_unavailable`, which says so rather than asking for a factor nothing reads.
+ */
+async function secondFactorFromSession(request: FastifyRequest, subject: string) {
+  const cookie = KratosSessionService.extractSessionCookie(request.headers.cookie)
+  if (!cookie) return null
+  const { session } = await kratosSessionService.validateSession(cookie)
+  if (!session || session.identityId !== subject) return null
+  return {
+    sessionId: session.sessionId,
+    aal: session.aal,
+    authenticatedAt: session.authenticatedAt,
+    secondFactorAt: session.secondFactorAt,
+    authVia: 'session' as const,
+  }
+}
 
   // MACHINE (M2M): a projected Kubernetes ServiceAccount token. Tried before
   // the cookie because a machine caller has no cookie; a REJECTED bearer token
@@ -106,6 +139,7 @@ export async function extractIdentity(
         // The real API-server username, so audit records name the actual
         // ServiceAccount and not just its synthetic email.
         name: principal.username,
+        authVia: 'machine',
       }
       request.log.debug(
         {
@@ -122,6 +156,57 @@ export async function extractIdentity(
       { path: request.url, method: request.method },
       'Bearer ServiceAccount token present but TokenReview rejected it',
     )
+  }
+
+  // HUMAN, proven by a signed token. Tried after the ServiceAccount path, whose tokens are also
+  // JWTs and are told apart by their subject, and before the cookie, because a caller who sent a
+  // token means to be judged on it. A rejected token falls through rather than short-circuiting,
+  // matching the ServiceAccount path above: a stale token alongside a valid session should still
+  // authenticate as the human.
+  if (bearer && oidcBearerService.enabled && oidcBearerService.looksLikeJwt(bearer)) {
+    const principal = await oidcBearerService.verify(bearer)
+    if (principal) {
+      // A token asserts WHO, never how recently they proved a second factor — no such claim is
+      // issued. A step-up gate reading only the token therefore refuses forever: the operator
+      // proves a factor, comes back, and the token still says nothing. It is a loop with no exit.
+      //
+      // Same browser, same origin: the Kratos session travels alongside the token. When it is
+      // present AND belongs to the SAME subject, the factor evidence is taken from it. The token
+      // stays the authority on identity — this joins one dimension the token cannot express, and
+      // only for a subject the token already named, so it can never widen who the caller is.
+      const factor = await secondFactorFromSession(request, principal.subject)
+      request.userContext = {
+        email: principal.email ?? '',
+        id: principal.subject,
+        name: principal.name ?? 'unknown',
+        organisations: principal.organisations,
+        ...(factor ?? { authVia: 'bearer' as const }),
+      }
+      request.log.debug(
+        {
+          subject: principal.subject,
+          organisations: principal.organisations.length,
+          path: request.url,
+        },
+        'User identity validated via OIDC bearer token',
+      )
+      return
+    }
+    request.sessionError = 'bearer_token_rejected'
+  }
+
+  // The session cookie is a method a deployment can decline. Turned off, a caller with a cookie and
+  // no token is nobody here — which is the point of turning it off rather than a side effect.
+  //
+  // Explicitly `=== false`, so a configuration that does not carry the setting at all behaves as
+  // this service did before the setting existed. Declining an authentication method is a decision
+  // to state, never one to inherit from an absent key.
+  if (env.AUTH_COOKIE_ENABLED === false) {
+    request.log.debug(
+      { path: request.url, method: request.method },
+      'Cookie authentication is disabled',
+    )
+    return
   }
 
   const cookieHeader = request.headers.cookie
@@ -147,6 +232,8 @@ export async function extractIdentity(
       expiresAt: validatedSession.expiresAt,
       aal: validatedSession.aal,
       authenticatedAt: validatedSession.authenticatedAt,
+      secondFactorAt: validatedSession.secondFactorAt,
+      authVia: 'session',
     }
     request.log.debug(
       {
