@@ -42,6 +42,7 @@ import { NotificationService, HttpNotifier } from './services/notifications/inde
 import { realtimeService } from './services/realtime.service.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
+import { logBase, traceFields } from './telemetry/log-correlation.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -68,11 +69,19 @@ export async function buildServer() {
               },
             }
           : undefined,
-      // Add base labels for Prometheus scraping
+      // Identity, and the two fields that let a line find its trace.
+      //
+      // `service` / `env` / `version` come from the SAME variables the trace SDK reads, so a line
+      // cannot be filed under a service the traces do not know. They fall back to what this service
+      // has always emitted when nothing is configured, so a deployment that wants no telemetry sees
+      // no change at all.
       base: {
         service: 'jinbe',
         environment: env.NODE_ENV,
+        ...logBase(),
       },
+      // Evaluated per line: the active span is a property of the moment, not of the logger.
+      mixin: traceFields,
     },
     requestIdLogLabel: 'requestId',
     disableRequestLogging: false,

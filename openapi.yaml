@@ -7529,6 +7529,31 @@ paths:
                 properties:
                   error:
                     type: string
+  /api/opa/status:
+    post:
+      tags:
+        - opa
+      description: Where an authorization engine reports the bundle revision it activated
+      responses:
+        "204":
+          description: Default Response
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+  /api/opa/propagation:
+    get:
+      tags:
+        - opa
+      description: The revision this service serves, and the revision each engine reports
+      responses:
+        "200":
+          description: Default Response
   /api/organizations/{organizationId}/assignable-groups:
     get:
       tags:
