@@ -108,7 +108,12 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
     expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
   })
 
-  it('defaults to ["users"] when newGroups is empty', async () => {
+  it('takes the last group away instead of putting the base one back', async () => {
+    // Asking for none used to write `users`, which came from the retired model. Here that group is
+    // not declared and confers nothing, so forcing it wrote a row granting nothing and made "holds
+    // no group" unreachable — the removal returned 200 and left the person where they were.
+    holds('platform-operator')
+
     await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: [],
@@ -117,7 +122,9 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       auditEventType: 'user.groups_changed',
     })
 
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', [])
+    expect(removeFromGroup).toHaveBeenCalledWith(IDENTITY.id, 'platform-operator')
+    expect(addToGroup).not.toHaveBeenCalled()
   })
 
   it('emits audit event with extra details merged into details object', async () => {

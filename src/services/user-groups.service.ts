@@ -161,7 +161,13 @@ class UserGroupsService {
       }
     }
 
-    const finalGroups = newGroups.length > 0 ? newGroups : [BASE_GROUP]
+    // EMPTY MEANS EMPTY. This used to put the base group back whenever the caller asked for none,
+    // which came from the retired model where Kratos answered `['users']` for anybody without a
+    // special group. Here that group is not declared and confers nothing, so forcing it wrote a row
+    // granting nothing AND made "holds no group" unreachable: taking the last one away returned 200
+    // and left the person exactly where they were. Holding nothing is a legitimate state, and in the
+    // store that decides it is simply the absence of a row.
+    const finalGroups = newGroups
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
     // Groups this (replace-semantics) update REMOVES. Containment must be
     // SYMMETRIC — an org admin may only remove a group they could also grant.
