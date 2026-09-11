@@ -66,7 +66,7 @@ const oathkeeperHandlerCatalogJsonSchema = {
 
 export async function rbacRoutes(fastify: FastifyInstance) {
   // All RBAC admin routes require admin group membership
-  fastify.addHook('preHandler', requireAdmin)
+  guardAll(fastify, requireAdmin, isPublicRoute)
 
   // ===========================================================================
   // Users
@@ -518,6 +518,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 // =============================================================================
 
 import { rbacService } from '../services/rbac.service.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // Bindings: user → groups + org membership (from Kratos). Routed through the

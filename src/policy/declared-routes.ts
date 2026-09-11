@@ -61,10 +61,38 @@ export function recordRoute(
 ): void {
   const permission = [guards].flat().map(enforcedBy).find((p) => p !== null) ?? null
   for (const verb of [method].flat()) {
-    collected.set(`${verb} ${path}`, permission
+    const key = `${verb} ${path}`
+    // A route is seen twice: once by the collector on the root instance, which sees only per-route
+    // guards, and once by the one a guarded plugin installs, which knows the gate it put on all of
+    // them. Whichever sighting found a permission is the true one — the other simply could not see
+    // it, and letting it win would describe a guarded route as merely authenticated.
+    if (!permission && collected.get(key)?.class === 'authorized') continue
+    collected.set(key, permission
       ? { method: verb, path, class: 'authorized', permission }
       : { method: verb, path, class: isPublic(path) ? 'public' : 'authenticated' })
   }
+}
+
+/**
+ * Puts a guard on every route of a plugin AND records what it requires, in one call.
+ *
+ * Separately, a plugin-level `addHook('preHandler', …)` is invisible to an `onRoute` hook on the
+ * root instance: Fastify reports only per-route handlers there. So the gate that actually protects
+ * most of the administration API was enforced and absent from the table at the same time. Doing
+ * both here is what stops the table and the enforcement from drifting apart again.
+ */
+export function guardAll(
+  fastify: {
+    addHook(name: 'preHandler', fn: unknown): unknown
+    addHook(name: 'onRoute', fn: (route: { method: string | string[]; url: string; preHandler?: unknown }) => void): unknown
+  },
+  guard: unknown,
+  isPublic: (path: string) => boolean,
+): void {
+  fastify.addHook('preHandler', guard)
+  fastify.addHook('onRoute', (route) => {
+    recordRoute(route.method, route.url, [route.preHandler, guard], isPublic)
+  })
 }
 
 /** Everything recorded so far, ordered so a diff between two versions is readable. */

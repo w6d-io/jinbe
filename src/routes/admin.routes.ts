@@ -29,6 +29,8 @@ import {
 import { assignableGroupsFor, authorizationModel } from '../services/authorization-model.service.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -43,7 +45,7 @@ import { allEntitlements, allOrganisations, organisationStoreConfigured } from '
  */
 export async function adminRoutes(fastify: FastifyInstance) {
   // Require admin group membership for all routes in this plugin
-  fastify.addHook('preHandler', requireAdmin)
+  guardAll(fastify, requireAdmin, isPublicRoute)
 
   // Real-time change stream (Server-Sent Events). Auth: inherits the plugin's
   // requireAdmin (Kratos session) — same gate as every other /admin route. It
