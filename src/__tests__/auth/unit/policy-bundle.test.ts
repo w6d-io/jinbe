@@ -10,7 +10,7 @@ import { extract } from 'tar-stream'
 
 const { core, storeState } = vi.hoisted(() => ({
   core: { listNamespacedConfigMap: vi.fn() },
-  storeState: { allGroupMemberships: vi.fn() },
+  storeState: { allGroupMemberships: vi.fn(), allEntitlements: vi.fn() },
 }))
 
 vi.mock('@kubernetes/client-node', () => {
@@ -92,6 +92,8 @@ describe('the policy bundle', () => {
     )
     storeState.allGroupMemberships.mockReset()
     storeState.allGroupMemberships.mockResolvedValue(new Map([['subject-a', ['platform-operator']]]))
+    storeState.allEntitlements.mockReset()
+    storeState.allEntitlements.mockResolvedValue(new Map([['org-a', ['time-backend']]]))
   })
 
   it('owns the root, and therefore carries everything', async () => {
@@ -107,6 +109,31 @@ describe('the policy bundle', () => {
     expect(data.ory.authz['roles.json']).toEqual({ operator: ['context:read'] })
     expect(data.ory['strada-demo-api']['permissions.json'].routes.GET.context.class).toBe('authorized')
     expect(data.ory.membership).toEqual({ 'subject-a': ['platform-operator'] })
+    // The second dimension: which applications an organisation has at all, beside who holds what.
+    expect(data.ory.entitlements).toEqual({ 'org-a': ['time-backend'] })
+  })
+
+  it('moves the revision when an entitlement changes, and nothing else does', async () => {
+    // The revision identifies the artefact. An entitlement that changed under an unchanged identity
+    // would be answered with a 304 and never reach the engine.
+    const before = await service.policyBundle()
+    storeState.allEntitlements.mockResolvedValue(new Map([['org-a', ['time-backend', 'tracking-backend']]]))
+    const after = await service.policyBundle()
+
+    expect(after.revision).not.toBe(before.revision)
+    const data = JSON.parse((await entriesOf(after.body))['data.json'])
+    expect(data.ory.entitlements['org-a']).toEqual(['time-backend', 'tracking-backend'])
+  })
+
+  it('refuses a ConfigMap that would collide with the entitlements', async () => {
+    // Named the same, one silently overwrites the other depending on the order they are merged.
+    core.listNamespacedConfigMap.mockImplementation((opts: { labelSelector: string }) =>
+      opts.labelSelector === 'openpolicyagent.org/data=opa'
+        ? Promise.resolve({ items: [{ metadata: { name: 'entitlements' }, data: { 'x.json': '{}' } }] })
+        : Promise.resolve({ items: [] }),
+    )
+
+    await expect(service.policyBundle()).rejects.toThrow(/collides/)
   })
 
   it('selects on the label the engine loader itself uses', async () => {
