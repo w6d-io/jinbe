@@ -41,17 +41,6 @@ vi.mock('../../../services/rbac.service.js', () => ({
   },
 }))
 
-// Mock rbac-resolver service
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: {
-    resolveUserRbac: vi.fn().mockResolvedValue({
-      email: 'user@example.com',
-      groups: ['admins'],
-      roles: ['admin'],
-      permissions: ['*'],
-    }),
-  },
-}))
 
 // Mock redis-rbac repository (legacy — may still be referenced in other tests)
 vi.mock('../../../services/redis-rbac.repository.js', () => ({

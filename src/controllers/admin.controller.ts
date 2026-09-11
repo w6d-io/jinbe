@@ -141,7 +141,6 @@ async function withMemberships(
 export class AdminController {
   /**
    * Enrich identity with RBAC info resolved directly from Kratos + Git
-   * (No OPAL dependency - uses rbacResolverService for direct resolution)
    */
   /**
    * An identity, with what it holds where that can be resolved.

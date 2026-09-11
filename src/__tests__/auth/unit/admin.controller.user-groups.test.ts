@@ -80,17 +80,6 @@ vi.mock('../../../config/env.js', () => ({
   },
 }))
 
-// Mock rbacResolverService (new direct resolver)
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: {
-    resolveUserRbac: vi.fn().mockResolvedValue({
-      email: 'test@example.com',
-      groups: [],
-      roles: [],
-      permissions: [],
-    }),
-  },
-}))
 
 import { AdminController } from '../../../controllers/admin.controller.js'
 import { kratosService, KratosApiError } from '../../../services/kratos.service.js'

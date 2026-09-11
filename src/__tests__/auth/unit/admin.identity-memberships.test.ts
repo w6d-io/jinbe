@@ -45,15 +45,8 @@ vi.mock('../../../services/organisation-store.js', () => ({
   groupsForSubjects: vi.fn(async () => new Map()),
 }))
 
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: {
-    resolveUserRbac: vi.fn(async (email: string) => ({
-      email,
-      groups: [],
-      roles: [],
-      permissions: [],
-    })),
-  },
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  platformRightsOf: vi.fn(async () => ({ groups: [], roles: [], permissions: [] })),
 }))
 
 vi.mock('../../../services/rbac.service.js', () => ({ rbacService: {} }))

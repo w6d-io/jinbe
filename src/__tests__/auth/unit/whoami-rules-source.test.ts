@@ -7,8 +7,8 @@ import { describe, it, expect, vi } from 'vitest'
 const envState = { RULES_SOURCE: 'service', APP_NAME: 'jinbe' }
 
 vi.mock('../../../config/env.js', () => ({ env: envState }))
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: { resolveUserRbac: vi.fn(async () => ({ groups: [], roles: [], permissions: [] })) },
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  platformRightsOf: vi.fn(async () => ({ groups: [], roles: [], permissions: [] })),
 }))
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: { extendSession: vi.fn(async () => {}), getIdentity: vi.fn(async () => null) },

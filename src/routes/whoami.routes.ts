@@ -1,6 +1,6 @@
 // routes/whoami.routes.ts
 import { FastifyInstance, FastifyRequest } from 'fastify'
-import { rbacResolverService } from '../services/rbac-resolver.service.js'
+import { platformRightsOf } from '../services/authorization-model.service.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
 
@@ -77,21 +77,32 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
       let roles: string[] = []
       let permissions: string[] = []
 
-      // DEV MODE: Return admin RBAC info matching requireAdmin bypass
+      // What the console paints itself from, and therefore the last thing that was still answered
+      // out of the retired model: groups from Kratos metadata, roles and permissions from Redis,
+      // the whole chain keyed on the ADDRESS. Every screen that asked "may I" asked that. It
+      // answered `super_admin` and `*` — two names this model does not define — so the console
+      // showed a role nobody holds and passed its own permission checks on a wildcard.
+      //
+      // It comes from the model the engine decides against now, keyed on the immutable identity,
+      // and scoped to what is held across the platform: a right held in ONE organisation is not an
+      // answer to "what may this session do here", and reporting it as one would light up screens
+      // the mutation then refuses.
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-        groups = ['super_admins', 'admins']
-        roles = ['super_admin', 'admin']
-        permissions = ['*']
-      } else if (email) {
-        // Resolve RBAC directly from Kratos + Git
+        // The tree has no `*`, so a bypass stamping one would be refused by the very gates it
+        // exists to skip. These are the roots the model does define.
+        groups = ['platform-admin']
+        roles = ['platform-admin']
+        permissions = ['admin:read', 'admin:write']
+      } else if (identityId) {
         try {
-          const rbacInfo = await rbacResolverService.resolveUserRbac(email, env.APP_NAME)
-          groups = rbacInfo.groups
-          roles = rbacInfo.roles
-          permissions = rbacInfo.permissions
+          const held = await platformRightsOf(identityId)
+          groups = held.groups
+          roles = held.roles
+          permissions = held.permissions
         } catch (error) {
-          // Log error but don't fail the request
-          request.log.error({ error, email }, 'Failed to resolve RBAC info')
+          // Reported and not fatal: a console that cannot read the model should say who you are and
+          // grey what it cannot vouch for, rather than refuse to load at all.
+          request.log.error({ error, identityId }, 'could not resolve what this session holds')
         }
       }
 

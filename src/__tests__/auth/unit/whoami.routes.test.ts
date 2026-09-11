@@ -14,11 +14,11 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
-// Mock rbacResolverService
-vi.mock('../../../services/rbac-resolver.service.js', () => ({
-  rbacResolverService: {
-    resolveUserRbac: vi.fn().mockImplementation(async () => mockState.rbacInfo),
-  },
+// What this session holds, from the model the engine decides against — keyed on the IDENTITY. What
+// it replaces resolved Kratos metadata and Redis roles from the ADDRESS, and answered `super_admin`
+// and `*`: two names this model does not define.
+vi.mock('../../../services/authorization-model.service.js', () => ({
+  platformRightsOf: vi.fn().mockImplementation(async () => mockState.rbacInfo),
 }))
 
 // Mock kratosService — the whoami handler best-effort extends the session
@@ -32,7 +32,7 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 // Import after mocking
 import { whoamiRoutes } from '../../../routes/whoami.routes.js'
-import { rbacResolverService } from '../../../services/rbac-resolver.service.js'
+import { platformRightsOf } from '../../../services/authorization-model.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 
 // Helper types
@@ -190,7 +190,9 @@ describe('whoamiRoutes', () => {
       expect(reply._body?.email).toBeNull()
     })
 
-    it('should resolve RBAC info when email is available', async () => {
+    it('resolves what the session holds from the identity, never the address', async () => {
+      // An address changes hands; the identity does not. Keyed on the address, a console painted
+      // itself from whatever the previous holder had been granted.
       const request = createMockRequest({
         validatedSession: {
           email: 'user@example.com',
@@ -202,26 +204,26 @@ describe('whoamiRoutes', () => {
 
       await handler(request, reply)
 
-      expect(rbacResolverService.resolveUserRbac).toHaveBeenCalledWith('user@example.com', 'jinbe')
+      expect(platformRightsOf).toHaveBeenCalledWith('identity-456')
       expect(reply._body?.groups).toEqual(['users'])
       expect(reply._body?.roles).toEqual(['viewer'])
       expect(reply._body?.permissions).toEqual(['read'])
     })
 
-    it('should not resolve RBAC when no email', async () => {
+    it('resolves nothing without an identity to key on', async () => {
       const request = createMockRequest({})
       const reply = createMockReply()
 
       await handler(request, reply)
 
-      expect(rbacResolverService.resolveUserRbac).not.toHaveBeenCalled()
+      expect(platformRightsOf).not.toHaveBeenCalled()
       expect(reply._body?.groups).toEqual([])
       expect(reply._body?.roles).toEqual([])
       expect(reply._body?.permissions).toEqual([])
     })
 
-    it('should handle RBAC resolver errors gracefully', async () => {
-      vi.mocked(rbacResolverService.resolveUserRbac).mockRejectedValueOnce(new Error('Service unavailable'))
+    it('still says who you are when the model cannot be read', async () => {
+      vi.mocked(platformRightsOf).mockRejectedValueOnce(new Error('the model could not be read'))
 
       const request = createMockRequest({
         validatedSession: {
