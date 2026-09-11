@@ -76,6 +76,9 @@ describe('extractIdentity — Kubernetes ServiceAccount (M2M) branch', () => {
       email: 'provisioner.acme-prod@serviceaccount.cluster.local',
       id: 'k8s:sa-uid-1',
       name: 'system:serviceaccount:acme-prod:provisioner',
+      // Stamped so the step-up gate refuses under a name that does not invite a re-verification
+      // it would never read.
+      authVia: 'machine',
     })
     expect(request.machine).toEqual(PRINCIPAL)
     // No human session artefacts — the step-up gate (aal2) can never pass.
