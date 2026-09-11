@@ -211,6 +211,27 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/telemetry:
+    get:
+      tags:
+        - health
+      description: Browser telemetry settings. Empty when none is configured.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  faroUrl:
+                    type: string
+                  serviceName:
+                    type: string
+                  version:
+                    type: string
+                  environment:
+                    type: string
   /api/whoami:
     get:
       tags:

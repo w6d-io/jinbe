@@ -65,3 +65,26 @@ describe('log correlation', () => {
     }
   })
 })
+
+describe('the browser settings route', () => {
+  it('passes the session gate without a credential, while a neighbour does not', async () => {
+    // A console that cannot read this before signing in cannot report a failure to sign in, which
+    // is exactly the load worth reporting.
+    const { requireAuth } = await import('../../middleware/require-auth.js')
+
+    const attempt = async (url: string) => {
+      let status: number | null = null
+      const reply = {
+        status(code: number) { status = code; return this },
+        send() { return this },
+      }
+      await requireAuth({ url, headers: {} } as never, reply as never)
+      return status
+    }
+
+    expect(await attempt('/api/telemetry')).toBeNull()
+    expect(await attempt('/api/telemetry?x=1')).toBeNull()
+    // The guard is still doing its job either side of it.
+    expect(await attempt('/api/admin/users')).toBe(401)
+  })
+})
