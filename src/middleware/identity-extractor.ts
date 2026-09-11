@@ -99,6 +99,26 @@ export async function extractIdentity(
     return
   }
 
+/**
+ * The second-factor evidence carried by the Kratos session accompanying a token, when it names the
+ * same subject. Null when there is no session, it does not validate, or it belongs to somebody
+ * else — in which case the caller is judged on the token alone and the gate refuses under
+ * `step_up_unavailable`, which says so rather than asking for a factor nothing reads.
+ */
+async function secondFactorFromSession(request: FastifyRequest, subject: string) {
+  const cookie = KratosSessionService.extractSessionCookie(request.headers.cookie)
+  if (!cookie) return null
+  const { session } = await kratosSessionService.validateSession(cookie)
+  if (!session || session.identityId !== subject) return null
+  return {
+    sessionId: session.sessionId,
+    aal: session.aal,
+    authenticatedAt: session.authenticatedAt,
+    secondFactorAt: session.secondFactorAt,
+    authVia: 'session' as const,
+  }
+}
+
   // MACHINE (M2M): a projected Kubernetes ServiceAccount token. Tried before
   // the cookie because a machine caller has no cookie; a REJECTED bearer token
   // falls through rather than short-circuiting, so a request carrying both a
@@ -146,12 +166,21 @@ export async function extractIdentity(
   if (bearer && oidcBearerService.enabled && oidcBearerService.looksLikeJwt(bearer)) {
     const principal = await oidcBearerService.verify(bearer)
     if (principal) {
+      // A token asserts WHO, never how recently they proved a second factor — no such claim is
+      // issued. A step-up gate reading only the token therefore refuses forever: the operator
+      // proves a factor, comes back, and the token still says nothing. It is a loop with no exit.
+      //
+      // Same browser, same origin: the Kratos session travels alongside the token. When it is
+      // present AND belongs to the SAME subject, the factor evidence is taken from it. The token
+      // stays the authority on identity — this joins one dimension the token cannot express, and
+      // only for a subject the token already named, so it can never widen who the caller is.
+      const factor = await secondFactorFromSession(request, principal.subject)
       request.userContext = {
         email: principal.email ?? '',
         id: principal.subject,
         name: principal.name ?? 'unknown',
         organisations: principal.organisations,
-        authVia: 'bearer',
+        ...(factor ?? { authVia: 'bearer' as const }),
       }
       request.log.debug(
         {
