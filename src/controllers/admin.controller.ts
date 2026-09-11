@@ -331,7 +331,7 @@ export class AdminController {
           organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: desiredGroups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -606,7 +606,7 @@ export class AdminController {
           organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: groups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })

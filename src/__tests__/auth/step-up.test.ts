@@ -96,3 +96,17 @@ describe('a credential that cannot carry a second factor', () => {
     expect(stepUpFailure({ authVia: 'session', aal: 'aal1' }, NOW)).toBe('absent')
   })
 })
+
+describe('what a stale refusal says', () => {
+  it('names the real age, because "older than 15 minutes" reads as a broken gate', async () => {
+    const { userGroupsService } = await import('../../services/user-groups.service.js')
+    const denial = (userGroupsService as unknown as {
+      stepUpDenial(a: unknown, e: string): { ok: false; body: { message: string } } | null
+    }).stepUpDenial(
+      { aal: 'aal2', secondFactorAt: new Date(Date.now() - 16 * 60_000), authVia: 'session' },
+      'target@example.com',
+    )
+    expect(denial?.body.message).toContain('16 minutes ago')
+    expect(denial?.body.message).toContain('the limit is 15')
+  })
+})
