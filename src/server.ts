@@ -43,6 +43,7 @@ import { realtimeService } from './services/realtime.service.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
 import { logBase, traceFields } from './telemetry/log-correlation.js'
+import { telemetryRoutes } from './routes/telemetry.routes.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -143,6 +144,7 @@ export async function buildServer() {
 
   await fastify.register(
     async function (api) {
+      await api.register(telemetryRoutes)
       await api.register(whoamiRoutes)
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(clusterRoutes, { prefix: '/clusters' })
