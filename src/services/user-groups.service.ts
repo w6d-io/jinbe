@@ -4,6 +4,7 @@ import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
+import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
 import {
   AuthorizationModelUnavailableError,
   groupFacts,
@@ -22,6 +23,7 @@ export type GroupUpdateActor = {
   requestId?: string | null
   aal?: string
   authenticatedAt?: Date | string
+  secondFactorAt?: Date | string | null
 }
 
 /**
@@ -64,7 +66,7 @@ export type ActorPrivilegePolicy =
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
   newGroups: string[]
-  // `aal` / `authenticatedAt` carry the actor's second-factor state for the R2
+  // `aal` / `secondFactorAt` carry the actor's second-factor state for the R2
   // step-up gate; sourced from the Kratos-validated session (request.userContext).
   actor: GroupUpdateActor
   privilegePolicy: ActorPrivilegePolicy
@@ -97,7 +99,6 @@ const ORG_ADMIN_FLAG_GROUP = 'org_admins'
 // session cannot keep minting privileged access without re-verifying TOTP. The
 // window matches the operator-chosen 15 minutes; a refresh=true AAL2 login
 // re-stamps `authenticated_at`, resetting it.
-const STEP_UP_MAX_AGE_MS = 15 * 60 * 1000
 
 /**
  * Shared core of "update a user's groups". Both the global admin endpoint
@@ -396,12 +397,14 @@ class UserGroupsService {
     }).catch(() => {})
   }
 
-  // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE.
+  // R2 step-up gate: the actor must hold AAL2 proven within STEP_UP_MAX_AGE,
+  // measured on the aal2 method's own completed_at (see ./step-up.ts for why the
+  // session's authenticated_at is the wrong clock).
   // Returns a 422 `reauth_required` denial (status pinned to 422 so cluster
   // ingress does not strip the body/headers) when the second factor is absent or
-  // stale; null when satisfied. Fail-closed: a missing aal/authenticatedAt denies.
+  // stale; null when satisfied. Fail-closed: an unknown level or time denies.
   private stepUpDenial(
-    actor: { aal?: string; authenticatedAt?: Date | string },
+    actor: { aal?: string; secondFactorAt?: Date | string | null },
     targetEmail: string,
   ): ApplyGroupUpdateResult | null {
     const reauth = (message: string): ApplyGroupUpdateResult => ({
@@ -416,13 +419,13 @@ class UserGroupsService {
         hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
       },
     })
-    if (actor.aal !== 'aal2') {
+    const failure = stepUpFailure(actor)
+    if (failure === 'absent') {
       return reauth(
         'This change assigns privileged access and requires two-factor authentication (TOTP). Complete 2FA and retry.',
       )
     }
-    const authedAt = actor.authenticatedAt ? new Date(actor.authenticatedAt).getTime() : 0
-    if (!authedAt || Number.isNaN(authedAt) || Date.now() - authedAt > STEP_UP_MAX_AGE_MS) {
+    if (failure === 'stale') {
       return reauth(
         `Your two-factor verification is older than ${STEP_UP_MAX_AGE_MS / 60000} minutes; re-verify (TOTP) to assign privileged access.`,
       )
