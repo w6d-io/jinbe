@@ -12,7 +12,7 @@ import { auditEventService, httpRequestsCounter, httpDurationHistogram } from '.
  * - Increments Prometheus counters for /metrics scraping
  */
 export async function auditLogger(request: FastifyRequest, reply: FastifyReply) {
-  const responseTime = reply.getResponseTime()
+  const responseTime = reply.elapsedTime
   const uc = request.userContext || { email: 'anonymous', id: 'unknown', name: 'anonymous' }
 
   const method      = request.method

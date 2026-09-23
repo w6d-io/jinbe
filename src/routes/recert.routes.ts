@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
+import { unauthorizedResponseSchema, notFoundResponseSchema } from '../schemas/response-schemas.js'
 import { requireAdmin } from '../middleware/require-admin.js'
 import { recertService, RecertError } from '../services/recert.service.js'
 import { startRecertScheduler } from '../services/recert-scheduler.service.js'
@@ -237,7 +238,10 @@ export async function recertRoutes(fastify: FastifyInstance) {
       schema: {
         description: "The caller's pending review items across active campaigns. No admin gate: reviewers are arbitrary identities.",
         tags: ['recert'],
-        response: { 200: { type: 'object', properties: { items: { type: 'array', items: itemSchema } } } },
+        response: {
+          200: { type: 'object', properties: { items: { type: 'array', items: itemSchema } } },
+          401: unauthorizedResponseSchema,
+        },
       },
     },
     async (request, reply) => {
@@ -269,7 +273,11 @@ export async function recertRoutes(fastify: FastifyInstance) {
             comment: { type: 'string', maxLength: 2000 },
           },
         },
-        response: { 200: { type: 'object', properties: { item: itemSchema } } },
+        response: {
+          200: { type: 'object', properties: { item: itemSchema } },
+          401: unauthorizedResponseSchema,
+          404: notFoundResponseSchema,
+        },
       },
     },
     async (request, reply) => {
