@@ -5,7 +5,7 @@ name: Build feature image
 
 on:
   push:
-    branches: ['feature/**', 'hotfix/**']
+    branches: ['feature/**', 'hotfix/**', 'develop']
 
 env:
   REGISTRY: ghcr.io
