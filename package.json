@@ -1,7 +1,7 @@
 {
   "name": "jinbe",
   "version": "0.6.2",
-  "description": "RBAC control plane — identity groups, service roles, route permissions, OPA policy sync and Oathkeeper rule management",
+  "description": "RBAC control plane \u2014 identity groups, service roles, route permissions, OPA policy sync and Oathkeeper rule management",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
@@ -97,5 +97,8 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8"
   }
 }
