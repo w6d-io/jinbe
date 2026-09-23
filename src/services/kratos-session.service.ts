@@ -124,7 +124,7 @@ export class KratosSessionService {
         return { session: null, error: `Kratos error: ${response.status} ${response.statusText}` }
       }
 
-      const session: KratosSession = await response.json()
+      const session = (await response.json()) as KratosSession
 
       // Check if session is active
       if (!session.active) {

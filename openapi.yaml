@@ -116,6 +116,7 @@ paths:
       description: Create a SCIM user (Kratos identity, default group [users],
         scim.managed marking). 409 uniqueness on existing email.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -153,6 +154,7 @@ paths:
         - scim
       description: Replace a SCIM user (traits + active state; groups preserved).
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -178,6 +180,7 @@ paths:
       description: "PATCH a SCIM user (RFC 7644 PatchOp): active true/false at
         minimum, plus userName/name/externalId. active=false revokes sessions."
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -487,6 +490,7 @@ paths:
         - clusters
       description: Create new cluster
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -545,7 +549,6 @@ paths:
                 - name
                 - config
               additionalProperties: false
-        required: true
       responses:
         "201":
           description: Default Response
@@ -689,6 +692,7 @@ paths:
         - clusters
       description: Update cluster by ID
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -845,6 +849,7 @@ paths:
         - databases
       description: Create new database under a specific cluster
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -888,7 +893,6 @@ paths:
                 - username
                 - password
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -943,6 +947,7 @@ paths:
         - backups
       description: Create new backup under a specific cluster
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -990,7 +995,6 @@ paths:
                 - size
                 - backupItems
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -1043,6 +1047,7 @@ paths:
       description: Verify a kubeconfig and retrieve token identity/permissions. Use
         this before creating a cluster to validate the configuration.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -1053,7 +1058,6 @@ paths:
                 config:
                   type: string
                   description: The kubeconfig YAML content to verify
-        required: true
       responses:
         "200":
           description: Default Response
@@ -1489,6 +1493,7 @@ paths:
         - databases
       description: Update database by ID
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -1772,6 +1777,7 @@ paths:
         - database-apis
       description: Create database API configuration for a specific database
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -1787,7 +1793,6 @@ paths:
                 - address
                 - api_key
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -2053,6 +2058,7 @@ paths:
         - backup-items
       description: Create new backup item under a specific backup
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -2086,7 +2092,6 @@ paths:
                 - filename
                 - date
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -2281,6 +2286,7 @@ paths:
         - backup-items
       description: Update backup item by ID
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -2540,6 +2546,7 @@ paths:
         - database-apis
       description: Update database API by ID
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -2786,6 +2793,7 @@ paths:
         - admin
       description: Create new user in Kratos identity service
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -3528,6 +3536,7 @@ paths:
         - admin
       description: Update user by ID in Kratos identity service
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -3726,6 +3735,7 @@ paths:
         - admin
       description: Merge-patch user metadata_public or metadata_admin
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -3870,6 +3880,7 @@ paths:
         - admin
       description: Set user state to active or inactive
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -3882,7 +3893,6 @@ paths:
                   enum:
                     - active
                     - inactive
-        required: true
       parameters:
         - schema:
             type: string
@@ -4016,6 +4026,7 @@ paths:
         - admin
       description: Set or remove the organization_id on a user (Kratos JSON Patch)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -4028,7 +4039,6 @@ paths:
                   format: uuid
                   nullable: true
                   description: Organization UUID to assign, or null to remove
-        required: true
       parameters:
         - schema:
             type: string
@@ -4221,6 +4231,7 @@ paths:
       description: Update a user's group memberships. Requires super_admin group.
         Groups must exist in groups.json.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -4233,7 +4244,6 @@ paths:
                   items:
                     type: string
                   description: Array of group names to assign to the user
-        required: true
       parameters:
         - schema:
             type: string
@@ -4645,6 +4655,7 @@ paths:
         - rbac
       description: Create a new group.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -4664,7 +4675,6 @@ paths:
               required:
                 - name
                 - services
-        required: true
       responses:
         "201":
           description: Default Response
@@ -4738,6 +4748,7 @@ paths:
         - rbac
       description: Update an existing group.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -4752,7 +4763,6 @@ paths:
                       type: string
               required:
                 - services
-        required: true
       parameters:
         - schema:
             type: string
@@ -5117,6 +5127,7 @@ paths:
         - rbac
       description: Replace roles for a specific service.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -5130,7 +5141,6 @@ paths:
                     type: array
                     items:
                       type: string
-        required: true
       parameters:
         - schema:
             type: string
@@ -5255,6 +5265,7 @@ paths:
         - rbac
       description: Replace the route map for a specific service.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -5276,7 +5287,6 @@ paths:
                         type: string
                       permission:
                         type: string
-        required: true
       parameters:
         - schema:
             type: string
@@ -5343,6 +5353,7 @@ paths:
         + diff it would produce for a service. Does not mutate; apply is PUT
         /services/:name/routes."
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -5390,7 +5401,6 @@ paths:
                         - prepend
                         - strip
                         - none
-        required: true
       parameters:
         - schema:
             type: string
@@ -6048,6 +6058,7 @@ paths:
       description: Set an organization → service bundle mapping. Replaces the org's
         entire bundle with the provided (non-empty) list of service names.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -6065,7 +6076,6 @@ paths:
                   items:
                     type: string
                     pattern: ^[a-z0-9_-]+$
-        required: true
       responses:
         "201":
           description: Default Response
@@ -6175,6 +6185,7 @@ paths:
         entire roster; an empty list clears it. Requires super_admin + a second
         factor proven within 15 minutes.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -6191,7 +6202,6 @@ paths:
                   items:
                     type: string
                     format: email
-        required: true
       responses:
         "200":
           description: Default Response
@@ -6359,6 +6369,7 @@ paths:
         snapshot; ?sections=services,groups,… applies only those parts
         (override/add, no prune), omitted = full 1:1 restore.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -6383,6 +6394,18 @@ paths:
                   imported:
                     type: object
                     additionalProperties: true
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
   /api/admin/rbac/bundle/backups:
     get:
       tags:
@@ -6399,6 +6422,7 @@ paths:
         - backup
       description: Restore RBAC config from an S3 backup snapshot (full replace).
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -6408,7 +6432,6 @@ paths:
               properties:
                 key:
                   type: string
-        required: true
       responses:
         "200":
           description: Default Response
@@ -6592,6 +6615,18 @@ paths:
                     properties:
                       enabled:
                         type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
     put:
       tags:
         - auth-config
@@ -6601,6 +6636,7 @@ paths:
         kratos.yml. registration.enabled=false makes account creation admin-only
         (kuma Users → create + invite).
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -6782,6 +6818,18 @@ paths:
                     properties:
                       enabled:
                         type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
   /api/admin/audit/metrics:
     get:
       tags:
@@ -7146,6 +7194,7 @@ paths:
       description: "Create a recertification campaign (draft). Phase 1: explicit
         reviewer emails, one-shot schedule."
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -7180,7 +7229,6 @@ paths:
                   enum:
                     - revoke
                     - flag
-        required: true
       responses:
         "201":
           description: Default Response
@@ -7399,6 +7447,23 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
   /api/admin/recert/items/{campaignId}/{itemId}/decision:
     post:
       tags:
@@ -7407,6 +7472,7 @@ paths:
         revoke requires a comment and is applied immediately (membership removed
         in Kratos). Self-review is blocked.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -7422,7 +7488,6 @@ paths:
                 comment:
                   type: string
                   maxLength: 2000
-        required: true
       parameters:
         - schema:
             type: string
@@ -7445,6 +7510,32 @@ paths:
                   item:
                     type: object
                     additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   /api/webhooks/kratos:
     post:
       tags:
@@ -7452,6 +7543,7 @@ paths:
       description: Kratos after-hook receiver (login / MFA / settings / registration).
         Self-authenticated via shared secret.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -7788,6 +7880,7 @@ paths:
         - organization-users
       description: Create a new user in this organization
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -7808,7 +7901,6 @@ paths:
                   items:
                     type: string
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -8097,6 +8189,7 @@ paths:
         - organization-users
       description: Update a user within this organization
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -8407,6 +8500,7 @@ paths:
       description: Update a user's group memberships within this organization.
         Requires users:assign_group permission.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -8419,7 +8513,6 @@ paths:
                   items:
                     type: string
                   description: Array of group names to assign to the user
-        required: true
       parameters:
         - schema:
             type: string
@@ -8521,6 +8614,7 @@ paths:
         organization. Returns client_id + client_secret ONCE. organization_id is
         enforced server-side.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -8546,7 +8640,6 @@ paths:
                     type: string
                   description: Optional token audience
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string
@@ -8902,6 +8995,7 @@ paths:
         - jobs
       description: Create a backup or restore job for a cluster
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -8944,7 +9038,6 @@ paths:
                 - action
                 - bases
               additionalProperties: false
-        required: true
       parameters:
         - schema:
             type: string

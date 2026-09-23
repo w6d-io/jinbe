@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { badRequestResponseSchema } from '../schemas/response-schemas.js'
 import { requireSuperAdmin } from '../middleware/require-admin.js'
 import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, BundleValidationError } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
@@ -76,6 +77,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         body: { type: 'object', additionalProperties: true },
         response: {
           200: { type: 'object', properties: { success: { type: 'boolean' }, imported: { type: 'object', additionalProperties: true } } },
+          400: badRequestResponseSchema,
         },
       },
     },

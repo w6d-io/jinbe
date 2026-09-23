@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { badRequestResponseSchema } from '../schemas/response-schemas.js'
 import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
 import {
   kratosConfigService,
@@ -52,6 +53,7 @@ export async function authConfigRoutes(fastify: FastifyInstance) {
               registration: { type: 'object', properties: { enabled: { type: 'boolean' } } },
             },
           },
+          400: badRequestResponseSchema,
         },
       },
     },
@@ -111,6 +113,7 @@ export async function authConfigRoutes(fastify: FastifyInstance) {
               registration: { type: 'object', properties: { enabled: { type: 'boolean' } } },
             },
           },
+          400: badRequestResponseSchema,
         },
       },
     },
