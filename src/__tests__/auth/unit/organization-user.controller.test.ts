@@ -52,18 +52,9 @@ vi.mock('../../../services/audit-event.service.js', () => ({
   },
 }))
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: {
-    // org-scoped delegation decision; default deny (fail-closed). Admin-power
-    // cases set it explicitly to model an OPA allow/deny.
-    canGrant: vi.fn().mockResolvedValue(false),
-  },
-}))
-
 import { organizationUserController } from '../../../controllers/organization-user.controller.js'
 import { kratosService, KratosApiError } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
-import { opaService } from '../../../services/opa.service.js'
 
 const ORG = '11111111-1111-1111-1111-111111111111'
 const OTHER_ORG = '22222222-2222-2222-2222-222222222222'
@@ -146,7 +137,6 @@ describe('OrganizationUserController.updateUserGroups', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(kratosService.getUserGroups).mockResolvedValue([])
-    vi.mocked(opaService.canGrant).mockResolvedValue(false)
   })
 
   it('rejects when target identity is in a different org (404)', async () => {

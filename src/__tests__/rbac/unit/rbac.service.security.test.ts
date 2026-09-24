@@ -81,15 +81,7 @@ vi.mock('../../../services/organisation-store.js', () => ({
   organisationStoreConfigured: vi.fn(() => true),
 }))
 
-vi.mock('../../../services/opa.service.js', () => ({
-  opaService: {
-    simulate: vi.fn(),
-    getUserInfo: vi.fn(),
-  },
-}))
-
 import { RbacService } from '../../../services/rbac.service.js'
-import { opaService } from '../../../services/opa.service.js'
 import { holdsPlatformPermission } from '../../../services/authorization-model.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
@@ -179,15 +171,6 @@ describe('RbacService - security helpers', () => {
         'super_admins',
         JSON.stringify({ global: ['super_admin'] }),
       )
-      // OPA reports the org admin is NOT a super_admin (assertSuperAdmin → 403).
-      vi.mocked(opaService.simulate).mockResolvedValue({
-        allow: true,
-        matching_rules: [],
-        groups: ['org_admins'],
-        roles: ['admin'],
-        permissions: ['*'],
-        super_admin: false,
-      })
     })
 
     it('blocks with 422 privilege_escalation_blocked despite the actor holding org "*"', async () => {
