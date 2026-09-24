@@ -16,7 +16,7 @@ const { poolState, envState } = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: envState.env }))
-vi.mock('pg', () => ({ Pool: vi.fn(() => poolState) }))
+vi.mock('pg', () => ({ Pool: vi.fn(function () { return poolState }) }))
 
 const store = await import('../../../services/organisation-store.js')
 

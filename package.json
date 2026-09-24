@@ -1,7 +1,7 @@
 {
   "name": "jinbe",
   "version": "0.6.2",
-  "description": "RBAC control plane \u2014 identity groups, service roles, route permissions, OPA policy sync and Oathkeeper rule management",
+  "description": "RBAC control plane — identity groups, service roles, route permissions, OPA policy sync and Oathkeeper rule management",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
@@ -84,7 +84,7 @@
     "@types/tar-stream": "^3.1.4",
     "@typescript-eslint/eslint-plugin": "^7.0.1",
     "@typescript-eslint/parser": "^7.0.1",
-    "@vitest/coverage-v8": "^3.2.6",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
     "madge": "^8.0.0",
@@ -93,7 +93,7 @@
     "supertest": "^6.3.4",
     "tsx": "^4.7.1",
     "typescript": "^5.3.3",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"
