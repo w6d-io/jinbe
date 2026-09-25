@@ -14,6 +14,8 @@ vi.mock('../../../services/organisation-store.js', () => ({
   removeFromGroup: vi.fn().mockResolvedValue(undefined),
   groupsForSubjects: vi.fn().mockResolvedValue(new Map()),
   organisationStoreConfigured: vi.fn().mockReturnValue(true),
+  // Membership is any organisation the person belongs to, not only the primary one.
+  organisationsForSubject: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../../../services/redis-lock.js', () => ({

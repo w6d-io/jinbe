@@ -19,14 +19,32 @@ import {
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
 import { env } from '../config/index.js'
-import { addMember, removeMemberEverywhere } from '../services/organisation-store.js'
+import { addMember, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
 import { assignableGroupsFor, declaredGroups } from '../services/authorization-model.service.js'
+import {
+  identitiesInOrganisation,
+  isMemberOf,
+  joinOrganisation,
+  leaveOrganisation,
+} from '../services/org-membership.service.js'
 
-function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): void {
-  const orgId = (identity as Record<string, unknown>).organization_id as string | null | undefined
-  if (orgId !== organizationId) {
+/**
+ * Refuses, as not found, an identity that does not belong to the organisation. Belonging is any of
+ * its organisations — not only the primary one, which hid a second organisation's members from it.
+ */
+async function assertOrganizationMatch(identity: KratosIdentity, organizationId: string): Promise<void> {
+  if (!(await isMemberOf(identity, organizationId))) {
     throw new KratosApiError(404, 'User not found in this organization')
   }
+}
+
+/** A membership write the directory refused: an outage to retry, never a silent partial success. */
+function storeUnavailable(reply: FastifyReply, err: unknown) {
+  if (!(err instanceof OrganisationStoreUnavailableError)) throw err
+  return reply.status(503).send({
+    error: 'Service Unavailable',
+    message: 'The membership could not be changed. Please try again later.',
+  })
 }
 
 /**
@@ -55,16 +73,6 @@ async function recordMembership(
   }
 }
 
-/** Drop every membership of a subject that no longer exists. */
-async function forgetMembership(subjectId: string, request: FastifyRequest): Promise<void> {
-  if (env.ORGANISATION_SOURCE !== 'directory') return
-  try {
-    await removeMemberEverywhere(subjectId)
-  } catch (err) {
-    request.log.error({ err, subjectId }, 'Deleted the identity but could not drop its memberships')
-  }
-}
-
 export class OrganizationUserController {
   /**
    * List users belonging to an organization
@@ -82,8 +90,9 @@ export class OrganizationUserController {
       organizationUsersQuerySchema.parse(request.query)
 
     // Paginates across ALL pages (J9) and applies the identifier filter
-    // server-side (exact match, Kratos `credentials_identifier`).
-    const { identities } = await kratosService.listIdentitiesByOrganization(organizationId, {
+    // server-side (exact match, Kratos `credentials_identifier`). Includes the members whose
+    // primary organisation is another one.
+    const identities = await identitiesInOrganisation(organizationId, {
       pageSize: page_size,
       credentialsIdentifier: credentials_identifier,
     })
@@ -101,7 +110,7 @@ export class OrganizationUserController {
   ) {
     const { organizationId, id } = request.params
     const identity = await kratosService.getIdentity(id)
-    assertOrganizationMatch(identity, organizationId)
+    await assertOrganizationMatch(identity, organizationId)
     return reply.send(identity)
   }
 
@@ -222,7 +231,7 @@ export class OrganizationUserController {
     const body = organizationUserUpdateBodySchema.parse(request.body)
 
     const current = await kratosService.getIdentity(id)
-    assertOrganizationMatch(current, organizationId)
+    await assertOrganizationMatch(current, organizationId)
 
     const identity = await kratosService.updateIdentity(id, body)
 
@@ -257,7 +266,7 @@ export class OrganizationUserController {
     const { organizationId, id } = request.params
 
     const identity = await kratosService.getIdentity(id)
-    assertOrganizationMatch(identity, organizationId)
+    await assertOrganizationMatch(identity, organizationId)
 
     const email = identity.traits?.email as string
     const groups = await kratosService.getUserGroups(email)
@@ -281,7 +290,7 @@ export class OrganizationUserController {
     const { groups } = updateUserGroupsBodySchema.parse(request.body)
 
     const identity = await kratosService.getIdentity(id)
-    assertOrganizationMatch(identity, organizationId)
+    await assertOrganizationMatch(identity, organizationId)
 
     const email = identity.traits?.email as string
 
@@ -344,8 +353,12 @@ export class OrganizationUserController {
   }
 
   /**
-   * Delete a user from an organization
+   * Remove a user from an organization — that membership only
    * DELETE /api/organizations/:organizationId/users/:id
+   *
+   * The identity stays, and so do its other organisations and its site access: leaving one company
+   * is not leaving the platform. What this replaced deleted the whole identity and then dropped its
+   * memberships everywhere. Deleting a person is a platform act (`DELETE /api/admin/users/:id`).
    */
   async deleteUser(
     request: FastifyRequest<{ Params: { organizationId: string; id: string } }>,
@@ -354,21 +367,20 @@ export class OrganizationUserController {
     const { organizationId, id } = request.params
 
     const identity = await kratosService.getIdentity(id)
-    assertOrganizationMatch(identity, organizationId)
+    await assertOrganizationMatch(identity, organizationId)
 
-    await kratosService.deleteIdentity(id)
-
-    // The identity is gone, so no membership of it can mean anything. Removed everywhere rather
-    // than in the organisation asked for: a row left behind names a subject that no longer
-    // exists, and would grant to whoever is issued that identifier next.
-    await forgetMembership(id, request)
+    try {
+      await leaveOrganisation(identity, organizationId)
+    } catch (err) {
+      return storeUnavailable(reply, err)
+    }
 
     kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('user_deleted', auditActor(request)).catch(() => {})
+    rbacService.notifyBindingsChanged('organization_changed', auditActor(request)).catch(() => {})
 
     auditEventService
       .emit({
-        type: 'organization_user.deleted',
+        type: 'organization_user.membership_removed',
         actor: auditActor(request),
         target: { type: 'user', id },
         details: { organizationId },
@@ -376,8 +388,42 @@ export class OrganizationUserController {
       })
       .catch(() => {})
 
-    notificationService.emit({ action: 'deleted', entity_type: 'user', payload: { id, organization_id: organizationId } })
+    notificationService.emit({ action: 'updated', entity_type: 'user', payload: { id, organization_id: organizationId } })
     return reply.status(204).send()
+  }
+
+  /**
+   * Add an existing user to this organization, keeping every other membership
+   * PUT /api/organizations/:organizationId/users/:id/membership
+   */
+  async addMembership(
+    request: FastifyRequest<{ Params: { organizationId: string; id: string } }>,
+    reply: FastifyReply
+  ) {
+    const { organizationId, id } = request.params
+
+    const identity = await kratosService.getIdentity(id)
+    try {
+      await joinOrganisation(identity, organizationId)
+    } catch (err) {
+      return storeUnavailable(reply, err)
+    }
+
+    kratosService.invalidateGroupsCache()
+    rbacService.notifyBindingsChanged('organization_changed', auditActor(request)).catch(() => {})
+
+    auditEventService
+      .emit({
+        type: 'organization_user.membership_added',
+        actor: auditActor(request),
+        target: { type: 'user', id },
+        details: { organizationId },
+        source: 'jinbe-api',
+      })
+      .catch(() => {})
+
+    notificationService.emit({ action: 'updated', entity_type: 'user', payload: { id, organization_id: organizationId } })
+    return reply.status(200).send(await kratosService.getIdentity(id))
   }
 }
 

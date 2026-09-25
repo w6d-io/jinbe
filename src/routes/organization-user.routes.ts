@@ -18,6 +18,7 @@ import {
   badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
+  serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
 
@@ -31,14 +32,16 @@ import {
  * GET    /users/:id - Get user by ID in organization
  * POST   /users     - Create user in organization
  * PUT    /users/:id - Update user in organization
- * DELETE /users/:id - Delete user from organization
+ * DELETE /users/:id - Remove user from organization (membership only; identity kept)
+ * PUT    /users/:id/membership - Add an existing user to organization
  */
 export async function organizationUserRoutes(fastify: FastifyInstance) {
   // requireServiceAdmin populates rbacInfo (and rejects callers with no
   // permission for the org's service); requireManageableOrg then confines
   // non-wildcard callers to organizations they actually administer. Order
-  // matters — requireManageableOrg depends on rbacInfo.
-  fastify.addHook('preHandler', requireServiceAdmin())
+  // matters — requireManageableOrg depends on rbacInfo. `orgAdmin` lets the org's own admin (roster
+  // or directory role) in without a group granting there — these are the routes it exists for.
+  fastify.addHook('preHandler', requireServiceAdmin('organizationId', { orgAdmin: true }))
   fastify.addHook('preHandler', requireManageableOrg())
 
   fastify.get(
@@ -151,18 +154,40 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
     '/users/:id',
     {
       schema: {
-        description: 'Delete a user from this organization',
+        description:
+          'Remove a user from this organization. Only this membership is dropped: the identity, its other organizations and its site access are kept.',
         tags: ['organization-users'],
         params: organizationUserIdParamJsonSchema,
         response: {
-          204: { type: 'null', description: 'User deleted' },
+          204: { type: 'null', description: 'Membership removed' },
           401: unauthorizedResponseSchema,
           403: forbiddenResponseSchema,
           404: notFoundResponseSchema,
+          503: serviceUnavailableResponseSchema,
         },
       },
     },
     organizationUserController.deleteUser.bind(organizationUserController)
+  )
+
+  fastify.put(
+    '/users/:id/membership',
+    {
+      schema: {
+        description:
+          'Add an existing user to this organization, keeping their other memberships. Idempotent.',
+        tags: ['organization-users'],
+        params: organizationUserIdParamJsonSchema,
+        response: {
+          200: kratosIdentityJsonSchema,
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: notFoundResponseSchema,
+          503: serviceUnavailableResponseSchema,
+        },
+      },
+    },
+    organizationUserController.addMembership.bind(organizationUserController)
   )
 
   // ===========================================================================

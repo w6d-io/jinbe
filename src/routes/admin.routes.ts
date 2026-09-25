@@ -31,6 +31,7 @@ import { requirePlatformPermission } from '../middleware/require-platform-permis
 import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
+import { organisationAdminRoutes } from './organisation-admin.routes.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -228,6 +229,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
       }
     },
   )
+
+  // Creating an organisation: its own file, behind this plugin's guard.
+  await organisationAdminRoutes(fastify)
 
   /**
    * The authorization model the engine decides against: what each group grants, and where.
