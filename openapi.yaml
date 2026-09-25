@@ -4543,6 +4543,48 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/rbac/opal/groups:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal/org_service_map:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal/org_admin_map:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal/roles/{service}:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: service
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal/route_map/{service}:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: service
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal-datasource:
+    get:
+      responses:
+        "200":
+          description: Default Response
   /api/admin/rbac/users:
     get:
       tags:
