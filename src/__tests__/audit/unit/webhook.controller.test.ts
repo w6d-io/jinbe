@@ -18,7 +18,8 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 }))
 
 import { webhookController, verifyKratosWebhookAuth } from '../../../controllers/webhook.controller.js'
-import { auditEventService } from '../../../services/audit-event.service.js'
+import { auditEventService, type AuditEvent } from '../../../services/audit-event.service.js'
+import { legacyToV1 } from '../../../audit/v1/legacy-map.js'
 
 function mockRequest(overrides: Record<string, unknown> = {}) {
   return {
@@ -96,5 +97,53 @@ describe('Kratos webhook — self-authentication (P0-1)', () => {
     expect(verifyKratosWebhookAuth(mockRequest({ headers: { 'x-kratos-webhook-secret': 'short' } }))).toBe(false)
     expect(verifyKratosWebhookAuth(mockRequest({ headers: { 'x-kratos-webhook-secret': 'top-secret-value' } }))).toBe(true)
     expect(verifyKratosWebhookAuth(mockRequest({ headers: { authorization: 'Bearer top-secret-value' } }))).toBe(true)
+  })
+})
+
+describe('Kratos webhook — the chart body carries the actor (AUD-0b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockState.env.KRATOS_WEBHOOK_SECRET = 'top-secret-value'
+  })
+
+  // The chart's Jsonnet body: {flow, method, identity_id, identity_email, ip, ua} (+ session_id, aal).
+  async function hook(body: Record<string, unknown>) {
+    const req = mockRequest({ headers: { 'x-kratos-webhook-secret': 'top-secret-value' }, body })
+    const reply = mockReply()
+    await webhookController.kratos(req, reply as never)
+    expect(reply._status).toBe(200)
+    return vi.mocked(auditEventService.emit).mock.calls[0][0] as unknown as AuditEvent
+  }
+  const chart = { identity_id: 'kratos-uuid-7', identity_email: 'user@example.com', ip: '203.0.113.9', ua: 'Mozilla/5.0 Firefox/130' }
+
+  it('reads identity_id / identity_email, the session id and aal', async () => {
+    const e = await hook({ flow: 'login', method: null, ...chart, session_id: 'sess-77', aal: 'aal2' })
+    expect(e.actor).toMatchObject({ id: 'kratos-uuid-7', email: 'user@example.com', sessionId: 'sess-77' })
+    expect(e.targetId).toBe('kratos-uuid-7')
+    expect(e.target).toBe('user:user@example.com')
+    expect(e.v1Event).toBe('auth.login.succeeded')
+
+    const v1 = legacyToV1(e)
+    expect(v1).toMatchObject({ event: 'auth.login.succeeded', source: 'kratos', actor: { id: 'kratos-uuid-7', sessionId: 'sess-77', aal: 'aal2' } })
+    expect(v1.target).toMatchObject({ type: 'user', id: 'kratos-uuid-7' })
+  })
+
+  it('accepts the session nested the way Kratos ctx carries it', async () => {
+    const e = await hook({ flow: 'login', ...chart, session: { id: 'sess-9', authenticator_assurance_level: 'aal1' } })
+    expect(e.actor.sessionId).toBe('sess-9')
+    expect(legacyToV1(e).actor.aal).toBe('aal1')
+  })
+
+  it.each([
+    [{ flow: 'settings', method: 'password' }, 'auth.password.changed'],
+    [{ flow: 'settings', method: 'profile' }, 'auth.profile.updated'],
+    [{ flow: 'settings', method: 'totp' }, 'auth.mfa.enrolled'],
+    [{ flow: 'registration', method: 'password' }, 'auth.registration.succeeded'],
+    [{ flow: 'recovery', method: 'code' }, 'auth.recovery.used'],
+    [{ flow: 'verification', method: 'code' }, 'auth.verification.succeeded'],
+  ])('%o → %s', async (flow, event) => {
+    const e = await hook({ ...flow, ...chart })
+    expect(e.v1Event).toBe(event)
+    expect(e.actor.id).toBe('kratos-uuid-7')
   })
 })

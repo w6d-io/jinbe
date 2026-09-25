@@ -342,9 +342,13 @@ export class RbacService {
   // model declares they answered "confers nothing". `authorization-model.service` answers them now,
   // from the documents the bundle carries.
 
-  // Public: call after any user-group mutation that bypasses rbacService methods
-  async notifyBindingsChanged(reason: string, actor?: AuditActorInput): Promise<void> {
-    await this.invalidateBundle(`user.${reason}`, { type: 'user' }, actor)
+  // Public: call after any user-group mutation that bypasses rbacService methods.
+  //
+  // Propagation only — no audit row. Every caller already emits the event for its own command
+  // (user.*, organization_user.*), and a second row here, with no target id, made one admin write
+  // read as two or three in the trail (AUD-3). `actor` is kept for the callers' signature.
+  async notifyBindingsChanged(reason: string, _actor?: AuditActorInput): Promise<void> {
+    await this.invalidateBundle(`user.${reason}`, { type: 'user' }, undefined, undefined, { audit: false })
   }
 
   // Public: the RBAC bundle importer reuses this exact fan-out so a restore
@@ -354,7 +358,7 @@ export class RbacService {
   // `changes` (A3) carries the redacted before→after envelope; `actor` is the
   // full audit-actor (A4) so name/ua/sessionId/requestId thread through and
   // cascade child-events correlate by requestId.
-  async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: AuditActorInput, changes?: AuditChanges): Promise<void> {
+  async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: AuditActorInput, changes?: AuditChanges, opts: { audit?: boolean } = {}): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
@@ -374,11 +378,11 @@ export class RbacService {
     // error for a component that never existed here. The etag invalidation and the real-time
     // notification above DO serve, and stay.
 
-    if (eventType) {
+    if (eventType && opts.audit !== false) {
       auditEventService.emit({
         type: eventType,
         target,
-        actor: { email: actor?.email, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        actor: { id: actor?.id, email: actor?.email, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
         requestId: actor?.requestId,
         changes,
         source: 'jinbe-api',

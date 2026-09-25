@@ -13,7 +13,8 @@ import { isPublicRoute } from '../middleware/require-auth.js'
  * GET /audit/events   → paginated rich audit log (newest first, filterable)
  * GET /audit/summary  → windowed stats derived from the Redis stream (P1-2)
  * GET /audit/export   → server-side NDJSON/CSV of a filtered range (audits itself)
- * GET /audit/metrics  → Prometheus text format (no auth — scraper access)
+ *
+ * Prometheus is no longer served here: see telemetry/metrics-server.ts (own port).
  */
 
 // Canonical categories only (out-of-enum legacy categories are folded server-side).
@@ -45,20 +46,7 @@ interface EventsQuery {
 }
 
 export async function auditRoutes(fastify: FastifyInstance) {
-  // Prometheus scrape endpoint — no auth (IP-level protection at ingress)
-  fastify.get('/metrics', {
-    schema: {
-      description: 'Prometheus metrics for audit events and HTTP requests',
-      tags: ['audit'],
-      response: { 200: { type: 'string' } },
-    },
-  }, async (_req, reply) => {
-    const metrics = await auditEventService.getPrometheusMetrics()
-    reply.header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
-    return reply.send(metrics)
-  })
-
-  // All remaining routes require admin
+  // Every route requires admin
   guardAll(fastify, requireAdmin, isPublicRoute)
 
   fastify.get('/events', {
@@ -100,11 +88,10 @@ export async function auditRoutes(fastify: FastifyInstance) {
     },
   }, async (request, reply) => {
     const query = request.query as EventsQuery
-    const [events, total] = await Promise.all([
-      auditEventService.query(query),
+    const [{ events, nextCursor }, total] = await Promise.all([
+      auditEventService.queryPage(query),
       auditEventService.count(),
     ])
-    const nextCursor = events.length === (query.limit ?? 50) ? events[events.length - 1]?.id ?? null : null
     return reply.send({ events, total, nextCursor })
   })
 

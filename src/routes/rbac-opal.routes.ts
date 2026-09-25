@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { env } from '../config/env.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
+import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSuccess } from '../telemetry/metrics.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -12,6 +13,7 @@ import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', requireOpalClient)
+  fastify.addHook('onResponse', recordDatasourceFetch)
 
   // Bindings: user → groups + org membership (from Kratos). Routed through the
   // service so the shape can't drift from the tested getBindingsFromKratos().
@@ -135,4 +137,19 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     const auth = { config: { headers: { Authorization: `Bearer ${env.OPAL_CLIENT_TOKEN}` } } }
     return reply.send({ entries: entries.map((entry) => ({ ...entry, ...auth })) })
   })
+}
+
+/**
+ * Per-entry fetch metrics. The entry is the datasource path (`bindings`, `opal/roles/kuma`) once the
+ * caller proved it is the OPAL client; a refused or failed call is filed under the route pattern, so
+ * an arbitrary path cannot mint a new series.
+ */
+async function recordDatasourceFetch(request: FastifyRequest, reply: FastifyReply) {
+  const status = reply.statusCode
+  const path = status < 400 ? request.url.split('?')[0] : (request.routeOptions?.url ?? 'unknown')
+  const entry = path.replace(/^.*\/admin\/rbac\/(develop\/)?/, '')
+  const statusClass = status >= 500 ? '5xx' : status >= 400 ? '4xx' : status >= 300 ? '3xx' : '2xx'
+  opalDatasourceRequests.labels(entry, statusClass).inc()
+  opalDatasourceDuration.labels(entry).observe(reply.elapsedTime / 1000)
+  if (status < 300) opalDatasourceLastSuccess.labels(entry).set(Date.now() / 1000)
 }

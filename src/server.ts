@@ -1,11 +1,10 @@
-import { redactQueryToken } from './middleware/require-opal-client.js'
 import Fastify from 'fastify'
 import { env } from './config/index.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestIdMiddleware } from './middleware/request-id.js'
 import { extractIdentity } from './middleware/identity-extractor.js'
 import { requireAuth } from './middleware/require-auth.js'
-import { auditLogger } from './middleware/audit-logger.js'
+import { requestLogger } from './middleware/request-logger.js'
 
 // Plugins
 import corsPlugin from './plugins/cors.js'
@@ -45,7 +44,8 @@ import { NotificationService, HttpNotifier } from './services/notifications/inde
 import { realtimeService } from './services/realtime.service.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
-import { logBase, traceFields } from './telemetry/log-correlation.js'
+import { rootLogger, fastifyLoggingOptions } from './telemetry/logger.js'
+import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
 import { isPublicRoute } from './middleware/require-auth.js'
 import { recordRoute } from './policy/declared-routes.js'
@@ -63,35 +63,9 @@ let bootstrapReady = false
  */
 export async function buildServer() {
   const fastify = Fastify({
-    logger: {
-      level: env.LOG_LEVEL,
-      redact: { paths: ['req.url'], censor: redactQueryToken },
-      transport:
-        env.NODE_ENV === 'development'
-          ? {
-              target: 'pino-pretty',
-              options: {
-                translateTime: 'HH:MM:ss Z',
-                ignore: 'pid,hostname',
-              },
-            }
-          : undefined,
-      // Identity, and the two fields that let a line find its trace.
-      //
-      // `service` / `env` / `version` come from the SAME variables the trace SDK reads, so a line
-      // cannot be filed under a service the traces do not know. They fall back to what this service
-      // has always emitted when nothing is configured, so a deployment that wants no telemetry sees
-      // no change at all.
-      base: {
-        service: 'jinbe',
-        environment: env.NODE_ENV,
-        ...logBase(),
-      },
-      // Evaluated per line: the active span is a property of the moment, not of the logger.
-      mixin: traceFields,
-    },
-    requestIdLogLabel: 'requestId',
-    disableRequestLogging: false,
+    // JSON lines with redaction, ISO time and `log_type` — see telemetry/logger.ts.
+    loggerInstance: rootLogger(),
+    ...fastifyLoggingOptions,
     trustProxy: true,
   })
 
@@ -124,8 +98,8 @@ export async function buildServer() {
   // Register helmet after swagger to avoid CSP issues
   await fastify.register(helmetPlugin)
 
-  // Audit logger - log all actions after response (after routes)
-  fastify.addHook('onResponse', auditLogger)
+  // One request line per response + HTTP RED counters (after routes)
+  fastify.addHook('onResponse', requestLogger)
 
   // Health check endpoint. Returns 503 until the bootstrap marker has been
   // observed, so Kubernetes startupProbe stays unsatisfied until ready.
@@ -214,6 +188,8 @@ async function start() {
       host: env.HOST,
     })
     fastify.log.info(`Server listening on http://${env.HOST}:${env.PORT}`)
+    // Prometheus on its own port, never through the app port Oathkeeper fronts.
+    startMetricsServer(fastify.log)
     if (env.ENABLE_SWAGGER) {
       fastify.log.info(`API docs available at http://${env.HOST}:${env.PORT}/docs`)
     }

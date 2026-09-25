@@ -19,6 +19,9 @@ process.env.KRATOS_ADMIN_URL = 'http://localhost:4434'
 process.env.OPA_URL = 'http://localhost:8181'
 process.env.ENABLE_SWAGGER = 'false'
 process.env.LOG_LEVEL = 'error'
+// Suites that mock Redis for the legacy stream would otherwise also print every audit/v1 line to
+// stdout. The audit/v1 suites set AUDIT_SINK themselves.
+process.env.AUDIT_SINK = 'legacy'
 // Remove BASE_URL if it exists to avoid validation errors
 delete process.env.BASE_URL
 
