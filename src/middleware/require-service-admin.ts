@@ -2,6 +2,11 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { rightsOf, type HeldRights } from '../services/authorization-model.service.js'
 import { env } from '../config/index.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import {
+  administersOrganisation,
+  ORG_ADMIN_PERMISSIONS,
+  ORG_ADMIN_ROLE,
+} from '../services/org-admin.js'
 
 /**
  * Middleware factory: requires the caller to hold at least one permission IN the organisation named
@@ -15,8 +20,16 @@ import { auditEventService } from '../services/audit-event.service.js'
  * 503 that read like an outage. It also resolved the organisation's id to a registered service name
  * through Redis first, because the retired model keyed grants per service. This one keys them per
  * organisation, so there is nothing to translate and one store fewer to be up.
+ *
+ * `orgAdmin` opts a plugin into the org-admin path, consulted FIRST: somebody who administers the
+ * organisation in the route (per-org roster or directory `org_admin` role) holds its member
+ * management rights without any group granting there. Opt-in, because those rights mean something
+ * only on the routes that manage an organisation's people.
  */
-export function requireServiceAdmin(paramName = 'organizationId') {
+export function requireServiceAdmin(
+  paramName = 'organizationId',
+  options: { orgAdmin?: boolean } = {}
+) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
     // The immutable identity is what rights are keyed on; the address is carried for the log and the
@@ -48,16 +61,39 @@ export function requireServiceAdmin(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
+    const orgAdmin = options.orgAdmin ? await administersOrganisation(request, organizationId) : false
+
     let held: HeldRights
     try {
       held = await rightsOf(subject, organizationId)
     } catch (err) {
-      // "Holds nothing" and "I could not tell" are opposite facts. Refusing with 403 here would read
-      // as a missing right; 503 says the model could not be read, which is what happened.
-      request.log.warn(
-        { subject, organizationId, err },
-        '[requireServiceAdmin] the authorization model could not be read'
-      )
+      if (orgAdmin === true) {
+        // The roster answered; only what groups would add is unknown, and nothing is assumed of it.
+        request.log.warn({ subject, organizationId, err }, '[requireServiceAdmin] model unreadable — org-admin rights only')
+        held = { groups: [], roles: [], permissions: [] }
+      } else {
+        // "Holds nothing" and "I could not tell" are opposite facts. Refusing with 403 here would
+        // read as a missing right; 503 says the model could not be read, which is what happened.
+        request.log.warn(
+          { subject, organizationId, err },
+          '[requireServiceAdmin] the authorization model could not be read'
+        )
+        return reply.status(503).send({
+          error: 'Service Unavailable',
+          message: 'Unable to verify authorization. Please try again later.',
+        })
+      }
+    }
+
+    if (orgAdmin === true) {
+      held = {
+        groups: held.groups,
+        roles: [...new Set([...held.roles, ORG_ADMIN_ROLE])].sort(),
+        permissions: [...new Set([...held.permissions, ...ORG_ADMIN_PERMISSIONS])].sort(),
+      }
+    } else if (orgAdmin === null && held.permissions.length === 0) {
+      // Nothing admits the caller, and one of the two authorities could not be read: an outage, not
+      // a missing right.
       return reply.status(503).send({
         error: 'Service Unavailable',
         message: 'Unable to verify authorization. Please try again later.',

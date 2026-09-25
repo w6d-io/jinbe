@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import { env } from '../config/index.js'
 
@@ -496,6 +497,27 @@ export async function setMemberships(
   } finally {
     client.release()
   }
+}
+
+/**
+ * Create one organisation: a name and a tenant, nothing else.
+ *
+ * No deployment and no member come with it. An organisation is its own entity; which applications
+ * it runs and who belongs to it are separate facts added later, and membership never decides site
+ * access — so nothing has to be bundled for it to exist.
+ */
+export async function createOrganisation(input: {
+  name: string
+  tenant: string
+  attributes?: Readonly<Record<string, unknown>>
+}): Promise<Organisation> {
+  const id = randomUUID()
+  const attributes = input.attributes ?? {}
+  await query(
+    'INSERT INTO organisations (id, name, tenant, attributes) VALUES ($1, $2, $3, $4::jsonb)',
+    [id, input.name, input.tenant, JSON.stringify(attributes)],
+  )
+  return { id, name: input.name, tenant: input.tenant, attributes }
 }
 
 export interface OrganisationRecord {
