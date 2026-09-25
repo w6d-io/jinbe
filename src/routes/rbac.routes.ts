@@ -520,10 +520,13 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { env } from '../config/env.js'
+import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 
 export async function rbacOpalRoutes(fastify: FastifyInstance) {
+  fastify.addHook('onRequest', requireOpalClient)
+
   // Bindings: user → groups + org membership (from Kratos). Routed through the
   // service so the shape can't drift from the tested getBindingsFromKratos().
   fastify.get('/bindings', async (_request, reply) => {
@@ -605,7 +608,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       }
     }
 
-    return reply.send({ entries })
+    // The client sends this on every data fetch; only reached once it proved it holds the token.
+    const auth = { config: { headers: { Authorization: `Bearer ${env.OPAL_CLIENT_TOKEN}` } } }
+    return reply.send({ entries: entries.map((entry) => ({ ...entry, ...auth })) })
   })
 
 }

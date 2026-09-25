@@ -33,6 +33,8 @@ services:
       # Mirrors the authenticators enabled in the local oathkeeper container
       # (oathkeeper/oathkeeper.yml) so fail-closed rule validation matches it.
       OATHKEEPER_ENABLED_AUTHENTICATORS: cookie_session,noop,bearer_token,oauth2_introspection
+      # OPAL data routes require it. Local dev value only.
+      OPAL_CLIENT_TOKEN: local-dev-opal-client-token-0123456789abcdef
     volumes:
       - ../kratos-login-ui/examples/kratos:/etc/kratos-config
     # Match the host user so jinbe can write the bind-mounted kratos.yml.

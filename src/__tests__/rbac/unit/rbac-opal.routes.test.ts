@@ -39,7 +39,13 @@ vi.mock('../../../services/rbac.service.js', () => ({
   },
 }))
 
+vi.mock('../../../config/env.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../config/env.js')>()
+  return { ...real, env: { ...real.env, OPAL_CLIENT_TOKEN: 't'.repeat(64), JINBE_INTERNAL_URL: 'http://auth-jinbe:8080' } }
+})
+
 import { rbacOpalRoutes } from '../../../routes/rbac.routes.js'
+import { requireOpalClient } from '../../../middleware/require-opal-client.js'
 
 // A minimal fastify stand-in that records registered routes so we can invoke
 // each handler directly. Supports both `get(path, handler)` and
@@ -82,9 +88,7 @@ function createMockReply() {
   return reply as unknown as FastifyReply & { _status: number; _body: unknown }
 }
 
-// What is left here is `/bindings`, which the console reads. The org->service map and the OPAL
-// datasource manifest tested alongside it are gone with the routes: their only caller was OPAL,
-// which does not run in this namespace.
+// OPAL is the only caller of these routes; the console reads none of them.
 describe('rbacOpalRoutes — /bindings', () => {
   let fastify: ReturnType<typeof createMockFastify>
 
@@ -129,5 +133,29 @@ describe('rbacOpalRoutes — /bindings', () => {
         user_organization_primary: {},
       })
     })
+  })
+})
+
+describe('rbacOpalRoutes — OPAL client only', () => {
+  it('guards every route with the OPAL client token', async () => {
+    const fastify = createMockFastify()
+    await rbacOpalRoutes(fastify)
+    expect(fastify.addHook).toHaveBeenCalledWith('onRequest', requireOpalClient)
+  })
+
+  it('tells OPAL to send the token on every data fetch', async () => {
+    mocks.getServices.mockResolvedValueOnce(['jinbe'])
+    mocks.getRouteMap.mockResolvedValue({ rules: [{ path: '/x' }] })
+    const fastify = createMockFastify()
+    await rbacOpalRoutes(fastify)
+    const manifest = fastify.registeredRoutes.find((r) => r.path === '/opal-datasource')!
+    const reply = createMockReply()
+    await manifest.handler({} as FastifyRequest, reply)
+
+    const { entries } = reply._body as { entries: Array<{ config: { headers: Record<string, string> } }> }
+    expect(entries.length).toBeGreaterThan(0)
+    for (const entry of entries) {
+      expect(entry.config.headers.Authorization).toBe(`Bearer ${'t'.repeat(64)}`)
+    }
   })
 })
