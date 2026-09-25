@@ -217,13 +217,7 @@ export const userCreateJsonSchema = {
       required: ['email'],
       properties: {
         email: { type: 'string', format: 'email' },
-        name: {
-          type: 'object',
-          properties: {
-            first: { type: 'string' },
-            last: { type: 'string' },
-          },
-        },
+        name: { type: 'string' },
       },
     },
     state: { type: 'string', enum: ['active', 'inactive'] },
@@ -255,13 +249,7 @@ export const userUpdateJsonSchema = {
       type: 'object',
       properties: {
         email: { type: 'string', format: 'email' },
-        name: {
-          type: 'object',
-          properties: {
-            first: { type: 'string' },
-            last: { type: 'string' },
-          },
-        },
+        name: { type: 'string' },
       },
     },
     state: { type: 'string', enum: ['active', 'inactive'] },
