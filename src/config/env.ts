@@ -202,6 +202,8 @@ export const envSchema = z.object({
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),
+  // Shared with the OPAL client (its OPAL_CLIENT_TOKEN). Unset: the OPAL data routes refuse everyone.
+  OPAL_CLIENT_TOKEN: z.string().min(32).optional(),
 
 
   // Redis (RBAC data store + audit streams)

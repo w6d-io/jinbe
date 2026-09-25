@@ -1,3 +1,4 @@
+import { redactQueryToken } from './middleware/require-opal-client.js'
 import Fastify from 'fastify'
 import { env } from './config/index.js'
 import { errorHandler } from './middleware/error-handler.js'
@@ -62,6 +63,7 @@ export async function buildServer() {
   const fastify = Fastify({
     logger: {
       level: env.LOG_LEVEL,
+      redact: { paths: ['req.url'], censor: redactQueryToken },
       transport:
         env.NODE_ENV === 'development'
           ? {
