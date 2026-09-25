@@ -59,7 +59,10 @@ export function recordRoute(
   guards: unknown,
   isPublic: (path: string) => boolean,
 ): void {
-  const permission = [guards].flat().map(enforcedBy).find((p) => p !== null) ?? null
+  // Two levels: guardAll passes `[route.preHandler, guard]`, and a route's preHandler may itself be
+  // an array — one level left `[requireSuperAdmin, requireRecentMfa]` unread and the plugin's
+  // `admin:read` described a write route.
+  const permission = [guards].flat(2).map(enforcedBy).find((p) => p !== null) ?? null
   for (const verb of [method].flat()) {
     const key = `${verb} ${path}`
     // A route is seen twice: once by the collector on the root instance, which sees only per-route

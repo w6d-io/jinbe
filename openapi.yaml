@@ -3317,6 +3317,1963 @@ paths:
                     example: Service Unavailable
                   message:
                     type: string
+  /api/admin/sites:
+    get:
+      tags: &a1
+        - sites
+      description: List sites with their status
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/preview:
+    post:
+      tags: *a1
+      description: Render an intent and run every check (gatekit compile + overlap
+        against all live rules, ties, groups, host). Writes nothing; 503 when
+        gatekit is unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{1,39}$
+                    displayName:
+                      type: string
+                      minLength: 1
+                      maxLength: 80
+                    description:
+                      type: string
+                      maxLength: 500
+                    icon:
+                      type: string
+                      maxLength: 64
+                    address:
+                      type: object
+                      properties:
+                        host:
+                          allOf:
+                            - type: string
+                              maxLength: 253
+                            - type: string
+                              pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+                        pathPrefix:
+                          type: string
+                          maxLength: 512
+                          pattern: ^\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*)?(\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*))*$
+                      required:
+                        - host
+                      additionalProperties: false
+                    upstream:
+                      type: object
+                      properties:
+                        service:
+                          type: string
+                          pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                        namespace:
+                          $ref: "#/properties/site/properties/upstream/properties/service"
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        scheme:
+                          type: string
+                          enum:
+                            - http
+                            - https
+                        preserveHost:
+                          type: boolean
+                        stripPath:
+                          $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                      required:
+                        - service
+                        - namespace
+                        - port
+                      additionalProperties: false
+                    exposure:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - zone
+                            - vanity
+                      required:
+                        - mode
+                      additionalProperties: false
+                      default:
+                        mode: zone
+                    gates:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            pattern: ^[a-z]([a-z0-9-]{0,20}[a-z0-9])?$
+                          label:
+                            type: string
+                            minLength: 1
+                            maxLength: 80
+                          authenticators:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                handler:
+                                  type: string
+                                  pattern: ^[a-z][a-z0-9_]{1,40}$
+                                config:
+                                  type: object
+                                  additionalProperties: {}
+                              required:
+                                - handler
+                              additionalProperties: false
+                            minItems: 1
+                            maxItems: 8
+                          authorizer:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - policy
+                              - $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                          mutators:
+                            type: array
+                            items:
+                              $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                            minItems: 1
+                            maxItems: 8
+                          errors:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - platform
+                                  - website
+                                  - api
+                              - type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                                minItems: 1
+                                maxItems: 8
+                          methods:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - GET
+                                - HEAD
+                                - POST
+                                - PUT
+                                - PATCH
+                                - DELETE
+                                - OPTIONS
+                            minItems: 1
+                          preflight:
+                            type: boolean
+                          expert:
+                            type: object
+                            properties:
+                              matchUrl:
+                                type: string
+                                minLength: 1
+                                maxLength: 2048
+                            additionalProperties: false
+                        required:
+                          - id
+                          - label
+                          - authenticators
+                          - authorizer
+                          - mutators
+                          - errors
+                        additionalProperties: false
+                      minItems: 1
+                      maxItems: 20
+                    routes:
+                      type: object
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                pattern: ^[a-z][a-z0-9-]{0,31}$
+                              methods:
+                                type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/methods/items"
+                                minItems: 1
+                              path:
+                                $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                              gate:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              access:
+                                anyOf:
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - public
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - signed-in
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - permission
+                                      permission:
+                                        type: string
+                                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                                    required:
+                                      - kind
+                                      - permission
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - deny
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                              orgParam:
+                                type: string
+                                pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              source:
+                                type: string
+                                enum:
+                                  - manual
+                                  - openapi
+                                  - template
+                                default: manual
+                              pinned:
+                                type: boolean
+                            required:
+                              - id
+                              - methods
+                              - path
+                              - gate
+                              - access
+                            additionalProperties: false
+                          maxItems: 500
+                        catchAll:
+                          type: object
+                          properties:
+                            gate:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            access:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                cess"
+                          required:
+                            - gate
+                            - access
+                          additionalProperties: false
+                      required:
+                        - items
+                        - catchAll
+                      additionalProperties: false
+                    roles:
+                      anyOf:
+                        - type: string
+                          enum:
+                            - standard
+                            - readonly
+                            - operator
+                        - type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              anyOf:
+                                - $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                    cess/anyOf/2/properties/permission"
+                                - type: string
+                                  enum:
+                                    - "*"
+                    groups:
+                      type: object
+                      properties:
+                        platform:
+                          type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+                        orgGrantable:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            properties:
+                              label:
+                                type: string
+                                minLength: 1
+                                maxLength: 80
+                              roles:
+                                type: array
+                                items:
+                                  type: string
+                                minItems: 1
+                            required:
+                              - label
+                              - roles
+                            additionalProperties: false
+                      required:
+                        - platform
+                        - orgGrantable
+                      additionalProperties: false
+                    orgs:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      maxItems: 500
+                    login:
+                      type: object
+                      properties:
+                        twoFactor:
+                          type: object
+                          properties:
+                            scope:
+                              type: string
+                              enum:
+                                - none
+                                - writes
+                                - all
+                            routes:
+                              type: array
+                              items:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            clients:
+                              type: string
+                              enum:
+                                - exempt
+                                - refused
+                          required:
+                            - scope
+                            - clients
+                          additionalProperties: false
+                        reach:
+                          type: string
+                          enum:
+                            - granted
+                            - any-account
+                        branding:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 80
+                            logo:
+                              type: string
+                              maxLength: 64
+                            accent:
+                              type: string
+                              pattern: ^#[0-9a-fA-F]{6}$
+                            welcome:
+                              type: string
+                              maxLength: 280
+                            helpUrl:
+                              type: string
+                              format: uri
+                          additionalProperties: false
+                        postLogoutUrl:
+                          type: string
+                          format: uri
+                      required:
+                        - twoFactor
+                        - reach
+                      additionalProperties: false
+                    state:
+                      type: string
+                      enum:
+                        - active
+                        - paused
+                      default: active
+                  required:
+                    - name
+                    - displayName
+                    - address
+                    - upstream
+                    - gates
+                    - routes
+                    - roles
+                    - groups
+                    - orgs
+                  additionalProperties: false
+                baseVersion:
+                  type: integer
+                  minimum: 0
+              required:
+                - site
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/zones:
+    get:
+      tags: *a1
+      description: The admin-defined wildcard zones a site host can live under, with
+        SSO (login cookie) coverage
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/check-host:
+    post:
+      tags: *a1
+      description: "Resolve a host against the zones: zone, SSO coverage, possible
+        exposures (zone / vanity), owner"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  allOf:
+                    - type: string
+                      maxLength: 253
+                    - type: string
+                      pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+                pathPrefix:
+                  type: string
+                  maxLength: 512
+                site:
+                  type: string
+                  pattern: ^[a-z][a-z0-9-]{1,39}$
+              required:
+                - host
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/match:
+    post:
+      tags: *a1
+      description: Which gateway rule and which route a request would hit, live or
+        with a draft (gatekit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum:
+                    - GET
+                    - HEAD
+                    - POST
+                    - PUT
+                    - PATCH
+                    - DELETE
+                    - OPTIONS
+                url:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+                against:
+                  type: string
+                  enum:
+                    - draft
+                    - live
+                  default: live
+                site:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{1,39}$
+                    displayName:
+                      type: string
+                      minLength: 1
+                      maxLength: 80
+                    description:
+                      type: string
+                      maxLength: 500
+                    icon:
+                      type: string
+                      maxLength: 64
+                    address:
+                      type: object
+                      properties:
+                        host:
+                          allOf:
+                            - type: string
+                              maxLength: 253
+                            - type: string
+                              pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+                        pathPrefix:
+                          type: string
+                          maxLength: 512
+                          pattern: ^\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*)?(\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*))*$
+                      required:
+                        - host
+                      additionalProperties: false
+                    upstream:
+                      type: object
+                      properties:
+                        service:
+                          type: string
+                          pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                        namespace:
+                          $ref: "#/properties/site/properties/upstream/properties/service"
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        scheme:
+                          type: string
+                          enum:
+                            - http
+                            - https
+                        preserveHost:
+                          type: boolean
+                        stripPath:
+                          $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                      required:
+                        - service
+                        - namespace
+                        - port
+                      additionalProperties: false
+                    exposure:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - zone
+                            - vanity
+                      required:
+                        - mode
+                      additionalProperties: false
+                      default:
+                        mode: zone
+                    gates:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            pattern: ^[a-z]([a-z0-9-]{0,20}[a-z0-9])?$
+                          label:
+                            type: string
+                            minLength: 1
+                            maxLength: 80
+                          authenticators:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                handler:
+                                  type: string
+                                  pattern: ^[a-z][a-z0-9_]{1,40}$
+                                config:
+                                  type: object
+                                  additionalProperties: {}
+                              required:
+                                - handler
+                              additionalProperties: false
+                            minItems: 1
+                            maxItems: 8
+                          authorizer:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - policy
+                              - $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                          mutators:
+                            type: array
+                            items:
+                              $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                            minItems: 1
+                            maxItems: 8
+                          errors:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - platform
+                                  - website
+                                  - api
+                              - type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                                minItems: 1
+                                maxItems: 8
+                          methods:
+                            type: array
+                            items:
+                              $ref: "#/properties/method"
+                            minItems: 1
+                          preflight:
+                            type: boolean
+                          expert:
+                            type: object
+                            properties:
+                              matchUrl:
+                                type: string
+                                minLength: 1
+                                maxLength: 2048
+                            additionalProperties: false
+                        required:
+                          - id
+                          - label
+                          - authenticators
+                          - authorizer
+                          - mutators
+                          - errors
+                        additionalProperties: false
+                      minItems: 1
+                      maxItems: 20
+                    routes:
+                      type: object
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                pattern: ^[a-z][a-z0-9-]{0,31}$
+                              methods:
+                                type: array
+                                items:
+                                  $ref: "#/properties/method"
+                                minItems: 1
+                              path:
+                                $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                              gate:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              access:
+                                anyOf:
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - public
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - signed-in
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - permission
+                                      permission:
+                                        type: string
+                                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                                    required:
+                                      - kind
+                                      - permission
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - deny
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                              orgParam:
+                                type: string
+                                pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              source:
+                                type: string
+                                enum:
+                                  - manual
+                                  - openapi
+                                  - template
+                                default: manual
+                              pinned:
+                                type: boolean
+                            required:
+                              - id
+                              - methods
+                              - path
+                              - gate
+                              - access
+                            additionalProperties: false
+                          maxItems: 500
+                        catchAll:
+                          type: object
+                          properties:
+                            gate:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            access:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                cess"
+                          required:
+                            - gate
+                            - access
+                          additionalProperties: false
+                      required:
+                        - items
+                        - catchAll
+                      additionalProperties: false
+                    roles:
+                      anyOf:
+                        - type: string
+                          enum:
+                            - standard
+                            - readonly
+                            - operator
+                        - type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              anyOf:
+                                - $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                    cess/anyOf/2/properties/permission"
+                                - type: string
+                                  enum:
+                                    - "*"
+                    groups:
+                      type: object
+                      properties:
+                        platform:
+                          type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+                        orgGrantable:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            properties:
+                              label:
+                                type: string
+                                minLength: 1
+                                maxLength: 80
+                              roles:
+                                type: array
+                                items:
+                                  type: string
+                                minItems: 1
+                            required:
+                              - label
+                              - roles
+                            additionalProperties: false
+                      required:
+                        - platform
+                        - orgGrantable
+                      additionalProperties: false
+                    orgs:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      maxItems: 500
+                    login:
+                      type: object
+                      properties:
+                        twoFactor:
+                          type: object
+                          properties:
+                            scope:
+                              type: string
+                              enum:
+                                - none
+                                - writes
+                                - all
+                            routes:
+                              type: array
+                              items:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            clients:
+                              type: string
+                              enum:
+                                - exempt
+                                - refused
+                          required:
+                            - scope
+                            - clients
+                          additionalProperties: false
+                        reach:
+                          type: string
+                          enum:
+                            - granted
+                            - any-account
+                        branding:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 80
+                            logo:
+                              type: string
+                              maxLength: 64
+                            accent:
+                              type: string
+                              pattern: ^#[0-9a-fA-F]{6}$
+                            welcome:
+                              type: string
+                              maxLength: 280
+                            helpUrl:
+                              type: string
+                              format: uri
+                          additionalProperties: false
+                        postLogoutUrl:
+                          type: string
+                          format: uri
+                      required:
+                        - twoFactor
+                        - reach
+                      additionalProperties: false
+                    state:
+                      type: string
+                      enum:
+                        - active
+                        - paused
+                      default: active
+                  required:
+                    - name
+                    - displayName
+                    - address
+                    - upstream
+                    - gates
+                    - routes
+                    - roles
+                    - groups
+                    - orgs
+                  additionalProperties: false
+              required:
+                - method
+                - url
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/render:
+    post:
+      tags: *a1
+      description: Render a header/payload/claims template exactly as Oathkeeper would
+        (gatekit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                template:
+                  type: string
+                  minLength: 1
+                  maxLength: 8192
+                kind:
+                  type: string
+                  enum:
+                    - header
+                    - cookie
+                    - payload
+                    - claims
+                name:
+                  type: string
+                  maxLength: 128
+                sample:
+                  type: object
+                  properties:
+                    subject:
+                      type: string
+                      maxLength: 128
+                    email:
+                      type: string
+                      format: email
+                    aal:
+                      type: string
+                      enum:
+                        - aal1
+                        - aal2
+                    anonymous:
+                      type: boolean
+                    method:
+                      type: string
+                      enum:
+                        - GET
+                        - HEAD
+                        - POST
+                        - PUT
+                        - PATCH
+                        - DELETE
+                        - OPTIONS
+                    url:
+                      type: string
+                      format: uri
+                      maxLength: 2048
+                    pattern:
+                      type: string
+                      maxLength: 4096
+                  required:
+                    - method
+                    - url
+                  additionalProperties: false
+              required:
+                - template
+                - kind
+                - sample
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}:
+    get:
+      tags: *a1
+      description: "A site: saved intent, version, etag, status"
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    put:
+      tags: *a1
+      description: "Save the intent as a new version (If-Match: the etag you edited;
+        absent only for a new site)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{1,39}$
+                    displayName:
+                      type: string
+                      minLength: 1
+                      maxLength: 80
+                    description:
+                      type: string
+                      maxLength: 500
+                    icon:
+                      type: string
+                      maxLength: 64
+                    address:
+                      type: object
+                      properties:
+                        host:
+                          allOf:
+                            - type: string
+                              maxLength: 253
+                            - type: string
+                              pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+                        pathPrefix:
+                          type: string
+                          maxLength: 512
+                          pattern: ^\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*)?(\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*))*$
+                      required:
+                        - host
+                      additionalProperties: false
+                    upstream:
+                      type: object
+                      properties:
+                        service:
+                          type: string
+                          pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                        namespace:
+                          $ref: "#/properties/site/properties/upstream/properties/service"
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        scheme:
+                          type: string
+                          enum:
+                            - http
+                            - https
+                        preserveHost:
+                          type: boolean
+                        stripPath:
+                          $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                      required:
+                        - service
+                        - namespace
+                        - port
+                      additionalProperties: false
+                    exposure:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - zone
+                            - vanity
+                      required:
+                        - mode
+                      additionalProperties: false
+                      default:
+                        mode: zone
+                    gates:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            pattern: ^[a-z]([a-z0-9-]{0,20}[a-z0-9])?$
+                          label:
+                            type: string
+                            minLength: 1
+                            maxLength: 80
+                          authenticators:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                handler:
+                                  type: string
+                                  pattern: ^[a-z][a-z0-9_]{1,40}$
+                                config:
+                                  type: object
+                                  additionalProperties: {}
+                              required:
+                                - handler
+                              additionalProperties: false
+                            minItems: 1
+                            maxItems: 8
+                          authorizer:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - policy
+                              - $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                          mutators:
+                            type: array
+                            items:
+                              $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                            minItems: 1
+                            maxItems: 8
+                          errors:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - platform
+                                  - website
+                                  - api
+                              - type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                                minItems: 1
+                                maxItems: 8
+                          methods:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - GET
+                                - HEAD
+                                - POST
+                                - PUT
+                                - PATCH
+                                - DELETE
+                                - OPTIONS
+                            minItems: 1
+                          preflight:
+                            type: boolean
+                          expert:
+                            type: object
+                            properties:
+                              matchUrl:
+                                type: string
+                                minLength: 1
+                                maxLength: 2048
+                            additionalProperties: false
+                        required:
+                          - id
+                          - label
+                          - authenticators
+                          - authorizer
+                          - mutators
+                          - errors
+                        additionalProperties: false
+                      minItems: 1
+                      maxItems: 20
+                    routes:
+                      type: object
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                pattern: ^[a-z][a-z0-9-]{0,31}$
+                              methods:
+                                type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/methods/items"
+                                minItems: 1
+                              path:
+                                $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                              gate:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              access:
+                                anyOf:
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - public
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - signed-in
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - permission
+                                      permission:
+                                        type: string
+                                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                                    required:
+                                      - kind
+                                      - permission
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - deny
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                              orgParam:
+                                type: string
+                                pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              source:
+                                type: string
+                                enum:
+                                  - manual
+                                  - openapi
+                                  - template
+                                default: manual
+                              pinned:
+                                type: boolean
+                            required:
+                              - id
+                              - methods
+                              - path
+                              - gate
+                              - access
+                            additionalProperties: false
+                          maxItems: 500
+                        catchAll:
+                          type: object
+                          properties:
+                            gate:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            access:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                cess"
+                          required:
+                            - gate
+                            - access
+                          additionalProperties: false
+                      required:
+                        - items
+                        - catchAll
+                      additionalProperties: false
+                    roles:
+                      anyOf:
+                        - type: string
+                          enum:
+                            - standard
+                            - readonly
+                            - operator
+                        - type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              anyOf:
+                                - $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                    cess/anyOf/2/properties/permission"
+                                - type: string
+                                  enum:
+                                    - "*"
+                    groups:
+                      type: object
+                      properties:
+                        platform:
+                          type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+                        orgGrantable:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            properties:
+                              label:
+                                type: string
+                                minLength: 1
+                                maxLength: 80
+                              roles:
+                                type: array
+                                items:
+                                  type: string
+                                minItems: 1
+                            required:
+                              - label
+                              - roles
+                            additionalProperties: false
+                      required:
+                        - platform
+                        - orgGrantable
+                      additionalProperties: false
+                    orgs:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      maxItems: 500
+                    login:
+                      type: object
+                      properties:
+                        twoFactor:
+                          type: object
+                          properties:
+                            scope:
+                              type: string
+                              enum:
+                                - none
+                                - writes
+                                - all
+                            routes:
+                              type: array
+                              items:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            clients:
+                              type: string
+                              enum:
+                                - exempt
+                                - refused
+                          required:
+                            - scope
+                            - clients
+                          additionalProperties: false
+                        reach:
+                          type: string
+                          enum:
+                            - granted
+                            - any-account
+                        branding:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 80
+                            logo:
+                              type: string
+                              maxLength: 64
+                            accent:
+                              type: string
+                              pattern: ^#[0-9a-fA-F]{6}$
+                            welcome:
+                              type: string
+                              maxLength: 280
+                            helpUrl:
+                              type: string
+                              format: uri
+                          additionalProperties: false
+                        postLogoutUrl:
+                          type: string
+                          format: uri
+                      required:
+                        - twoFactor
+                        - reach
+                      additionalProperties: false
+                    state:
+                      type: string
+                      enum:
+                        - active
+                        - paused
+                      default: active
+                  required:
+                    - name
+                    - displayName
+                    - address
+                    - upstream
+                    - gates
+                    - routes
+                    - roles
+                    - groups
+                    - orgs
+                  additionalProperties: false
+                note:
+                  type: string
+                  maxLength: 280
+              required:
+                - site
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    delete:
+      tags: *a1
+      description: "Delete a site: rules first, then its permissions; a snapshot is
+        kept 30 days"
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/draft:
+    get:
+      tags: *a1
+      description: The server-side draft
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    put:
+      tags: *a1
+      description: Autosave the draft (may be incomplete)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site: {}
+                baseVersion:
+                  type: integer
+                  minimum: 0
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    delete:
+      tags: *a1
+      description: Discard the draft
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/diff:
+    post:
+      tags: *a1
+      description: What would change against the applied version, per artefact, with
+        risk flags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{1,39}$
+                    displayName:
+                      type: string
+                      minLength: 1
+                      maxLength: 80
+                    description:
+                      type: string
+                      maxLength: 500
+                    icon:
+                      type: string
+                      maxLength: 64
+                    address:
+                      type: object
+                      properties:
+                        host:
+                          allOf:
+                            - type: string
+                              maxLength: 253
+                            - type: string
+                              pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+                        pathPrefix:
+                          type: string
+                          maxLength: 512
+                          pattern: ^\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*)?(\/([A-Za-z0-9._~@-]+|:[A-Za-z_][A-Za-z0-9_]*|:any\*))*$
+                      required:
+                        - host
+                      additionalProperties: false
+                    upstream:
+                      type: object
+                      properties:
+                        service:
+                          type: string
+                          pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                        namespace:
+                          $ref: "#/properties/site/properties/upstream/properties/service"
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        scheme:
+                          type: string
+                          enum:
+                            - http
+                            - https
+                        preserveHost:
+                          type: boolean
+                        stripPath:
+                          $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                      required:
+                        - service
+                        - namespace
+                        - port
+                      additionalProperties: false
+                    exposure:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - zone
+                            - vanity
+                      required:
+                        - mode
+                      additionalProperties: false
+                      default:
+                        mode: zone
+                    gates:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            pattern: ^[a-z]([a-z0-9-]{0,20}[a-z0-9])?$
+                          label:
+                            type: string
+                            minLength: 1
+                            maxLength: 80
+                          authenticators:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                handler:
+                                  type: string
+                                  pattern: ^[a-z][a-z0-9_]{1,40}$
+                                config:
+                                  type: object
+                                  additionalProperties: {}
+                              required:
+                                - handler
+                              additionalProperties: false
+                            minItems: 1
+                            maxItems: 8
+                          authorizer:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - policy
+                              - $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                          mutators:
+                            type: array
+                            items:
+                              $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                            minItems: 1
+                            maxItems: 8
+                          errors:
+                            anyOf:
+                              - type: string
+                                enum:
+                                  - platform
+                                  - website
+                                  - api
+                              - type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/authenticators/items"
+                                minItems: 1
+                                maxItems: 8
+                          methods:
+                            type: array
+                            items:
+                              type: string
+                              enum:
+                                - GET
+                                - HEAD
+                                - POST
+                                - PUT
+                                - PATCH
+                                - DELETE
+                                - OPTIONS
+                            minItems: 1
+                          preflight:
+                            type: boolean
+                          expert:
+                            type: object
+                            properties:
+                              matchUrl:
+                                type: string
+                                minLength: 1
+                                maxLength: 2048
+                            additionalProperties: false
+                        required:
+                          - id
+                          - label
+                          - authenticators
+                          - authorizer
+                          - mutators
+                          - errors
+                        additionalProperties: false
+                      minItems: 1
+                      maxItems: 20
+                    routes:
+                      type: object
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                                pattern: ^[a-z][a-z0-9-]{0,31}$
+                              methods:
+                                type: array
+                                items:
+                                  $ref: "#/properties/site/properties/gates/items/properties/methods/items"
+                                minItems: 1
+                              path:
+                                $ref: "#/properties/site/properties/address/properties/pathPrefix"
+                              gate:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              access:
+                                anyOf:
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - public
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - signed-in
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - permission
+                                      permission:
+                                        type: string
+                                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                                    required:
+                                      - kind
+                                      - permission
+                                    additionalProperties: false
+                                  - type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - deny
+                                    required:
+                                      - kind
+                                    additionalProperties: false
+                              orgParam:
+                                type: string
+                                pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              source:
+                                type: string
+                                enum:
+                                  - manual
+                                  - openapi
+                                  - template
+                                default: manual
+                              pinned:
+                                type: boolean
+                            required:
+                              - id
+                              - methods
+                              - path
+                              - gate
+                              - access
+                            additionalProperties: false
+                          maxItems: 500
+                        catchAll:
+                          type: object
+                          properties:
+                            gate:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            access:
+                              $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                cess"
+                          required:
+                            - gate
+                            - access
+                          additionalProperties: false
+                      required:
+                        - items
+                        - catchAll
+                      additionalProperties: false
+                    roles:
+                      anyOf:
+                        - type: string
+                          enum:
+                            - standard
+                            - readonly
+                            - operator
+                        - type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              anyOf:
+                                - $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                                    cess/anyOf/2/properties/permission"
+                                - type: string
+                                  enum:
+                                    - "*"
+                    groups:
+                      type: object
+                      properties:
+                        platform:
+                          type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+                        orgGrantable:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            properties:
+                              label:
+                                type: string
+                                minLength: 1
+                                maxLength: 80
+                              roles:
+                                type: array
+                                items:
+                                  type: string
+                                minItems: 1
+                            required:
+                              - label
+                              - roles
+                            additionalProperties: false
+                      required:
+                        - platform
+                        - orgGrantable
+                      additionalProperties: false
+                    orgs:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      maxItems: 500
+                    login:
+                      type: object
+                      properties:
+                        twoFactor:
+                          type: object
+                          properties:
+                            scope:
+                              type: string
+                              enum:
+                                - none
+                                - writes
+                                - all
+                            routes:
+                              type: array
+                              items:
+                                $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                            clients:
+                              type: string
+                              enum:
+                                - exempt
+                                - refused
+                          required:
+                            - scope
+                            - clients
+                          additionalProperties: false
+                        reach:
+                          type: string
+                          enum:
+                            - granted
+                            - any-account
+                        branding:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 80
+                            logo:
+                              type: string
+                              maxLength: 64
+                            accent:
+                              type: string
+                              pattern: ^#[0-9a-fA-F]{6}$
+                            welcome:
+                              type: string
+                              maxLength: 280
+                            helpUrl:
+                              type: string
+                              format: uri
+                          additionalProperties: false
+                        postLogoutUrl:
+                          type: string
+                          format: uri
+                      required:
+                        - twoFactor
+                        - reach
+                      additionalProperties: false
+                    state:
+                      type: string
+                      enum:
+                        - active
+                        - paused
+                      default: active
+                  required:
+                    - name
+                    - displayName
+                    - address
+                    - upstream
+                    - gates
+                    - routes
+                    - roles
+                    - groups
+                    - orgs
+                  additionalProperties: false
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/apply:
+    post:
+      tags: *a1
+      description: "Apply the saved version: permissions first, then the Site CR. 503
+        and nothing written when gatekit or Kubernetes cannot answer"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+              required:
+                - version
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/versions:
+    get:
+      tags: *a1
+      description: Version history (append-only)
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/versions/{v}:
+    get:
+      tags: *a1
+      description: One version, with its intent
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: v
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/rollback:
+    post:
+      tags: *a1
+      description: Save an older version as a new one and apply it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                toVersion:
+                  type: integer
+                  minimum: 1
+                note:
+                  type: string
+                  maxLength: 280
+              required:
+                - toVersion
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/pause:
+    post:
+      tags: *a1
+      description: Stop serving the site (rules removed by the operator), keep
+        everything else
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/resume:
+    post:
+      tags: *a1
+      description: Serve a paused site again
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/blast-radius:
+    get:
+      tags: *a1
+      description: What deleting the site would take with it
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/authorization-model:
     get:
       tags:
@@ -7293,18 +9250,6 @@ paths:
                     example: Bad Request
                   message:
                     type: string
-  /api/admin/audit/metrics:
-    get:
-      tags:
-        - audit
-      description: Prometheus metrics for audit events and HTTP requests
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: string
   /api/admin/audit/events:
     get:
       tags:
