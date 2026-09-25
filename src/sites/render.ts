@@ -52,8 +52,8 @@ export interface SiteCr {
     /** The operator renders `<scheme>://<service>.<namespace>.svc.cluster.local:<port>`. */
     upstream: { service: string; namespace: string; port: number; scheme: 'http' | 'https'; preserveHost: boolean; stripPath?: string }
     gates: SiteCrGate[]
-    /** ingress false: the zone's wildcard Ingress serves the host. true: a per-site (vanity) Ingress. */
-    exposure: { ingress: false } | { ingress: true; tls: 'wildcard' | 'per-site' }
+    /** zone: the zone's wildcard Ingress serves the host. vanity: a per-site Ingress. */
+    exposure: { mode: 'zone' } | { mode: 'vanity'; tls: 'wildcard' | 'per-site' }
     paused: boolean
   }
 }
@@ -337,7 +337,7 @@ export function render(site: Site, platform: Platform): Rendered {
     hosts: [host],
     upstream: { service: u.service, namespace: u.namespace, port: u.port, scheme: u.scheme ?? 'http', preserveHost: u.preserveHost ?? false, ...(u.stripPath ? { stripPath: u.stripPath } : {}) },
     gates: crGates,
-    exposure: site.exposure.mode === 'vanity' ? { ingress: true, tls: placement.tls === 'per-site' ? 'per-site' : 'wildcard' } : { ingress: false },
+    exposure: site.exposure.mode === 'vanity' ? { mode: 'vanity', tls: placement.tls === 'per-site' ? 'per-site' : 'wildcard' } : { mode: 'zone' },
     paused: site.state === 'paused',
   }
   const siteCr: SiteCr = {
