@@ -54,6 +54,13 @@ export async function isMemberOf(identity: KratosIdentity, organisationId: strin
   return (await organisationsForSubject(identity.id)).includes(organisationId)
 }
 
+/** Every organisation the identity belongs to: the ones it names, then any directory row. */
+export async function organisationsOf(identity: KratosIdentity): Promise<string[]> {
+  const named = organisationsOnIdentity(identity)
+  if (!ownsMembership()) return named
+  return [...new Set([...named, ...(await organisationsForSubject(identity.id))])]
+}
+
 async function writeListed(identity: KratosIdentity, organisations: string[]): Promise<void> {
   const metadata = (identity.metadata_admin as Record<string, unknown> | null | undefined) ?? {}
   await kratosService.updateIdentity(identity.id, {

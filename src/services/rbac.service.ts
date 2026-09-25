@@ -3,6 +3,7 @@ import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
 import { findRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
+import { assertOrgParams } from '../policy/route-org-param.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
@@ -946,6 +947,8 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    // An org_param the policy cannot read would deny every request on the route: refuse it first.
+    assertOrgParams(serviceName, rules)
     // Refuse before writing: a tie would leave the route with no owner in policy (not_found for all).
     // Check + write under one lock so two services cannot each pass against the other's old map.
     const before = await withRedisLock('route_maps', async () => {

@@ -1,4 +1,4 @@
-import { env } from '../config/env.js'
+import { OpaQueryError, OpaUnavailableError, opaConfigured, queryOpa } from './opa-client.js'
 
 /**
  * "Can this person do METHOD PATH, and why?" — asked of the engine that decides it.
@@ -31,17 +31,8 @@ export type AccessCheckResult = {
   superAdmin: boolean
 }
 
-/** OPA is not configured on this deployment. */
-export class AccessCheckUnavailableError extends Error {
-  statusCode = 503
-}
-
-/** OPA was asked and did not answer usably. The message never carries the token. */
-export class OpaQueryError extends Error {
-  statusCode = 502
-}
-
-const OPA_TIMEOUT_MS = 5000
+// Unconfigured (503) and unanswered (502), under the names the route has always caught.
+export { OpaUnavailableError as AccessCheckUnavailableError, OpaQueryError }
 
 type Decision = { allow?: boolean; reason?: string; groups?: string[] }
 type Simulation = {
@@ -52,28 +43,13 @@ type Simulation = {
 }
 
 export async function checkAccess(input: AccessCheckInput): Promise<AccessCheckResult> {
-  const { OPA_URL: url, OPA_TOKEN: token } = env
-  if (!url || !token) {
-    throw new AccessCheckUnavailableError(
+  if (!opaConfigured()) {
+    throw new OpaUnavailableError(
       'Access check is not configured on this deployment: set OPA_URL and OPA_TOKEN (the OPA bearer token).',
     )
   }
 
-  const query = async <T>(rule: string, opaInput: Record<string, unknown>): Promise<T | undefined> => {
-    let res: Response
-    try {
-      res = await fetch(`${url.replace(/\/$/, '')}/v1/data/rbac/${rule}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ input: opaInput }),
-        signal: AbortSignal.timeout(OPA_TIMEOUT_MS),
-      })
-    } catch (err) {
-      throw new OpaQueryError(`OPA is unreachable (${(err as Error).name}).`)
-    }
-    if (!res.ok) throw new OpaQueryError(`OPA refused the query for rbac.${rule} (HTTP ${res.status}).`)
-    return ((await res.json()) as { result?: T }).result
-  }
+  const query = <T>(rule: string, opaInput: Record<string, unknown>) => queryOpa<T>(`rbac/${rule}`, opaInput)
 
   const base = { email: input.email, action: input.method, object: input.path }
   const asked = input.app ? { ...base, app: input.app } : base

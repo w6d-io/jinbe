@@ -5,13 +5,14 @@ import { membersOf, organisationStoreConfigured } from './organisation-store.js'
 import { redisRbacRepository } from './redis-rbac.repository.js'
 
 /**
- * What administering one organisation gives, and nothing else: managing its people.
+ * What administering one organisation gives, and nothing else: managing its people and its API keys
+ * (the same set as `org_management_permission` in opal-policies org.rego, minus users:assign_group).
  *
  * Deliberately not `*`, not a service permission and not `users:assign_group`. Handing out a group
- * is a grant of rights, and this model has no delegation rule bounding it to the admin's own
- * organisation yet — so an org admin reaches the member routes and the group routes still refuse.
+ * is a grant of rights: an org admin does that through the org-grant routes, where OPA's `can_grant`
+ * bounds it to their own org and to what they hold — the site-wide group routes still refuse.
  */
-export const ORG_ADMIN_PERMISSIONS = ['org:manage_users', 'users:read', 'users:create'] as const
+export const ORG_ADMIN_PERMISSIONS = ['org:manage_users', 'org:manage_api_keys', 'users:read', 'users:create'] as const
 
 /** The role a directory membership row carries for an organisation's admin. */
 export const ORG_ADMIN_ROLE = 'org_admin'

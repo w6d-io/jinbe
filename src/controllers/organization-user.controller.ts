@@ -20,7 +20,7 @@ import {
 } from '../schemas/organization-user.schema.js'
 import { env } from '../config/index.js'
 import { addMember, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
-import { assignableGroupsFor, declaredGroups } from '../services/authorization-model.service.js'
+import { declaredGroups } from '../services/authorization-model.service.js'
 import {
   identitiesInOrganisation,
   isMemberOf,
@@ -308,48 +308,6 @@ export class OrganizationUserController {
 
     if (!result.ok) return reply.status(result.status).send(result.body)
     return reply.send(result.response)
-  }
-
-  /**
-   * List the groups the caller may assign within this organization —
-   * `assignable_groups` (delegation) scoped to the org's mapped service.
-   * GET /api/organizations/:organizationId/assignable-groups
-   *
-   * Resolved from the model the engine decides against, so the UI can only offer what the mutation
-   * guard would also accept. The organisation in the route is not consulted: assignment authority in
-   * this model is global or nothing, so it cannot vary by organisation.
-   */
-  async listAssignableGroups(
-    request: FastifyRequest<{ Params: { organizationId: string } }>,
-    reply: FastifyReply
-  ) {
-
-    // What the picker offers must be exactly what the mutation would accept, no more: a picker that
-    // offers a group the guard then refuses turns a refusal into a surprise.
-    //
-    // In this model that set is all-or-nothing. Holding a group that grants in every organisation is
-    // the only authority over assignment it expresses — there is no delegated, containment-bounded
-    // middle tier any more, so there is no middle set to compute either.
-    //
-    // What this replaced resolved the organisation to a registered service name through Redis, asked
-    // an engine for the actor's permissions, then filtered group definitions by their single service.
-    // All three belonged to the retired model: the engine path stopped answering, and grants are no
-    // longer keyed per service.
-    const subject = request.userContext?.id
-    if (!subject) {
-      return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-    }
-
-    try {
-      return reply.send({ groups: await assignableGroupsFor(subject) })
-    } catch (err) {
-      // An empty list would read as "you may assign nothing"; this says the model could not be read.
-      request.log.warn({ subject, err }, '[organization-user] the authorization model could not be read')
-      return reply.status(503).send({
-        error: 'Service Unavailable',
-        message: 'Unable to list the assignable groups. Please try again later.',
-      })
-    }
   }
 
   /**

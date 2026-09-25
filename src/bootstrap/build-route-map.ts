@@ -8,6 +8,10 @@ import type { RouteRule } from './types.js'
  *
  * Routes with `permission` are gated by the OPA policy comparing
  * the user's aggregated permissions against the route's required permission.
+ *
+ * `org_param` names the path param carrying the org id: the route is then that
+ * org's only (members of it, permission from site ∪ org_grants of it). The
+ * policy infers it under /api/organizations/; it is set explicitly anyway.
  */
 export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // Public routes
@@ -81,6 +85,7 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/admin/users/:email/groups',       permission: 'admin:read' },
   { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
   { method: 'POST',   path: '/api/admin/users/:id/recovery-email',  permission: 'admin:update' },
+  { method: 'GET',    path: '/api/admin/users/:id/access',          permission: 'admin:read' },
 
   // RBAC management
   { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
@@ -107,11 +112,11 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
 
   // Organization users
-  { method: 'GET',    path: '/api/organizations/:organizationId/users',     permission: 'admin:read' },
-  { method: 'POST',   path: '/api/organizations/:organizationId/users',     permission: 'admin:create' },
-  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:read' },
-  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:update' },
-  { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id', permission: 'admin:delete' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users',     permission: 'admin:read', org_param: 'organizationId' },
+  { method: 'POST',   path: '/api/organizations/:organizationId/users',     permission: 'admin:create', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:read', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id', permission: 'admin:update', org_param: 'organizationId' },
+  { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id', permission: 'admin:delete', org_param: 'organizationId' },
 
   // Delegated org-admin reachability. These coexist with the admin:* rules
   // above — the OPA policy allows a request if the caller satisfies ANY matching
@@ -124,14 +129,27 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // gate these per-verb beyond manageable_orgs. That is deliberate ("manage
   // users" = CRUD within the org); org_admin's finer users:* perms don't
   // independently restrict the verb.
-  { method: 'GET',    path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users' },
-  { method: 'POST',   path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users' },
-  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
-  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
-  { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users' },
-  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users' },
-  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users' },
-  { method: 'GET',    path: '/api/organizations/:organizationId/assignable-groups', permission: 'org:manage_users' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'POST',   path: '/api/organizations/:organizationId/users',            permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/membership', permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/assignable-groups', permission: 'org:manage_users', org_param: 'organizationId' },
+
+  // Org grants (J-1): the org's admin hands out their org's groups. The gateway admits the roster
+  // admin on org:manage_users; jinbe re-checks org admin and asks OPA can_grant per group.
+  { method: 'GET',    path: '/api/organizations/:organizationId/grants',           permission: 'org:manage_users', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/grants', permission: 'org:manage_users', org_param: 'organizationId' },
+
+  // API keys of ONE org (J-3, story 7): its org admin, super_admin, or a member holding
+  // org:manage_api_keys there (site ∪ org_grants of that org). jinbe re-enforces the same.
+  { method: 'GET',    path: '/api/organizations/:organizationId/api-keys',           permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'POST',   path: '/api/organizations/:organizationId/api-keys',           permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/api-keys/:clientId', permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'DELETE', path: '/api/organizations/:organizationId/api-keys/:clientId', permission: 'org:manage_api_keys', org_param: 'organizationId' },
 
   // Self-service: any authenticated caller may ask which orgs they administer.
   // Returns only the caller's own manageable_orgs; jinbe 401s an anonymous call.

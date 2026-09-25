@@ -6,6 +6,7 @@ import { defaultServiceRoles } from './rbac-defaults.js'
 import { oathkeeperRuleSchema } from '../schemas/rbac/access-rules.schema.js'
 import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oathkeeper-handlers.js'
 import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
+import { assertOrgParams } from '../policy/route-org-param.js'
 
 export interface AuthBundle {
   version: '1'
@@ -166,7 +167,10 @@ class RbacBundleService {
     // malformed or references a non-enabled handler (see validateOathkeeperRules).
     if (want('oathkeeperRules')) this.validateOathkeeperRules(oathkeeperRules ?? [])
 
-    // Same refusal as a route write: two services tied on one route leave it ownerless in policy.
+    // Same refusals as a route write: an unreadable org_param, or two services tied on one route.
+    if (want('routeMaps')) {
+      for (const [svc, rm] of Object.entries(routeMaps ?? {})) assertOrgParams(svc, rm?.rules ?? [])
+    }
     if (want('routeMaps') || want('services')) await this.validateRouteTies(bundle, want, isFull)
 
     // Pre-apply snapshot → rollback point. Taken AFTER validation so a rejected

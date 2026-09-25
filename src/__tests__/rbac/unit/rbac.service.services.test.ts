@@ -166,6 +166,23 @@ describe('RbacService - Services', () => {
     })
   })
 
+  describe('updateServiceRoutes — org_param (J-1)', () => {
+    it('stores org_param when it names a :param of the path', async () => {
+      const rules = [{ method: 'GET', path: '/api/kuma/orgs/:orgId/x', permission: 'read', org_param: 'orgId' }]
+      await service.updateServiceRoutes('kuma', rules)
+      expect(JSON.parse((await redisMock.get('rbac:route_map:kuma'))!)).toEqual({ rules })
+    })
+
+    it('400s, writing nothing, when org_param names no :param of the path', async () => {
+      await expect(
+        service.updateServiceRoutes('kuma', [{ method: 'GET', path: '/api/kuma/orgs/:id/x', permission: 'read', org_param: 'orgId' }]),
+      ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/org_param.*orgId.*\/api\/kuma\/orgs\/:id\/x/) })
+      expect(JSON.parse((await redisMock.get('rbac:route_map:kuma'))!)).toEqual({
+        rules: [{ method: 'GET', path: '/api/kuma/health' }],
+      })
+    })
+  })
+
   describe('org → service bundle map', () => {
     const ORG = '11111111-1111-1111-1111-111111111111'
 

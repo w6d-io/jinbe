@@ -33,7 +33,9 @@ import { withRedisLock } from './redis-lock.js'
 
 export type GroupDefinition = Record<string, string[]> // { service: roles[] }
 export type FlatRolesMap = Record<string, string[]>    // { roleName: permissions[] }
-export interface RouteRule { method: string; path: string; permission?: string }
+// org_param: name of the `:param` in `path` that carries the org id — the route is then that org's
+// only (opal-policies org.rego). Checked by policy/route-org-param.ts before any write.
+export interface RouteRule { method: string; path: string; permission?: string; org_param?: string }
 export interface RouteMap { rules: RouteRule[] }
 
 /**

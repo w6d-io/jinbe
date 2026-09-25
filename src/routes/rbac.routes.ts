@@ -3,6 +3,8 @@ import { rbacController } from '../controllers/rbac.controller.js'
 import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { accessCheckRoutes } from './access-check.routes.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -10,7 +12,6 @@ import {
   forbiddenResponseSchema,
   badRequestResponseSchema,
   conflictResponseSchema,
-  serviceUnavailableResponseSchema,
 } from '../schemas/response-schemas.js'
 import {
   createGroupBodyJsonSchema,
@@ -18,49 +19,7 @@ import {
   groupJsonSchema,
   oathkeeperRuleJsonSchema,
 } from '../schemas/rbac/index.js'
-
-// Response schema for GET /oathkeeper/handlers. A handler descriptor is the
-// plain-language shape the admin UI renders (label/description + guided fields);
-// an explicit schema keeps fast-json-stringify from stripping nested fields.
-const handlerDescriptorJsonSchema = {
-  type: 'object',
-  properties: {
-    handler: { type: 'string' },
-    label: { type: 'string' },
-    description: { type: 'string' },
-    hasFreeformConfig: { type: 'boolean' },
-    fields: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          key: { type: 'string' },
-          label: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: ['string', 'url', 'bool', 'textarea', 'kv', 'list', 'json'],
-          },
-          required: { type: 'boolean' },
-          placeholder: { type: 'string' },
-          help: { type: 'string' },
-        },
-        required: ['key', 'label', 'type'],
-      },
-    },
-  },
-  required: ['handler', 'label', 'description', 'hasFreeformConfig', 'fields'],
-}
-
-const oathkeeperHandlerCatalogJsonSchema = {
-  type: 'object',
-  properties: {
-    authenticators: { type: 'array', items: handlerDescriptorJsonSchema },
-    authorizers: { type: 'array', items: handlerDescriptorJsonSchema },
-    mutators: { type: 'array', items: handlerDescriptorJsonSchema },
-    errorHandlers: { type: 'array', items: handlerDescriptorJsonSchema },
-  },
-  required: ['authenticators', 'authorizers', 'mutators', 'errorHandlers'],
-}
+import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-handlers.schema.js'
 
 // =============================================================================
 // RBAC Routes — Redis-backed, no branch prefix
@@ -279,6 +238,10 @@ export async function rbacRoutes(fastify: FastifyInstance) {
                 method: { type: 'string' },
                 path: { type: 'string' },
                 permission: { type: 'string' },
+                org_param: {
+                  type: 'string',
+                  description: 'Name of the :param in `path` carrying the org id; the route is then that org\'s only. 400 when the path has no such param.',
+                },
               },
             },
           },
@@ -286,6 +249,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
       response: {
         200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' }, timestamp: { type: 'string' } } },
+        400: badRequestResponseSchema,
         401: unauthorizedResponseSchema,
         403: forbiddenResponseSchema,
         404: notFoundResponseSchema,
@@ -517,116 +481,4 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       return reply.send({ commits: [], total: 0 })
     }
   })
-}
-
-// =============================================================================
-// OPAL Public Data Routes — no auth, called by OPAL server to sync policy data
-// =============================================================================
-
-import { rbacService } from '../services/rbac.service.js'
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
-import { env } from '../config/env.js'
-import { requireOpalClient } from '../middleware/require-opal-client.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
-
-export async function rbacOpalRoutes(fastify: FastifyInstance) {
-  fastify.addHook('onRequest', requireOpalClient)
-
-  // Bindings: user → groups + org membership (from Kratos). Routed through the
-  // service so the shape can't drift from the tested getBindingsFromKratos().
-  fastify.get('/bindings', {
-    schema: {
-      description:
-        'OPAL data source: user → groups + org membership, read from Kratos. 503 when Kratos cannot be ' +
-        'read, so OPAL keeps the bindings OPA already holds instead of replacing them with an empty set.',
-      tags: ['rbac'],
-      // No 200 schema: the dataset is keyed by email — let it pass through unserialized.
-      response: { 503: serviceUnavailableResponseSchema },
-    },
-  }, async (request, reply) => {
-    try {
-      const bindings = await rbacService.getBindingsFromKratos()
-      return reply.send(bindings)
-    } catch (err) {
-      // 503, never an empty dataset. OPAL skips an entry whose fetch fails and leaves what OPA
-      // already holds at /bindings (opal_client/data/updater.py `_store_fetched_update`); an empty
-      // 200 would REPLACE it and deny everybody, super_admin included, until the next fetch.
-      // With no previous data OPA still has none at /bindings, and the policy denies on that.
-      request.log.error({ err }, 'bindings: Kratos unavailable — answering 503 so OPAL keeps the last good data')
-      return reply.status(503).send({
-        error: 'Service Unavailable',
-        message: 'Identity bindings could not be read from Kratos. Keep the last good data and retry.',
-      })
-    }
-  })
-
-  // Groups: group → service → roles
-  fastify.get('/opal/groups', async (_request, reply) => {
-    const groups = await redisRbacRepository.getGroups()
-    return reply.send(groups)
-  })
-
-  // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
-  // Values are service bundles (arrays). Legacy scalar values in Redis are
-  // normalized to single-element arrays by the repository before serving.
-  fastify.get('/opal/org_service_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgServiceMap()
-    return reply.send(map)
-  })
-
-  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
-  fastify.get('/opal/org_admin_map', async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgAdminMap()
-    return reply.send(map)
-  })
-
-  // Roles per service
-  fastify.get('/opal/roles/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const roles = await redisRbacRepository.getRoles(service)
-    return reply.send(roles || {})
-  })
-
-  // Route map per service
-  fastify.get('/opal/route_map/:service', async (request, reply) => {
-    const { service } = request.params as { service: string }
-    const routeMap = await redisRbacRepository.getRouteMap(service)
-    return reply.send(routeMap || { rules: [] })
-  })
-
-  // OPAL datasource config (tells OPAL what to fetch)
-  fastify.get('/opal-datasource', async (_request, reply) => {
-    const services = await redisRbacRepository.getServices()
-    const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
-
-    const entries = [
-      { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-      { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-      // Global roles are always part of OPA's dataset, even though "global"
-      // is not listed in the services registry — they hold the platform-wide
-      // wildcard ("*") used by the super_admin role and the rego super_admin
-      // detector relies on data.roles.global being populated.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
-      // Org → service map (data.org_service_map): the delegation rego resolves
-      // which service a target org's RBAC lives under from this.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
-      // Org → admin roster (data.org_admin_map): per-org list of admin emails;
-      // manageable_orgs + the org-mgmt allow clause resolve org admins from it.
-      { url: `${jinbeUrl}/api/admin/rbac/opal/org_admin_map`, topics: ['policy_data'], dst_path: '/org_admin_map' },
-    ]
-
-    for (const svc of services) {
-      entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-      const routeMap = await redisRbacRepository.getRouteMap(svc)
-      if (routeMap) {
-        entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-      }
-    }
-
-    // The client sends this on every data fetch; only reached once it proved it holds the token.
-    const auth = { config: { headers: { Authorization: `Bearer ${env.OPAL_CLIENT_TOKEN}` } } }
-    return reply.send({ entries: entries.map((entry) => ({ ...entry, ...auth })) })
-  })
-
 }

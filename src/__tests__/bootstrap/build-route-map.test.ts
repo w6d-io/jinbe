@@ -59,4 +59,27 @@ describe('bootstrap/build-route-map', () => {
       expect(r.permission).toMatch(/^clusters:/)
     }
   })
+  it('every /api/organizations/:organizationId route names its org param (J-1)', () => {
+    const orgRoutes = JINBE_BUILT_IN_ROUTES.filter((r) => r.path.startsWith('/api/organizations/'))
+    expect(orgRoutes.length).toBeGreaterThan(0)
+    for (const r of orgRoutes) expect(r.org_param).toBe('organizationId')
+    // Nothing outside the org tree claims one.
+    for (const r of JINBE_BUILT_IN_ROUTES.filter((x) => !x.path.startsWith('/api/organizations/'))) {
+      expect(r.org_param).toBeUndefined()
+    }
+  })
+
+  it('declares the API-key routes with org:manage_api_keys and org_param (J-3)', () => {
+    const base = '/api/organizations/:organizationId/api-keys'
+    for (const [method, path] of [['GET', base], ['POST', base], ['GET', `${base}/:clientId`], ['DELETE', `${base}/:clientId`]]) {
+      expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method, path, permission: 'org:manage_api_keys', org_param: 'organizationId' })
+    }
+  })
+
+  it('declares the grant routes (org admin) and the admin access view (J-1)', () => {
+    const org = '/api/organizations/:organizationId'
+    expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method: 'GET', path: `${org}/grants`, permission: 'org:manage_users', org_param: 'organizationId' })
+    expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method: 'PUT', path: `${org}/users/:id/grants`, permission: 'org:manage_users', org_param: 'organizationId' })
+    expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method: 'GET', path: '/api/admin/users/:id/access', permission: 'admin:read' })
+  })
 })

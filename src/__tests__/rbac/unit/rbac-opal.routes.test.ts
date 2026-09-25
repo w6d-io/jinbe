@@ -44,7 +44,7 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
   return { ...real, env: { ...real.env, OPAL_CLIENT_TOKEN: 't'.repeat(64), JINBE_INTERNAL_URL: 'http://auth-jinbe:8080' } }
 })
 
-import { rbacOpalRoutes } from '../../../routes/rbac.routes.js'
+import { rbacOpalRoutes } from '../../../routes/rbac-opal.routes.js'
 import { requireOpalClient } from '../../../middleware/require-opal-client.js'
 
 // A minimal fastify stand-in that records registered routes so we can invoke

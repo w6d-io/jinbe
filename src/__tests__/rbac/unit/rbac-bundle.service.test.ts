@@ -148,6 +148,25 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     })
   })
 
+  describe('route org_param (J-1)', () => {
+    it('rejects a route whose org_param names no :param of its path — nothing written', async () => {
+      const bad = makeBundle({
+        routeMaps: { jinbe: { rules: [{ method: 'GET', path: '/api/fleet/orgs/:id', permission: 'r', org_param: 'orgId' }] } },
+      })
+      const err = await rbacBundleService.import(bad).catch((e) => e)
+      expect(err.statusCode).toBe(400)
+      expect(err.message).toMatch(/jinbe.*org_param/)
+      expect(await redisRbacRepository.getServices()).toEqual([])
+      expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
+    })
+
+    it('keeps a valid org_param through the import', async () => {
+      const rules = [{ method: 'GET', path: '/api/fleet/orgs/:orgId', permission: 'r', org_param: 'orgId' }]
+      await rbacBundleService.import(makeBundle({ routeMaps: { jinbe: { rules } } }))
+      expect(await redisRbacRepository.getRouteMap('jinbe')).toEqual({ rules })
+    })
+  })
+
   describe('import history (rbac:import:history)', () => {
     it('pushes a pre-import snapshot on every import, newest first, with actor + reason', async () => {
       await rbacBundleService.import(makeBundle(), { email: 'admin@example.com' })
