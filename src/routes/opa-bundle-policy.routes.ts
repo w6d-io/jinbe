@@ -15,12 +15,21 @@ import { recordEngineStatus, propagation } from '../services/engine-status.servi
  * `/admin/api/...` through the edge, so an unguarded route here is an internet-reachable listing of
  * every rule and everybody who satisfies one.
  */
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    /** Opts a route out of this plugin's machine-only default. */
+    operatorReadable?: boolean
+  }
+}
+
 export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
-  // The machine credential guards what only a machine asks for. `/propagation` is the exception and
-  // is guarded per-route below: it answers the question an OPERATOR asks right after a write, and a
-  // route only a machine can read cannot be read by the person the answer is for.
+  // The machine credential guards every route here unless the route itself opts out through its
+  // own config, as `/propagation` does. Decided from the matched route, never from the raw URL:
+  // `/policy?x=/propagation` must not read as the propagation route.
   fastify.addHook('preHandler', (request, reply) =>
-    request.url.includes('/propagation') ? Promise.resolve() : machineOnly(request, reply),
+    request.routeOptions.config.operatorReadable
+      ? Promise.resolve()
+      : machineOnly(request, reply),
   )
 
   fastify.get(
@@ -104,6 +113,7 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
     '/propagation',
     {
       preHandler: machineOrOperator,
+      config: { operatorReadable: true },
       schema: {
         description: 'The revision this service serves, and the revision each engine reports',
         tags: ['opa'],
