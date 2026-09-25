@@ -99,6 +99,8 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'PUT',    path: '/api/admin/rbac/access-rules/:id',     permission: 'admin:update' },
   { method: 'DELETE', path: '/api/admin/rbac/access-rules/:id',     permission: 'admin:delete' },
   { method: 'POST',   path: '/api/admin/rbac/simulate',             permission: 'admin:read' },
+  // Lists what another user holds: only holders of `*` (super_admin, global admin) carry admin:write.
+  { method: 'POST',   path: '/api/admin/rbac/access-check',         permission: 'admin:write' },
   { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
 
   // Audit

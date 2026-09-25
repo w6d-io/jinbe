@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { badRequestResponseSchema } from '../schemas/response-schemas.js'
+import { badRequestResponseSchema, conflictResponseSchema } from '../schemas/response-schemas.js'
 import { requireSuperAdmin } from '../middleware/require-admin.js'
 import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, BundleValidationError } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
@@ -71,13 +71,14 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
     {
       preHandler: requireSuperAdmin,
       schema: {
-        description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore.',
+        description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore. 409 (nothing written) when the resulting route maps tie two services on one route at the same specificity.',
         tags: ['rbac', 'backup'],
         querystring: { type: 'object', properties: { sections: { type: 'string' } } },
         body: { type: 'object', additionalProperties: true },
         response: {
           200: { type: 'object', properties: { success: { type: 'boolean' }, imported: { type: 'object', additionalProperties: true } } },
           400: badRequestResponseSchema,
+          409: conflictResponseSchema,
         },
       },
     },

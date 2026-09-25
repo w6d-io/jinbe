@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { rbacController } from '../controllers/rbac.controller.js'
 import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
+import { accessCheckRoutes } from './access-check.routes.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -9,6 +10,7 @@ import {
   forbiddenResponseSchema,
   badRequestResponseSchema,
   conflictResponseSchema,
+  serviceUnavailableResponseSchema,
 } from '../schemas/response-schemas.js'
 import {
   createGroupBodyJsonSchema,
@@ -67,6 +69,9 @@ const oathkeeperHandlerCatalogJsonSchema = {
 export async function rbacRoutes(fastify: FastifyInstance) {
   // All RBAC admin routes require admin group membership
   guardAll(fastify, requireAdmin, isPublicRoute)
+
+  // A child plugin, so it inherits the admin gate above and adds admin:write on top.
+  await fastify.register(accessCheckRoutes)
 
   // ===========================================================================
   // Users
@@ -258,7 +263,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   fastify.put('/services/:name/routes', {
     preHandler: refuseWhenSourcedFromGit,
     schema: {
-      description: 'Replace the route map for a specific service.',
+      description: 'Replace the route map for a specific service. 409 when a route ties with another service\'s at the same specificity (exact == exact, same :param shape, same :any* prefix): the policy would leave it with no owner and refuse every request on it.',
       tags: ['rbac'],
       params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       body: {
@@ -284,6 +289,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         401: unauthorizedResponseSchema,
         403: forbiddenResponseSchema,
         404: notFoundResponseSchema,
+        409: conflictResponseSchema,
       },
     },
   }, rbacController.updateServiceRoutes.bind(rbacController) as never)
@@ -529,18 +535,28 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
 
   // Bindings: user → groups + org membership (from Kratos). Routed through the
   // service so the shape can't drift from the tested getBindingsFromKratos().
-  fastify.get('/bindings', async (_request, reply) => {
+  fastify.get('/bindings', {
+    schema: {
+      description:
+        'OPAL data source: user → groups + org membership, read from Kratos. 503 when Kratos cannot be ' +
+        'read, so OPAL keeps the bindings OPA already holds instead of replacing them with an empty set.',
+      tags: ['rbac'],
+      // No 200 schema: the dataset is keyed by email — let it pass through unserialized.
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
     try {
       const bindings = await rbacService.getBindingsFromKratos()
       return reply.send(bindings)
-    } catch {
-      // Fail closed: if Kratos is unreachable, publish an empty (full-shape)
-      // dataset so OPA denies rather than authorizing against stale/partial data.
-      return reply.send({
-        emails: {},
-        group_membership: {},
-        user_organizations: {},
-        user_organization_primary: {},
+    } catch (err) {
+      // 503, never an empty dataset. OPAL skips an entry whose fetch fails and leaves what OPA
+      // already holds at /bindings (opal_client/data/updater.py `_store_fetched_update`); an empty
+      // 200 would REPLACE it and deny everybody, super_admin included, until the next fetch.
+      // With no previous data OPA still has none at /bindings, and the policy denies on that.
+      request.log.error({ err }, 'bindings: Kratos unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Identity bindings could not be read from Kratos. Keep the last good data and retry.',
       })
     }
   })
