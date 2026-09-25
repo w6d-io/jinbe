@@ -217,7 +217,7 @@ describe('render — Site CR', () => {
     expect(siteCr.spec.hosts).toEqual(['payroll.dev.stairling.com'])
     expect(siteCr.spec.upstream).toEqual({ service: 'payroll', namespace: 'payroll', port: 8080, scheme: 'http', preserveHost: false })
     // A zone host rides the zone's wildcard Ingress: no per-site Ingress.
-    expect(siteCr.spec.exposure).toEqual({ ingress: false })
+    expect(siteCr.spec.exposure).toEqual({ mode: 'zone' })
     expect(siteCr.spec.paused).toBe(false)
     expect(siteCr.spec.gates.map((g) => g.name).sort()).toEqual(['public', 'web', 'web-preflight'])
     expect(siteCr.metadata.annotations['auth.w6d.io/spec-hash']).toMatch(/^[0-9a-f]{64}$/)
@@ -233,7 +233,7 @@ describe('render — Site CR', () => {
 
   it('vanity exposure is opt-in and renders one Ingress with the zone certificate', () => {
     const { siteCr } = render(payrollSite({ exposure: { mode: 'vanity' } }), platform)
-    expect(siteCr.spec.exposure).toEqual({ ingress: true, tls: 'wildcard' })
+    expect(siteCr.spec.exposure).toEqual({ mode: 'vanity', tls: 'wildcard' })
   })
 
   it('refuses an upstream in a platform namespace', () => {
@@ -251,6 +251,14 @@ describe('render — Site CR', () => {
     const r = render(payrollSite({ upstream: { service: 'payroll', namespace: 'payroll', port: 8443, scheme: 'https' } }), platform)
     expect(r.rules[0].upstream.url).toBe('https://payroll.payroll.svc.cluster.local:8443')
     expect(r.siteCr.spec.upstream.scheme).toBe('https')
+  })
+
+  it('the upstream fields follow the CRD: service starts with a letter, stripPath ≤ 256 and absolute', () => {
+    const up = (u: object) => siteSchema.safeParse({ ...payrollSite(), upstream: { service: 'payroll', namespace: 'payroll', port: 80, ...u } }).success
+    expect(up({ service: '1payroll' })).toBe(false)
+    expect(up({ stripPath: 'api' })).toBe(false)
+    expect(up({ stripPath: `/${'a'.repeat(256)}` })).toBe(false)
+    expect(up({ stripPath: '/api' })).toBe(true)
   })
 
   it('refuses a free-form upstream URL at the schema', () => {

@@ -85,12 +85,13 @@ export const siteSchema = z
     // to `<svc>.<ns>.svc.cluster.local` outside the platform namespaces (site-operator.md §5).
     upstream: z
       .object({
-        service: dnsLabel,
+        // Same patterns as the Site CRD (site-operator config/crd/bases/auth.w6d.io_sites.yaml).
+        service: z.string().regex(/^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/, 'a Service name'),
         namespace: dnsLabel,
         port: z.number().int().min(1).max(65535),
         scheme: z.enum(['http', 'https']).optional(),
         preserveHost: z.boolean().optional(),
-        stripPath: routePath.optional(),
+        stripPath: z.string().max(256).regex(/^\/[^\s]*$/, 'an absolute path').optional(),
       })
       .strict(),
     // zone (default): rules only, the zone's wildcard already reaches the gateway. vanity: one Ingress.
