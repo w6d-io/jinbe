@@ -35,6 +35,12 @@ describe('the table collected from the guards', () => {
     expect(declaredRoutes()[0].permission).toBe('admin:write')
   })
 
+  it('finds the guard inside a route\'s preHandler array, as guardAll passes it', () => {
+    const routeGuards = [enforcing(async () => {}, 'admin:write'), async () => {}]
+    recordRoute('POST', '/x', [routeGuards, enforcing(async () => {}, 'admin:read')], never)
+    expect(declaredRoutes()[0].permission).toBe('admin:write')
+  })
+
   it('records every verb a route is registered for', () => {
     recordRoute(['GET', 'HEAD'], '/x', [enforcing(async () => {}, 'admin:read')], never)
     expect(declaredRoutes().map((r) => r.method)).toEqual(['GET', 'HEAD'])

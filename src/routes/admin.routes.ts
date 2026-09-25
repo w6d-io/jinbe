@@ -33,6 +33,7 @@ import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
 import { userAccessRoutes } from './user-access.routes.js'
+import { sitesRoutes } from '../sites/routes.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -235,6 +236,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   await organisationAdminRoutes(fastify)
   // One user's site + org access, behind this plugin's admin:read gate.
   await userAccessRoutes(fastify)
+  // Plug a site: intent, drafts, preview, apply (its own plugin, so its zod-only validation stays local).
+  await fastify.register(sitesRoutes, { prefix: '/sites' })
 
   /**
    * The authorization model the engine decides against: what each group grants, and where.

@@ -63,15 +63,30 @@ export function routesTie(a: Rule, b: Rule): boolean {
   return patternsOverlap(a.path, b.path)
 }
 
+/**
+ * The hosts an app-pinned service is served on (a Site: its Oathkeeper rules put `"app":"<site>"` in
+ * the payload). The policy never asks `owning_apps` for such a request, so two pinned services only
+ * compete where they share a host. A service absent from the map is unpinned and competes everywhere.
+ */
+export type PinnedHosts = Record<string, readonly string[]>
+
+function hostsDisjoint(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (!a?.length || !b?.length) return false
+  const mine = new Set(a.map((h) => h.toLowerCase()))
+  return !b.some((h) => mine.has(h.toLowerCase()))
+}
+
 /** Ties between `rules` (for `service`) and every OTHER service's rules. A service never ties with itself. */
 export function findRouteTies(
   service: string,
   rules: readonly Rule[],
   others: Record<string, readonly Rule[]>,
+  pinnedHosts: PinnedHosts = {},
 ): RouteTie[] {
   const ties: RouteTie[] = []
   for (const [otherService, otherRules] of Object.entries(others)) {
     if (otherService === service) continue
+    if (hostsDisjoint(pinnedHosts[service], pinnedHosts[otherService])) continue
     for (const rule of rules) {
       for (const other of otherRules) {
         if (routesTie(rule, other)) {
