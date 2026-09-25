@@ -52,6 +52,10 @@ const { redisMock, redisModule } = vi.hoisted(() => {
 vi.mock('../../../services/redis-client.service.js', () => redisModule)
 
 import { auditEventService } from '../../../services/audit-event.service.js'
+import { auditLog } from '../../../audit/v1/index.js'
+
+// These cases are about the legacy Redis stream; the audit/v1 side has its own suite.
+auditLog.useSinks({ write: () => {}, outbox: { append: async () => '' } })
 
 const MAIN = 'auth:audit:events'
 

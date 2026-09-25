@@ -47,6 +47,12 @@ export const envSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
+  // Metrics — Prometheus is served on its own port (0 turns it off), never on the app port the
+  // gateway fronts. With a token set, a scrape must present it as a bearer.
+  METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
+  METRICS_HOST: z.string().default('0.0.0.0'),
+  METRICS_TOKEN: z.string().min(16).optional(),
+
   // API Documentation
   ENABLE_SWAGGER: z
     .string()
@@ -219,6 +225,15 @@ export const envSchema = z.object({
   // fan-out keys carry their own tighter cap. Retention is bounded by this
   // number — there is no tamper-evident/WORM store in this pass.
   REDIS_AUDIT_MAXLEN: z.string().transform(Number).pipe(z.number().int().positive()).default('100000'),
+  // Where audit events go. `legacy` — the Redis stream above only. `dual` — that stream AND the
+  // audit/v1 line (stdout, `log_type:"audit"`) plus its outbox. `v1` — the v1 line and outbox only;
+  // the legacy /admin/audit reads then stop receiving new rows.
+  AUDIT_SINK: z.enum(['legacy', 'dual', 'v1']).default('dual'),
+  // Key for the HMACs that stand in for an IP, a session id or an unknown identifier in audit/v1.
+  // Unset: those fields are left out (the truncated network is still written).
+  AUDIT_HMAC_KEY: z.string().min(32).optional(),
+  // Durable copy of every v1 event until the archive confirms it. Never trimmed by count.
+  AUDIT_OUTBOX_STREAM: z.string().default('auth:audit:outbox'),
 
   // Service Creation Defaults (for Oathkeeper rules and kustomization).
   // The defaults are placeholders — every production deployment must set
