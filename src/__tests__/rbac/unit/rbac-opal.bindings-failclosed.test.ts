@@ -4,7 +4,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 // Integration-style: exercise the REAL /bindings handler → real rbacService →
 // real kratosService → mocked global.fetch. Only Redis is stubbed (the path
 // under test doesn't touch it). A Kratos call that rejects (as an aborted /
-// timed-out request does) must fail closed to an empty full-shape dataset.
+// timed-out request does) must answer 503: OPAL then keeps the bindings OPA already holds,
+// where an empty dataset would have denied everyone until the next fetch.
 
 const { redisModule } = vi.hoisted(() => {
   const stub = {
@@ -49,14 +50,15 @@ function createMockFastify() {
 
 function createMockReply() {
   const reply = {
+    _status: 200,
     _body: undefined as unknown,
-    status: vi.fn(function (this: typeof reply) { return this }),
+    status: vi.fn(function (this: typeof reply, s: number) { this._status = s; return this }),
     send: vi.fn(function (this: typeof reply, b: unknown) { this._body = b; return this }),
   }
-  return reply as unknown as FastifyReply & { _body: unknown }
+  return reply as unknown as FastifyReply & { _status: number; _body: unknown }
 }
 
-describe('GET /bindings — fail closed on aborted/timed-out Kratos', () => {
+describe('GET /bindings — 503 on aborted/timed-out Kratos', () => {
   let fastify: ReturnType<typeof createMockFastify>
 
   beforeEach(async () => {
@@ -67,7 +69,7 @@ describe('GET /bindings — fail closed on aborted/timed-out Kratos', () => {
     await rbacOpalRoutes(fastify)
   })
 
-  it('returns the empty 4-key dataset when the Kratos fetch rejects (abort)', async () => {
+  it('answers 503, not an empty dataset, when the Kratos fetch rejects (abort)', async () => {
     // Reject exactly as node fetch does when its AbortSignal fires.
     global.fetch = vi.fn().mockRejectedValue(new Error('The operation was aborted'))
 
@@ -75,13 +77,9 @@ describe('GET /bindings — fail closed on aborted/timed-out Kratos', () => {
       (r) => r.method === 'GET' && r.path === '/bindings'
     )!.handler
     const reply = createMockReply()
-    await handler({} as FastifyRequest, reply)
+    await handler({ log: { error: vi.fn() } } as unknown as FastifyRequest, reply)
 
-    expect(reply._body).toEqual({
-      emails: {},
-      group_membership: {},
-      user_organizations: {},
-      user_organization_primary: {},
-    })
+    expect(reply._status).toBe(503)
+    expect(reply._body).not.toHaveProperty('group_membership')
   })
 })

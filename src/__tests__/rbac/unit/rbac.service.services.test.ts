@@ -146,6 +146,26 @@ describe('RbacService - Services', () => {
     })
   })
 
+  describe('updateServiceRoutes — refuse a route another service already owns at the same rank', () => {
+    it('409s naming both services and the path, and writes nothing', async () => {
+      await expect(
+        service.updateServiceRoutes('kuma', [{ method: 'GET', path: '/api/jinbe/health' }]),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringMatching(/kuma.*GET \/api\/jinbe\/health.*jinbe/),
+      })
+      expect(JSON.parse((await redisMock.get('rbac:route_map:kuma'))!)).toEqual({
+        rules: [{ method: 'GET', path: '/api/kuma/health' }],
+      })
+    })
+
+    it('accepts an overlap at a different specificity (most specific wins in policy)', async () => {
+      await expect(
+        service.updateServiceRoutes('kuma', [{ method: 'GET', path: '/api/:any*' }]),
+      ).resolves.toMatchObject({ success: true })
+    })
+  })
+
   describe('org → service bundle map', () => {
     const ORG = '11111111-1111-1111-1111-111111111111'
 

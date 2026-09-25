@@ -120,18 +120,15 @@ describe('rbacOpalRoutes — /bindings', () => {
       expect(reply._body).toEqual(bindings)
     })
 
-    it('fails closed to an empty full-shape dataset when Kratos is unavailable', async () => {
+    it('answers 503 when Kratos is unavailable, so OPAL keeps the last good bindings', async () => {
       mocks.getBindingsFromKratos.mockRejectedValueOnce(new Error('Kratos unreachable'))
 
       const reply = createMockReply()
-      await handlerFor('/bindings')({} as FastifyRequest, reply)
+      await handlerFor('/bindings')({ log: { error: vi.fn() } } as unknown as FastifyRequest, reply)
 
-      expect(reply._body).toEqual({
-        emails: {},
-        group_membership: {},
-        user_organizations: {},
-        user_organization_primary: {},
-      })
+      // An empty dataset here would replace OPA's bindings and deny everyone, super_admin included.
+      expect(reply._status).toBe(503)
+      expect(reply._body).not.toHaveProperty('group_membership')
     })
   })
 })

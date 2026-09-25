@@ -121,6 +121,33 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     })
   })
 
+  describe('route ties across services', () => {
+    it('rejects a bundle where two services own one route at the same rank — nothing written', async () => {
+      const bad = makeBundle({
+        services: ['jinbe', 'billing'],
+        routeMaps: {
+          jinbe: { rules: [{ method: 'GET', path: '/api/clusters/:id', permission: 'clusters:read' }] },
+          billing: { rules: [{ method: 'GET', path: '/api/clusters/:clusterId' }] },
+        },
+      })
+      const err = await rbacBundleService.import(bad).catch((e) => e)
+      expect(err.statusCode).toBe(409)
+      expect(err.message).toMatch(/jinbe.*\/api\/clusters\/:id.*billing|billing.*jinbe/)
+      expect(await redisRbacRepository.getServices()).toEqual([])
+      expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
+    })
+
+    it('a routeMaps-only import is checked against the services it leaves in place', async () => {
+      await redisRbacRepository.addService('kuma')
+      await redisRbacRepository.addService('jinbe')
+      await redisRbacRepository.setRouteMap('kuma', { rules: [{ method: 'GET', path: '/api/x' }] })
+      const bad = makeBundle({ routeMaps: { jinbe: { rules: [{ method: 'GET', path: '/api/x' }] } } })
+      const err = await rbacBundleService.import(bad, undefined, ['routeMaps']).catch((e) => e)
+      expect(err.statusCode).toBe(409)
+      expect(await redisRbacRepository.getRouteMap('jinbe')).toBeNull()
+    })
+  })
+
   describe('import history (rbac:import:history)', () => {
     it('pushes a pre-import snapshot on every import, newest first, with actor + reason', async () => {
       await rbacBundleService.import(makeBundle(), { email: 'admin@example.com' })

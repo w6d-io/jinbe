@@ -1,4 +1,5 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { describeRouteTie, findRouteTies, loadPublishedRouteRules } from '../policy/route-ties.js'
 import type { BootstrapLogger, RouteRule } from './types.js'
 
 /**
@@ -68,6 +69,10 @@ export async function mergeJinbeRouteMap(
     }
   }
 
+  // Built-ins are code, so they are not refused here — but a service that already declares one of
+  // them at the same rank leaves that route ownerless in policy (not_found for everybody). Say so.
+  await reportRouteTies([...existingRules, ...toAdd], logger)
+
   if (toAdd.length === 0) {
     logger.debug({ total: existingRules.length }, 'Jinbe route_map up to date — no new built-in routes')
     return { added: 0, total: existingRules.length }
@@ -77,4 +82,14 @@ export async function mergeJinbeRouteMap(
   await redisRbacRepository.setRouteMap('jinbe', { rules: merged })
   logger.info({ added: toAdd.length, total: merged.length }, 'Jinbe route_map updated with new built-in routes')
   return { added: toAdd.length, total: merged.length }
+}
+
+async function reportRouteTies(rules: RouteRule[], logger: BootstrapLogger): Promise<void> {
+  const ties = findRouteTies('jinbe', rules, await loadPublishedRouteRules())
+  for (const tie of ties) {
+    logger.error(
+      { tie },
+      `Jinbe route_map: ${describeRouteTie(tie)} — the policy answers not_found on it until one side changes`,
+    )
+  }
 }

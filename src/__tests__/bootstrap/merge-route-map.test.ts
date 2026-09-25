@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { RouteRule } from '../../bootstrap/types.js'
 
-const store = vi.hoisted(() => ({ routeMap: null as { rules: RouteRule[] } | null }))
+const store = vi.hoisted(() => ({
+  routeMap: null as { rules: RouteRule[] } | null,
+  others: {} as Record<string, { rules: RouteRule[] }>,
+}))
 
 vi.mock('../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
-    getRouteMap: vi.fn(async () => store.routeMap),
+    getRouteMap: vi.fn(async (svc: string) => (svc === 'jinbe' ? store.routeMap : store.others[svc] ?? null)),
+    getServices: vi.fn(async () => ['jinbe', ...Object.keys(store.others)]),
     setRouteMap: vi.fn(async (_svc: string, rm: { rules: RouteRule[] }) => { store.routeMap = rm }),
   },
 }))
@@ -17,6 +21,7 @@ const P = '/api/organizations/:organizationId/users'
 
 beforeEach(() => {
   store.routeMap = null
+  store.others = {}
   vi.clearAllMocks()
 })
 
@@ -69,5 +74,13 @@ describe('mergeJinbeRouteMap', () => {
     store.routeMap = { rules: [{ method: 'GET', path: '/api/custom', permission: 'custom:read' }] }
     await mergeJinbeRouteMap([{ method: 'GET', path: P, permission: 'org:manage_users' }], logger)
     expect(store.routeMap!.rules).toContainEqual({ method: 'GET', path: '/api/custom', permission: 'custom:read' })
+  })
+
+  it('logs an error naming both services when a built-in route ties with another service', async () => {
+    store.others = { billing: { rules: [{ method: 'GET', path: '/api/clusters/:clusterId' }] } }
+    await mergeJinbeRouteMap([{ method: 'GET', path: '/api/clusters/:id', permission: 'clusters:read' }], logger)
+    const error = (logger as unknown as { error: ReturnType<typeof vi.fn> }).error
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(error.mock.calls[0])).toMatch(/billing.*\/api\/clusters\/:clusterId|jinbe.*billing/)
   })
 })

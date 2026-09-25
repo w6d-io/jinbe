@@ -5,6 +5,7 @@ import { rbacService } from './rbac.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import { oathkeeperRuleSchema } from '../schemas/rbac/access-rules.schema.js'
 import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oathkeeper-handlers.js'
+import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
 
 export interface AuthBundle {
   version: '1'
@@ -137,6 +138,21 @@ class RbacBundleService {
     if (failures.length > 0) throw new BundleValidationError(failures)
   }
 
+  /**
+   * Rejects (409, before any write) an import whose resulting route maps — what OPA would see once
+   * it is applied — hold two services tied on one route at the same specificity.
+   */
+  private async validateRouteTies(bundle: AuthBundle, want: (s: BundleSection) => boolean, isFull: boolean): Promise<void> {
+    const current = await loadPublishedRouteRules()
+    const services = !want('services') ? Object.keys(current)
+      : isFull ? bundle.rbac.services
+      : [...new Set([...Object.keys(current), ...bundle.rbac.services])]
+    const incoming = want('routeMaps') ? bundle.rbac.routeMaps ?? {} : {}
+    const after = Object.fromEntries(services.map((svc) => [svc, incoming[svc]?.rules ?? current[svc] ?? []]))
+    const ties = findAllRouteTies(after)
+    if (ties.length > 0) throw routeTieConflict(ties)
+  }
+
   async import(bundle: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
     const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
     // `sections` (optional) restricts a selective import to the chosen parts.
@@ -149,6 +165,9 @@ class RbacBundleService {
     // Fail-closed: reject the whole import BEFORE any write if a rule is
     // malformed or references a non-enabled handler (see validateOathkeeperRules).
     if (want('oathkeeperRules')) this.validateOathkeeperRules(oathkeeperRules ?? [])
+
+    // Same refusal as a route write: two services tied on one route leave it ownerless in policy.
+    if (want('routeMaps') || want('services')) await this.validateRouteTies(bundle, want, isFull)
 
     // Pre-apply snapshot → rollback point. Taken AFTER validation so a rejected
     // import leaves no trace, but BEFORE any write so a partial failure (below)

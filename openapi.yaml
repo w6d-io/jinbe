@@ -3128,6 +3128,101 @@ paths:
                     type: string
                   message:
                     type: string
+    post:
+      tags:
+        - admin
+      description: Create an organisation from a name. No service bundle is required.
+        Needs admin.organisation:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                tenant:
+                  type: string
+                  pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                  description: Namespace-shaped label; derived from the name when omitted.
+              additionalProperties: false
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  tenant:
+                    type: string
+                  applications:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/authorization-model:
     get:
       tags:
@@ -4540,9 +4635,24 @@ paths:
                     type: string
   /api/admin/rbac/bindings:
     get:
+      tags:
+        - rbac
+      description: "OPAL data source: user → groups + org membership, read from
+        Kratos. 503 when Kratos cannot be read, so OPAL keeps the bindings OPA
+        already holds instead of replacing them with an empty set."
       responses:
-        "200":
+        "503":
           description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/rbac/opal/groups:
     get:
       responses:
@@ -4585,6 +4695,163 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/rbac/access-check:
+    post:
+      tags:
+        - rbac
+      description: "Ask OPA whether a user may call METHOD PATH and why: the gateway
+        verdict (rbac.decision) plus the owning service, the route rules that
+        matched, and the groups, roles and permissions that applied
+        (rbac.simulate). `owners` with two or more services is a route tie,
+        which the policy answers not_found. Requires admin:write. 503 when
+        OPA_URL / OPA_TOKEN are not configured; 502 when OPA does not answer."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - method
+                - path
+              properties:
+                email:
+                  type: string
+                  format: email
+                method:
+                  type: string
+                  description: GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS (any case)
+                path:
+                  type: string
+                  description: Absolute request path, no query string, e.g. /api/clusters/42
+                app:
+                  type: string
+                  description: Pin the service instead of letting the policy resolve the owner
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allow:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum:
+                      - ok
+                      - not_found
+                      - forbidden
+                      - forbidden_org
+                  app:
+                    type:
+                      - "null"
+                      - string
+                  owners:
+                    type: array
+                    items:
+                      type: string
+                  matchingRules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        method:
+                          type: string
+                        path:
+                          type: string
+                        permission:
+                          type: string
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                  superAdmin:
+                    type: boolean
+                required:
+                  - allow
+                  - reason
+                  - app
+                  - owners
+                  - matchingRules
+                  - groups
+                  - roles
+                  - permissions
+                  - superAdmin
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "502":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/rbac/users:
     get:
       tags:
@@ -5305,7 +5572,10 @@ paths:
     put:
       tags:
         - rbac
-      description: Replace the route map for a specific service.
+      description: "Replace the route map for a specific service. 409 when a route
+        ties with another service's at the same specificity (exact == exact,
+        same :param shape, same :any* prefix): the policy would leave it with no
+        owner and refuse every request on it."
       requestBody:
         required: true
         content:
@@ -5385,6 +5655,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Conflict
                   message:
                     type: string
   /api/admin/rbac/services/{name}/routes/import/preview:
@@ -6409,7 +6691,9 @@ paths:
         - backup
       description: Import an auth bundle — restores RBAC config. Body must be a full
         snapshot; ?sections=services,groups,… applies only those parts
-        (override/add, no prune), omitted = full 1:1 restore.
+        (override/add, no prune), omitted = full 1:1 restore. 409 (nothing
+        written) when the resulting route maps tie two services on one route at
+        the same specificity.
       requestBody:
         required: true
         content:
@@ -6446,6 +6730,18 @@ paths:
                   error:
                     type: string
                     example: Bad Request
+                  message:
+                    type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Conflict
                   message:
                     type: string
   /api/admin/rbac/bundle/backups:
@@ -8400,7 +8696,9 @@ paths:
     delete:
       tags:
         - organization-users
-      description: Delete a user from this organization
+      description: "Remove a user from this organization. Only this membership is
+        dropped: the identity, its other organizations and its site access are
+        kept."
       parameters:
         - schema:
             type: string
@@ -8418,7 +8716,7 @@ paths:
           description: User ID
       responses:
         "204":
-          description: User deleted
+          description: Membership removed
         "401":
           description: Default Response
           content:
@@ -8455,6 +8753,183 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/users/{id}/membership:
+    put:
+      tags:
+        - organization-users
+      description: Add an existing user to this organization, keeping their other
+        memberships. Idempotent.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+          description: User ID
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  schema_id:
+                    type: string
+                  schema_url:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                      - active
+                      - inactive
+                  state_changed_at:
+                    type: string
+                    format: date-time
+                  traits:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: string
+                        description: User display name
+                      picture:
+                        type: string
+                        format: uri
+                        description: User avatar URL
+                      providers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            issuer_url:
+                              type: string
+                            provider_type:
+                              type: string
+                    required:
+                      - email
+                  metadata_public:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  metadata_admin:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  organization_id:
+                    type: string
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                    description: User groups from OPAL RBAC
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                    description: User roles from OPAL RBAC
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                    description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
+                  credentials:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
                   message:
                     type: string
   /api/organizations/{organizationId}/users/{id}/groups:

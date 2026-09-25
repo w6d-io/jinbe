@@ -204,6 +204,10 @@ export const envSchema = z.object({
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),
   // Shared with the OPAL client (its OPAL_CLIENT_TOKEN). Unset: the OPAL data routes refuse everyone.
   OPAL_CLIENT_TOKEN: z.string().min(32).optional(),
+  // OPA (the opal-client sidecar) and its bearer token (the client's OPAL_POLICY_STORE_AUTH_TOKEN),
+  // for the admin access check. Either unset: POST /api/admin/rbac/access-check answers 503.
+  OPA_URL: z.string().url().optional(),
+  OPA_TOKEN: z.string().min(1).optional(),
 
 
   // Redis (RBAC data store + audit streams)
