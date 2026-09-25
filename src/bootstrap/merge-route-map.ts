@@ -20,7 +20,11 @@ import type { BootstrapLogger, RouteRule } from './types.js'
  *   rule, so adding a variant widens by exactly that one role and leaves the
  *   others intact.
  *
- * The merge is append-only: it never deletes or rewrites an existing rule.
+ * The merge never deletes a rule. The one rewrite it does is narrowing-only: a
+ * built-in rule's `org_param`, copied onto the identical (method, path,
+ * permission) rule already stored when that rule has none — it confines the
+ * route to members of the org in its path and grants nothing. An org_param the
+ * operator set is left alone.
  */
 const pathKey = (r: RouteRule): string => `${r.method}:${r.path}`
 const perm = (r: RouteRule): string => r.permission ?? ''
@@ -69,18 +73,30 @@ export async function mergeJinbeRouteMap(
     }
   }
 
+  // Backfill org_param onto stored rules that match a built-in exactly and carry none.
+  let backfilled = 0
+  const builtInOrgParam = new Map(
+    builtInRoutes.filter((r) => r.org_param).map((r) => [`${pathKey(r)}:${perm(r)}`, r.org_param!]),
+  )
+  const existingWithOrgParam = existingRules.map((r) => {
+    const orgParam = builtInOrgParam.get(`${pathKey(r)}:${perm(r)}`)
+    if (!orgParam || r.org_param !== undefined) return r
+    backfilled++
+    return { ...r, org_param: orgParam }
+  })
+
   // Built-ins are code, so they are not refused here — but a service that already declares one of
   // them at the same rank leaves that route ownerless in policy (not_found for everybody). Say so.
-  await reportRouteTies([...existingRules, ...toAdd], logger)
+  await reportRouteTies([...existingWithOrgParam, ...toAdd], logger)
 
-  if (toAdd.length === 0) {
+  if (toAdd.length === 0 && backfilled === 0) {
     logger.debug({ total: existingRules.length }, 'Jinbe route_map up to date — no new built-in routes')
     return { added: 0, total: existingRules.length }
   }
 
-  const merged = [...existingRules, ...toAdd]
+  const merged = [...existingWithOrgParam, ...toAdd]
   await redisRbacRepository.setRouteMap('jinbe', { rules: merged })
-  logger.info({ added: toAdd.length, total: merged.length }, 'Jinbe route_map updated with new built-in routes')
+  logger.info({ added: toAdd.length, backfilled, total: merged.length }, 'Jinbe route_map updated with new built-in routes')
   return { added: toAdd.length, total: merged.length }
 }
 

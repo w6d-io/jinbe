@@ -3218,6 +3218,105 @@ paths:
                     example: Service Unavailable
                   message:
                     type: string
+  /api/admin/users/{id}/access:
+    get:
+      tags:
+        - admin
+      description: "A user's site access (groups → roles per service) and org access
+        (per org: admin flag and the groups granted there). Needs admin:read."
+      parameters:
+        - schema:
+            type: string
+            maxLength: 128
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site:
+                    type: object
+                    properties:
+                      groups:
+                        type: array
+                        items:
+                          type: string
+                      byService:
+                        type: object
+                        additionalProperties:
+                          type: array
+                          items:
+                            type: string
+                  orgs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        orgId:
+                          type: string
+                        name:
+                          type: string
+                        admin:
+                          type: boolean
+                        grants:
+                          type: array
+                          items:
+                            type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/authorization-model:
     get:
       tags:
@@ -4658,6 +4757,26 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/rbac/opal/org_grants:
+    get:
+      tags:
+        - rbac
+      description: "OPAL data source: groups handed out per org by its admins
+        (data.org_grants). 503 when the store cannot be read, so OPAL keeps the
+        org grants OPA already holds."
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/rbac/opal/roles/{service}:
     get:
       parameters:
@@ -5589,6 +5708,10 @@ paths:
                         type: string
                       permission:
                         type: string
+                      org_param:
+                        type: string
+                        description: Name of the :param in `path` carrying the org id; the route is then
+                          that org's only. 400 when the path has no such param.
       parameters:
         - schema:
             type: string
@@ -5608,6 +5731,18 @@ paths:
                   message:
                     type: string
                   timestamp:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
                     type: string
         "401":
           description: Default Response
@@ -7995,61 +8130,6 @@ paths:
       responses:
         "200":
           description: Default Response
-  /api/organizations/{organizationId}/assignable-groups:
-    get:
-      tags:
-        - organization-users
-      description: List the groups the caller may assign within this organization
-        (containment-bounded, scoped to the org service)
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: organizationId
-          required: true
-          description: Organization identifier
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  groups:
-                    type: array
-                    items:
-                      type: string
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
   /api/organizations/{organizationId}/users:
     get:
       tags:
@@ -9113,6 +9193,294 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/organizations/{organizationId}/grants:
+    get:
+      tags:
+        - organization-users
+      description: Groups handed out in this organization, per member
+        (data.org_grants[org]). Org admin or super_admin.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grants:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/users/{id}/grants:
+    put:
+      tags:
+        - organization-users
+      description: Replace a member's grants in this organization. Every group being
+        added must pass OPA data.rbac.delegation.can_grant; one refusal refuses
+        the whole write (403 with `refused`) and nothing is written. 503 when
+        OPA_URL / OPA_TOKEN are unset, 502 when OPA does not answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - groups
+              properties:
+                groups:
+                  type: array
+                  items:
+                    type: string
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+          description: User ID
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: string
+                  groups:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group:
+                          type: string
+                        reason:
+                          type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "502":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/assignable-groups:
+    get:
+      tags:
+        - organization-users
+      description: Groups the caller may grant in this organization (OPA
+        data.rbac.delegation.assignable_groups, kept to this org's service
+        bundle), each with its roles per service.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        services:
+                          type: object
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "502":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/organizations/{organizationId}/api-keys:
     post:
       tags:
@@ -9199,6 +9567,9 @@ paths:
                     example: Bad Request
                   message:
                     type: string
+                  details:
+                    type: object
+                    additionalProperties: true
         "401":
           description: Default Response
           content:

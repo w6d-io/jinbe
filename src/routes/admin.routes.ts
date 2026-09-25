@@ -32,6 +32,7 @@ import { allEntitlements, allOrganisations, organisationStoreConfigured } from '
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
+import { userAccessRoutes } from './user-access.routes.js'
 
 /**
  * Admin routes for user management via Kratos Admin API
@@ -232,6 +233,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   // Creating an organisation: its own file, behind this plugin's guard.
   await organisationAdminRoutes(fastify)
+  // One user's site + org access, behind this plugin's admin:read gate.
+  await userAccessRoutes(fastify)
 
   /**
    * The authorization model the engine decides against: what each group grants, and where.

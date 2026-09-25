@@ -45,27 +45,6 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireManageableOrg())
 
   fastify.get(
-    '/assignable-groups',
-    {
-      schema: {
-        description:
-          'List the groups the caller may assign within this organization (containment-bounded, scoped to the org service)',
-        tags: ['organization-users'],
-        params: organizationIdParamJsonSchema,
-        response: {
-          200: {
-            type: 'object',
-            properties: { groups: { type: 'array', items: { type: 'string' } } },
-          },
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-        },
-      },
-    },
-    organizationUserController.listAssignableGroups.bind(organizationUserController)
-  )
-
-  fastify.get(
     '/users',
     {
       schema: {

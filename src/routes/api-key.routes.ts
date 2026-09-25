@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify'
 import { apiKeyController } from '../controllers/api-key.controller.js'
-import { requireServiceAdmin } from '../middleware/require-service-admin.js'
+import { requireOrgPermission } from '../middleware/require-org-permission.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import {
   organizationIdParamJsonSchema,
   apiKeyClientIdParamJsonSchema,
@@ -20,16 +22,26 @@ import {
  * Organization-scoped API-key (Hydra OAuth2 client) management.
  *
  * Mounted under /api/organizations/:organizationId. Every route requires the
- * caller to be an admin of the target organization (OPA-resolved, via
- * requireServiceAdmin) — i.e. an authenticated Kratos admin (Hydra spec §4).
+ * caller to manage THAT organization's keys (`org:manage_api_keys`): its org
+ * admin, super_admin, or a member holding the permission there (site grants ∪
+ * org_grants of that org). Holding it in another organization counts for
+ * nothing. Declared in jinbe's route_map with `org_param` so the gateway draws
+ * the same org boundary.
  *
  * POST   /api-keys            - create a key (returns client_secret ONCE)
  * GET    /api-keys            - list keys (no secrets)
  * GET    /api-keys/:clientId  - get one key (no secret)
  * DELETE /api-keys/:clientId  - revoke a key
  */
+// The 400 carries WHY (e.g. details.invalid_scopes / details.allowed_scopes): the shared
+// badRequestResponseSchema would strip it on serialization.
+const apiKeyBadRequestResponseSchema = {
+  ...badRequestResponseSchema,
+  properties: { ...badRequestResponseSchema.properties, details: { type: 'object', additionalProperties: true } },
+}
+
 export async function apiKeyRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', requireServiceAdmin())
+  guardAll(fastify, requireOrgPermission('org:manage_api_keys', 'organizationId'), isPublicRoute)
 
   fastify.post(
     '/api-keys',
@@ -43,7 +55,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
         body: apiKeyCreateBodyJsonSchema,
         response: {
           201: apiKeySecretViewJsonSchema,
-          400: badRequestResponseSchema,
+          400: apiKeyBadRequestResponseSchema,
           401: unauthorizedResponseSchema,
           403: forbiddenResponseSchema,
         },

@@ -83,4 +83,19 @@ describe('mergeJinbeRouteMap', () => {
     expect(error).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(error.mock.calls[0])).toMatch(/billing.*\/api\/clusters\/:clusterId|jinbe.*billing/)
   })
+  it('backfills org_param onto an existing identical built-in rule — narrowing only, nothing else changes', async () => {
+    store.routeMap = { rules: [{ method: 'GET', path: P, permission: 'admin:read' }, { method: 'GET', path: '/x' }] }
+    const { added } = await mergeJinbeRouteMap([{ method: 'GET', path: P, permission: 'admin:read', org_param: 'organizationId' }], logger)
+    expect(added).toBe(0)
+    expect(store.routeMap!.rules).toEqual([
+      { method: 'GET', path: P, permission: 'admin:read', org_param: 'organizationId' },
+      { method: 'GET', path: '/x' },
+    ])
+  })
+
+  it('never overwrites an org_param the operator set', async () => {
+    store.routeMap = { rules: [{ method: 'GET', path: P, permission: 'admin:read', org_param: 'orgX' }] }
+    await mergeJinbeRouteMap([{ method: 'GET', path: P, permission: 'admin:read', org_param: 'organizationId' }], logger)
+    expect(store.routeMap!.rules).toEqual([{ method: 'GET', path: P, permission: 'admin:read', org_param: 'orgX' }])
+  })
 })

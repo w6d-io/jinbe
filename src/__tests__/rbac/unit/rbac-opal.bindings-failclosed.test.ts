@@ -24,7 +24,7 @@ const { redisModule } = vi.hoisted(() => {
 
 vi.mock('../../../services/redis-client.service.js', () => redisModule)
 
-import { rbacOpalRoutes } from '../../../routes/rbac.routes.js'
+import { rbacOpalRoutes } from '../../../routes/rbac-opal.routes.js'
 import { kratosService } from '../../../services/kratos.service.js'
 
 type Handler = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>

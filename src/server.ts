@@ -23,7 +23,9 @@ import { whoamiRoutes } from './routes/whoami.routes.js'
 import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { jobRoutes } from './routes/job.routes.js'
-import { rbacRoutes, rbacOpalRoutes } from './routes/rbac.routes.js'
+import { rbacRoutes } from './routes/rbac.routes.js'
+import { orgGrantsRoutes } from './routes/org-grants.routes.js'
+import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
@@ -164,7 +166,7 @@ export async function buildServer() {
       await api.register(backupItemRoutes, { prefix: '/backup-items' })
       await api.register(databaseAPIRoutes, { prefix: '/database-apis' })
       await api.register(adminRoutes, { prefix: '/admin' })
-      await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // Public OPAL data endpoints (no auth)
+      await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
@@ -176,6 +178,7 @@ export async function buildServer() {
       await api.register(directoryRoutes, { prefix: '/directory' })
       await api.register(opaPolicyBundleRoutes, { prefix: '/opa' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
+      await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
       await api.register(opaBundleRoutes, { prefix: '/opa' })
