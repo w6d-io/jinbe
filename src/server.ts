@@ -21,15 +21,20 @@ import { databaseAPIRoutes } from './routes/database-api.routes.js'
 import { whoamiRoutes } from './routes/whoami.routes.js'
 import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
+import { userManagementRoutes } from './routes/user-management.routes.js'
 import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgGrantsRoutes } from './routes/org-grants.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
+import { publicSitesRoutes } from './sites/public.routes.js'
+import { startSitesBackground } from './sites/sync.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
+import { auditApiRoutes } from './routes/audit-api.routes.js'
+import { observabilityRoutes } from './routes/observability.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
@@ -49,6 +54,7 @@ import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
 import { isPublicRoute } from './middleware/require-auth.js'
 import { recordRoute } from './policy/declared-routes.js'
+import { auditRouteWrite } from './audit/route-events.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -101,6 +107,10 @@ export async function buildServer() {
   // One request line per response + HTTP RED counters (after routes)
   fastify.addHook('onResponse', requestLogger)
 
+  // One audit/v1 event per successful write whose route-table row says the route emits it (the
+  // infrastructure CRUD, which has no emit downstream) — audit/route-events.ts, CONTROL AU-2.
+  fastify.addHook('onSend', auditRouteWrite)
+
   // Health check endpoint. Returns 503 until the bootstrap marker has been
   // observed, so Kubernetes startupProbe stays unsatisfied until ready.
   fastify.get('/api/health', {
@@ -139,12 +149,15 @@ export async function buildServer() {
       await api.register(backupRoutes, { prefix: '/backups' })
       await api.register(backupItemRoutes, { prefix: '/backup-items' })
       await api.register(databaseAPIRoutes, { prefix: '/database-apis' })
+      await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
       await api.register(adminRoutes, { prefix: '/admin' })
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
-      await api.register(auditRoutes, { prefix: '/admin/audit' })
+      await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
+      await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
+      await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
       // Answers about a named subject rather than about its caller, so it takes a machine
@@ -157,6 +170,7 @@ export async function buildServer() {
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
+      await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(jobRoutes)
     },
     { prefix: '/api' }
@@ -230,6 +244,9 @@ async function start() {
       // holds S3 creds). No-op unless backup is enabled. Replaces the external
       // aws-cli CronJob, which had no way to authenticate to /bundle/export.
       startBackupScheduler(fastify.log)
+
+      // Sites: re-create missing/drifted Site CRs from the intent, tick the migration dual run.
+      startSitesBackground(fastify.log)
     } catch (err) {
       if (err instanceof BootstrapTimeoutError) {
         fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')

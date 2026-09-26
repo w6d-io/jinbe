@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { scimTokenService } from '../services/scim-token.service.js'
-import { auditEventService } from '../services/audit-event.service.js'
 import { organisationsForSubject, organisationsById, organisationStoreConfigured } from '../services/organisation-store.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * What this service knows about somebody OTHER than the caller.
@@ -105,18 +105,7 @@ async function machineOnly(request: FastifyRequest, reply: FastifyReply) {
   const principal = presented ? await scimTokenService.verify(presented) : null
 
   if (!principal) {
-    auditEventService
-      .emit({
-        category: 'access',
-        verb: 'deny',
-        target: `${request.method} ${request.url}`,
-        result: 'denied',
-        actor: { email: null, ip: request.ip, ua: (request.headers['user-agent'] as string) || null },
-        method: request.method,
-        path: request.url,
-        reason: 'machine_credential_required',
-      })
-      .catch(() => {})
+    denyAudit(request, 'machine_credential_required')
 
     return reply.status(401).send({
       error: 'Unauthorized',

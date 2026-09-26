@@ -21,9 +21,9 @@ describe('render — route map', () => {
 
   it('emits one row per method, specific routes first, catch-all last', () => {
     expect(routeMap.slice(0, 3)).toEqual([
-      { method: 'GET', path: '/health' },
-      { method: 'GET', path: '/api/orgs/:orgId/payslips', permission: 'payslips:read', org_param: 'orgId' },
-      { method: 'POST', path: '/api/orgs/:orgId/payslips', permission: 'payslips:create', org_param: 'orgId' },
+      { id: 'health', method: 'GET', path: '/health' },
+      { id: 'payslips', method: 'GET', path: '/api/orgs/:orgId/payslips', permission: 'payslips:read', org_param: 'orgId' },
+      { id: 'create', method: 'POST', path: '/api/orgs/:orgId/payslips', permission: 'payslips:create', org_param: 'orgId' },
     ])
     const catchAll = routeMap.slice(3)
     expect(catchAll.map((r) => r.method)).toEqual(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'])
@@ -38,7 +38,7 @@ describe('render — route map', () => {
   it('a catch-all needing a permission carries it', () => {
     const site = payrollSite()
     site.routes.catchAll = { gate: 'web', access: { kind: 'permission', permission: 'payroll:read' } }
-    expect(render(site, platform).routeMap.at(-1)).toEqual({ method: 'DELETE', path: '/:any*', permission: 'payroll:read' })
+    expect(render(site, platform).routeMap.at(-1)).toEqual({ id: 'catch-all', method: 'DELETE', path: '/:any*', permission: 'payroll:read' })
   })
 
   it('refuses an org_param the policy cannot read', () => {

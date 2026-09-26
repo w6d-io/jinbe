@@ -9,11 +9,7 @@ import {
 } from '../services/enforced-config.service.js'
 import {
   userIdParamSchema,
-  usersQuerySchema,
   kratosIdentityJsonSchema,
-  kratosIdentityListJsonSchema,
-  userCreateJsonSchema,
-  userUpdateJsonSchema,
   userEmailParamSchema,
   updateUserGroupsBodyJsonSchema,
   userGroupsResponseJsonSchema,
@@ -34,17 +30,14 @@ import { isPublicRoute } from '../middleware/require-auth.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
 import { userAccessRoutes } from './user-access.routes.js'
 import { sitesRoutes } from '../sites/routes.js'
+import { gatewayRoutes } from '../gateway/routes.js'
 
 /**
- * Admin routes for user management via Kratos Admin API
+ * Admin routes, all behind `admin:read` (plus what a route adds).
  *
- * All routes require `admin:*` permission (enforced by OPAL)
- *
- * GET    /users     - List all users
- * GET    /users/:id - Get user by ID
- * POST   /users     - Create new user
- * PUT    /users/:id - Update user by ID
- * DELETE /users/:id - Delete user by ID
+ * Listing, reading, creating, editing and deleting users, their sessions, recovery and sign-in links
+ * live in `user-management.routes.ts`: one permission per action, so a support role can reach them
+ * without this plugin's gate.
  */
 export async function adminRoutes(fastify: FastifyInstance) {
   // Require admin group membership for all routes in this plugin
@@ -76,29 +69,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
     reply.raw.on('error', cleanup)
     reply.hijack()
   })
-
-  // List all users
-  fastify.get(
-    '/users',
-    {
-      schema: {
-        description: 'List all users from Kratos identity service',
-        tags: ['admin'],
-        querystring: zodToJsonSchema(usersQuerySchema),
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              data: kratosIdentityListJsonSchema,
-              next_page_token: { type: 'string', nullable: true },
-            },
-          },
-          401: unauthorizedResponseSchema,
-        },
-      },
-    },
-    adminController.listUsers.bind(adminController)
-  )
 
   // Directory stats (cached counts — total/active/perGroup/perOrg)
   fastify.get(
@@ -238,6 +208,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   await userAccessRoutes(fastify)
   // Plug a site: intent, drafts, preview, apply (its own plugin, so its zod-only validation stays local).
   await fastify.register(sitesRoutes, { prefix: '/sites' })
+  await fastify.register(gatewayRoutes, { prefix: '/gateway' })
 
   /**
    * The authorization model the engine decides against: what each group grants, and where.
@@ -443,101 +414,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Substring search over identities (email + name), cached in-memory.
-  // Declared before /users/:id; Fastify's router prefers the static segment.
-  fastify.get(
-    '/users/search',
-    {
-      schema: {
-        description: 'Search identities by email or name substring (cached; no directory walk)',
-        tags: ['admin'],
-        querystring: {
-          type: 'object',
-          properties: { q: { type: 'string' }, limit: { type: 'string' } },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: { data: { type: 'array', items: { type: 'object', additionalProperties: true } } },
-          },
-          401: unauthorizedResponseSchema,
-        },
-      },
-    },
-    adminController.searchUsers.bind(adminController)
-  )
-
-  // Get user by ID
-  fastify.get(
-    '/users/:id',
-    {
-      schema: {
-        description: 'Get user by ID from Kratos identity service',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        response: {
-          200: kratosIdentityJsonSchema,
-          401: unauthorizedResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.getUser.bind(adminController)
-  )
-
-  // Create new user
-  fastify.post(
-    '/users',
-    {
-      schema: {
-        description: 'Create new user in Kratos identity service',
-        tags: ['admin'],
-        body: {
-          oneOf: [
-            // Simplified flat format from kuma UI
-            {
-              type: 'object',
-              required: ['email'],
-              properties: {
-                email: { type: 'string', format: 'email' },
-                name: { type: 'string' },
-                groups: { type: 'array', items: { type: 'string' } },
-                sendInvite: { type: 'boolean' },
-              },
-              additionalProperties: false,
-            },
-            // Full Kratos format
-            userCreateJsonSchema,
-          ],
-        },
-        response: {
-          201: kratosIdentityJsonSchema,
-          401: unauthorizedResponseSchema,
-        },
-      },
-    },
-    adminController.createUser.bind(adminController)
-  )
-
-  // Update user by ID
-  fastify.put(
-    '/users/:id',
-    {
-      schema: {
-        description: 'Update user by ID in Kratos identity service',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        body: userUpdateJsonSchema,
-        response: {
-          200: kratosIdentityJsonSchema,
-          401: unauthorizedResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.updateUser.bind(adminController)
-  )
-
   // Patch user metadata (merge into metadata_public / metadata_admin)
   fastify.patch(
     '/users/:id/metadata',
@@ -616,27 +492,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.setUserOrganization.bind(adminController) as never
   )
 
-  // Delete user by ID
-  fastify.delete(
-    '/users/:id',
-    {
-      schema: {
-        description: 'Delete user by ID from Kratos identity service',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        response: {
-          204: {
-            type: 'null',
-            description: 'User deleted successfully',
-          },
-          401: unauthorizedResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.deleteUser.bind(adminController)
-  )
-
   // ===========================================================================
   // User Group Management (Kratos-backed)
   // ===========================================================================
@@ -683,78 +538,4 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.updateUserGroups.bind(adminController) as never
   )
 
-  // Send recovery email to user (one-click password reset)
-  fastify.post(
-    '/users/:id/recovery-email',
-    {
-      schema: {
-        description: 'Send a recovery email to the user. Triggers Kratos self-service recovery flow.',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        response: {
-          204: { type: 'null', description: 'Recovery email sent' },
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.sendRecoveryEmail.bind(adminController) as never
-  )
-
-  // List sessions for an identity (proxied from Kratos admin — never exposed directly to browser)
-  fastify.get(
-    '/users/:id/sessions',
-    {
-      schema: {
-        description: 'List active sessions for a Kratos identity. Requires admin.',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        response: {
-          200: { type: 'array', items: { type: 'object', additionalProperties: true } },
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.listUserSessions.bind(adminController) as never
-  )
-
-  // Revoke a single session
-  fastify.delete(
-    '/sessions/:sessionId',
-    {
-      schema: {
-        description: 'Revoke a session by ID. Requires admin.',
-        tags: ['admin'],
-        params: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] },
-        response: {
-          204: { type: 'null' },
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-        },
-      },
-    },
-    adminController.revokeSession.bind(adminController) as never
-  )
-
-  // Revoke all sessions for an identity
-  fastify.delete(
-    '/users/:id/sessions',
-    {
-      schema: {
-        description: 'Revoke all sessions for a Kratos identity. Requires admin.',
-        tags: ['admin'],
-        params: zodToJsonSchema(userIdParamSchema),
-        response: {
-          204: { type: 'null' },
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    adminController.revokeAllUserSessions.bind(adminController) as never
-  )
 }

@@ -24,6 +24,8 @@ export interface Platform {
   cookieDomain?: string
   /** Namespaces no upstream may point into (kratos-admin, OPA, the gateway itself…). */
   platformNamespaces?: string[]
+  /** login-ui's /access page: where a 2FA site's browser gates send `forbidden` (SITES_ACCESS_URL). */
+  accessUrl?: string
 }
 
 export interface Check {
@@ -41,6 +43,8 @@ export interface SiteCrGate {
   authorizer: Handler
   mutators: Handler[]
   errors?: Handler[]
+  /** Per-gate upstream (the CRD allows it; only migrated legacy rules use it). */
+  upstream?: SiteCr['spec']['upstream']
 }
 
 export interface SiteCr {
@@ -55,6 +59,8 @@ export interface SiteCr {
     /** zone: the zone's wildcard Ingress serves the host. vanity: a per-site Ingress. */
     exposure: { mode: 'zone' } | { mode: 'vanity'; tls: 'wildcard' | 'per-site' }
     paused: boolean
+    /** A platform-owned site (migrated built-ins); read-only in kuma. */
+    system?: boolean
   }
 }
 
@@ -71,12 +77,19 @@ export interface Rendered {
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 const DENY_GATE = 'deny'
+const CATCH_ALL_ID = 'catch-all'
+// Static paths under /api/admin/sites and the migrated system sites: a site by that name would be shadowed.
+const RESERVED_NAMES = ['migration', 'requests', 'preview', 'zones', 'check-host', 'match', 'render', 'platform', 'sign-in']
 // The services the operator and admission refuse as upstreams in any namespace (site-operator):
 // the identity admin API, the policy engine and its feeder, the data stores.
 const FORBIDDEN_SERVICE = /^(kratos-admin|opa|opal(-.*)?|redis(-.*)?|postgres(ql)?(-.*)?)$/
 
-/** The platform authorizer payload (charts auth values, remote_json) plus the pinned site. */
-export function platformPayload(site: string): string {
+/**
+ * The platform authorizer payload (charts auth values, remote_json) plus the pinned site. A site
+ * that asks for 2FA also sends the session's sign-in strength, which the policy compares with
+ * data.site_login[site].min_aal (only then: adding it renames every rule of the site).
+ */
+export function platformPayload(site: string, withAal = false): string {
   return [
     '{',
     '  "input": {',
@@ -84,10 +97,36 @@ export function platformPayload(site: string): string {
     '    "email": "{{ if .Extra.identity }}{{ index .Extra.identity.traits "email" }}{{ end }}",',
     '    "object": "{{ .MatchContext.URL.Path }}",',
     '    "action": "{{ .MatchContext.Method }}",',
+    ...(withAal ? ['    "aal": "{{ if .Extra }}{{ print .Extra.authenticator_assurance_level }}{{ end }}",'] : []),
     `    "app": "${site}"`,
     '  }',
     '}',
   ].join('\n')
+}
+
+/** Whether the site asks for a second factor anywhere (scope, or routes picked one by one). */
+export function twoFactorOn(site: Pick<Site, 'login'>): boolean {
+  const tf = site.login?.twoFactor
+  return !!tf && (tf.scope !== 'none' || (tf.routes?.length ?? 0) > 0)
+}
+
+/**
+ * Browser-gate error handlers of a 2FA site: a refused HTML request goes to login-ui /access
+ * (step-up, enrol, or a branded no-access page — it asks jinbe which), before the platform's
+ * redirect-to-login and JSON handlers. Oathkeeper's remote_json cannot pass the policy's reason
+ * through, so the redirect is per rule, on `forbidden` only.
+ */
+function accessRedirect(site: string, accessUrl: string): Handler {
+  const to = new URL(accessUrl)
+  to.searchParams.set('site', site)
+  return {
+    handler: 'redirect',
+    config: {
+      to: to.toString(),
+      return_to_query_param: 'return_to',
+      when: [{ error: ['forbidden'], request: { header: { accept: ['text/html'] } } }],
+    },
+  }
 }
 
 /** The URL the operator renders for an upstream — jinbe builds the same one only for gatekit. */
@@ -138,8 +177,10 @@ function errorHandlers(errors: Gate['errors']): Handler[] | undefined {
   return errors
 }
 
-function rowsFor(route: Pick<Route, 'methods' | 'path' | 'orgParam'>, access: Access): RouteRule[] {
+// Every row carries its route's id: data.site_login[site].routes names rows by it (S-4a).
+function rowsFor(route: Pick<Route, 'id' | 'methods' | 'path' | 'orgParam'>, access: Access): RouteRule[] {
   return methodOrder(route.methods).map((method) => ({
+    id: route.id,
     method,
     path: route.path,
     ...(access.kind === 'permission' ? { permission: access.permission } : {}),
@@ -156,6 +197,7 @@ export function render(site: Site, platform: Platform): Rendered {
   const prefix = site.address.pathPrefix
 
   if ((SYSTEM_SITES as readonly string[]).includes(name)) fail('system_site', `'${name}' is a system service and cannot be managed as a site`, 'name')
+  if (RESERVED_NAMES.includes(name)) fail('reserved_name', `'${name}' is reserved (an API path or a system site)`, 'name')
 
   const gates = new Map<string, Gate>()
   for (const [i, gate] of site.gates.entries()) {
@@ -208,7 +250,16 @@ export function render(site: Site, platform: Platform): Rendered {
   }
   if (catchAllAccess.kind === 'public') warn('public_catch_all', 'every path not listed is open to anyone', 'routes.catchAll')
   // A deny catch-all publishes no row: the policy then owns no route there and refuses.
-  if (catchAllAccess.kind !== 'deny') routeMap.push(...rowsFor({ methods: catchAllMethods, path: catchAllPath }, catchAllAccess))
+  if (catchAllAccess.kind !== 'deny') routeMap.push(...rowsFor({ id: CATCH_ALL_ID, methods: catchAllMethods, path: catchAllPath }, catchAllAccess))
+
+  // ── per-site 2FA ────────────────────────────────────────────
+  const with2fa = twoFactorOn(site)
+  for (const id of site.login?.twoFactor.routes ?? []) {
+    if (!seenIds.has(id) && id !== CATCH_ALL_ID) fail('unknown_2fa_route', `2FA is asked on route '${id}', which the site does not have`, 'login.twoFactor.routes')
+  }
+  if (with2fa && !platform.accessUrl && site.gates.some((g) => g.errors === 'website')) {
+    fail('access_url_missing', 'per-site 2FA needs the sign-in step-up page (SITES_ACCESS_URL) configured on the platform', 'login.twoFactor')
+  }
 
   // ── roles and groups ────────────────────────────────────────
   const roles = expandRoles(site)
@@ -251,7 +302,7 @@ export function render(site: Site, platform: Platform): Rendered {
   // Rule name, so a template edit is a new rule on both sides.
   const emit = (gateName: string, gate: Omit<SiteCrGate, 'name'>) => {
     crGates.push({ name: gateName, ...gate })
-    rules.push({ id: `site-${name}-${gateName}-${sha256({ ...gate, upstream }).slice(0, 10)}`, upstream, ...gate })
+    rules.push({ id: `site-${name}-${gateName}-${sha256({ ...gate, upstream }).slice(0, 10)}`, ...gate, upstream })
   }
 
   const gateRule = (gate: Gate, url: string, methods: string[]) => {
@@ -259,10 +310,11 @@ export function render(site: Site, platform: Platform): Rendered {
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
     gate.mutators.forEach((h) => handlerOk('mutators', h, at))
     const authorizer: Handler = gate.authorizer === 'policy'
-      ? { handler: 'remote_json', config: { payload: platformPayload(name) } }
+      ? { handler: 'remote_json', config: { payload: platformPayload(name, with2fa) } }
       : gate.authorizer
     handlerOk('authorizers', authorizer, at)
-    const errors = errorHandlers(gate.errors)
+    const preset = errorHandlers(gate.errors)
+    const errors = with2fa && gate.errors === 'website' && platform.accessUrl && preset ? [accessRedirect(name, platform.accessUrl), ...preset] : preset
     errors?.forEach((h) => handlerOk('errors', h, at))
     const matchUrl = gate.expert?.matchUrl ?? url
     if (gate.expert?.matchUrl) warn('expert_match_url', `gate '${gate.id}' uses a raw match URL; only gatekit checks it`, at)

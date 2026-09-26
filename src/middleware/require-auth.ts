@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { auditEventService } from '../services/audit-event.service.js'
 import { env } from '../config/index.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * What a caller may actually present, listed from what this deployment enables.
@@ -41,6 +41,9 @@ const PUBLIC_ROUTES = [
   // gate refuses before the route's own hook is ever reached. Listing it here does not make it
   // public — it makes it guarded by the credential it actually takes.
   '/api/opa',
+  // Site login branding for login-ui before sign-in (exact host / name, rate limited), the logo,
+  // and access-reason, which checks the visitor's own Kratos cookie itself (src/sites/public.routes.ts).
+  '/api/public/sites',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed
@@ -94,16 +97,7 @@ export async function requireAuth(
     // redirect and a forced re-auth (login?refresh=true) that regenerates the
     // broken session.
     const credentialRejected = !!request.sessionError
-    auditEventService.emit({
-      category: 'access',
-      verb:     'deny',
-      target:   `${request.method} ${path}`,
-      result:   'denied',
-      actor:    { email: null, ip: request.ip, ua: request.headers['user-agent'] as string || null },
-      method:   request.method,
-      path,
-      reason:   credentialRejected ? 'session_invalid' : 'unauthenticated',
-    }).catch(() => {})
+    denyAudit(request, credentialRejected ? 'session_invalid' : 'unauthenticated')
     return reply.status(401).send({
       error: 'Unauthorized',
       code: credentialRejected ? 'session_invalid' : 'authentication_required',

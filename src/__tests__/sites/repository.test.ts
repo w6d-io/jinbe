@@ -25,6 +25,10 @@ const { redisMock } = vi.hoisted(() => {
       return 'OK'
     }
     async del(k: string) { return this.strings.delete(k) || this.lists.delete(k) ? 1 : 0 }
+    sets = new Map<string, Set<string>>()
+    async sadd(k: string, v: string) { if (!this.sets.has(k)) this.sets.set(k, new Set()); this.sets.get(k)!.add(v); return 1 }
+    async srem(k: string, v: string) { return this.sets.get(k)?.delete(v) ? 1 : 0 }
+    async smembers(k: string) { return [...(this.sets.get(k) ?? [])] }
     async rpush(k: string, v: string) {
       if (!this.lists.has(k)) this.lists.set(k, [])
       this.lists.get(k)!.push(v)

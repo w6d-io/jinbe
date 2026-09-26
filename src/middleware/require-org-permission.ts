@@ -4,8 +4,8 @@ import { permits } from '../services/authorization-resolution.js'
 import { administersOrganisation, ORG_ADMIN_PERMISSIONS } from '../services/org-admin.js'
 import { callerOrganisations } from '../services/caller-organisations.js'
 import { orgGrantPermissions } from '../services/org-grants.service.js'
-import { auditEventService } from '../services/audit-event.service.js'
 import { enforcing } from '../policy/declared-routes.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * Gates for routes that act on ONE organisation — the one named by the route parameter.
@@ -39,24 +39,7 @@ function refuse(request: FastifyRequest, reply: FastifyReply, organizationId: st
       message: 'Unable to verify authorization. Please try again later.',
     })
   }
-  auditEventService
-    .emit({
-      category: 'access',
-      verb: 'deny',
-      target: route,
-      result: 'denied',
-      actor: {
-        id: request.userContext?.id,
-        email: request.userContext?.email ?? null,
-        ip: request.ip,
-        ua: (request.headers['user-agent'] as string) || null,
-      },
-      method: request.method,
-      path: (request.url || '').split('?')[0],
-      reason,
-      source: 'jinbe-api',
-    })
-    .catch(() => {})
+  denyAudit(request, reason)
   return reply.status(403).send({
     error: 'Forbidden',
     message: `Not allowed in organization '${organizationId}'`,

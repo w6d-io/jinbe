@@ -41,5 +41,6 @@ export async function loadPlatform(): Promise<Platform> {
     zones: await loadZones(),
     cookieDomain: cfg.SITES_COOKIE_DOMAIN,
     platformNamespaces: cfg.SITES_PLATFORM_NAMESPACES,
+    ...(cfg.SITES_ACCESS_URL ? { accessUrl: cfg.SITES_ACCESS_URL } : {}),
   }
 }

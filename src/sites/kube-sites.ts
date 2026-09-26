@@ -14,9 +14,20 @@ export const SITE_GROUP = 'auth.w6d.io'
 export const SITE_VERSION = 'v1alpha1'
 export const SITE_PLURAL = 'sites'
 
+/** A metav1.Condition as the operator writes it on Site.status.conditions. */
+export interface SiteCondition {
+  type: string
+  status: string
+  reason?: string
+  message?: string
+  observedGeneration?: number
+  lastTransitionTime?: string
+}
+
 export interface SiteCrObject extends SiteCr {
   metadata: SiteCr['metadata'] & { resourceVersion?: string; generation?: number }
-  status?: { observedGeneration?: number; conditions?: Array<{ type: string; status: string; reason?: string; message?: string }> }
+  /** site-operator api/v1alpha1 SiteStatus. */
+  status?: { observedGeneration?: number; conditions?: SiteCondition[]; children?: Array<{ kind: string; name: string; specHash: string }> }
 }
 
 /** A cluster-scoped Zone (zones.auth.w6d.io): an admin-defined wildcard domain. */

@@ -111,13 +111,21 @@ export const siteSchema = z
       })
       .strict(),
     orgs: z.array(z.string().uuid()).max(500),
-    // Per-site login (S-4) is accepted and stored; nothing is published from it yet.
+    // Per-site login (S-4): 2FA is published to OPA as data.site_login[<site>] (routes = route ids,
+    // honoured under every scope); branding is served by the public by-host lookup.
     login: z
       .object({
-        twoFactor: z.object({ scope: z.enum(['none', 'writes', 'all']), routes: z.array(id).optional(), clients: z.enum(['exempt', 'refused']) }).strict(),
+        twoFactor: z.object({ scope: z.enum(['none', 'writes', 'all', 'routes']), routes: z.array(id).max(500).optional(), clients: z.enum(['exempt', 'refused']) }).strict(),
         reach: z.enum(['granted', 'any-account']),
         branding: z
-          .object({ name: z.string().max(80).optional(), logo: z.string().max(64).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), welcome: z.string().max(280).optional(), helpUrl: z.string().url().optional() })
+          .object({
+            name: z.string().min(1).max(80).optional(),
+            // The logo itself is uploaded through PUT /sites/:name/logo; this field is kept for the editor.
+            logo: z.string().max(64).optional(),
+            accent: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'a colour like #1A2B3C').optional(),
+            welcome: z.string().max(280).refine((w) => !/[<>]/.test(w), 'plain text only').optional(),
+            helpUrl: z.string().url().max(2048).refine((u) => u.startsWith('https://'), 'an https:// link').optional(),
+          })
           .strict()
           .optional(),
         postLogoutUrl: z.string().url().optional(),

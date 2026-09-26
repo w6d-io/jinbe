@@ -1,12 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { rightsOf, type HeldRights } from '../services/authorization-model.service.js'
 import { env } from '../config/index.js'
-import { auditEventService } from '../services/audit-event.service.js'
 import {
   administersOrganisation,
   ORG_ADMIN_PERMISSIONS,
   ORG_ADMIN_ROLE,
 } from '../services/org-admin.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * Middleware factory: requires the caller to hold at least one permission IN the organisation named
@@ -122,24 +122,7 @@ export function requireServiceAdmin(
         { email, organizationId, groups: rbacInfo.groups, roles: rbacInfo.roles },
         '[requireServiceAdmin] access denied — no permissions for service'
       )
-      auditEventService
-        .emit({
-          category: 'access',
-          verb: 'deny',
-          target: route,
-          result: 'denied',
-          actor: {
-            id: subject,
-            email: email ?? null,
-            ip: request.ip,
-            ua: (request.headers['user-agent'] as string) || null,
-          },
-          method: request.method,
-          path: (request.url || '').split('?')[0],
-          reason: 'not_service_admin',
-          source: 'jinbe-api',
-        })
-        .catch(() => {})
+      denyAudit(request, 'not_service_admin')
 
       return reply.status(403).send({
         error: 'Forbidden',
@@ -203,23 +186,7 @@ export function requireServicePermission(requiredPermission: string) {
         },
         '[requireServicePermission] access denied — missing permission'
       )
-      auditEventService
-        .emit({
-          category: 'access',
-          verb: 'deny',
-          target: route,
-          result: 'denied',
-          actor: {
-            email: email ?? null,
-            ip: request.ip,
-            ua: (request.headers['user-agent'] as string) || null,
-          },
-          method: request.method,
-          path: (request.url || '').split('?')[0],
-          reason: `missing_permission:${requiredPermission}`,
-          source: 'jinbe-api',
-        })
-        .catch(() => {})
+      denyAudit(request, `missing_permission:${requiredPermission}`)
 
       return reply.status(403).send({
         error: 'Forbidden',

@@ -1,6 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { auditEventService } from '../services/audit-event.service.js'
 import { platformRightsOf } from '../services/authorization-model.service.js'
 import { permits } from '../services/authorization-resolution.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
@@ -9,6 +8,7 @@ import { enforcing } from '../policy/declared-routes.js'
 /** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
 const READ_ADMIN = 'admin:read'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
+import { denyAudit } from '../audit/deny.js'
 
 
 /**
@@ -126,16 +126,7 @@ async function requireAdminHandler(
       },
       'Access denied — the caller does not hold the permission this API requires'
     )
-    auditEventService.emit({
-      category: 'access',
-      verb:     'deny',
-      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
-      result:   'denied',
-      actor:    { email, ip: request.ip, ua: request.headers['user-agent'] as string || null },
-      method:   request.method,
-      path:     (request.url || '').split('?')[0],
-      reason:   'not_admin',
-    }).catch(() => {})
+    denyAudit(request, 'not_admin')
     return reply.status(403).send({
       error: 'Forbidden',
       message: 'Admin or superadmin access required',
@@ -297,17 +288,7 @@ async function requireSuperAdminHandler(
       },
       'Access denied — the caller does not hold the permission this write requires'
     )
-    auditEventService.emit({
-      category: 'access',
-      verb:     'deny',
-      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
-      result:   'denied',
-      actor:    { email, ip: request.ip, ua: request.headers['user-agent'] as string || null },
-      method:   request.method,
-      path:     (request.url || '').split('?')[0],
-      reason:   'not_super_admin',
-      source: 'jinbe-api',
-    }).catch(() => {})
+    denyAudit(request, 'not_super_admin')
     return reply.status(403).send({
       error: 'Forbidden',
       message: 'Super admin access required to modify user groups',
@@ -348,26 +329,7 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
   if (!secondFactorIsFresh(stepUp)) {
     const unprovable = !canProveSecondFactor(stepUp)
     // Emit the currently-silent step-up denial (A2).
-    auditEventService.emit({
-      category: 'access',
-      kind:     'change',
-      verb:     'deny',
-      target:   `${request.method} ${(request.url || '').split('?')[0]}`,
-      result:   'denied',
-      severity: 'warn',
-      reason:   unprovable ? 'step_up_unavailable' : 'reauth_required',
-      actor:    {
-        email: request.userContext?.email ?? null,
-        ip: request.ip,
-        ua: (request.headers['user-agent'] as string) || null,
-        sessionId: request.userContext?.sessionId ?? null,
-      },
-      requestId: (request.headers['x-request-id'] as string) || null,
-      method:   request.method,
-      path:     (request.url || '').split('?')[0],
-      statusCode: 422,
-      source:   'jinbe-api',
-    }).catch(() => {})
+    denyAudit(request, unprovable ? 'step_up_unavailable' : 'reauth_required', { statusCode: 422, severity: 'warn' })
     if (unprovable) {
       return reply.status(422).send({
         error: 'step_up_unavailable',
@@ -390,3 +352,36 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
 // guard rather than written beside it. Two spellings of one rule are two rules.
 export const requireAdmin = enforcing(requireAdminHandler, READ_ADMIN)
 export const requireSuperAdmin = enforcing(requireSuperAdminHandler, WRITE_ADMIN)
+
+const SITES_APPLY = 'sites:apply'
+
+/**
+ * Changing what the gateway serves through the Sites API — apply, rollback, pause, delete, restore,
+ * approving a request, the migration cut-over (owner decision: "admin:write drafts and requests;
+ * super_admin applies"). Held through the global `*` role (super_admin) or `sites:apply` itself; an
+ * administrator with `admin:write` only may draft, save and ask. Pair with requireRecentMfa.
+ */
+async function requireSitesApplyHandler(request: FastifyRequest, reply: FastifyReply) {
+  const email = request.userContext?.email
+  const subject = request.userContext?.id
+  if (!email || email === 'unknown' || !subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
+  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
+    request.log.warn({ email }, '⚠️  DEV MODE: sites:apply authorization bypassed')
+    request.rbacInfo = { email, groups: ['platform-admin'], roles: ['platform-admin'], permissions: ['admin:read', 'admin:write', SITES_APPLY] }
+    return
+  }
+  const rbacInfo = await resolveOrNull(subject, email)
+  if (!rbacInfo) {
+    return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+  }
+  request.rbacInfo = rbacInfo
+  if (!rbacInfo.permissions.includes('*') && !permits(rbacInfo.permissions, SITES_APPLY)) {
+    request.log.warn({ email, required: SITES_APPLY }, 'Access denied — applying sites needs a super admin')
+    denyAudit(request, 'not_super_admin')
+    return reply.status(403).send({ error: 'Forbidden', message: 'Only a super admin can change what the gateway serves; send a request instead' })
+  }
+}
+
+export const requireSitesApply = enforcing(requireSitesApplyHandler, SITES_APPLY)

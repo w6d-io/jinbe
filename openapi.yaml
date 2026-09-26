@@ -294,6 +294,73 @@ paths:
                     enum:
                       - service
                       - gitops
+  /api/me/permissions:
+    get:
+      tags:
+        - me
+      description: The caller's effective permissions across the platform, and which
+        user-management actions they allow.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: string
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                  actions:
+                    type: object
+                    additionalProperties:
+                      type: boolean
+                  apps:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/me/organizations:
     get:
       tags:
@@ -2643,16 +2710,11 @@ paths:
                     type: string
                     example: Valid authentication required. Please provide a valid
                       ory_kratos_session cookie.
-  /api/admin/events:
-    get:
-      responses:
-        "200":
-          description: Default Response
   /api/admin/users:
     get:
       tags:
         - admin
-      description: List all users from Kratos identity service
+      description: List all users from Kratos identity service. Needs users:read.
       parameters:
         - schema:
             type: string
@@ -2788,10 +2850,32 @@ paths:
                     type: string
                     example: Valid authentication required. Please provide a valid
                       ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
     post:
       tags:
         - admin
-      description: Create new user in Kratos identity service
+      description: Create new user in Kratos identity service. Needs users:create;
+        users:assign_group to give groups; users:recovery to send an invite.
       requestBody:
         required: true
         content:
@@ -2960,6 +3044,758 @@ paths:
                     type: string
                     example: Valid authentication required. Please provide a valid
                       ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/search:
+    get:
+      tags:
+        - admin
+      description: Search identities by email or name substring (cached; no directory
+        walk). Needs users:read.
+      parameters:
+        - schema:
+            type: string
+          in: query
+          name: q
+          required: false
+        - schema:
+            type: string
+          in: query
+          name: limit
+          required: false
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}:
+    get:
+      tags:
+        - admin
+      description: Get user by ID from Kratos identity service. Needs users:read.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  schema_id:
+                    type: string
+                  schema_url:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                      - active
+                      - inactive
+                  state_changed_at:
+                    type: string
+                    format: date-time
+                  traits:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: string
+                        description: User display name
+                      picture:
+                        type: string
+                        format: uri
+                        description: User avatar URL
+                      providers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            issuer_url:
+                              type: string
+                            provider_type:
+                              type: string
+                    required:
+                      - email
+                  metadata_public:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  metadata_admin:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  organization_id:
+                    type: string
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                    description: User groups from OPAL RBAC
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                    description: User roles from OPAL RBAC
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                    description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
+                  credentials:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    put:
+      tags:
+        - admin
+      description: Update a user. Needs users:update for the name, users:update_email
+        for the address, admin:write for anything outside the traits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schema_id:
+                  type: string
+                traits:
+                  type: object
+                  properties:
+                    email:
+                      type: string
+                      format: email
+                    name:
+                      type: string
+                state:
+                  type: string
+                  enum:
+                    - active
+                    - inactive
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  schema_id:
+                    type: string
+                  schema_url:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                      - active
+                      - inactive
+                  state_changed_at:
+                    type: string
+                    format: date-time
+                  traits:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: string
+                        description: User display name
+                      picture:
+                        type: string
+                        format: uri
+                        description: User avatar URL
+                      providers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            issuer_url:
+                              type: string
+                            provider_type:
+                              type: string
+                    required:
+                      - email
+                  metadata_public:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  metadata_admin:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                  organization_id:
+                    type: string
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                    description: User groups from OPAL RBAC
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                    description: User roles from OPAL RBAC
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                    description: User permissions from OPAL RBAC
+                  organizations:
+                    type: array
+                    items:
+                      type: string
+                    description: Organisations this identity belongs to, where this service owns
+                      membership
+                  rbacUnavailable:
+                    type: boolean
+                    description: Set when what this identity holds could not be resolved — empty is
+                      not the same fact
+                  credentials:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    delete:
+      tags:
+        - admin
+      description: Delete user by ID from Kratos identity service. Needs users:delete.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "204":
+          description: User deleted successfully
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/recovery-email:
+    post:
+      tags:
+        - admin
+      description: Send a recovery email to the user. Triggers Kratos self-service
+        recovery flow. Needs users:recovery.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "204":
+          description: Recovery email sent
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/login-link:
+    post:
+      tags:
+        - admin
+      description: Email the user a one-click sign-in link (Kratos recovery link, sent
+        by Kratos). The link is never returned. Needs users:send_login_link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - "null"
+              properties:
+                return_to:
+                  type: string
+                  maxLength: 2048
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+                  expiresAt:
+                    type: string
+                    nullable: true
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/sessions:
+    get:
+      tags:
+        - admin
+      description: List active sessions for a Kratos identity. Needs sessions:read.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    delete:
+      tags:
+        - admin
+      description: Revoke all sessions for a Kratos identity. Needs sessions:revoke.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/sessions/{sessionId}:
+    delete:
+      tags:
+        - admin
+      description: Revoke a session by ID. Needs sessions:revoke.
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: sessionId
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/events:
+    get:
+      responses:
+        "200":
+          description: Default Response
   /api/admin/stats:
     get:
       tags:
@@ -3661,10 +4497,12 @@ paths:
                                 - none
                                 - writes
                                 - all
+                                - routes
                             routes:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              maxItems: 500
                             clients:
                               type: string
                               enum:
@@ -3684,6 +4522,7 @@ paths:
                           properties:
                             name:
                               type: string
+                              minLength: 1
                               maxLength: 80
                             logo:
                               type: string
@@ -3697,6 +4536,7 @@ paths:
                             helpUrl:
                               type: string
                               format: uri
+                              maxLength: 2048
                           additionalProperties: false
                         postLogoutUrl:
                           type: string
@@ -3766,6 +4606,21 @@ paths:
               required:
                 - host
               additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/platform:
+    get:
+      tags: *a1
+      description: "This environment: name, production flag, four-eyes mode, expected
+        rule-load time, zones"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deleted:
+    get:
+      tags: *a1
+      description: Deleted sites whose snapshot is kept (30 days)
       responses:
         "200":
           description: Default Response
@@ -4116,10 +4971,12 @@ paths:
                                 - none
                                 - writes
                                 - all
+                                - routes
                             routes:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              maxItems: 500
                             clients:
                               type: string
                               enum:
@@ -4139,6 +4996,7 @@ paths:
                           properties:
                             name:
                               type: string
+                              minLength: 1
                               maxLength: 80
                             logo:
                               type: string
@@ -4152,6 +5010,7 @@ paths:
                             helpUrl:
                               type: string
                               format: uri
+                              maxLength: 2048
                           additionalProperties: false
                         postLogoutUrl:
                           type: string
@@ -4603,10 +5462,12 @@ paths:
                                 - none
                                 - writes
                                 - all
+                                - routes
                             routes:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              maxItems: 500
                             clients:
                               type: string
                               enum:
@@ -4626,6 +5487,7 @@ paths:
                           properties:
                             name:
                               type: string
+                              minLength: 1
                               maxLength: 80
                             logo:
                               type: string
@@ -4639,6 +5501,7 @@ paths:
                             helpUrl:
                               type: string
                               format: uri
+                              maxLength: 2048
                           additionalProperties: false
                         postLogoutUrl:
                           type: string
@@ -4684,6 +5547,20 @@ paths:
       tags: *a1
       description: "Delete a site: rules first, then its permissions; a snapshot is
         kept 30 days"
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{1,39}$
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/restore:
+    post:
+      tags: *a1
+      description: Restore a deleted site from its snapshot, saved but not applied
       parameters:
         - schema:
             type: string
@@ -5081,10 +5958,12 @@ paths:
                                 - none
                                 - writes
                                 - all
+                                - routes
                             routes:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
+                              maxItems: 500
                             clients:
                               type: string
                               enum:
@@ -5104,6 +5983,7 @@ paths:
                           properties:
                             name:
                               type: string
+                              minLength: 1
                               maxLength: 80
                             logo:
                               type: string
@@ -5117,6 +5997,7 @@ paths:
                             helpUrl:
                               type: string
                               format: uri
+                              maxLength: 2048
                           additionalProperties: false
                         postLogoutUrl:
                           type: string
@@ -5283,6 +6164,362 @@ paths:
           in: path
           name: name
           required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/applies/{id}:
+    get:
+      tags: &a2
+        - sites
+      description: "One apply: its stages (Saved → Permissions published → Site
+        accepted → Rules synced → Rules loaded → Address/HTTPS for vanity sites
+        → Verified) with timings"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/applies/{id}/events:
+    get:
+      tags: *a2
+      description: "Server-sent events: `apply` with the whole record on every change,
+        `done` at the end"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/status:
+    get:
+      tags: *a2
+      description: "The Site CR as the operator reports it: generation, conditions,
+        children"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/drift:
+    get:
+      tags: *a2
+      description: "What differs from what kuma applied: Site CR spec and conditions,
+        route map, roles, groups, org map"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/drift/accept:
+    post:
+      tags: *a2
+      description: Fold the live values the intent can hold into a draft for review
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/requests:
+    post:
+      tags: *a2
+      description: "Ask for the saved version to be applied (four-eyes: approved by
+        another super admin when required)"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/requests:
+    get:
+      tags: *a2
+      description: Apply requests, newest first
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/requests/{id}/approve:
+    post:
+      tags: *a2
+      description: "Approve a request: applies the version, as the approver"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/requests/{id}/reject:
+    post:
+      tags: *a2
+      description: Reject a request, with an optional reason
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/logo:
+    put:
+      tags: *a2
+      description: "Upload the login-page logo: PNG or WebP bytes (Content-Type
+        image/png|image/webp), at most 256 KB; SVG refused"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    delete:
+      tags: *a2
+      description: Remove the login-page logo
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration:
+    get:
+      tags: &a3
+        - sites
+      description: "Migration state: legacy rule count, proposed groups, parity, dual
+        run, cut-over, rollback window"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration/preview:
+    post:
+      tags: *a3
+      description: Convert the live legacy rules into proposed Sites / system sites
+        (1:1); opt-in fixes and decisions per group/rule
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration/parity:
+    post:
+      tags: *a3
+      description: "Match every legacy probe against the legacy and the converted rule
+        sets (gatekit): differences and regressions"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration/dualrun:
+    get:
+      tags: *a3
+      description: "Dual-run status: compared, same, differences, regressions, eligibility"
+      responses:
+        "200":
+          description: Default Response
+    post:
+      tags: *a3
+      description: Start or stop the dual run
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration/cutover:
+    post:
+      tags: *a3
+      description: Create the Site CRs and wait for RulesLoaded; then new sites may be
+        applied. 202, follow GET /migration
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/migration/rollback:
+    post:
+      tags: *a3
+      description: "Within the rollback window: restore the frozen legacy rules and
+        pause the migrated Site CRs"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/gateway:
+    get:
+      tags: &a4
+        - gateway
+      description: "Every Oathkeeper handler: enabled, global config (secrets masked),
+        defaults, the sites using it, form fields; plus rollout status.
+        managed=false when no Gateway resource exists yet (live config,
+        read-only)"
+      responses:
+        "200":
+          description: Default Response
+    put:
+      tags: *a4
+      description: "Write the Gateway resource (If-Match: the etag you edited). The
+        site-operator rolls the gateway pods"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                spec:
+                  type: object
+                  properties:
+                    authenticators:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          enabled:
+                            type: boolean
+                          config:
+                            type: object
+                            additionalProperties: {}
+                        required:
+                          - enabled
+                        additionalProperties: false
+                      default: {}
+                    authorizers:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    mutators:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    errors:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    errorFallback:
+                      type: array
+                      items:
+                        type: string
+                        pattern: ^[a-z0-9_]{1,64}$
+                      maxItems: 8
+                      default: []
+                  additionalProperties: false
+                note:
+                  type: string
+                  maxLength: 500
+              required:
+                - spec
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/gateway/preview:
+    post:
+      tags: *a4
+      description: "Validate a proposed gateway configuration: handler schemas, in-use
+        handlers, fallback, risk flags. Writes nothing"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                spec:
+                  type: object
+                  properties:
+                    authenticators:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          enabled:
+                            type: boolean
+                          config:
+                            type: object
+                            additionalProperties: {}
+                        required:
+                          - enabled
+                        additionalProperties: false
+                      default: {}
+                    authorizers:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    mutators:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    errors:
+                      $ref: "#/properties/spec/properties/authenticators"
+                    errorFallback:
+                      type: array
+                      items:
+                        type: string
+                        pattern: ^[a-z0-9_]{1,64}$
+                      maxItems: 8
+                      default: []
+                  additionalProperties: false
+                note:
+                  type: string
+                  maxLength: 500
+              required:
+                - spec
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/gateway/rollout:
+    get:
+      tags: *a4
+      description: Rollout progress of the last gateway change (from the Gateway status)
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/gateway/rollout/events:
+    get:
+      tags: *a4
+      description: Rollout progress as Server-Sent Events, until it settles
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/gateway/rollback:
+    post:
+      tags: *a4
+      description: Restore the configuration before the last change, re-checked
+        against the sites using each handler
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+              additionalProperties: false
+              default: {}
       responses:
         "200":
           description: Default Response
@@ -5509,377 +6746,6 @@ paths:
                 properties:
                   error:
                     type: string
-                  message:
-                    type: string
-  /api/admin/users/search:
-    get:
-      tags:
-        - admin
-      description: Search identities by email or name substring (cached; no directory walk)
-      parameters:
-        - schema:
-            type: string
-          in: query
-          name: q
-          required: false
-        - schema:
-            type: string
-          in: query
-          name: limit
-          required: false
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-  /api/admin/users/{id}:
-    get:
-      tags:
-        - admin
-      description: Get user by ID from Kratos identity service
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  schema_id:
-                    type: string
-                  schema_url:
-                    type: string
-                  state:
-                    type: string
-                    enum:
-                      - active
-                      - inactive
-                  state_changed_at:
-                    type: string
-                    format: date-time
-                  traits:
-                    type: object
-                    properties:
-                      email:
-                        type: string
-                        format: email
-                      name:
-                        type: string
-                        description: User display name
-                      picture:
-                        type: string
-                        format: uri
-                        description: User avatar URL
-                      providers:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            name:
-                              type: string
-                            issuer_url:
-                              type: string
-                            provider_type:
-                              type: string
-                    required:
-                      - email
-                  metadata_public:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  metadata_admin:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  organization_id:
-                    type: string
-                    nullable: true
-                  created_at:
-                    type: string
-                    format: date-time
-                  updated_at:
-                    type: string
-                    format: date-time
-                  groups:
-                    type: array
-                    items:
-                      type: string
-                    description: User groups from OPAL RBAC
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                    description: User roles from OPAL RBAC
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                    description: User permissions from OPAL RBAC
-                  organizations:
-                    type: array
-                    items:
-                      type: string
-                    description: Organisations this identity belongs to, where this service owns
-                      membership
-                  rbacUnavailable:
-                    type: boolean
-                    description: Set when what this identity holds could not be resolved — empty is
-                      not the same fact
-                  credentials:
-                    type: object
-                    additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    put:
-      tags:
-        - admin
-      description: Update user by ID in Kratos identity service
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                schema_id:
-                  type: string
-                traits:
-                  type: object
-                  properties:
-                    email:
-                      type: string
-                      format: email
-                    name:
-                      type: string
-                state:
-                  type: string
-                  enum:
-                    - active
-                    - inactive
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  schema_id:
-                    type: string
-                  schema_url:
-                    type: string
-                  state:
-                    type: string
-                    enum:
-                      - active
-                      - inactive
-                  state_changed_at:
-                    type: string
-                    format: date-time
-                  traits:
-                    type: object
-                    properties:
-                      email:
-                        type: string
-                        format: email
-                      name:
-                        type: string
-                        description: User display name
-                      picture:
-                        type: string
-                        format: uri
-                        description: User avatar URL
-                      providers:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            name:
-                              type: string
-                            issuer_url:
-                              type: string
-                            provider_type:
-                              type: string
-                    required:
-                      - email
-                  metadata_public:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  metadata_admin:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  organization_id:
-                    type: string
-                    nullable: true
-                  created_at:
-                    type: string
-                    format: date-time
-                  updated_at:
-                    type: string
-                    format: date-time
-                  groups:
-                    type: array
-                    items:
-                      type: string
-                    description: User groups from OPAL RBAC
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                    description: User roles from OPAL RBAC
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                    description: User permissions from OPAL RBAC
-                  organizations:
-                    type: array
-                    items:
-                      type: string
-                    description: Organisations this identity belongs to, where this service owns
-                      membership
-                  rbacUnavailable:
-                    type: boolean
-                    description: Set when what this identity holds could not be resolved — empty is
-                      not the same fact
-                  credentials:
-                    type: object
-                    additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    delete:
-      tags:
-        - admin
-      description: Delete user by ID from Kratos identity service
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "204":
-          description: User deleted successfully
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
                   message:
                     type: string
   /api/admin/users/{id}/metadata:
@@ -6482,215 +7348,6 @@ paths:
                 properties:
                   message:
                     type: string
-  /api/admin/users/{id}/recovery-email:
-    post:
-      tags:
-        - admin
-      description: Send a recovery email to the user. Triggers Kratos self-service
-        recovery flow.
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "204":
-          description: Recovery email sent
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-  /api/admin/users/{id}/sessions:
-    get:
-      tags:
-        - admin
-      description: List active sessions for a Kratos identity. Requires admin.
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-    delete:
-      tags:
-        - admin
-      description: Revoke all sessions for a Kratos identity. Requires admin.
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: id
-          required: true
-      responses:
-        "204":
-          description: Default Response
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-  /api/admin/sessions/{sessionId}:
-    delete:
-      tags:
-        - admin
-      description: Revoke a session by ID. Requires admin.
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: sessionId
-          required: true
-      responses:
-        "204":
-          description: Default Response
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
   /api/admin/rbac/bindings:
     get:
       tags:
@@ -6733,6 +7390,26 @@ paths:
       description: "OPAL data source: groups handed out per org by its admins
         (data.org_grants). 503 when the store cannot be read, so OPAL keeps the
         org grants OPA already holds."
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
+  /api/admin/rbac/opal/site_login:
+    get:
+      tags:
+        - rbac
+      description: "OPAL data source: per-site sign-in strength (data.site_login). 503
+        when the store cannot be read, so OPAL keeps the 2FA requirements OPA
+        already holds."
       responses:
         "503":
           description: Default Response
@@ -9607,6 +10284,121 @@ paths:
                     example: Forbidden
                   message:
                     type: string
+  /api/audit/events:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/facets:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/summary:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/events/{eventId}:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: eventId
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/users/{id}/timeline:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/me/logins:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/tail:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/exports:
+    post:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/exports/{id}:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/exports/{id}/download:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/saved-queries:
+    get:
+      responses:
+        "200":
+          description: Default Response
+    post:
+      responses:
+        "200":
+          description: Default Response
+  /api/audit/saved-queries/{id}:
+    delete:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/observability/logs:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/observability/trace/{traceId}:
+    get:
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: traceId
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/observability/links:
+    get:
+      responses:
+        "200":
+          description: Default Response
   /api/admin/recert/campaigns:
     post:
       tags:
@@ -11821,6 +12613,65 @@ paths:
       tags:
         - oathkeeper
       description: Get Oathkeeper access rules. Polled by Oathkeeper.
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sites/by-host/{host}:
+    get:
+      tags:
+        - sites
+      description: Login branding and 2FA bar of the site served on exactly this host;
+        404 otherwise
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: host
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sites/{name}/login:
+    get:
+      tags:
+        - sites
+      description: Login branding and 2FA bar of one site, by name
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sites/{name}/logo:
+    get:
+      tags:
+        - sites
+      description: The site login-page logo (PNG or WebP)
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sites/{name}/access-reason:
+    get:
+      tags:
+        - sites
+      description: "Why the signed-in visitor (own Kratos session cookie) was refused
+        GET <url> on this site: {reason: needs_2fa|forbidden|ok|not_found,
+        minAal}"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
       responses:
         "200":
           description: Default Response

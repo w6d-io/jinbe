@@ -12,6 +12,8 @@ import { sha256 } from './render.js'
  *   rbac:sites:versions:<name>   → List: JSON(SiteVersion), RPUSH only    append-only history
  *   rbac:sites:draft:<name>      → String: JSON(SiteDraft)                one server-side draft
  *   rbac:sites:deleted:<name>    → String: JSON(snapshot), EX 30 days     for restore
+ *   rbac:sites:drafts            → Set: names with a draft (lists draft-only sites)
+ *   rbac:sites:deleted           → Set: names with a snapshot (members whose snapshot expired are dropped on read)
  *
  * Every save is a new version with its own etag; a save names the etag it was based on (If-Match),
  * so two editors cannot silently overwrite each other.
@@ -37,6 +39,13 @@ export interface SiteVersion {
   site: Site
 }
 
+export interface DeletedSnapshot {
+  record: SiteRecord
+  versions: SiteVersion[]
+  deletedAt: string
+  deletedBy: string
+}
+
 export interface SiteDraft {
   site: unknown
   baseVersion: number
@@ -48,7 +57,9 @@ const SITES = 'rbac:sites'
 const versionsKey = (name: string) => `rbac:sites:versions:${name}`
 const draftKey = (name: string) => `rbac:sites:draft:${name}`
 const deletedKey = (name: string) => `rbac:sites:deleted:${name}`
-const DELETED_TTL_SECONDS = 30 * 24 * 3600
+const DRAFTS = 'rbac:sites:drafts'
+const DELETED = 'rbac:sites:deleted'
+export const DELETED_TTL_SECONDS = 30 * 24 * 3600
 
 const status = (message: string, statusCode: number, code: string) => Object.assign(new Error(message), { statusCode, code })
 
@@ -102,6 +113,17 @@ class SitesRepository {
     })
   }
 
+  /** Put back what the gateway serves after an automatic rollback (`undefined`: nothing applied). */
+  async setApplied(name: string, applied: SiteRecord['applied'] | undefined): Promise<void> {
+    await withRedisLock(`sites:${name}`, async () => {
+      const current = await this.get(name)
+      if (!current) return
+      if (applied) current.applied = applied
+      else delete current.applied
+      await this.redis.hset(SITES, name, JSON.stringify(current))
+    })
+  }
+
   /** Replace the stored intent's run state without a new version (pause/resume). */
   async setState(name: string, state: Site['state']): Promise<SiteRecord> {
     return withRedisLock(`sites:${name}`, async () => {
@@ -132,11 +154,51 @@ class SitesRepository {
   async putDraft(name: string, draft: SiteDraft): Promise<SiteDraft> {
     const stored = { ...draft, updatedAt: new Date().toISOString() }
     await this.redis.set(draftKey(name), JSON.stringify(stored))
+    await this.redis.sadd(DRAFTS, name)
     return stored
   }
 
   async deleteDraft(name: string): Promise<void> {
     await this.redis.del(draftKey(name))
+    await this.redis.srem(DRAFTS, name)
+  }
+
+  /** Every name that has a draft, with it (a stale set member is dropped). */
+  async drafts(): Promise<Array<{ name: string; draft: SiteDraft }>> {
+    const out: Array<{ name: string; draft: SiteDraft }> = []
+    for (const name of await this.redis.smembers(DRAFTS)) {
+      const draft = await this.getDraft(name)
+      if (draft) out.push({ name, draft })
+      else await this.redis.srem(DRAFTS, name)
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async deleted(): Promise<DeletedSnapshot[]> {
+    const out: DeletedSnapshot[] = []
+    for (const name of await this.redis.smembers(DELETED)) {
+      const raw = await this.redis.get(deletedKey(name))
+      if (raw) out.push(JSON.parse(raw) as DeletedSnapshot)
+      else await this.redis.srem(DELETED, name)
+    }
+    return out.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
+  }
+
+  /** Put a deleted site back from its snapshot: record (not applied) and history. */
+  async restore(name: string): Promise<SiteRecord> {
+    return withRedisLock(`sites:${name}`, async () => {
+      if (await this.get(name)) throw status(`A site named ${name} exists; delete or rename it first`, 409, 'site_exists')
+      const raw = await this.redis.get(deletedKey(name))
+      if (!raw) throw status(`No deleted site ${name} (snapshots are kept 30 days)`, 404, 'not_found')
+      const snapshot = JSON.parse(raw) as DeletedSnapshot
+      const { applied: _applied, ...record } = snapshot.record
+      await this.redis.del(versionsKey(name))
+      for (const v of snapshot.versions) await this.redis.rpush(versionsKey(name), JSON.stringify(v))
+      await this.redis.hset(SITES, name, JSON.stringify(record))
+      await this.redis.del(deletedKey(name))
+      await this.redis.srem(DELETED, name)
+      return record
+    })
   }
 
   /** Drop the site; its record and history are kept 30 days under rbac:sites:deleted:<name>. */
@@ -146,9 +208,11 @@ class SitesRepository {
       if (!current) return
       const snapshot = { record: current, versions: await this.versions(name), deletedAt: new Date().toISOString(), deletedBy: by }
       await this.redis.set(deletedKey(name), JSON.stringify(snapshot), 'EX', DELETED_TTL_SECONDS)
+      await this.redis.sadd(DELETED, name)
       await this.redis.hdel(SITES, name)
       await this.redis.del(versionsKey(name))
       await this.redis.del(draftKey(name))
+      await this.redis.srem(DRAFTS, name)
     })
   }
 }

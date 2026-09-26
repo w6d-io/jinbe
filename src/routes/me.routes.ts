@@ -1,4 +1,7 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
+import { callerRights } from '../middleware/require-permission.js'
+import { effectivePermissions } from '../services/effective-permissions.js'
+import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { kratosService } from '../services/kratos.service.js'
@@ -84,6 +87,74 @@ async function namesFor(ids: readonly string[]): Promise<Record<string, string>>
 }
 
 export async function meRoutes(fastify: FastifyInstance) {
+  /**
+   * What the caller may do, so a console offers only the actions the API would accept.
+   *
+   * `actions` names every user-management permission and the coarse pair, each true or false — the
+   * SAME rule the routes enforce (a coarse permission covers the fine ones under it), so a button is
+   * shown exactly when its request would pass. A console must still expect a 403: this is a hint for
+   * what to draw, never the decision.
+   *
+   * Answered by OPA, the engine the gateway decides with: `permissions`/`roles` are jinbe's (global
+   * roles included), `apps.kuma` the console's own.
+   */
+  fastify.get(
+    '/permissions',
+    {
+      schema: {
+        description: "The caller's effective permissions across the platform, and which user-management actions they allow.",
+        tags: ['me'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              subject: { type: 'string' },
+              groups: { type: 'array', items: { type: 'string' } },
+              roles: { type: 'array', items: { type: 'string' } },
+              permissions: { type: 'array', items: { type: 'string' } },
+              actions: { type: 'object', additionalProperties: { type: 'boolean' } },
+              apps: {
+                type: 'object',
+                additionalProperties: {
+                  type: 'object',
+                  properties: {
+                    roles: { type: 'array', items: { type: 'string' } },
+                    permissions: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              },
+            },
+          },
+          401: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+          503: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const rights = await callerRights(request, reply)
+      if (!rights) return reply
+      let kuma: { roles: string[]; permissions: string[] } = { roles: [], permissions: [] }
+      if (!(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
+        try {
+          const held = await effectivePermissions(rights.email, 'kuma')
+          kuma = { roles: held.roles, permissions: held.permissions }
+        } catch (err) {
+          // Same rule as jinbe's own: "could not tell" is not "holds nothing".
+          request.log.warn({ err: (err as Error).message }, '[me/permissions] OPA could not answer for kuma')
+          return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+        }
+      }
+      return reply.send({
+        subject: request.userContext?.id,
+        groups: rights.groups,
+        roles: rights.roles,
+        permissions: rights.permissions,
+        actions: userActions(rights.permissions),
+        apps: { jinbe: { roles: rights.roles, permissions: rights.permissions }, kuma },
+      })
+    },
+  )
+
   fastify.get(
     '/organizations',
     {

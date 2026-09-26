@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { scimTokenService, type ScimTokenPrincipal } from '../services/scim-token.service.js'
-import { auditEventService } from '../services/audit-event.service.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * SCIM bearer-token authentication (SCIM provisioning spec §3).
@@ -54,22 +54,11 @@ function extractBearerToken(header?: string): string | null {
 }
 
 export async function scimAuth(request: FastifyRequest, reply: FastifyReply) {
-  const path = (request.url || '').split('?')[0]
   const token = extractBearerToken(request.headers.authorization)
   const principal = token ? await scimTokenService.verify(token) : null
 
   if (!principal) {
-    auditEventService.emit({
-      category: 'access',
-      verb:     'deny',
-      target:   `${request.method} ${path}`,
-      result:   'denied',
-      actor:    { email: null, ip: request.ip, ua: (request.headers['user-agent'] as string) || null },
-      method:   request.method,
-      path,
-      source:   'scim',
-      reason:   token ? 'scim_token_invalid' : 'scim_token_missing',
-    }).catch(() => {})
+    denyAudit(request, token ? 'scim_token_invalid' : 'scim_token_missing', { source: 'scim' })
     return reply
       .status(401)
       .header('WWW-Authenticate', 'Bearer realm="scim"')

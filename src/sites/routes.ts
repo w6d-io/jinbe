@@ -1,21 +1,24 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { ZodError, type z, type ZodSchema, type ZodTypeAny } from 'zod'
+import type { FastifyInstance } from 'fastify'
+import type { ZodSchema } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
+import { requireRecentMfa, requireSitesApply, requireSuperAdmin } from '../middleware/require-admin.js'
 import {
   applyBodySchema, checkHostBodySchema, diffBodySchema, draftBodySchema, matchBodySchema, nameParamsSchema,
   previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema,
 } from './schemas.js'
 import * as sites from './sites.service.js'
 import * as ops from './apply.service.js'
-import type { Actor } from './audit.js'
+import { actorOf, handle, nameOf, parse } from './http.js'
+import { siteOpsRoutes } from './ops.routes.js'
+import { migrationRoutes } from './migration/routes.js'
 
 /**
  * /api/admin/sites — plug a site (SERVICE_PLUG.md, site-ux.md §14.2).
  *
- * Registered inside the admin plugin, so every route already needs `admin:read`. Every write needs
- * `admin:write` (super_admin); anything that changes what the gateway serves — apply, rollback,
- * pause/resume, delete — also needs a second factor proven in the last 15 minutes.
+ * Registered inside the admin plugin, so every route already needs `admin:read`. Drafts, saves and
+ * requests need `admin:write`; anything that changes what the gateway serves — apply, rollback,
+ * pause/resume, delete, restore — needs `sites:apply` (super_admin) and a second factor proven in
+ * the last 15 minutes (owner decision: admins draft and ask, super admins apply).
  *
  * Bodies are validated by zod here, and only here: the JSON schemas below document them in the
  * OpenAPI spec but are not a second validator with its own coercions.
@@ -23,7 +26,7 @@ import type { Actor } from './audit.js'
 
 const TAGS = ['sites']
 const write = { preHandler: [requireSuperAdmin] }
-const gateway = { preHandler: [requireSuperAdmin, requireRecentMfa] }
+const gateway = { preHandler: [requireSitesApply, requireRecentMfa] }
 const doc = (description: string, body?: ZodSchema) => ({
   schema: {
     description,
@@ -34,45 +37,6 @@ const doc = (description: string, body?: ZodSchema) => ({
 const docNamed = (description: string, body?: ZodSchema) => {
   const d = doc(description, body)
   return { schema: { ...d.schema, params: zodToJsonSchema(nameParamsSchema, { target: 'openApi3' }) } }
-}
-
-function actorOf(request: FastifyRequest): Actor {
-  return {
-    id: request.userContext?.id ?? null,
-    email: request.userContext?.email ?? null,
-    ip: request.ip,
-    ua: (request.headers['user-agent'] as string | undefined)?.slice(0, 200) ?? null,
-    sessionId: request.userContext?.sessionId ?? null,
-    requestId: (request.headers['x-request-id'] as string | undefined) ?? null,
-  }
-}
-
-const parse = <S extends ZodTypeAny>(schema: S, value: unknown): z.output<S> => schema.parse(value)
-const nameOf = (request: FastifyRequest) => parse(nameParamsSchema, request.params).name
-
-/** One error shape for the whole module: `{error: <code>, message, checks?, issues?}`. */
-function fail(reply: FastifyReply, request: FastifyRequest, err: unknown) {
-  if (err instanceof ZodError) {
-    return reply.status(400).send({ error: 'invalid_request', message: 'The request is not valid', issues: err.issues })
-  }
-  const e = err as { statusCode?: number; code?: string; message?: string; checks?: unknown; ties?: unknown }
-  const status = typeof e.statusCode === 'number' && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 500
-  if (status >= 500 && status !== 503) request.log.error({ err }, '[sites] request failed')
-  return reply.status(status).send({
-    error: e.code ?? (status === 409 ? 'conflict' : status === 500 ? 'internal_error' : 'error'),
-    message: status === 500 ? 'Internal error' : e.message,
-    ...(e.checks ? { checks: e.checks } : {}),
-    ...(e.ties ? { ties: e.ties } : {}),
-  })
-}
-
-type Handler = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>
-const handle = (fn: Handler): Handler => async (request, reply) => {
-  try {
-    return await fn(request, reply)
-  } catch (err) {
-    return fail(reply, request, err)
-  }
 }
 
 export async function sitesRoutes(fastify: FastifyInstance) {
@@ -90,6 +54,11 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.post('/check-host', { ...write, ...doc('Resolve a host against the zones: zone, SSO coverage, possible exposures (zone / vanity), owner', checkHostBodySchema) },
     handle(async (request) => sites.checkHost(parse(checkHostBodySchema, request.body))))
+
+  fastify.get('/platform', doc('This environment: name, production flag, four-eyes mode, expected rule-load time, zones'),
+    handle(async () => sites.platformView()))
+
+  fastify.get('/deleted', doc('Deleted sites whose snapshot is kept (30 days)'), handle(async () => sites.deletedSites()))
 
   fastify.post('/match', { ...write, ...doc('Which gateway rule and which route a request would hit, live or with a draft (gatekit)', matchBodySchema) },
     handle(async (request) => sites.match(parse(matchBodySchema, request.body))))
@@ -114,6 +83,9 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/:name', { ...gateway, ...docNamed('Delete a site: rules first, then its permissions; a snapshot is kept 30 days') },
     handle(async (request) => ops.remove(nameOf(request), actorOf(request))))
+
+  fastify.post('/:name/restore', { ...gateway, ...docNamed('Restore a deleted site from its snapshot, saved but not applied') },
+    handle(async (request) => ops.restore(nameOf(request))))
 
   fastify.get('/:name/draft', docNamed('The server-side draft'), handle(async (request) => sites.getDraft(nameOf(request))))
 
@@ -153,5 +125,9 @@ export async function sitesRoutes(fastify: FastifyInstance) {
     handle(async (request) => ops.setPaused(nameOf(request), false, actorOf(request))))
 
   fastify.get('/:name/blast-radius', docNamed('What deleting the site would take with it'), handle(async (request) => ops.blastRadius(nameOf(request))))
+
+  // Day-2 (status, drift, timelines, requests, logo) and the one-time migration.
+  await fastify.register(siteOpsRoutes)
+  await fastify.register(migrationRoutes, { prefix: '/migration' })
 }
 
