@@ -68,6 +68,35 @@ export function auditSite(
   })
 }
 
+// ─── Zones ──────────────────────────────────────────────────────────────────
+
+/**
+ * `zone.created` / `zone.deleted`: a wildcard domain the platform starts or stops serving. Carries the
+ * domain, ingress mode and TLS mode (what became reachable, and how it is certified) — nothing secret.
+ */
+export function auditZone(
+  command: 'create' | 'delete',
+  name: string,
+  actor: AuditActorInput,
+  facts: { domain: string; ingress?: string; tls?: string; issuer?: string; ingressClass?: string },
+): void {
+  send({
+    category: 'service',
+    kind: 'change',
+    verb: command,
+    target: `zone:${name}`,
+    targetType: 'zone',
+    targetId: name,
+    result: 'applied',
+    actor: actorOf(actor),
+    requestId: actor.requestId ?? null,
+    changes: { resource: 'zone', id: name, summary: `${command === 'create' ? 'created' : 'deleted'} zone *.${facts.domain}` },
+    details: Object.fromEntries(Object.entries(facts).filter(([, v]) => v !== undefined)),
+    source: 'jinbe-api',
+    v1Event: command === 'create' ? 'zone.created' : 'zone.deleted',
+  })
+}
+
 // ─── Access check ───────────────────────────────────────────────────────────
 
 /**

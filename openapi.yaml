@@ -4541,6 +4541,10 @@ paths:
                         postLogoutUrl:
                           type: string
                           format: uri
+                        defaultReturnUrl:
+                          type: string
+                          format: uri
+                          maxLength: 2048
                       required:
                         - twoFactor
                         - reach
@@ -4576,6 +4580,111 @@ paths:
       tags: *a1
       description: The admin-defined wildcard zones a site host can live under, with
         SSO (login cookie) coverage
+      responses:
+        "200":
+          description: Default Response
+    post:
+      tags: *a1
+      description: "Create a zone (Zone CR): domain under SITES_ZONE_ALLOWED_PARENTS,
+        TLS default | issuer | secret. The operator makes the wildcard Ingress
+        and certificate"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain:
+                  allOf:
+                    - type: string
+                      maxLength: 253
+                    - type: string
+                      pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$
+                name:
+                  type: string
+                  pattern: ^[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?$
+                ingress:
+                  type: string
+                  enum:
+                    - wildcard
+                    - per-site
+                tls:
+                  type: object
+                  properties:
+                    mode:
+                      type: string
+                      enum:
+                        - default
+                        - issuer
+                        - secret
+                    issuer:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$
+                    secretName:
+                      $ref: "#/properties/tls/properties/issuer"
+                  required:
+                    - mode
+                  additionalProperties: false
+                  default:
+                    mode: default
+                ingressClass:
+                  $ref: "#/properties/tls/properties/issuer"
+              required:
+                - domain
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/zones/{name}:
+    get:
+      tags: *a1
+      description: "A zone: spec, operator status (IngressReady, CertificateReady,
+        DomainTaken), the sites it serves"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    delete:
+      tags: *a1
+      description: Delete a zone; refused (409, with the sites) while a saved site has
+        a host under it
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/zones/suggest:
+    post:
+      tags: *a1
+      description: "The zone to create for a host outside every zone: its parent
+        domain, allow-list, wildcard DNS probe, TLS choices, SSO coverage.
+        Writes nothing"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  allOf:
+                    - type: string
+                      maxLength: 253
+                    - type: string
+                      pattern: ^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$
+              required:
+                - host
+              additionalProperties: false
       responses:
         "200":
           description: Default Response
@@ -5015,6 +5124,10 @@ paths:
                         postLogoutUrl:
                           type: string
                           format: uri
+                        defaultReturnUrl:
+                          type: string
+                          format: uri
+                          maxLength: 2048
                       required:
                         - twoFactor
                         - reach
@@ -5506,6 +5619,10 @@ paths:
                         postLogoutUrl:
                           type: string
                           format: uri
+                        defaultReturnUrl:
+                          type: string
+                          format: uri
+                          maxLength: 2048
                       required:
                         - twoFactor
                         - reach
@@ -6002,6 +6119,10 @@ paths:
                         postLogoutUrl:
                           type: string
                           format: uri
+                        defaultReturnUrl:
+                          type: string
+                          format: uri
+                          maxLength: 2048
                       required:
                         - twoFactor
                         - reach
@@ -12450,6 +12571,16 @@ paths:
           in: path
           name: host
           required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sites/mine:
+    get:
+      tags:
+        - sites
+      description: "The sites the signed-in visitor (own Kratos session cookie) can
+        open: [{name, displayName, url, logoUrl, accent}]; 401 without a
+        session"
       responses:
         "200":
           description: Default Response

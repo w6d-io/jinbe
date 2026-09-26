@@ -11,6 +11,8 @@ import { diffArtefacts, riskOf } from './diff.js'
 import { gatekit, type RenderSample } from './gatekit.client.js'
 import { placeHost, zonesView } from './host.js'
 import { auditSite, type Actor } from './audit.js'
+import { suggestFor } from './zones.service.js'
+import { clusterIngresses, collisionChecks } from './host-collisions.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -138,14 +140,21 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
 export async function preview(site: Site) {
   assertNotSystem(site.name)
   const records = await sitesRepository.list()
-  const rendered = render(site, await loadPlatform())
+  const platform = await loadPlatform()
+  const rendered = render(site, platform)
   // gatekit first: when it cannot answer there is no preview at all (no JS approximation).
   const gk = await gatekitChecks(site, rendered, records)
   const ctx = await contextChecks(site, rendered, records)
   const before = await appliedRender(records.find((r) => r.site.name === site.name) ?? null)
   const risk = riskOf(before?.site ?? null, site)
   const { checks, ...artefacts } = rendered
-  return { artefacts, checks: [...checks, ...ctx, ...gk], risk, words: risk.flags.map((f) => f.message) }
+  const ingresses = await clusterIngresses()
+  const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
+  return {
+    artefacts, checks: [...checks, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...gk], risk, words: risk.flags.map((f) => f.message),
+    // Outside every zone: the zone the wizard can offer to create.
+    ...(suggested.covered ? {} : { suggestedZone: suggested }),
+  }
 }
 
 export async function diff(name: string, candidate?: Site) {
@@ -196,21 +205,26 @@ export async function version(name: string, v: number) {
 /** Resolve a host against the admin-defined zones: which zone, SSO coverage, which exposures, who owns it. */
 export async function checkHost(body: { host: string; pathPrefix?: string; site?: string }) {
   const cfg = sitesConfig()
-  const placement = placeHost(body.host, await loadZones(), cfg.SITES_COOKIE_DOMAIN)
+  const zones = await loadZones()
+  const placement = placeHost(body.host, zones, cfg.SITES_COOKIE_DOMAIN)
   const reserved = cfg.SITES_RESERVED_HOSTS.includes(body.host)
   const records = await sitesRepository.list()
   const { owner, sharedWith } = hostOwner(body.host, body.pathPrefix, body.site, records)
+  // Another Ingress anywhere in the cluster already answering this host (the operator's HostTaken).
+  const ingresses = await clusterIngresses()
+  const taken = collisionChecks(body.host, body.site, ingresses).map(({ path: _p, ...c }) => c)
   const legacy = (await redisRbacRepository.getAccessRules()).some((r) => r.match.url.includes(`://${body.host}/`) || r.match.url.includes(`://${body.host}<`))
   const checks = [
     ...(placement.tooDeep ? [{ level: 'error', code: 'host_too_deep', message: 'A site host must be exactly one label under a zone' }] : []),
     ...(placement.zone || placement.tooDeep ? [] : [{ level: 'error', code: 'host_outside_zones', message: 'No zone covers this host; sites are mapped under the configured wildcard zones only' }]),
     ...(reserved ? [{ level: 'error', code: 'host_reserved', message: 'This is a platform host' }] : []),
     ...(owner ? [{ level: 'error', code: 'host_taken', message: `Already served by site '${owner}'` }] : []),
+    ...taken,
     ...(legacy ? [{ level: 'warn', code: 'legacy_rules', message: 'Legacy gateway rules already serve this host; overlaps are checked at preview' }] : []),
     ...(placement.zone && !placement.sso ? [{ level: 'warn', code: 'no_sso', message: 'The login cookie does not reach this zone; browser sign-in will not work there' }] : []),
   ]
   return {
-    available: !!placement.zone && !reserved && !owner,
+    available: !!placement.zone && !reserved && !owner && !taken.some((c) => c.level === 'error'),
     ...(owner ? { owner } : {}),
     sharedWith,
     zone: placement.zone,
@@ -220,6 +234,8 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
     tls: placement.tls,
     reserved,
     checks,
+    // Outside every zone (or too deep for one): the zone that would cover the host, to offer creating it.
+    ...(placement.zone ? {} : { suggestedZone: await suggestFor(body.host, zones, { ingresses }) }),
   }
 }
 

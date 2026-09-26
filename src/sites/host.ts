@@ -15,6 +15,8 @@ export interface Zone {
   /** `dev.stairling.com` for the wildcard `*.dev.stairling.com` (Zone `spec.domain`). */
   suffix: string
   ingressClass?: string
+  /** Zone CRs only: one wildcard Ingress, or one exact-host Ingress per Site (a shared domain). */
+  ingress?: 'wildcard' | 'per-site'
   /** `zone`: a Zone CR (zones.auth.w6d.io); `config`: SITES_ZONES, used when the cluster is not read. */
   source?: 'zone' | 'config'
   /** Whether the zone's wildcard certificate is served (default true); false = a certificate per vanity site. */
@@ -38,7 +40,8 @@ export interface HostPlacement {
 const bare = (domain: string) => domain.replace(/^\./, '').toLowerCase()
 const under = (host: string, domain: string) => host === bare(domain) || host.endsWith(`.${bare(domain)}`)
 
-function ssoOf(zone: Zone, platformCookieDomain: string | undefined) {
+/** Whether the login cookie (the zone's own, else the platform's) reaches the zone. */
+export function ssoOf(zone: Pick<Zone, 'suffix' | 'cookieDomain'>, platformCookieDomain: string | undefined) {
   const cookieDomain = zone.cookieDomain ?? platformCookieDomain ?? null
   return { cookieDomain, sso: !!cookieDomain && under(zone.suffix.toLowerCase(), cookieDomain) }
 }
@@ -66,6 +69,7 @@ export function zonesView(zones: readonly Zone[], platformCookieDomain: string |
       sso,
       tls: z.wildcardTls === false ? 'per-site' as const : 'wildcard' as const,
       ...(z.ingressClass ? { ingressClass: z.ingressClass } : {}),
+      ...(z.ingress ? { ingress: z.ingress } : {}),
       source: z.source ?? 'config',
     }
   })

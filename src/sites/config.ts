@@ -27,6 +27,14 @@ import type { Zone } from './host.js'
  *   SITES_ENV              environment name shown in kuma (default: NODE_ENV).
  *   SITES_PRODUCTION       true on a production environment (stricter guards in kuma; default false).
  *   SITES_RULES_LOAD_EXPECTED_SEC  typical save→enforced time shown on the timeline (10; ~90 with maester in controller mode).
+ *   SITES_ZONE_ALLOWED_PARENTS  comma-separated domains a Zone may be created at or under (e.g.
+ *                          dev.stairling.com,stairfleet.com). Empty = no Zone can be created from kuma.
+ *   SITES_ZONE_ISSUERS     comma-separated ClusterIssuers offered for TLS mode `issuer` (mirror the
+ *                          operator's allowed issuers). A named issuer must be one of them;
+ *                          mode `issuer` without a name uses the operator's default issuer.
+ *   SITES_INGRESS_ADDRESSES  comma-separated IPs/hostnames of the platform ingress load balancer, which a
+ *                          new zone's wildcard DNS must point at. Empty = learnt from the existing Zones.
+ *   SITES_ZONE_DNS_TIMEOUT_MS  per DNS lookup of the wildcard probe (1500).
  */
 
 const zoneSchema = z.object({
@@ -34,6 +42,8 @@ const zoneSchema = z.object({
   wildcardTls: z.boolean().optional(),
   cookieDomain: z.string().regex(/^\.?([a-z0-9-]+\.)+[a-z]{2,63}$/).optional(),
 })
+
+const list = (v: string) => v.split(',').map((s) => s.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean)
 
 const schema = z.object({
   GATEKIT_URL: z.string().url().optional(),
@@ -78,6 +88,10 @@ const schema = z.object({
   SITES_ENV: z.string().max(64).optional(),
   SITES_PRODUCTION: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   SITES_RULES_LOAD_EXPECTED_SEC: z.coerce.number().int().min(1).max(3600).default(10),
+  SITES_ZONE_ALLOWED_PARENTS: z.string().default('').transform(list).pipe(z.array(z.string().regex(/^([a-z0-9-]+\.)+[a-z]{2,63}$/, 'a domain'))),
+  SITES_ZONE_ISSUERS: z.string().default('').transform(list).pipe(z.array(z.string().regex(/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'a ClusterIssuer name'))),
+  SITES_INGRESS_ADDRESSES: z.string().default('').transform(list),
+  SITES_ZONE_DNS_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1500),
 })
 
 export type SitesConfig = z.infer<typeof schema> & { namespace: string }

@@ -129,6 +129,9 @@ export const siteSchema = z
           .strict()
           .optional(),
         postLogoutUrl: z.string().url().optional(),
+        // Where a visitor lands after signing in to this site, instead of Kratos' default return URL.
+        // On the site's own host (render checks it); served by the public by-host lookup and /mine.
+        defaultReturnUrl: z.string().url().max(2048).refine((u) => u.startsWith('https://'), 'an https:// link').optional(),
       })
       .strict()
       .optional(),
@@ -178,3 +181,36 @@ export const renderTemplateBodySchema = z
       .strict(),
   })
   .strict()
+
+// ── zones (zones.auth.w6d.io) ────────────────────────────────
+
+// The Zone CRD's own domain pattern (site-operator api/v1alpha1 ZoneSpec.Domain).
+const zoneDomain = z
+  .string()
+  .max(253)
+  .transform((d) => d.toLowerCase().replace(/^\*\./, '').replace(/\.$/, ''))
+  .pipe(z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/, 'a domain like apps.stairfleet.com'))
+// Zone names are cluster object names, at most 50 characters (Zone CRD rule).
+const zoneName = z.string().regex(/^[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?$/, 'lowercase letters, digits and dashes, at most 50 characters')
+const k8sName = z.string().regex(/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'a Kubernetes object name')
+
+export const zoneParamsSchema = z.object({ name: zoneName })
+export const createZoneBodySchema = z
+  .object({
+    domain: zoneDomain,
+    name: zoneName.optional(),
+    ingress: z.enum(['wildcard', 'per-site']).optional(),
+    tls: z
+      .object({ mode: z.enum(['default', 'issuer', 'secret']), issuer: k8sName.optional(), secretName: k8sName.optional() })
+      .strict()
+      .default({ mode: 'default' })
+      .superRefine((t, ctx) => {
+        if (t.mode === 'secret' && !t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'mode secret needs secretName' })
+        if (t.mode !== 'secret' && t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'secretName is only for mode secret' })
+        if (t.mode !== 'issuer' && t.issuer) ctx.addIssue({ code: 'custom', path: ['issuer'], message: 'issuer is only for mode issuer' })
+      }),
+    ingressClass: k8sName.optional(),
+  })
+  .strict()
+export const suggestZoneBodySchema = z.object({ host }).strict()
+export type CreateZoneBody = z.infer<typeof createZoneBodySchema>

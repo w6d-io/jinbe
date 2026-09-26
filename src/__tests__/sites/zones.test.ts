@@ -13,7 +13,7 @@ import { redisRbacRepository } from '../../services/redis-rbac.repository.js'
 
 const kube = {
   up: true,
-  ping: vi.fn(), get: vi.fn(), apply: vi.fn(), delete: vi.fn(),
+  ping: vi.fn(), get: vi.fn(), apply: vi.fn(), delete: vi.fn(), listIngresses: vi.fn(async () => []),
   listZones: vi.fn(async () => {
     if (!kube.up) throw new KubeUnavailable('down')
     return [
@@ -44,8 +44,8 @@ describe('zones', () => {
     process.env.SITES_KUBE = 'in-cluster'
     resetSitesConfig()
     expect(await zones()).toEqual([
-      { name: 'apps', suffix: 'apps.dev.stairling.com', wildcard: '*.apps.dev.stairling.com', cookieDomain: '.dev.stairling.com', sso: true, tls: 'wildcard', ingressClass: 'nginx', source: 'zone' },
-      { name: 'fleet', suffix: 'dev.stairfleet.com', wildcard: '*.dev.stairfleet.com', cookieDomain: '.stairfleet.com', sso: true, tls: 'wildcard', source: 'zone' },
+      { name: 'apps', suffix: 'apps.dev.stairling.com', wildcard: '*.apps.dev.stairling.com', cookieDomain: '.dev.stairling.com', sso: true, tls: 'wildcard', ingressClass: 'nginx', ingress: 'wildcard', source: 'zone' },
+      { name: 'fleet', suffix: 'dev.stairfleet.com', wildcard: '*.dev.stairfleet.com', cookieDomain: '.stairfleet.com', sso: true, tls: 'wildcard', ingress: 'wildcard', source: 'zone' },
     ])
     expect(await checkHost({ host: 'shop.apps.dev.stairling.com' })).toMatchObject({ available: true, zone: 'apps.dev.stairling.com' })
     // Not a Zone CR any more, so not a zone — config does not add to the cluster's list.

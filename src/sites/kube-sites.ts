@@ -3,7 +3,9 @@ import { sitesConfig } from './config.js'
 import type { SiteCr } from './render.js'
 
 /**
- * The only Kubernetes surface jinbe touches for Sites: `sites.auth.w6d.io` in one namespace.
+ * The only Kubernetes surface jinbe touches for Sites: `sites.auth.w6d.io` in one namespace, and the
+ * cluster-scoped `zones.auth.w6d.io` (list/get/create/delete — never update: a domain is immutable),
+ * and a read-only list of every Ingress (host collisions).
  *
  * jinbe never writes a Rule, Ingress or Certificate — the site-operator renders those from the Site
  * CR through fixed templates (SERVICE_PLUG.md). Anything that is not a clean answer from the API
@@ -30,15 +32,47 @@ export interface SiteCrObject extends SiteCr {
   status?: { observedGeneration?: number; conditions?: SiteCondition[]; children?: Array<{ kind: string; name: string; specHash: string }> }
 }
 
+export type ZoneTlsMode = 'default' | 'secret' | 'issuer'
+/** wildcard: one `*.<domain>` Ingress; per-site: one exact-host Ingress per Site (a shared domain). */
+export type ZoneIngressMode = 'wildcard' | 'per-site'
+
 /** A cluster-scoped Zone (zones.auth.w6d.io): an admin-defined wildcard domain. */
 export interface ZoneCrObject {
-  metadata: { name: string }
-  spec: { domain: string; ingressClass?: string; tls?: { mode?: 'default' | 'secret' | 'issuer'; secretName?: string; issuer?: string } }
+  metadata: { name: string; generation?: number; creationTimestamp?: string; resourceVersion?: string }
+  spec: { domain: string; ingress?: ZoneIngressMode; ingressClass?: string; tls?: { mode?: ZoneTlsMode; secretName?: string; issuer?: string } }
+  /** site-operator api/v1alpha1 ZoneStatus. */
+  status?: { observedGeneration?: number; conditions?: SiteCondition[] }
+}
+
+/** The Zone jinbe creates: spec only, the operator writes the status. */
+export interface ZoneCr {
+  apiVersion: 'auth.w6d.io/v1alpha1'
+  kind: 'Zone'
+  metadata: { name: string; labels?: Record<string, string> }
+  spec: ZoneCrObject['spec']
+}
+
+/** An Ingress anywhere in the cluster, reduced to what a host collision needs. */
+export interface IngressHosts {
+  namespace: string
+  name: string
+  /** Rule hosts as written: `beta.dev.stairling.com`, `*.dev.stairling.com`. */
+  hosts: string[]
+  /** The paths each rule host routes (`/collect`), for saying what a shadowed wildcard stops serving. */
+  paths: Record<string, string[]>
+  labels: Record<string, string>
 }
 
 export interface KubeSites {
-  /** Every Zone CR (cluster-scoped, read-only for jinbe). */
+  /** Every Ingress of the cluster (read-only), for host collisions. */
+  listIngresses(): Promise<IngressHosts[]>
+  /** Every Zone CR (cluster-scoped). */
   listZones(): Promise<ZoneCrObject[]>
+  getZone(name: string): Promise<ZoneCrObject | null>
+  /** Create only: an existing Zone is 409, never replaced (its domain is immutable). */
+  createZone(cr: ZoneCr): Promise<void>
+  /** Idempotent: an absent Zone is not an error. */
+  deleteZone(name: string): Promise<void>
   /** Proves the API server answers and the Site CRD is reachable with our RBAC. */
   ping(): Promise<void>
   get(name: string): Promise<SiteCrObject | null>
@@ -56,13 +90,43 @@ export class KubeUnavailable extends Error {
   }
 }
 
+/** The API server refused the object itself (conflict, schema, CEL, admission): not an outage. */
+export class KubeRefused extends Error {
+  constructor(readonly statusCode: 409 | 422, readonly code: string, message: string) {
+    super(message)
+  }
+}
+
 const statusOf = (err: unknown): number | undefined => {
   const e = err as { code?: number; statusCode?: number; response?: { statusCode?: number } }
   return e?.code ?? e?.statusCode ?? e?.response?.statusCode
 }
 
+/** The `message` of a Kubernetes Status body, bounded. */
+function apiMessage(err: unknown): string {
+  const e = err as { body?: unknown; message?: string }
+  try {
+    const body = typeof e?.body === 'string' ? JSON.parse(e.body) : e?.body
+    if (body && typeof (body as { message?: unknown }).message === 'string') return (body as { message: string }).message.slice(0, 500)
+  } catch {
+    // not JSON
+  }
+  return (e?.message ?? 'refused').slice(0, 500)
+}
+
 class ClientNodeKubeSites implements KubeSites {
-  constructor(private readonly api: k8s.CustomObjectsApi, private readonly namespace: string) {}
+  constructor(private readonly api: k8s.CustomObjectsApi, private readonly net: k8s.NetworkingV1Api, private readonly namespace: string) {}
+
+  async listIngresses(): Promise<IngressHosts[]> {
+    const out = await this.call('list ingresses', () => this.net.listIngressForAllNamespaces({}))
+    return (out.items ?? []).map((i) => ({
+      namespace: i.metadata?.namespace ?? '',
+      name: i.metadata?.name ?? '',
+      hosts: (i.spec?.rules ?? []).map((r) => r.host).filter((h): h is string => !!h),
+      paths: Object.fromEntries((i.spec?.rules ?? []).filter((r) => r.host).map((r) => [r.host!, (r.http?.paths ?? []).map((p) => p.path ?? '/')])),
+      labels: i.metadata?.labels ?? {},
+    }))
+  }
 
   private base() {
     return { group: SITE_GROUP, version: SITE_VERSION, namespace: this.namespace, plural: SITE_PLURAL }
@@ -83,6 +147,40 @@ class ClientNodeKubeSites implements KubeSites {
   async listZones(): Promise<ZoneCrObject[]> {
     const out = await this.call('list zones', () => this.api.listClusterCustomObject({ group: SITE_GROUP, version: SITE_VERSION, plural: 'zones' }))
     return ((out as { items?: ZoneCrObject[] }).items ?? []).filter((z) => typeof z?.spec?.domain === 'string')
+  }
+
+  private zones() {
+    return { group: SITE_GROUP, version: SITE_VERSION, plural: 'zones' }
+  }
+
+  async getZone(name: string): Promise<ZoneCrObject | null> {
+    try {
+      return (await this.api.getClusterCustomObject({ ...this.zones(), name })) as ZoneCrObject
+    } catch (err) {
+      if (statusOf(err) === 404) return null
+      throw new KubeUnavailable(`get zone: ${statusOf(err) ?? 'error'}`)
+    }
+  }
+
+  async createZone(cr: ZoneCr): Promise<void> {
+    try {
+      await this.api.createClusterCustomObject({ ...this.zones(), body: cr })
+    } catch (err) {
+      const status = statusOf(err)
+      if (status === 409) throw new KubeRefused(409, 'zone_exists', `A Zone named ${cr.metadata.name} already exists`)
+      // Schema, CEL or admission refusal: the API server's own words say which rule.
+      if (status === 400 || status === 422) throw new KubeRefused(422, 'zone_rejected', `The cluster refused the Zone: ${apiMessage(err)}`)
+      throw new KubeUnavailable(`create zone: ${status ?? 'error'}`)
+    }
+  }
+
+  async deleteZone(name: string): Promise<void> {
+    try {
+      await this.api.deleteClusterCustomObject({ ...this.zones(), name })
+    } catch (err) {
+      if (statusOf(err) === 404) return
+      throw new KubeUnavailable(`delete zone: ${statusOf(err) ?? 'error'}`)
+    }
   }
 
   async get(name: string): Promise<SiteCrObject | null> {
@@ -120,6 +218,10 @@ class OffKubeSites implements KubeSites {
   }
   async ping(): Promise<void> { this.refuse() }
   async listZones(): Promise<ZoneCrObject[]> { this.refuse() }
+  async listIngresses(): Promise<IngressHosts[]> { this.refuse() }
+  async getZone(): Promise<ZoneCrObject | null> { this.refuse() }
+  async createZone(): Promise<void> { this.refuse() }
+  async deleteZone(): Promise<void> { this.refuse() }
   async get(): Promise<SiteCrObject | null> { this.refuse() }
   async apply(): Promise<void> { this.refuse() }
   async delete(): Promise<void> { this.refuse() }
@@ -136,7 +238,7 @@ export function kubeSites(): KubeSites {
     const kc = new k8s.KubeConfig()
     if (cfg.SITES_KUBE === 'in-cluster') kc.loadFromCluster()
     else kc.loadFromDefault()
-    instance = new ClientNodeKubeSites(kc.makeApiClient(k8s.CustomObjectsApi), cfg.namespace)
+    instance = new ClientNodeKubeSites(kc.makeApiClient(k8s.CustomObjectsApi), kc.makeApiClient(k8s.NetworkingV1Api), cfg.namespace)
   }
   return instance
 }

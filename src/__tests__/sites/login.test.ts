@@ -56,6 +56,7 @@ import { render } from '../../sites/render.js'
 import { siteLoginOf } from '../../sites/login.js'
 import { sitesRoutes } from '../../sites/routes.js'
 import { publicSitesRoutes } from '../../sites/public.routes.js'
+import { resetMySitesCache } from '../../sites/mine.js'
 import { setKubeSites } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
 import * as redisClient from '../../services/redis-client.service.js'
@@ -109,12 +110,13 @@ beforeEach(() => {
   setKubeSites(h.kube)
   h.session.mockReset()
   h.opa.mockReset()
+  resetMySitesCache()
   vi.stubGlobal('fetch', fakeGatekit(h.gatekit))
 })
 
 async function saveAndApply(site: Site) {
   const put = await app.inject({ method: 'PUT', url: `/sites/${site.name}`, headers: W, payload: { site } })
-  expect(put.statusCode).toBe(200)
+  expect(put.statusCode, put.body).toBe(200)
   const res = await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: put.json().version } })
   expect(res.statusCode).toBe(200)
 }
@@ -186,7 +188,7 @@ describe('S-4 — public branding', () => {
     expect(res.headers['cache-control']).toBe('public, max-age=60')
     expect(res.json()).toEqual({
       name: 'payroll', displayName: 'Payroll HQ', logoUrl: null, accent: '#1A2B3C', welcome: 'Hello',
-      helpUrl: 'https://help.example.com/', minAal: 'aal2', scope: 'writes',
+      helpUrl: 'https://help.example.com/', minAal: 'aal2', scope: 'writes', defaultReturnUrl: null,
     })
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/dev.stairling.com' })).statusCode).toBe(404)
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/x.payroll.dev.stairling.com' })).statusCode).toBe(404)
@@ -271,5 +273,88 @@ describe('access-reason (login-ui /access)', () => {
     h.session.mockResolvedValue({ session: { email: 'nina@x.test', aal: 'aal2' } })
     h.opa.mockResolvedValue(undefined)
     expect((await ask('https://payroll.dev.stairling.com/')).json()).toEqual({ reason: 'forbidden', minAal: 'aal2' })
+  })
+})
+
+describe('landing page after sign-in (login.defaultReturnUrl, /mine)', () => {
+  const landing = (url: string, overrides: Partial<Site> = {}): Site => {
+    const s = twoFactor('none')
+    return { ...s, ...overrides, login: { ...s.login!, defaultReturnUrl: url } }
+  }
+  const mine = (cookie?: string) => app.inject({ method: 'GET', url: '/api/public/sites/mine', headers: cookie ? { cookie } : {} })
+  // Another plain site: no routes of its own, no org-grantable group (those are named after the site).
+  const other = (name: string, host: string, extra: Partial<Site> = {}): Site => {
+    const s = payrollSite({ name, displayName: name[0].toUpperCase() + name.slice(1), address: { host }, ...extra })
+    return { ...s, routes: { ...s.routes, items: [] }, groups: { ...s.groups, orgGrantable: {} } }
+  }
+  const nina = { session: { email: 'nina@x.test', identityId: 'id-nina', aal: 'aal1' } }
+
+  it('must be https on the site\'s own host; by-host serves it', async () => {
+    expect(render(landing('https://payroll.dev.stairling.com/home'), platform).checks.filter((c) => c.level === 'error')).toEqual([])
+    expect(render(landing('https://evil.example.com/home'), platform).checks).toContainEqual(expect.objectContaining({ level: 'error', code: 'return_url_host', path: 'login.defaultReturnUrl' }))
+    const put = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: W, payload: { site: landing('http://payroll.dev.stairling.com/') } })
+    expect(put.statusCode).toBe(400)
+    await saveAndApply(landing('https://payroll.dev.stairling.com/home'))
+    expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/payroll.dev.stairling.com' })).json().defaultReturnUrl).toBe('https://payroll.dev.stairling.com/home')
+  })
+
+  it('401 without a Kratos session cookie, or with one Kratos refuses', async () => {
+    expect((await mine()).statusCode).toBe(401)
+    expect((await mine('other=1')).statusCode).toBe(401)
+    h.session.mockResolvedValue({ session: null })
+    expect((await mine('ory_kratos_session=x')).statusCode).toBe(401)
+  })
+
+  it('lists only the sites OPA allows GET on the landing path for, with the visitor\'s email and aal', async () => {
+    await saveAndApply(landing('https://payroll.dev.stairling.com/home'))
+    await saveAndApply(other('wiki', 'wiki.dev.stairling.com', { address: { host: 'wiki.dev.stairling.com', pathPrefix: '/docs' } }))
+    await saveAndApply(other('secret', 'secret.dev.stairling.com'))
+    h.session.mockResolvedValue(nina)
+    h.opa.mockImplementation(async (_rule: string, input: { app: string }) => ({ allow: input.app !== 'secret', reason: input.app === 'secret' ? 'forbidden' : 'ok' }))
+    const res = await mine('ory_kratos_session_abc=x; theme=dark')
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['cache-control']).toBe('private, no-store')
+    expect(res.json()).toEqual([
+      { name: 'payroll', displayName: 'Payroll HQ', url: 'https://payroll.dev.stairling.com/home', logoUrl: null, accent: '#1A2B3C' },
+      { name: 'wiki', displayName: 'Wiki', url: 'https://wiki.dev.stairling.com/docs/', logoUrl: null, accent: null },
+    ])
+    // Only the Kratos session cookie is forwarded (any ory_kratos_session* name).
+    expect(h.session).toHaveBeenCalledWith('ory_kratos_session_abc=x')
+    expect(h.opa).toHaveBeenCalledWith('rbac/decision', { email: 'nina@x.test', object: '/home', action: 'GET', app: 'payroll', aal: 'aal1', client: false })
+    expect(h.opa).toHaveBeenCalledWith('rbac/decision', expect.objectContaining({ app: 'wiki', object: '/docs/' }))
+  })
+
+  it('anything but an explicit allow leaves a site out; unapplied and paused sites are never considered', async () => {
+    await saveAndApply(payrollSite())
+    await saveAndApply(other('wiki', 'wiki.dev.stairling.com', { state: 'paused' }))
+    await app.inject({ method: 'PUT', url: '/sites/draft-only', headers: W, payload: { site: other('draft-only', 'draft.dev.stairling.com') } })
+    h.session.mockResolvedValue(nina)
+    h.opa.mockResolvedValue({ reason: 'ok' })
+    expect((await mine('ory_kratos_session=x')).json()).toEqual([])
+    expect(h.opa.mock.calls.map((c) => (c[1] as { app: string }).app)).toEqual(['payroll'])
+  })
+
+  it('503, not an empty list, when OPA cannot answer; nothing cached', async () => {
+    await saveAndApply(payrollSite())
+    h.session.mockResolvedValue(nina)
+    h.opa.mockRejectedValue(new Error('down'))
+    expect((await mine('ory_kratos_session=x')).statusCode).toBe(503)
+    h.opa.mockResolvedValue({ allow: true, reason: 'ok' })
+    expect((await mine('ory_kratos_session=x')).json()).toHaveLength(1)
+  })
+
+  it('answers are kept 30 s per visitor and aal; a step-up to aal2 asks again', async () => {
+    await saveAndApply(payrollSite())
+    h.opa.mockResolvedValue({ allow: true, reason: 'ok' })
+    h.session.mockResolvedValue(nina)
+    await mine('ory_kratos_session=x')
+    await mine('ory_kratos_session=x')
+    expect(h.opa).toHaveBeenCalledTimes(1)
+    h.session.mockResolvedValue({ session: { ...nina.session, aal: 'aal2' } })
+    await mine('ory_kratos_session=x')
+    expect(h.opa).toHaveBeenCalledTimes(2)
+    h.session.mockResolvedValue({ session: { email: 'bob@x.test', identityId: 'id-bob', aal: 'aal1' } })
+    await mine('ory_kratos_session=y')
+    expect(h.opa).toHaveBeenCalledTimes(3)
   })
 })
