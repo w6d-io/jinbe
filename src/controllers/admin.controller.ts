@@ -15,7 +15,8 @@ import {
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
 import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
-import { declaredGroups, platformRightsOf } from '../services/authorization-model.service.js'
+import { declaredGroups } from '../services/group-catalogue.js'
+import { rights } from '../authz/opa.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -157,11 +158,10 @@ export class AdminController {
     }
 
     try {
-      // From the store the artefact carries, keyed on the immutable identity — the only place that
-      // says what is ENFORCED. It used to resolve groups from Kratos metadata and their meaning from
-      // a cache, so a screen showed memberships nobody decides against: an editing screen that saves
-      // one truth while displaying another turns a bad read into a bad write.
-      const held = await platformRightsOf(identity.id)
+      // What OPA — the engine that enforces — resolves for them in jinbe, global roles included: an
+      // editing screen that saves one truth while displaying another turns a bad read into a bad
+      // write.
+      const held = await rights(email)
 
       return {
         ...identity,

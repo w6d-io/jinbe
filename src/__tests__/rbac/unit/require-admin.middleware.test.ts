@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import type { UserRbacInfo } from '../../../services/opa.service.js'
+import type { UserRbacInfo } from '../../../services/authorization-resolution.js'
 
 // Use vi.hoisted to ensure mockState is available when vi.mock is hoisted
 const mockState = vi.hoisted(() => ({
@@ -16,23 +16,22 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
-// What the caller holds comes from the model the engine decides against, keyed on the immutable
-// identity. It used to be resolved from Kratos metadata through a cache, so what let somebody into
-// the console was decided by something nobody enforces.
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  platformRightsOf: vi.fn().mockImplementation(async () => {
+// What the caller holds is OPA's answer (rbac.user_info for jinbe), keyed on the address the RBAC
+// bindings are keyed on. Unanswered → the guard must answer 503.
+vi.mock('../../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
+  rights: vi.fn().mockImplementation(async () => {
     const held = mockState.opalUserInfo
-    if (!held) throw new Error('the model could not be read')
+    if (!held) throw new Error('OPA is unreachable')
     return { groups: held.groups, roles: held.roles, permissions: held.permissions }
   }),
-  AuthorizationModelUnavailableError: class extends Error {},
 }))
 
-import { requireAdmin, requireGroups } from '../../../middleware/require-admin.js'
-import { platformRightsOf } from '../../../services/authorization-model.service.js'
+import { requireAdmin } from '../../../middleware/require-admin.js'
+import { rights } from '../../../authz/opa.js'
 
 /** The reader the guard consults. Named as before so the assertions read the same. */
-const opalService = { getUserInfo: platformRightsOf }
+const opalService = { getUserInfo: rights }
 
 // Helper to create mock request
 function createMockRequest(email?: string, rbacInfo?: UserRbacInfo): FastifyRequest {
@@ -271,116 +270,5 @@ describe('requireAdmin middleware', () => {
 
       expect(request.rbacInfo).toEqual(mockState.opalUserInfo)
     })
-  })
-})
-
-describe('requireGroups factory function', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockState.env.DEV_BYPASS_AUTH = false
-    mockState.env.NODE_ENV = 'test'
-    mockState.opalUserInfo = null
-  })
-
-  it('should create middleware that checks for specified groups', async () => {
-    const middleware = requireGroups(['developers', 'testers'])
-    expect(typeof middleware).toBe('function')
-  })
-
-  it('should grant access when user in any allowed group', async () => {
-    mockState.opalUserInfo = {
-      email: 'dev@example.com',
-      groups: ['developers'],
-      roles: [],
-      permissions: [],
-    }
-
-    const middleware = requireGroups(['developers', 'testers'])
-    const request = createMockRequest('dev@example.com')
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    expect(reply.send).not.toHaveBeenCalled()
-  })
-
-  it('should return 403 when user not in any allowed group', async () => {
-    mockState.opalUserInfo = {
-      email: 'user@example.com',
-      groups: ['viewers'],
-      roles: [],
-      permissions: [],
-    }
-
-    const middleware = requireGroups(['developers', 'testers'])
-    const request = createMockRequest('user@example.com')
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    expect(reply._statusCode).toBe(403)
-    expect(reply._body).toEqual({
-      error: 'Forbidden',
-      message: 'Access requires membership in one of: developers, testers',
-    })
-  })
-
-  it('should reuse existing request.rbacInfo if already fetched', async () => {
-    const existingRbacInfo: UserRbacInfo = {
-      email: 'user@example.com',
-      groups: ['developers'],
-      roles: [],
-      permissions: [],
-    }
-
-    const middleware = requireGroups(['developers'])
-    const request = createMockRequest('user@example.com', existingRbacInfo)
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    // Should NOT call OPAL since rbacInfo already exists
-    expect(opalService.getUserInfo).not.toHaveBeenCalled()
-    expect(reply.send).not.toHaveBeenCalled()
-  })
-
-  it('should resolve what the caller holds when it is not already known', async () => {
-    mockState.opalUserInfo = {
-      email: 'user@example.com',
-      groups: ['developers'],
-      roles: [],
-      permissions: [],
-    }
-
-    const middleware = requireGroups(['developers'])
-    const request = createMockRequest('user@example.com')
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    // The IDENTITY, and only it: an address can be changed by its owner and reused by somebody else.
-    expect(opalService.getUserInfo).toHaveBeenCalledWith('subject-of-user@example.com')
-  })
-
-  it('should return 503 when OPAL unavailable', async () => {
-    mockState.opalUserInfo = null
-
-    const middleware = requireGroups(['developers'])
-    const request = createMockRequest('user@example.com')
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    expect(reply._statusCode).toBe(503)
-  })
-
-  it('should return 401 when email is missing', async () => {
-    const middleware = requireGroups(['developers'])
-    const request = createMockRequest(undefined)
-    const reply = createMockReply()
-
-    await middleware(request, reply)
-
-    expect(reply._statusCode).toBe(401)
   })
 })

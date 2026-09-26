@@ -1,13 +1,10 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
 import { denyAudit } from '../audit/deny.js'
-import { effectivePermissions } from '../services/effective-permissions.js'
+import { rights } from '../authz/opa.js'
 import { allows, type CheckedPermission } from '../services/user-permissions.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
-
-/** The app whose roles decide jinbe's own API. */
-export const JINBE_APP = 'jinbe'
 
 /**
  * What the caller holds in jinbe (global roles included), attached to the request; or null with a
@@ -35,7 +32,7 @@ export async function callerRights(request: FastifyRequest, reply: FastifyReply)
   }
 
   try {
-    request.rbacInfo = { email, ...(await effectivePermissions(email, JINBE_APP)) }
+    request.rbacInfo = { email, ...(await rights(email)) }
     return request.rbacInfo
   } catch (err) {
     request.log.warn({ subject, err: (err as Error).message }, '[permission] OPA could not say what the caller holds')

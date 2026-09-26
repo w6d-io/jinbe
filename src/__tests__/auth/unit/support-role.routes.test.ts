@@ -28,15 +28,6 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
   return { ...real, env: new Proxy(real.env, { get: (t, k) => (k in over ? over[k as string] : t[k as keyof typeof t]) }) }
 })
 
-// The admin plugin's own gate (requireAdmin) still reads the ConfigMap model — not migrated here.
-vi.mock('../../../services/authorization-model.service.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../../services/authorization-model.service.js')>()
-  return {
-    ...real,
-    platformRightsOf: vi.fn(async (subject: string) => ({ groups: [], roles: [], permissions: s.rights[subject] ?? [] })),
-    holdsPlatformPermission: vi.fn(async () => false),
-  }
-})
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn(async (e: Record<string, unknown>) => { s.audits.push(e); return 'id' }) },
 }))
@@ -78,8 +69,7 @@ import { adminRoutes } from '../../../routes/admin.routes.js'
 import { userManagementRoutes } from '../../../routes/user-management.routes.js'
 import { meRoutes } from '../../../routes/me.routes.js'
 import { rbacRoutes } from '../../../routes/rbac.routes.js'
-import { clearEffectivePermissionsCache } from '../../../services/effective-permissions.js'
-import { platformRightsOf } from '../../../services/authorization-model.service.js'
+import { clearAuthzCache } from '../../../authz/opa.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -130,7 +120,7 @@ beforeEach(() => {
   s.audits = []
   s.opaDown = false
   s.opaCalls = []
-  clearEffectivePermissionsCache()
+  clearAuthzCache()
 })
 
 const as = (who: string) => ({ 'x-test-user': who })
@@ -169,7 +159,7 @@ describe('support is refused by jinbe itself, not only at the gateway', () => {
     ['GET', '/api/admin/rbac/groups'],
     ['DELETE', '/api/admin/rbac/groups/support'],
     ['GET', '/api/admin/rbac/services'],
-    ['GET', '/api/admin/authorization-model'],
+    ['GET', '/api/admin/assignable-groups'],
     ['GET', '/api/admin/sites'],
   ]
   for (const [method, url, payload] of refused) {
@@ -280,16 +270,16 @@ describe('the guard asks OPA, and only OPA', () => {
     expect(s.opaCalls[0]).toEqual({ auth: 'Bearer opa-secret', input: { email: 'support@example.com', app: 'jinbe' } })
   })
 
-  it('never reads the ConfigMap model', async () => {
-    vi.mocked(platformRightsOf).mockClear()
-    await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('support'), payload: { traits: { email: 'b2@example.com' } } })
-    await app.inject({ url: '/api/me/permissions', headers: as('support') })
-    expect(platformRightsOf).not.toHaveBeenCalled()
+  it('the admin plugin gate (requireAdmin) asks OPA too — no second source', async () => {
+    await app.inject({ url: '/api/admin/sites', headers: as('support') })
+    expect(s.opaCalls).toEqual([{ auth: 'Bearer opa-secret', input: { email: 'support@example.com', app: 'jinbe' } }])
   })
 
   it('caches the answer for a few seconds', async () => {
     for (let i = 0; i < 3; i++) await app.inject({ url: `/api/admin/users/${USER}`, headers: as('support') })
-    expect(s.opaCalls).toHaveLength(1)
+    // The caller's rights once; the user shown is asked about too (what OPA says they hold), also once.
+    expect(s.opaCalls.filter((c) => c.input.email === 'support@example.com')).toHaveLength(1)
+    expect(s.opaCalls).toHaveLength(2)
   })
 
   it('fails closed: OPA unreachable → 503, never an allow', async () => {

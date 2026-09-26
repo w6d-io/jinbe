@@ -1,30 +1,33 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { rightsOf, type HeldRights } from '../services/authorization-model.service.js'
 import { env } from '../config/index.js'
-import {
-  administersOrganisation,
-  ORG_ADMIN_PERMISSIONS,
-  ORG_ADMIN_ROLE,
-} from '../services/org-admin.js'
+import { decide, manageableOrgs, rights } from '../authz/opa.js'
+import type { HeldRights } from '../services/authorization-resolution.js'
+import { ORG_ADMIN_PERMISSIONS, ORG_ADMIN_ROLE } from '../services/org-admin.js'
 import { denyAudit } from '../audit/deny.js'
 
+/** The path OPA is asked about: the request's own, without its query string. */
+export function requestPath(request: FastifyRequest): string {
+  return (request.url || '').split('?')[0]
+}
+
+/** What the gateway passes as `client`: an OAuth2 client, not a person's session. */
+export function isClient(request: FastifyRequest): boolean {
+  return request.userContext?.authVia === 'machine'
+}
+
 /**
- * Middleware factory: requires the caller to hold at least one permission IN the organisation named
- * by the route parameter `paramName`.
+ * Middleware factory: admits a request to a route of ONE organisation (named by the route parameter
+ * `paramName`) exactly when the gateway would — OPA's `rbac.decision` for this very request: the
+ * jinbe route_map, the org layer (membership, org grants, the per-org admin roster) and the site
+ * layer. The same rule and the same data, asked again here because the gateway is not the only way
+ * in (NetworkPolicy is not enforced).
  *
- * Resolved from the same two documents the engine decides against — a group gives roles in a named
- * organisation or in every one, and each role carries permissions. No role list is written here.
+ * Then attaches what the caller holds for the downstream checks: their jinbe rights (`user_info`)
+ * and, with `orgAdmin`, the org-admin management set when OPA lists the org among their
+ * `manageable_orgs` — opt-in, because those rights mean something only on the routes that manage an
+ * organisation's people.
  *
- * What this replaced asked an engine for `data.rbac.user_info`, a path that stopped existing when the
- * model became `strada.authz`; it answered nothing, so every route behind this gate refused with a
- * 503 that read like an outage. It also resolved the organisation's id to a registered service name
- * through Redis first, because the retired model keyed grants per service. This one keys them per
- * organisation, so there is nothing to translate and one store fewer to be up.
- *
- * `orgAdmin` opts a plugin into the org-admin path, consulted FIRST: somebody who administers the
- * organisation in the route (per-org roster or directory `org_admin` role) holds its member
- * management rights without any group granting there. Opt-in, because those rights mean something
- * only on the routes that manage an organisation's people.
+ * "Holds nothing" and "could not tell" stay apart: OPA unreachable → 503, never 403, never an allow.
  */
 export function requireServiceAdmin(
   paramName = 'organizationId',
@@ -32,15 +35,9 @@ export function requireServiceAdmin(
 ) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
-    // The immutable identity is what rights are keyed on; the address is carried for the log and the
-    // audit trail only.
     const subject = request.userContext?.id
-    const route = `${request.method} ${(request.url || '').split('?')[0]}`
 
-    request.log.debug({ email, subject, route }, '[requireServiceAdmin] start')
-
-    if (!subject || subject === 'unknown') {
-      request.log.debug('[requireServiceAdmin] no identity — 401')
+    if (!subject || subject === 'unknown' || !email || email === 'unknown') {
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Authentication required',
@@ -49,9 +46,9 @@ export function requireServiceAdmin(
 
     // DEV MODE: bypass
     if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-      request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — model not read')
+      request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — OPA not asked')
       request.rbacInfo = {
-        email: email ?? subject,
+        email,
         groups: ['super_admins', 'admins'],
         roles: ['super_admin', 'admin'],
         permissions: ['*'],
@@ -61,79 +58,44 @@ export function requireServiceAdmin(
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
-    const orgAdmin = options.orgAdmin ? await administersOrganisation(request, organizationId) : false
-
+    let allow: boolean
     let held: HeldRights
+    let orgAdmin = false
     try {
-      held = await rightsOf(subject, organizationId)
+      ;({ allow } = await decide({
+        email,
+        method: request.method,
+        path: requestPath(request),
+        aal: request.userContext?.aal,
+        client: isClient(request),
+      }))
+      held = await rights(email)
+      if (allow && options.orgAdmin) orgAdmin = (await manageableOrgs(email)).includes(organizationId)
     } catch (err) {
-      if (orgAdmin === true) {
-        // The roster answered; only what groups would add is unknown, and nothing is assumed of it.
-        request.log.warn({ subject, organizationId, err }, '[requireServiceAdmin] model unreadable — org-admin rights only')
-        held = { groups: [], roles: [], permissions: [] }
-      } else {
-        // "Holds nothing" and "I could not tell" are opposite facts. Refusing with 403 here would
-        // read as a missing right; 503 says the model could not be read, which is what happened.
-        request.log.warn(
-          { subject, organizationId, err },
-          '[requireServiceAdmin] the authorization model could not be read'
-        )
-        return reply.status(503).send({
-          error: 'Service Unavailable',
-          message: 'Unable to verify authorization. Please try again later.',
-        })
-      }
-    }
-
-    if (orgAdmin === true) {
-      held = {
-        groups: held.groups,
-        roles: [...new Set([...held.roles, ORG_ADMIN_ROLE])].sort(),
-        permissions: [...new Set([...held.permissions, ...ORG_ADMIN_PERMISSIONS])].sort(),
-      }
-    } else if (orgAdmin === null && held.permissions.length === 0) {
-      // Nothing admits the caller, and one of the two authorities could not be read: an outage, not
-      // a missing right.
+      request.log.warn({ subject, organizationId, err: (err as Error).message }, '[requireServiceAdmin] OPA could not be asked')
       return reply.status(503).send({
         error: 'Service Unavailable',
         message: 'Unable to verify authorization. Please try again later.',
       })
     }
 
-    const rbacInfo = { email: email ?? subject, ...held }
-
-    request.log.debug(
-      {
-        email,
-        organizationId,
-        groups: rbacInfo.groups,
-        roles: rbacInfo.roles,
-        permissions: rbacInfo.permissions,
-      },
-      '[requireServiceAdmin] OPA resolved RBAC'
-    )
-
-    request.rbacInfo = rbacInfo
-
-    // OPA resolves permissions for the target service — if the user has
-    // none, they are not authorized for this organization.
-    if (rbacInfo.permissions.length === 0) {
-      request.log.warn(
-        { email, organizationId, groups: rbacInfo.groups, roles: rbacInfo.roles },
-        '[requireServiceAdmin] access denied — no permissions for service'
-      )
+    if (!allow) {
+      request.log.warn({ email, organizationId }, '[requireServiceAdmin] access denied by OPA')
       denyAudit(request, 'not_service_admin')
-
       return reply.status(403).send({
         error: 'Forbidden',
         message: `Admin access required for organization '${organizationId}'`,
       })
     }
 
-    request.log.debug(
-      { email, organizationId, roles: rbacInfo.roles, permissions: rbacInfo.permissions },
-      '[requireServiceAdmin] access granted'
-    )
+    if (orgAdmin) {
+      held = {
+        groups: held.groups,
+        roles: [...new Set([...held.roles, ORG_ADMIN_ROLE])].sort(),
+        permissions: [...new Set([...held.permissions, ...ORG_ADMIN_PERMISSIONS])].sort(),
+      }
+    }
+    request.rbacInfo = { email, ...held }
   }
 }
 

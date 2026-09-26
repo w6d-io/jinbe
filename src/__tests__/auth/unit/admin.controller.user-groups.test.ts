@@ -20,8 +20,8 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
 // has its own test).
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
-vi.mock('../../../services/authorization-model.service.js', async () =>
-  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),

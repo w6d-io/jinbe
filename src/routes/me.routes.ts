@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerRights } from '../middleware/require-permission.js'
-import { effectivePermissions } from '../services/effective-permissions.js'
+import { rights as opaRights } from '../authz/opa.js'
 import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
@@ -136,7 +136,7 @@ export async function meRoutes(fastify: FastifyInstance) {
       let kuma: { roles: string[]; permissions: string[] } = { roles: [], permissions: [] }
       if (!(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
         try {
-          const held = await effectivePermissions(rights.email, 'kuma')
+          const held = await opaRights(rights.email, 'kuma')
           kuma = { roles: held.roles, permissions: held.permissions }
         } catch (err) {
           // Same rule as jinbe's own: "could not tell" is not "holds nothing".

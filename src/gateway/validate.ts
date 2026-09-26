@@ -1,7 +1,7 @@
 import { env } from '../config/env.js'
 import { HANDLER_KINDS, handlerMeta, type FieldMeta, type HandlerKind, type HandlerMeta } from './catalog.js'
 import { SPEC_KEY, type GatewaySpec, type HandlerSpec } from './kube-gateway.js'
-import { secretLeaves } from './secrets.js'
+import { isSecretKey } from './secrets.js'
 
 /**
  * Everything a proposed Gateway spec is checked against before it may be written.
@@ -112,6 +112,13 @@ function checkConfig(meta: HandlerMeta, config: Json | undefined, push: (i: Omit
     const problem = field.key === 'token_from' ? checkTokenFrom(value) : field.key === 'when' ? checkWhen(value) : typeProblem(field, value)
     if (problem) push({ severity: 'error', code: 'field_invalid', path: field.key, message: `${meta.name}: ${field.label} ${problem}` })
   }
+  // Oathkeeper requires the secret with these blocks, and the Gateway may not carry one.
+  if (getAt(config, 'pre_authorization.enabled') === true) {
+    push({ severity: 'error', code: 'needs_platform_secret', path: 'pre_authorization', message: `${meta.name}: pre-authorization needs a client secret, which only the platform (chart) can set` })
+  }
+  if (getAt(config, 'api.auth') !== undefined) {
+    push({ severity: 'error', code: 'needs_platform_secret', path: 'api.auth', message: `${meta.name}: basic auth needs a password, which only the platform (chart) can set` })
+  }
   if (meta.name === 'jwt' && !empty(getAt(config, 'required_scope')) && (getAt(config, 'scope_strategy') ?? 'none') === 'none') {
     push({ severity: 'error', code: 'field_invalid', path: 'scope_strategy', message: 'jwt: required scopes with scope strategy "none" make every request answer 500' })
   }
@@ -126,14 +133,13 @@ function changedKeys(meta: HandlerMeta | undefined, before: HandlerSpec | undefi
   if (!keys.length) return null
   const sensitiveTop = new Set([
     ...(meta?.fields.filter((f) => f.restart).map((f) => f.key.split('.')[0]) ?? []),
-    ...secretLeaves(meta, b).map((p) => p[0]),
   ])
   return {
     kind: meta?.kind ?? 'authenticator',
     handler: meta?.name ?? '',
     change: 'config',
     changedKeys: keys,
-    ...(keys.some((k) => sensitiveTop.has(k)) ? { sensitive: true } : {}),
+    ...(keys.some((k) => sensitiveTop.has(k) || isSecretKey(k)) ? { sensitive: true } : {}),
   }
 }
 

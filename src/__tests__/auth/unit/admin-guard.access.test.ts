@@ -4,14 +4,10 @@ import Fastify, { type FastifyInstance } from 'fastify'
 // The admin plugin's gate: anonymous → 401 (never 503), signed in without admin:read → 403 — on the
 // organisation list and on the new access view alike.
 
-vi.mock('../../../services/authorization-model.service.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../../services/authorization-model.service.js')>()
-  return {
-    ...real,
-    platformRightsOf: vi.fn(async () => ({ groups: [], roles: [], permissions: [] })),
-    holdsPlatformPermission: vi.fn(async () => false),
-  }
-})
+vi.mock('../../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
+  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: [] })),
+}))
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn().mockResolvedValue(undefined) },
 }))

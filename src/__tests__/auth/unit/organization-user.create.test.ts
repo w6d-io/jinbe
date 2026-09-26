@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 // The model the gates read. See the helper for why they read a model rather than predicates.
-vi.mock('../../../services/authorization-model.service.js', async () =>
-  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {

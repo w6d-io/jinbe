@@ -12,6 +12,8 @@ const mockState = vi.hoisted(() => ({
     roles: string[]
     permissions: string[]
   },
+  allow: false,
+  manageable: [] as string[],
 }))
 
 vi.mock('../../../config/env.js', () => ({
@@ -22,10 +24,11 @@ vi.mock('../../../config/index.js', () => ({
   env: mockState.env,
 }))
 
-// The gate resolves rights from the model the engine decides against, not from an engine.
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  rightsOf: vi.fn().mockImplementation(async () => mockState.held),
-  AuthorizationModelUnavailableError: class extends Error {},
+// The gate asks OPA: the gateway's own decision for this request, then what the caller holds.
+vi.mock('../../../authz/opa.js', () => ({
+  decide: vi.fn().mockImplementation(async () => ({ allow: mockState.allow, reason: mockState.allow ? 'ok' : 'forbidden' })),
+  rights: vi.fn().mockImplementation(async () => mockState.held),
+  manageableOrgs: vi.fn().mockImplementation(async () => mockState.manageable),
 }))
 
 vi.mock('../../../services/audit-event.service.js', () => ({
@@ -38,7 +41,8 @@ import {
   requireServiceAdmin,
   requireServicePermission,
 } from '../../../middleware/require-service-admin.js'
-import { rightsOf } from '../../../services/authorization-model.service.js'
+import { decide, manageableOrgs, rights } from '../../../authz/opa.js'
+import type { UserRbacInfo } from '../../../services/authorization-resolution.js'
 
 function createMockRequest(
   email?: string,
@@ -89,6 +93,8 @@ describe('requireServiceAdmin middleware', () => {
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
     mockState.held = { groups: [], roles: [], permissions: [] }
+    mockState.allow = false
+    mockState.manageable = []
   })
 
   describe('DEV_BYPASS_AUTH mode', () => {
@@ -101,7 +107,7 @@ describe('requireServiceAdmin middleware', () => {
 
       await requireServiceAdmin()(request, reply)
 
-      expect(rightsOf).not.toHaveBeenCalled()
+      expect(decide).not.toHaveBeenCalled()
       expect(reply.send).not.toHaveBeenCalled()
       expect(request.rbacInfo).toEqual({
         email: 'dev@example.com',
@@ -120,7 +126,7 @@ describe('requireServiceAdmin middleware', () => {
 
       await requireServiceAdmin()(request, reply)
 
-      expect(rightsOf).toHaveBeenCalled()
+      expect(decide).toHaveBeenCalled()
     })
   })
 
@@ -148,35 +154,30 @@ describe('requireServiceAdmin middleware', () => {
     })
   })
 
-  describe('reading the model', () => {
-    it('asks what the caller holds IN the organisation named by the route', async () => {
-      mockState.held = { groups: ['admins'], roles: ['admin'], permissions: ['rbac:read'] }
-
+  describe('asking OPA', () => {
+    it('asks rbac.decision about this very request — method, path without query, aal', async () => {
+      mockState.allow = true
       const request = createMockRequest('user@example.com', { organizationId: 'org-42' })
+      ;(request as { url: string }).url = '/api/organizations/org-42/users?limit=5'
+      ;(request.userContext as { aal?: string }).aal = 'aal2'
       const reply = createMockReply()
 
       await requireServiceAdmin('organizationId')(request, reply)
 
-      // The identity and the organisation's own id — no service name to resolve, because this model
-      // keys grants per organisation rather than per service.
-      expect(rightsOf).toHaveBeenCalledWith('subject-of-user@example.com', 'org-42')
+      expect(decide).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        method: 'GET',
+        path: '/api/organizations/org-42/users',
+        aal: 'aal2',
+        client: false,
+      })
+      expect(rights).toHaveBeenCalledWith('user@example.com')
     })
 
-    it('respects custom paramName', async () => {
-      mockState.held = { groups: ['admins'], roles: ['admin'], permissions: ['rbac:read'] }
-
-      const request = createMockRequest('user@example.com', { customId: 'svc-7' })
-      const reply = createMockReply()
-
-      await requireServiceAdmin('customId')(request, reply)
-
-      expect(rightsOf).toHaveBeenCalledWith('subject-of-user@example.com', 'svc-7')
-    })
-
-    it('returns 503 when the model cannot be read, not 403', async () => {
+    it('returns 503 when OPA cannot be asked, not 403', async () => {
       // "Holds nothing" and "I could not tell" are opposite facts, and a 403 here would read as a
-      // missing right rather than as a model nobody could load.
-      vi.mocked(rightsOf).mockRejectedValueOnce(new Error('configmaps is forbidden'))
+      // missing right rather than as an engine nobody could reach.
+      vi.mocked(decide).mockRejectedValueOnce(new Error('OPA is unreachable'))
 
       const request = createMockRequest('user@example.com', { organizationId: 'org-1' })
       const reply = createMockReply()
@@ -190,19 +191,20 @@ describe('requireServiceAdmin middleware', () => {
       })
     })
 
-    it('refuses before reading anything when the caller has no identity', async () => {
+    it('refuses before asking anything when the caller has no identity', async () => {
       const request = createMockRequest(undefined, { organizationId: 'org-1' })
       const reply = createMockReply()
 
       await requireServiceAdmin()(request, reply)
 
       expect(reply._statusCode).toBe(401)
-      expect(rightsOf).not.toHaveBeenCalled()
+      expect(decide).not.toHaveBeenCalled()
     })
   })
 
   describe('authorization checks', () => {
-    it('grants access and attaches rbacInfo when user has at least one permission', async () => {
+    it('admits and attaches what the caller holds when OPA allows', async () => {
+      mockState.allow = true
       mockState.held = { groups: ['admins'], roles: ['admin'], permissions: ['rbac:read'] }
 
       const request = createMockRequest('user@example.com', { organizationId: 'org-1' })
@@ -214,8 +216,9 @@ describe('requireServiceAdmin middleware', () => {
       expect(request.rbacInfo).toEqual({ email: 'user@example.com', ...mockState.held })
     })
 
-    it('returns 403 when permissions are empty', async () => {
-      mockState.held = { groups: [], roles: [], permissions: [] }
+    it('returns 403 when OPA refuses, whatever the caller holds elsewhere', async () => {
+      mockState.allow = false
+      mockState.held = { groups: ['admins'], roles: ['admin'], permissions: ['*'] }
 
       const request = createMockRequest('user@example.com', { organizationId: 'org-1' })
       const reply = createMockReply()
@@ -224,6 +227,25 @@ describe('requireServiceAdmin middleware', () => {
 
       expect(reply._statusCode).toBe(403)
       expect(reply._body).toMatchObject({ error: 'Forbidden' })
+    })
+
+    it('adds the org-admin set only with orgAdmin and only for an org OPA lists as manageable', async () => {
+      mockState.allow = true
+      mockState.manageable = ['org-1']
+
+      const plain = createMockRequest('user@example.com', { organizationId: 'org-1' })
+      await requireServiceAdmin()(plain, createMockReply())
+      expect(plain.rbacInfo?.permissions).toEqual([])
+      expect(manageableOrgs).not.toHaveBeenCalled()
+
+      const admin = createMockRequest('user@example.com', { organizationId: 'org-1' })
+      await requireServiceAdmin('organizationId', { orgAdmin: true })(admin, createMockReply())
+      expect(admin.rbacInfo?.roles).toContain('org_admin')
+      expect(admin.rbacInfo?.permissions).toEqual(['org:manage_api_keys', 'org:manage_users', 'users:create', 'users:read'])
+
+      const other = createMockRequest('user@example.com', { organizationId: 'org-2' })
+      await requireServiceAdmin('organizationId', { orgAdmin: true })(other, createMockReply())
+      expect(other.rbacInfo?.permissions).toEqual([])
     })
   })
 })

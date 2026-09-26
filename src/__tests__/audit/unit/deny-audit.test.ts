@@ -8,7 +8,10 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 
 const h = vi.hoisted(() => ({ emit: vi.fn(async () => '1-0'), rights: vi.fn() }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../../services/authorization-model.service.js', () => ({ platformRightsOf: h.rights }))
+vi.mock('../../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
+  rights: h.rights,
+}))
 
 import { denyAudit } from '../../../audit/deny.js'
 import { requireAdmin } from '../../../middleware/require-admin.js'

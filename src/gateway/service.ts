@@ -4,8 +4,8 @@ import type { SiteCrObject } from '../sites/kube-sites.js'
 import { auditGateway, type Actor } from './audit.js'
 import { CATALOG, HANDLER_KINDS, PLATFORM_HANDLERS, handlerMeta, type FieldMeta, type HandlerKind } from './catalog.js'
 import {
-  GATEWAY_NAME, PREVIOUS_SPEC_ANNOTATION, SPEC_KEY, kubeGateway,
-  type GatewayCr, type GatewaySpec, type HandlerSpec, type SpecKey,
+  GATEWAY_NAME, PREVIOUS_SPEC_ANNOTATION, SPEC_KEY, fromCrSpec, kubeGateway, toCrSpec,
+  type Condition, type GatewayCr, type GatewaySpec, type HandlerSpec, type SpecKey,
 } from './kube-gateway.js'
 import type { ProposalBody } from './schemas.js'
 import { maskConfig, resolveSecrets, type SecretIssue } from './secrets.js'
@@ -73,7 +73,7 @@ async function current(): Promise<Current> {
   const kube = kubeGateway()
   const cr = await kube.get()
   if (cr) {
-    return { managed: true, source: 'gateway-cr', spec: { ...emptySpec(), ...cr.spec }, etag: `rv:${cr.metadata.resourceVersion ?? ''}`, cr }
+    return { managed: true, source: 'gateway-cr', spec: fromCrSpec(cr.spec), etag: `rv:${cr.metadata.resourceVersion ?? ''}`, cr }
   }
   const live = await kube.liveOathkeeperConfig()
   return live
@@ -81,15 +81,28 @@ async function current(): Promise<Current> {
     : { managed: false, source: 'env', spec: specFromEnv(), etag: UNMANAGED_ETAG, cr: null }
 }
 
-/** Which sites (and the platform itself) reference each handler, from the Site CRs. */
-export function handlersInUse(sites: SiteCrObject[]): InUse {
+/**
+ * Which sites and platform rules reference each handler: the Site CRs, plus the operator's
+ * `status.inUse` (which also sees the platform's own rules, as `rule/<name>`). Before the operator
+ * has reported, the handlers the platform is known to need stand in for its rules.
+ */
+export function handlersInUse(sites: SiteCrObject[], cr: GatewayCr | null = null): InUse {
   const inUse: InUse = { authenticator: {}, authorizer: {}, mutator: {}, error: {} }
   const add = (kind: HandlerKind, name: string | undefined, who: string) => {
     if (!name) return
     const list = (inUse[kind][name] ??= [])
     if (!list.includes(who)) list.push(who)
   }
-  for (const kind of HANDLER_KINDS) PLATFORM_HANDLERS[kind].forEach((n) => add(kind, n, PLATFORM_USER))
+  const reported = cr?.status?.inUse
+  if (reported) {
+    const kindOf = Object.fromEntries(HANDLER_KINDS.map((k) => [SPEC_KEY[k], k])) as Record<string, HandlerKind>
+    for (const use of reported) {
+      const [plural, name] = use.handler.split('/')
+      if (kindOf[plural]) use.usedBy.forEach((who) => add(kindOf[plural], name, who))
+    }
+  } else {
+    for (const kind of HANDLER_KINDS) PLATFORM_HANDLERS[kind].forEach((n) => add(kind, n, PLATFORM_USER))
+  }
   for (const site of sites) {
     const who = site.metadata.name
     for (const gate of site.spec?.gates ?? []) {
@@ -105,18 +118,56 @@ export function handlersInUse(sites: SiteCrObject[]): InUse {
 const defaultsOf = (fields: FieldMeta[]): Json =>
   Object.fromEntries(fields.filter((f) => f.default !== undefined).map((f) => [f.key, f.default]))
 
+export type RolloutPhase = 'Pending' | 'Progressing' | 'Complete' | 'Failed' | 'RolledBack'
+
+/**
+ * The operator reports conditions (Validated, Applied, Rolled, Ready); the console wants one phase.
+ * A generation the operator has not observed yet is Pending whatever the conditions say.
+ */
+export function rolloutOf(cr: GatewayCr) {
+  const conditions = cr.status?.conditions ?? []
+  const cond = (type: string): Condition | undefined => conditions.find((c) => c.type === type)
+  const generation = cr.metadata.generation ?? null
+  const observed = cr.status?.observedGeneration ?? null
+  const validated = cond('Validated')
+  const applied = cond('Applied')
+  const rolled = cond('Rolled')
+  const ready = cond('Ready')
+  let phase: RolloutPhase
+  let decisive: Condition | undefined
+  if (generation !== null && observed !== generation) phase = 'Pending'
+  else if (validated?.status === 'False') [phase, decisive] = ['Failed', validated]
+  else if (applied?.status === 'False' && applied.reason === 'RolledBack') [phase, decisive] = ['RolledBack', applied]
+  else if (ready?.status === 'False' && ready.reason === 'RolloutFailed') [phase, decisive] = ['Failed', ready]
+  else if (ready?.status === 'True') [phase, decisive] = ['Complete', ready]
+  else if (rolled?.status === 'False' && rolled.reason === 'RollingOut') [phase, decisive] = ['Progressing', rolled]
+  else [phase, decisive] = ['Pending', rolled ?? validated]
+  // Rolled's message while rolling: "n/N pods updated, n ready, n total".
+  const pods = /(\d+)\/(\d+) pods updated, (\d+) ready, (\d+) total/.exec(rolled?.message ?? '')
+  return {
+    phase,
+    reason: decisive?.reason ?? null,
+    message: decisive?.message ?? null,
+    since: decisive?.lastTransitionTime ?? null,
+    pods: pods ? { updated: Number(pods[1]), ready: Number(pods[3]), total: Number(pods[4]) } : null,
+    configHash: cr.status?.configHash ?? null,
+    failedHash: cr.status?.failedHash ?? null,
+  }
+}
+
 function statusView(cr: GatewayCr | null) {
   return {
     generation: cr?.metadata.generation ?? null,
     observedGeneration: cr?.status?.observedGeneration ?? null,
     conditions: cr?.status?.conditions ?? [],
-    lastRollout: cr?.status?.rollout ?? null,
+    liveEnabled: cr?.status?.enabled ?? null,
+    lastRollout: cr ? rolloutOf(cr) : null,
   }
 }
 
 export async function view() {
   const [cur, sites] = await Promise.all([current(), kubeGateway().listSites()])
-  const inUse = handlersInUse(sites)
+  const inUse = handlersInUse(sites, cur.cr)
   const handlers = HANDLER_KINDS.flatMap((kind) => {
     const key = SPEC_KEY[kind]
     const known = CATALOG.filter((m) => m.kind === kind)
@@ -127,7 +178,7 @@ export async function view() {
         return {
           kind, name: meta.name, label: meta.label, description: meta.description,
           enabled: h?.enabled === true,
-          config: maskConfig(meta, h?.config) ?? {},
+          config: maskConfig(h?.config) ?? {},
           defaults: defaultsOf(meta.fields),
           inUse: inUse[kind][meta.name] ?? [],
           ...(meta.locked ? { locked: meta.locked } : {}),
@@ -160,15 +211,14 @@ async function evaluate(body: ProposalBody, cur: Current): Promise<{ spec: Gatew
   for (const kind of HANDLER_KINDS) {
     const key = SPEC_KEY[kind]
     for (const [name, h] of Object.entries(body.spec[key])) {
-      const meta = handlerMeta(kind, name)
-      const { config, issues } = resolveSecrets(meta, h.config, cur.spec[key][name]?.config, cur.managed)
+      const { config, issues } = resolveSecrets(h.config, cur.spec[key][name]?.config)
       spec[key][name] = { enabled: h.enabled, ...(config ? { config } : {}) }
       issues.forEach((i: SecretIssue) => secretIssues.push({ severity: 'error', code: i.code, message: i.message, kind, handler: name, path: i.path }))
     }
   }
   spec.errorFallback = body.spec.errorFallback
   const sites = await kubeGateway().listSites()
-  const verdict = validate(spec, cur.spec, handlersInUse(sites))
+  const verdict = validate(spec, cur.spec, handlersInUse(sites, cur.cr))
   const issues = [...secretIssues, ...verdict.issues]
   return { spec, verdict: { ok: verdict.ok && secretIssues.length === 0, issues, changes: verdict.changes } }
 }
@@ -197,7 +247,7 @@ function crFor(spec: GatewaySpec, previous: GatewaySpec | null, base: GatewayCr 
       labels: { ...(base?.metadata.labels ?? {}), 'app.kubernetes.io/managed-by': 'jinbe' },
       annotations,
     },
-    spec,
+    spec: toCrSpec(spec),
   }
 }
 
@@ -209,7 +259,7 @@ export async function put(body: ProposalBody, ifMatch: string | undefined, actor
   const { spec, verdict } = await evaluate(body, cur)
   if (!verdict.ok) throw httpError(422, 'gateway_invalid', 'The proposed gateway configuration is refused', { issues: verdict.issues })
 
-  // Adopting the live config: no previous spec is recorded, since it may hold clear secrets.
+  // Adopting the live config: no previous spec is recorded — it was never a Gateway.
   const written = await kubeGateway().write(
     crFor(spec, cur.managed ? cur.spec : null, cur.cr, actor, body.note),
     cur.managed ? cur.cr!.metadata.resourceVersion ?? '' : null,
@@ -240,7 +290,7 @@ export async function rollback(ifMatch: string | undefined, actor: Actor, note?:
   }
   // The previous spec is re-checked against today's sites: rolling back must not pull a handler
   // out from under a site plugged since.
-  const verdict = validate(previous, cur.spec, handlersInUse(await kubeGateway().listSites()))
+  const verdict = validate(previous, cur.spec, handlersInUse(await kubeGateway().listSites(), cur.cr))
   if (!verdict.ok) throw httpError(422, 'gateway_invalid', 'The previous configuration is refused today', { issues: verdict.issues })
   const written = await kubeGateway().write(crFor(previous, cur.spec, cur.cr, actor, note), cur.cr.metadata.resourceVersion ?? '')
   auditGateway('gateway.rolled_back', actor, `rolled back ${verdict.changes.length} handler change(s)`, {
@@ -249,16 +299,15 @@ export async function rollback(ifMatch: string | undefined, actor: Actor, note?:
   return { etag: `rv:${written.metadata.resourceVersion ?? ''}`, generation: written.metadata.generation ?? null, changes: verdict.changes }
 }
 
-const SETTLED = new Set(['Complete', 'Failed', 'RolledBack'])
+const SETTLED = new Set<RolloutPhase>(['Complete', 'Failed', 'RolledBack'])
 
 export async function rollout() {
   const cr = await kubeGateway().get()
   if (!cr) return { managed: false as const, settled: true, generation: null, observedGeneration: null, rollout: null, conditions: [] }
   const s = statusView(cr)
-  const caughtUp = s.generation !== null && s.observedGeneration === s.generation
   return {
     managed: true as const,
-    settled: caughtUp && SETTLED.has(s.lastRollout?.phase ?? ''),
+    settled: SETTLED.has(s.lastRollout!.phase),
     generation: s.generation,
     observedGeneration: s.observedGeneration,
     rollout: s.lastRollout,

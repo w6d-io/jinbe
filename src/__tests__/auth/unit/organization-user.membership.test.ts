@@ -75,8 +75,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: { notifyBindingsChanged: vi.fn().mockResolvedValue(undefined) },
 }))
 vi.mock('../../../services/user-groups.service.js', () => ({ userGroupsService: {} }))
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  assignableGroupsFor: vi.fn(),
+vi.mock('../../../services/group-catalogue.js', () => ({
   declaredGroups: vi.fn(),
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({

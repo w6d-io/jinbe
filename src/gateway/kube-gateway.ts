@@ -6,7 +6,7 @@ import type { HandlerKind } from './catalog.js'
 
 /**
  * The Kubernetes surface of the gateway module: the `Gateway` singleton (gateways.auth.w6d.io,
- * named `gateway` in the Sites namespace), the Site CRs (read, for "in use"), and — only while no
+ * named `default` in the Sites namespace), the Site CRs (read, for "in use"), and — only while no
  * Gateway exists — the live Oathkeeper ConfigMap, read-only.
  *
  * jinbe writes the Gateway spec and nothing else. The site-operator renders it into Oathkeeper's
@@ -14,7 +14,8 @@ import type { HandlerKind } from './catalog.js'
  */
 
 export const GATEWAY_PLURAL = 'gateways'
-export const GATEWAY_NAME = 'gateway'
+/** The operator's CEL refuses any other name (site-operator api/v1alpha1 GatewayName). */
+export const GATEWAY_NAME = 'default'
 export const PREVIOUS_SPEC_ANNOTATION = 'auth.w6d.io/previous-spec'
 
 export type SpecKey = 'authenticators' | 'authorizers' | 'mutators' | 'errors'
@@ -23,26 +24,56 @@ export const SPEC_KEY: Record<HandlerKind, SpecKey> = {
 }
 
 export interface HandlerSpec { enabled: boolean; config?: Record<string, unknown> }
+/** jinbe's (and kuma's) view of the spec: the four handler maps side by side, plus the fallback. */
 export type GatewaySpec = Record<SpecKey, Record<string, HandlerSpec>> & { errorFallback: string[] }
 
-export interface Condition { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string }
-export interface Rollout {
-  phase?: 'Pending' | 'Progressing' | 'Complete' | 'Failed' | 'RolledBack'
-  configHash?: string
-  replicas?: number
-  updatedReplicas?: number
-  readyReplicas?: number
-  startedAt?: string
-  finishedAt?: string
-  message?: string
+/** The CR's own spec: error handlers nest under `errors.handlers`, next to `errors.fallback`. */
+export interface GatewayCrSpec {
+  authenticators?: Record<string, HandlerSpec>
+  authorizers?: Record<string, HandlerSpec>
+  mutators?: Record<string, HandlerSpec>
+  errors?: { handlers?: Record<string, HandlerSpec>; fallback?: string[] }
 }
+
+export function fromCrSpec(spec: GatewayCrSpec | undefined): GatewaySpec {
+  const fallback = spec?.errors?.fallback ?? []
+  return {
+    authenticators: { ...(spec?.authenticators ?? {}) },
+    authorizers: { ...(spec?.authorizers ?? {}) },
+    mutators: { ...(spec?.mutators ?? {}) },
+    errors: { ...(spec?.errors?.handlers ?? {}) },
+    // Empty means Oathkeeper's default.
+    errorFallback: fallback.length ? [...fallback] : ['json'],
+  }
+}
+
+export function toCrSpec(spec: GatewaySpec): GatewayCrSpec {
+  return {
+    authenticators: spec.authenticators,
+    authorizers: spec.authorizers,
+    mutators: spec.mutators,
+    errors: { handlers: spec.errors, fallback: spec.errorFallback },
+  }
+}
+
+/** metav1.Condition: Validated, Applied, Rolled, Ready. */
+export interface Condition { type: string; status: string; reason?: string; message?: string; lastTransitionTime?: string; observedGeneration?: number }
 
 export interface GatewayCr {
   apiVersion: 'auth.w6d.io/v1alpha1'
   kind: 'Gateway'
   metadata: { name: string; namespace: string; resourceVersion?: string; generation?: number; annotations?: Record<string, string>; labels?: Record<string, string> }
-  spec: GatewaySpec
-  status?: { observedGeneration?: number; conditions?: Condition[]; rollout?: Rollout }
+  spec: GatewayCrSpec
+  status?: {
+    observedGeneration?: number
+    conditions?: Condition[]
+    /** The handler set live on every pod. */
+    enabled?: Partial<Record<SpecKey, string[]>>
+    /** `handler` is `<kind plural>/<name>`; `usedBy` holds site names and `rule/<name>`. */
+    inUse?: Array<{ handler: string; usedBy: string[] }>
+    configHash?: string
+    failedHash?: string
+  }
 }
 
 export interface KubeGateway {
@@ -59,6 +90,17 @@ export class GatewayConflict extends Error {
   readonly code = 'precondition_failed'
   constructor() {
     super('The gateway configuration changed since you read it; reload and retry')
+  }
+}
+
+/** The CRD's own validation (unknown handler names, a config on noop…) refused the object. */
+export class GatewayRefused extends Error {
+  readonly statusCode = 422
+  readonly code = 'gateway_invalid'
+  constructor(err: unknown) {
+    const body = (err as { body?: unknown })?.body
+    const detail = typeof body === 'string' ? body : (body as { message?: string } | undefined)?.message
+    super(`The Kubernetes API refused the Gateway${detail ? `: ${String(detail).slice(0, 500)}` : ''}`)
   }
 }
 
@@ -100,6 +142,7 @@ class ClientNodeKubeGateway implements KubeGateway {
       return (await this.custom.replaceNamespacedCustomObject({ ...this.base(), name: GATEWAY_NAME, body })) as GatewayCr
     } catch (err) {
       if (statusOf(err) === 409) throw new GatewayConflict()
+      if (statusOf(err) === 422) throw new GatewayRefused(err)
       throw unavailable('write gateway', err)
     }
   }

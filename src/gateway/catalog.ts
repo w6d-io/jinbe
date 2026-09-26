@@ -4,8 +4,8 @@
  *
  * A field `key` is a dot path into the handler's `config` (`pre_authorization.client_secret`).
  * `required` means required by Oathkeeper's schema once the handler is enabled — a global config
- * missing it makes the gateway refuse its whole config. `secret` fields are never returned and are
- * accepted only as Vault references (secrets.ts); for a `kv` field, `secret` covers every value.
+ * missing it makes the gateway refuse its whole config. `secret` fields are set by the platform
+ * (chart env from a Secret) and never through the console (secrets.ts).
  * `restart` marks templates Oathkeeper caches by rule id and header name (spec §0.8): only a pod
  * restart picks up an edit, which the operator's rolling restart provides.
  */
@@ -59,7 +59,7 @@ const sessionCheck = (subjectDefault: string): FieldMeta[] => [
   { key: 'preserve_host', label: 'Send X-Forwarded-Host', type: 'bool', default: false },
   { key: 'force_method', label: 'Force method', type: 'enum', options: METHODS },
   { key: 'forward_http_headers', label: 'Headers forwarded to the check', type: 'list' },
-  { key: 'additional_headers', label: 'Static headers on the check', type: 'kv', secret: true },
+  { key: 'additional_headers', label: 'Static headers on the check', type: 'kv', help: 'No credentials: the configuration is readable.' },
   { key: 'subject_from', label: 'Subject (GJSON path)', type: 'string', default: subjectDefault, help: 'Kratos: identity.id' },
   { key: 'extra_from', label: 'Extra (GJSON path)', type: 'string', default: 'extra', help: 'Kratos: @this' },
 ]
@@ -93,11 +93,11 @@ export const CATALOG: readonly HandlerMeta[] = [
     { key: 'trusted_issuers', label: 'Trusted issuers', type: 'list' },
     { key: 'prefix', label: 'Token prefix', type: 'string' },
     { key: 'preserve_host', label: 'Send X-Forwarded-Host', type: 'bool', default: false },
-    { key: 'introspection_request_headers', label: 'Headers on the introspection call', type: 'kv', secret: true },
+    { key: 'introspection_request_headers', label: 'Headers on the introspection call', type: 'kv', help: 'No credentials: the configuration is readable.' },
     tokenFrom,
     { key: 'pre_authorization.enabled', label: 'Authenticate to the introspection endpoint', type: 'bool', default: false },
     { key: 'pre_authorization.client_id', label: 'Client id', type: 'string' },
-    { key: 'pre_authorization.client_secret', label: 'Client secret', type: 'string', secret: true },
+    { key: 'pre_authorization.client_secret', label: 'Client secret', type: 'string', secret: true, help: 'Set by the platform (chart env from a Secret); the console cannot enable what needs it.' },
     { key: 'pre_authorization.token_url', label: 'Token URL', type: 'url' },
     { key: 'pre_authorization.audience', label: 'Audience', type: 'string' },
     { key: 'pre_authorization.scope', label: 'Scopes', type: 'list' },
@@ -132,13 +132,13 @@ export const CATALOG: readonly HandlerMeta[] = [
   { kind: 'authorizer', name: 'remote_json', label: 'Policy decision (JSON)', description: 'POSTs a JSON payload to the policy engine; 200 allows, 403 refuses.', fields: [
     { key: 'remote', label: 'Decision endpoint', type: 'url', required: true },
     { key: 'payload', label: 'Payload template', type: 'template', required: true, help: 'Go template producing JSON.' },
-    { key: 'headers', label: 'Request headers', type: 'kv', secret: true, restart: true },
+    { key: 'headers', label: 'Request headers', type: 'kv', restart: true, help: 'Templates; no credentials: the configuration is readable.' },
     { key: 'forward_response_headers_to_upstream', label: 'Decision headers passed upstream', type: 'list' },
     ...retry(),
   ] },
   { kind: 'authorizer', name: 'remote', label: 'Policy decision (body)', description: 'POSTs the original request body to a policy endpoint.', fields: [
     { key: 'remote', label: 'Decision endpoint', type: 'url', required: true },
-    { key: 'headers', label: 'Request headers', type: 'kv', secret: true, restart: true },
+    { key: 'headers', label: 'Request headers', type: 'kv', restart: true, help: 'Templates; no credentials: the configuration is readable.' },
     { key: 'forward_response_headers_to_upstream', label: 'Decision headers passed upstream', type: 'list' },
     ...retry(),
   ] },
@@ -169,7 +169,7 @@ export const CATALOG: readonly HandlerMeta[] = [
   { kind: 'mutator', name: 'hydrator', label: 'Hydrator', description: 'Sends the session and every request header to an API that returns an enriched session.', fields: [
     { key: 'api.url', label: 'Hydrator URL', type: 'url', required: true },
     { key: 'api.auth.basic.username', label: 'Basic auth user', type: 'string' },
-    { key: 'api.auth.basic.password', label: 'Basic auth password', type: 'string', secret: true },
+    { key: 'api.auth.basic.password', label: 'Basic auth password', type: 'string', secret: true, help: 'Set by the platform (chart env from a Secret); the console cannot enable what needs it.' },
     ...retry('api.retry'),
     { key: 'cache.enabled', label: 'Cache', type: 'bool', default: false },
     { key: 'cache.ttl', label: 'Cache TTL', type: 'duration', pattern: DURATION, default: '1m' },
