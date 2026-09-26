@@ -60,7 +60,11 @@ const norm = (email: string) => email.trim().toLowerCase()
 class RecertService {
   // ── Campaign CRUD ──────────────────────────────────────────────────────────
 
-  async createCampaign(input: CreateCampaignInput, createdBy: string | null): Promise<RecertCampaign> {
+  // `actor` may still be the creator's address alone (older callers); the full actor lets the create
+  // be audited with the immutable id and the request id.
+  async createCampaign(input: CreateCampaignInput, actor: AuditActorInput | string | null): Promise<RecertCampaign> {
+    const by: AuditActorInput = typeof actor === 'string' ? { email: actor } : actor ?? {}
+    const createdBy = by.email ?? null
     const name = input.name?.trim()
     if (!name) throw new RecertError(400, 'name is required')
     const reviewers = [...new Set((input.reviewers ?? []).map(norm).filter(Boolean))]
@@ -96,7 +100,22 @@ class RecertService {
       createdAt: new Date().toISOString(),
     }
     await redisRecertRepository.setCampaign(campaign)
+    this.auditCampaign('create', campaign, by)
     return campaign
+  }
+
+  /** Create and delete had no event — and deleting a campaign deletes its evidence (AUD-4). */
+  private auditCampaign(verb: 'create' | 'delete', campaign: RecertCampaign, actor: AuditActorInput): void {
+    auditEventService.emit({
+      category: 'access', kind: 'change', verb, target: `recert:${campaign.id}`,
+      targetType: 'campaign', targetId: campaign.id,
+      result: 'applied',
+      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      requestId: actor.requestId ?? null,
+      changes: { resource: 'recert_campaign', id: campaign.id, summary: `${verb === 'create' ? 'created' : 'deleted'} campaign (${campaign.status})` },
+      source: 'jinbe-api',
+      v1Event: verb === 'create' ? 'recert.campaign.created' : 'recert.campaign.deleted',
+    }).catch(() => {})
   }
 
   async listCampaigns(): Promise<CampaignSummary[]> {
@@ -120,7 +139,7 @@ class RecertService {
     return { campaign, items }
   }
 
-  async deleteCampaign(id: string): Promise<void> {
+  async deleteCampaign(id: string, actor: AuditActorInput = {}): Promise<void> {
     const campaign = await redisRecertRepository.getCampaign(id)
     if (!campaign) throw new RecertError(404, `Campaign not found: ${id}`)
     if (campaign.status !== 'draft' && campaign.status !== 'archived') {
@@ -130,6 +149,7 @@ class RecertService {
     for (const item of items) await redisRecertRepository.removeFromInbox(item.reviewer, id, item.id)
     await redisRecertRepository.deleteItems(id)
     await redisRecertRepository.deleteCampaign(id)
+    this.auditCampaign('delete', campaign, actor)
   }
 
   // ── Item generation (activation) ───────────────────────────────────────────

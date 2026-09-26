@@ -5,6 +5,7 @@ export class InlineRedisMock {
   hashes = new Map<string, Map<string, string>>()
   strings = new Map<string, string>()
   lists = new Map<string, string[]>()
+  sets = new Map<string, Set<string>>()
   async hget(k: string, f: string) { return this.hashes.get(k)?.get(f) ?? null }
   async hset(k: string, f: string, v: string) {
     if (!this.hashes.has(k)) this.hashes.set(k, new Map())
@@ -15,7 +16,13 @@ export class InlineRedisMock {
   async hgetall(k: string) { return Object.fromEntries(this.hashes.get(k)?.entries() ?? []) }
   async get(k: string) { return this.strings.get(k) ?? null }
   async set(k: string, v: string) { this.strings.set(k, v); return 'OK' }
-  async del(k: string) { return this.strings.delete(k) || this.lists.delete(k) ? 1 : 0 }
+  async del(k: string) { return this.strings.delete(k) || this.lists.delete(k) || this.sets.delete(k) ? 1 : 0 }
+  async sadd(k: string, v: string) {
+    if (!this.sets.has(k)) this.sets.set(k, new Set())
+    return this.sets.get(k)!.add(v) ? 1 : 0
+  }
+  async srem(k: string, v: string) { return this.sets.get(k)?.delete(v) ? 1 : 0 }
+  async smembers(k: string) { return [...(this.sets.get(k) ?? [])] }
   async rpush(k: string, v: string) {
     if (!this.lists.has(k)) this.lists.set(k, [])
     this.lists.get(k)!.push(v)
@@ -29,6 +36,7 @@ export class InlineRedisMock {
     this.hashes.clear()
     this.strings.clear()
     this.lists.clear()
+    this.sets.clear()
   }
 }
 
@@ -72,6 +80,7 @@ export function makeRbacStore() {
       else s.orgMap[o] = svcs
     },
     getAccessRules: async () => s.accessRules,
+    setAccessRules: async (rules: OathkeeperRule[]) => { s.log.push('setAccessRules'); s.accessRules = rules },
   }
   const reset = () => {
     s.services = new Set(['jinbe', 'kuma'])

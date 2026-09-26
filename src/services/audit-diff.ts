@@ -216,3 +216,12 @@ function summarize(subject: string, added: string[], removed: string[]): string 
   if (removed.length) parts.push(`-${removed.length} removed`)
   return `${subject} ${parts.length ? parts.join(', ') : 'unchanged'}`
 }
+
+/** Before → after of a flat list (an org's services, its admin roster). */
+export function diffList(resource: string, id: string, before: string[], after: string[]): AuditChanges {
+  const was = new Set(before)
+  const now = new Set(after)
+  const added = after.filter((x) => !was.has(x))
+  const removed = before.filter((x) => !now.has(x))
+  return { resource, id, added, removed, summary: `+${added.length} −${removed.length}` }
+}

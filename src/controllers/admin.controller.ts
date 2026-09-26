@@ -477,7 +477,10 @@ export class AdminController {
       return reply.status(422).send(GROUPS_NOT_MUTABLE_HERE)
     }
     if (currentGroups !== undefined) {
-      body.metadata_admin = { ...(incomingMeta ?? {}), groups: currentGroups }
+      // An edit that does not send metadata_admin (a name or address fix) keeps what is stored,
+      // rather than replacing it with the groups alone.
+      const base = incomingMeta ?? (current.metadata_admin as Record<string, unknown> | undefined) ?? {}
+      body.metadata_admin = { ...base, groups: currentGroups }
     } else if (incomingMeta && 'groups' in incomingMeta) {
       const { groups: _drop, ...rest } = incomingMeta
       body.metadata_admin = rest

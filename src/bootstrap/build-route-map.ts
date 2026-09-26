@@ -86,6 +86,26 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'admin:update' },
   { method: 'POST',   path: '/api/admin/users/:id/recovery-email',  permission: 'admin:update' },
   { method: 'GET',    path: '/api/admin/users/:id/access',          permission: 'admin:read' },
+  { method: 'GET',    path: '/api/admin/users/search',              permission: 'admin:read' },
+  { method: 'POST',   path: '/api/admin/users/:id/login-link',      permission: 'admin:update' },
+
+  // User management, one permission per action (support role). ADDED beside the admin:* rows above,
+  // never replacing them: OPA allows on ANY matching rule, so administrators keep every route and a
+  // role holding only these reaches exactly these. jinbe re-enforces each in the app layer
+  // (routes/user-management.routes.ts) — the gateway is not the only way in.
+  { method: 'GET',    path: '/api/admin/users',                     permission: 'users:read' },
+  { method: 'GET',    path: '/api/admin/users/search',              permission: 'users:read' },
+  { method: 'POST',   path: '/api/admin/users',                     permission: 'users:create' },
+  { method: 'GET',    path: '/api/admin/users/:id',                 permission: 'users:read' },
+  { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'users:update' },
+  { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'users:update_email' },
+  { method: 'DELETE', path: '/api/admin/users/:id',                 permission: 'users:delete' },
+  { method: 'PUT',    path: '/api/admin/users/:email/groups',       permission: 'users:assign_group' },
+  { method: 'GET',    path: '/api/admin/users/:id/sessions',        permission: 'sessions:read' },
+  { method: 'DELETE', path: '/api/admin/users/:id/sessions',        permission: 'sessions:revoke' },
+  { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'sessions:revoke' },
+  { method: 'POST',   path: '/api/admin/users/:id/recovery-email',  permission: 'users:recovery' },
+  { method: 'POST',   path: '/api/admin/users/:id/login-link',      permission: 'users:send_login_link' },
 
   // RBAC management
   { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },
@@ -110,6 +130,27 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
 
   // Audit
   { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
+  // audit/v1 (AUD-9). No gateway permission: an org admin holds no platform permission to test here,
+  // and /me/logins is every user's own. jinbe resolves the scope itself (platform audit:read /
+  // admin:read → all; org admin → their orgs, org filter injected server-side) and refuses the rest.
+  { method: 'GET',    path: '/api/audit/events' },
+  { method: 'GET',    path: '/api/audit/events/:eventId' },
+  { method: 'GET',    path: '/api/audit/facets' },
+  { method: 'GET',    path: '/api/audit/summary' },
+  { method: 'GET',    path: '/api/audit/users/:id/timeline' },
+  { method: 'GET',    path: '/api/audit/me/logins' },
+  { method: 'GET',    path: '/api/audit/tail' },
+  { method: 'POST',   path: '/api/audit/exports' },
+  { method: 'GET',    path: '/api/audit/exports/:id' },
+  { method: 'GET',    path: '/api/audit/exports/:id/download' },
+  { method: 'GET',    path: '/api/audit/saved-queries' },
+  { method: 'POST',   path: '/api/audit/saved-queries' },
+  { method: 'DELETE', path: '/api/audit/saved-queries/:id' },
+
+  // Observability proxy (OBS-4.1): platform admins only.
+  { method: 'GET',    path: '/api/admin/observability/logs',            permission: 'admin:read' },
+  { method: 'GET',    path: '/api/admin/observability/trace/:traceId',  permission: 'admin:read' },
+  { method: 'GET',    path: '/api/admin/observability/links',           permission: 'admin:read' },
 
   // Organization users
   { method: 'GET',    path: '/api/organizations/:organizationId/users',     permission: 'admin:read', org_param: 'organizationId' },
@@ -154,4 +195,6 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // Self-service: any authenticated caller may ask which orgs they administer.
   // Returns only the caller's own manageable_orgs; jinbe 401s an anonymous call.
   { method: 'GET',    path: '/api/me/organizations' },
+  // What the caller may do (kuma draws only the allowed actions). Answers about the caller only.
+  { method: 'GET',    path: '/api/me/permissions' },
 ] as const

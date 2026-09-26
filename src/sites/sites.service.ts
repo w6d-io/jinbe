@@ -3,7 +3,7 @@ import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
 import { render, type Rendered } from './render.js'
-import { sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
+import { DELETED_TTL_SECONDS, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
 import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
@@ -27,7 +27,7 @@ export function statusOf(r: SiteRecord): SiteStatus {
 
 export async function listSites() {
   const records = await sitesRepository.list()
-  return Promise.all(records.map(async (r) => {
+  const saved = await Promise.all(records.map(async (r) => {
     const draft = await sitesRepository.getDraft(r.site.name)
     return {
       name: r.site.name,
@@ -41,6 +41,52 @@ export async function listSites() {
       orgs: r.site.orgs.length,
       ...(draft ? { draft: { by: draft.updatedBy, at: draft.updatedAt } } : {}),
     }
+  }))
+  // A site being plugged has only a draft until its first save: list it too, at version 0.
+  const known = new Set(records.map((r) => r.site.name))
+  const draftOnly = (await sitesRepository.drafts()).filter((d) => !known.has(d.name)).map(({ name, draft }) => {
+    const site = (draft.site ?? {}) as { displayName?: unknown; address?: { host?: unknown } }
+    return {
+      name,
+      displayName: typeof site.displayName === 'string' && site.displayName ? site.displayName : name,
+      host: typeof site.address?.host === 'string' ? site.address.host : null,
+      status: 'draft' as const,
+      version: 0,
+      appliedVersion: null,
+      appliedAt: null,
+      appliedBy: null,
+      orgs: 0,
+      draft: { by: draft.updatedBy, at: draft.updatedAt },
+    }
+  })
+  return [...saved, ...draftOnly].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** What the editor needs to know about this environment before anything is typed. */
+export async function platformView() {
+  const cfg = sitesConfig()
+  return {
+    env: cfg.SITES_ENV ?? process.env.NODE_ENV ?? 'unknown',
+    production: cfg.SITES_PRODUCTION,
+    fourEyes: cfg.SITES_FOUR_EYES,
+    rulesLoadExpectedSec: cfg.SITES_RULES_LOAD_EXPECTED_SEC,
+    rulesLoadedTimeoutSec: Math.round(cfg.SITES_RULES_LOADED_TIMEOUT_MS / 1000),
+    zones: zonesView(await loadZones(), cfg.SITES_COOKIE_DOMAIN),
+    reserved: cfg.SITES_RESERVED_HOSTS,
+    login: { accessUrlConfigured: !!cfg.SITES_ACCESS_URL },
+  }
+}
+
+/** Deleted sites whose snapshot is still kept (30 days), newest first. */
+export async function deletedSites() {
+  return (await sitesRepository.deleted()).map((s) => ({
+    name: s.record.site.name,
+    displayName: s.record.site.displayName,
+    host: s.record.site.address.host,
+    version: s.record.version,
+    deletedAt: s.deletedAt,
+    deletedBy: s.deletedBy,
+    expiresAt: new Date(new Date(s.deletedAt).getTime() + DELETED_TTL_SECONDS * 1000).toISOString(),
   }))
 }
 

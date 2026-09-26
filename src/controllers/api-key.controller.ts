@@ -2,6 +2,7 @@ import { FastifyReply, FastifyRequest } from 'fastify'
 import { apiKeyService, ApiKeyError } from '../services/api-key.service.js'
 import { HydraApiError } from '../services/hydra.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { recordApiKeyUse } from '../audit/record.js'
 import {
   ApiKeyCreateBody,
   apiKeyCreateBodySchema,
@@ -112,6 +113,8 @@ export class ApiKeyController {
       if (!resolved) {
         return reply.status(404).send({ error: 'Not Found', message: 'Unknown client_id' })
       }
+      // The introspection path: the first resolution per client per day is recorded (apikey.used).
+      void recordApiKeyUse(clientId, resolved.organization_id ?? null)
       return reply.send(resolved)
     } catch (err) {
       return handleError(err, reply)

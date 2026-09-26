@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { requireSuperAdmin } from '../middleware/require-admin.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { checkAccess, AccessCheckUnavailableError, OpaQueryError } from '../services/access-check.service.js'
+import { auditAccessCheck } from '../audit/record.js'
+import { auditActor } from '../utils/audit-actor.js'
 import {
   badRequestResponseSchema,
   forbiddenResponseSchema,
@@ -91,7 +93,10 @@ export async function accessCheckRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      return reply.send(await checkAccess(parsed.data))
+      const answer = await checkAccess(parsed.data)
+      // It discloses what somebody else holds: who asked, about whom, is recorded (access.checked).
+      auditAccessCheck(auditActor(request), parsed.data, answer)
+      return reply.send(answer)
     } catch (err) {
       if (err instanceof AccessCheckUnavailableError) {
         return reply.status(503).send({ error: 'Service Unavailable', message: err.message })

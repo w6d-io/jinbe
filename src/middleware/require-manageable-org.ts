@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { callerOrganisations } from '../services/caller-organisations.js'
-import { auditEventService } from '../services/audit-event.service.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * Middleware factory: scopes an org-parameterised route to organisations the
@@ -64,23 +64,7 @@ export function requireManageableOrg(paramName = 'organizationId') {
         { email, organizationId, manageable },
         '[requireManageableOrg] access denied — org not administered by caller'
       )
-      auditEventService
-        .emit({
-          category: 'access',
-          verb: 'deny',
-          target: route,
-          result: 'denied',
-          actor: {
-            email,
-            ip: request.ip,
-            ua: (request.headers['user-agent'] as string) || null,
-          },
-          method: request.method,
-          path: (request.url || '').split('?')[0],
-          reason: 'not_org_admin',
-          source: 'jinbe-api',
-        })
-        .catch(() => {})
+      denyAudit(request, 'not_org_admin')
 
       return reply.status(403).send({
         error: 'Forbidden',

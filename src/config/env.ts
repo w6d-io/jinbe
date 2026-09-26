@@ -235,6 +235,19 @@ export const envSchema = z.object({
   // Durable copy of every v1 event until the archive confirms it. Never trimmed by count.
   AUDIT_OUTBOX_STREAM: z.string().default('auth:audit:outbox'),
 
+  // Observability backends read by /api/audit/* and /api/admin/observability/* (in-cluster, no
+  // auth). Unset: the audit reads answer 503 audit_store_unavailable, the ops endpoints 404.
+  LOKI_URL: z.string().url().optional(),
+  LOKI_TIMEOUT_MS: z.string().transform(Number).pipe(z.number().int().positive()).default('30000'),
+  // The namespace every query is pinned to — Loki is single-tenant, so this is the env boundary.
+  LOKI_NAMESPACE: z.string().regex(/^[a-z0-9-]{1,63}$/).optional(),
+  TEMPO_URL: z.string().url().optional(),
+  GRAFANA_URL: z.string().url().optional(),
+  GRAFANA_LOKI_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('loki'),
+  GRAFANA_TEMPO_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('tempo'),
+  // Most rows one audit export job writes; beyond it the export is marked truncated.
+  AUDIT_EXPORT_MAX_ROWS: z.string().transform(Number).pipe(z.number().int().positive().max(1_000_000)).default('100000'),
+
   // Service Creation Defaults (for Oathkeeper rules and kustomization).
   // The defaults are placeholders — every production deployment must set
   // these explicitly to the deployer's namespace/domain.

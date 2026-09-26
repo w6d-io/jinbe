@@ -35,7 +35,8 @@ export type GroupDefinition = Record<string, string[]> // { service: roles[] }
 export type FlatRolesMap = Record<string, string[]>    // { roleName: permissions[] }
 // org_param: name of the `:param` in `path` that carries the org id — the route is then that org's
 // only (opal-policies org.rego). Checked by policy/route-org-param.ts before any write.
-export interface RouteRule { method: string; path: string; permission?: string; org_param?: string }
+/** `id`: the Site route a row comes from (data.site_login routes name rows by it); absent on non-site rows. */
+export interface RouteRule { id?: string; method: string; path: string; permission?: string; org_param?: string }
 export interface RouteMap { rules: RouteRule[] }
 
 /**

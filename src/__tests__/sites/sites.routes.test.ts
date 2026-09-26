@@ -46,6 +46,9 @@ vi.mock('../../middleware/require-admin.js', async () => {
   requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs admin:write' })
   }, 'admin:write'),
+  requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs sites:apply' })
+  }, 'sites:apply'),
   requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required', message: 'mfa' })
   },
@@ -117,7 +120,7 @@ describe('guards', () => {
     expect(find('GET', '/api/admin/sites')).toBe('admin:read')
     expect(find('GET', '/api/admin/sites/:name/blast-radius')).toBe('admin:read')
     expect(find('PUT', '/api/admin/sites/:name')).toBe('admin:write')
-    expect(find('POST', '/api/admin/sites/:name/apply')).toBe('admin:write')
+    expect(find('POST', '/api/admin/sites/:name/apply')).toBe('sites:apply')
     expect(find('POST', '/api/admin/sites/preview')).toBe('admin:write')
     expect(rows.every((r) => r.class === 'authorized')).toBe(true)
     await admin.close()

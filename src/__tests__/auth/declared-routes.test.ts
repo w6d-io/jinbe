@@ -120,8 +120,16 @@ describe('what the running service ends up declaring', () => {
       const authorized = rows.filter((r) => r.class === 'authorized')
       expect(authorized.length).toBeGreaterThan(80)
       expect(rows.find((r) => r.path === '/api/admin/users' && r.method === 'GET')).toEqual({
-        method: 'GET', path: '/api/admin/users', class: 'authorized', permission: 'admin:read',
+        method: 'GET', path: '/api/admin/users', class: 'authorized', permission: 'users:read',
       })
+      // The user routes are read off their own guards: one permission per action.
+      const row = (method: string, path: string) => rows.find((r) => r.method === method && r.path === path)
+      expect(row('PUT', '/api/admin/users/:id')?.permission).toBe('users:update')
+      expect(row('DELETE', '/api/admin/users/:id')?.permission).toBe('users:delete')
+      expect(row('GET', '/api/admin/users/:id/sessions')?.permission).toBe('sessions:read')
+      expect(row('DELETE', '/api/admin/sessions/:sessionId')?.permission).toBe('sessions:revoke')
+      expect(row('POST', '/api/admin/users/:id/login-link')?.permission).toBe('users:send_login_link')
+      expect(row('GET', '/api/me/permissions')?.class).toBe('authenticated')
       // The session gate is a hook, not a route guard, so these must not be called authorized.
       expect(rows.find((r) => r.path === '/api/health')?.class).toBe('public')
       expect(rows.find((r) => r.path === '/api/telemetry')?.class).toBe('public')

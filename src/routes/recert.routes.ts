@@ -65,7 +65,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const body = request.body as { name: string; scope?: { groups?: string[] }; reviewers: string[]; deadline: string; onExpiry: 'revoke' | 'flag' }
       try {
-        const campaign = await recertService.createCampaign(body, auditActor(request).email)
+        const campaign = await recertService.createCampaign(body, auditActor(request))
         return reply.status(201).send(campaign)
       } catch (e) {
         return sendRecertError(reply, e)
@@ -164,7 +164,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        await recertService.deleteCampaign((request.params as { id: string }).id)
+        await recertService.deleteCampaign((request.params as { id: string }).id, auditActor(request))
         return reply.status(204).send()
       } catch (e) {
         return sendRecertError(reply, e)

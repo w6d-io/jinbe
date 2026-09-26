@@ -6,7 +6,7 @@ import { findRouteTies, loadPublishedRouteRules, routeTieConflict } from '../pol
 import { assertOrgParams } from '../policy/route-org-param.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
-import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
+import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP, holdsPlatformPermission } from './authorization-model.service.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
@@ -1194,16 +1194,20 @@ export class RbacService {
         throw Object.assign(new Error(`Service '${serviceName}' does not exist`), { statusCode: 400 })
       }
     }
+    const before = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
     await redisRbacRepository.setOrgServiceMapping(organizationId, services)
-    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, services }, actor)
+    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, services }, actor,
+      diffList('org_service_map', organizationId, before, services))
   }
 
   async deleteOrgServiceMapping(organizationId: string, actor?: AuditActorInput): Promise<void> {
+    const before = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
     const deleted = await redisRbacRepository.deleteOrgServiceMapping(organizationId)
     if (!deleted) {
       throw Object.assign(new Error(`No mapping found for organization '${organizationId}'`), { statusCode: 404 })
     }
-    await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor)
+    await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor,
+      diffList('org_service_map', organizationId, before, []))
   }
 
   async getOrgAdminMap(): Promise<Record<string, string[]>> {
@@ -1215,8 +1219,12 @@ export class RbacService {
   // to also be a MEMBER of the org (data.bindings.user_organizations), so a
   // rostered non-member is inert — they gain nothing until they're a member.
   async setOrgAdmins(organizationId: string, admins: string[], actor?: AuditActorInput): Promise<void> {
+    const before = await redisRbacRepository.getOrgAdmins(organizationId)
     await redisRbacRepository.setOrgAdmins(organizationId, admins)
-    await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor)
+    // The roster is a list of addresses: the legacy stream keeps them as it always has, and audit/v1
+    // replaces each with its HMAC (scrubEmails) — who was added stays comparable, not readable.
+    await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor,
+      diffList('org_admin_map', organizationId, before, admins))
   }
 
   // ===========================================================================

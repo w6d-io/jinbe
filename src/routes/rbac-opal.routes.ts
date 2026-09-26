@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
+import { siteLoginStore } from '../sites/login-store.js'
 import { env } from '../config/env.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
@@ -87,6 +88,29 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // Per-site 2FA: { site: {min_aal, scope, routes, clients} } (feeds data.site_login). Empty when no
+  // site asks for a second factor; 503 on a store error — an empty 200 would silently drop every
+  // site's 2FA bar until the next fetch.
+  fastify.get('/opal/site_login', {
+    schema: {
+      description:
+        'OPAL data source: per-site sign-in strength (data.site_login). 503 when the store cannot be read, ' +
+        'so OPAL keeps the 2FA requirements OPA already holds.',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send(await siteLoginStore.getAll())
+    } catch (err) {
+      request.log.error({ err }, 'site_login: store unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Site login settings could not be read. Keep the last good data and retry.',
+      })
+    }
+  })
+
   // Roles per service
   fastify.get('/opal/roles/:service', async (request, reply) => {
     const { service } = request.params as { service: string }
@@ -123,6 +147,8 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       // Org grants (data.org_grants): groups an org admin handed out in THEIR org; the org layer
       // counts them only on that org's routes.
       { url: `${jinbeUrl}/api/admin/rbac/opal/org_grants`, topics: ['policy_data'], dst_path: '/org_grants' },
+      // Per-site 2FA (data.site_login): the bar each Site sets, published with its permissions.
+      { url: `${jinbeUrl}/api/admin/rbac/opal/site_login`, topics: ['policy_data'], dst_path: '/site_login' },
     ]
 
     for (const svc of services) {

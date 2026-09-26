@@ -9,13 +9,37 @@ describe('bootstrap/build-route-map', () => {
     expect(publicRoutes).toContainEqual({ method: 'GET', path: '/docs/:any*' })
   })
 
-  it('admin user-management routes require admin permissions', () => {
+  it('admin user-management routes require admin or user-management permissions', () => {
     const adminRoutes = JINBE_BUILT_IN_ROUTES.filter((r) =>
       r.path.startsWith('/api/admin/users'),
     )
     for (const r of adminRoutes) {
-      expect(r.permission).toMatch(/^admin:/)
+      expect(r.permission).toMatch(/^(admin|users|sessions):/)
     }
+  })
+
+  it('user routes carry their fine permission BESIDE the admin:* rule, never instead of it', () => {
+    const fine: Array<[string, string, string]> = [
+      ['GET', '/api/admin/users', 'users:read'],
+      ['GET', '/api/admin/users/search', 'users:read'],
+      ['GET', '/api/admin/users/:id', 'users:read'],
+      ['POST', '/api/admin/users', 'users:create'],
+      ['PUT', '/api/admin/users/:id', 'users:update'],
+      ['PUT', '/api/admin/users/:id', 'users:update_email'],
+      ['DELETE', '/api/admin/users/:id', 'users:delete'],
+      ['PUT', '/api/admin/users/:email/groups', 'users:assign_group'],
+      ['GET', '/api/admin/users/:id/sessions', 'sessions:read'],
+      ['DELETE', '/api/admin/users/:id/sessions', 'sessions:revoke'],
+      ['DELETE', '/api/admin/sessions/:sessionId', 'sessions:revoke'],
+      ['POST', '/api/admin/users/:id/recovery-email', 'users:recovery'],
+      ['POST', '/api/admin/users/:id/login-link', 'users:send_login_link'],
+    ]
+    for (const [method, path, permission] of fine) {
+      expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method, path, permission })
+      // Administrators keep the route: an admin:* rule stays on the same method + path.
+      expect(JINBE_BUILT_IN_ROUTES.some((r) => r.method === method && r.path === path && r.permission?.startsWith('admin:'))).toBe(true)
+    }
+    expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method: 'GET', path: '/api/me/permissions' })
   })
 
   it('rbac management routes require admin permissions', () => {

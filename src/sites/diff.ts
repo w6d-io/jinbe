@@ -76,6 +76,9 @@ export function riskOf(before: Site | null, after: Site): Risk {
     if (gb.has(id) && gb.get(id) !== authn) flag('sign_in_changed', 'medium', `gate ${id} changes how callers sign in`)
   }
   if (after.state === 'paused' && before?.state !== 'paused') flag('paused', 'medium', 'the site stops answering')
+  if (before && stableStringify(before.upstream) !== stableStringify(after.upstream)) flag('upstream_changed', 'high', 'requests go to a different upstream')
+  const tfa = (s: Site | null) => !!s?.login && (s.login.twoFactor.scope !== 'none' || (s.login.twoFactor.routes?.length ?? 0) > 0)
+  if (tfa(before) && !tfa(after)) flag('two_factor_off', 'high', 'the site no longer asks for a second factor')
 
   const level = flags.reduce<Risk['level']>((m, f) => (rank[f.level] > rank[m] ? f.level : m), 'low')
   return { level, flags }

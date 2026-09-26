@@ -68,11 +68,22 @@ const RECERT: Record<string, AuditEventType> = {
   flag: 'recert.item.expired',
 }
 
+/** The sites module's emits (`category: service`, target `site:<name>`), by verb. */
+const SITE: Record<string, AuditEventType> = {
+  update: 'site.saved',
+  apply: 'site.applied',
+  rollback: 'site.rolled_back',
+  pause: 'site.paused',
+  resume: 'site.resumed',
+  delete: 'site.deleted',
+}
+
 function eventOf(rich: AuditEvent, legacyType?: string): AuditEventType {
   if (rich.v1Event) return rich.v1Event
   if (legacyType && BY_TYPE[legacyType]) return BY_TYPE[legacyType]
   if (rich.source === 'scim' && rich.kind === 'change') return BY_VERB[`scim:${rich.verb}`] ?? 'system.unmapped'
   if (rich.target.startsWith('recert:') && RECERT[rich.verb]) return RECERT[rich.verb]
+  if (rich.target.startsWith('site:') && SITE[rich.verb]) return SITE[rich.verb]
   if (rich.target === 'auth-methods') return 'config.auth_methods.changed'
   return BY_VERB[`${rich.category}.${rich.verb}`] ?? 'system.unmapped'
 }
