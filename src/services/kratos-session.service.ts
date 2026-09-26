@@ -109,7 +109,8 @@ export class KratosSessionService {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          Cookie: `ory_kratos_session=${sessionCookie}`,
+          // Either the cookies as extracted (`name=value; …`) or a bare value under the default name.
+          Cookie: sessionCookie.includes('=') ? sessionCookie : `ory_kratos_session=${sessionCookie}`,
         },
       })
 
@@ -158,19 +159,18 @@ export class KratosSessionService {
   }
 
   /**
-   * Extract ory_kratos_session cookie from cookie header
+   * The session cookies to hand to Kratos, as `name=value[; name=value]`. The cookie's name is
+   * Kratos' own setting (session.cookie.name — e.g. ory_kratos_session_sandbox), so every
+   * `ory_kratos_session*` cookie is forwarded and Kratos picks the one it issued. Other cookies
+   * (analytics, CSRF) never leave this process.
    */
   static extractSessionCookie(cookieHeader: string | undefined): string | null {
     if (!cookieHeader) return null
-
-    const cookies = cookieHeader.split(';').map((c) => c.trim())
-    for (const cookie of cookies) {
-      const [name, ...valueParts] = cookie.split('=')
-      if (name === 'ory_kratos_session') {
-        return valueParts.join('=') // Handle '=' in cookie value
-      }
-    }
-    return null
+    const session = cookieHeader
+      .split(';')
+      .map((c) => c.trim())
+      .filter((c) => /^ory_kratos_session[A-Za-z0-9_-]*=/.test(c))
+    return session.length > 0 ? session.join('; ') : null
   }
 }
 

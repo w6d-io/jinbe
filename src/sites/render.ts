@@ -24,6 +24,8 @@ export interface Platform {
   cookieDomain?: string
   /** Namespaces no upstream may point into (kratos-admin, OPA, the gateway itself…). */
   platformNamespaces?: string[]
+  /** Exact `namespace/service` exceptions to platformNamespaces (e.g. a sandbox echo in the gateway namespace). */
+  upstreamAllow?: string[]
   /** login-ui's /access page: where a 2FA site's browser gates send `forbidden` (SITES_ACCESS_URL). */
   accessUrl?: string
 }
@@ -284,7 +286,8 @@ export function render(site: Site, platform: Platform): Rendered {
       fail('handler_disabled', `${h.handler} is not enabled on the gateway (${kind}); enable it in the Oathkeeper config first`, at)
     }
   }
-  if (platform.platformNamespaces?.includes(site.upstream.namespace)) {
+  const allowListed = platform.upstreamAllow?.includes(`${site.upstream.namespace}/${site.upstream.service}`) ?? false
+  if (!allowListed && platform.platformNamespaces?.includes(site.upstream.namespace)) {
     fail('upstream_platform_namespace', `upstream namespace '${site.upstream.namespace}' is a platform namespace`, 'upstream.namespace')
   }
   if (FORBIDDEN_SERVICE.test(site.upstream.service)) {
