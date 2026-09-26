@@ -73,6 +73,10 @@ export const AUDIT_EVENTS = {
   'site.logo_removed': ['authz', 'delete'],
   'site.migration_changed': ['authz', 'apply', 'warn'],
 
+  // Zones: a wildcard domain the platform serves (one Ingress, maybe a certificate) — what is exposed.
+  'zone.created': ['config', 'create', 'warn'],
+  'zone.deleted': ['config', 'delete', 'high'],
+
   'gateway.rule.created': ['authz', 'create'],
   'gateway.rule.updated': ['authz', 'update'],
   'gateway.rule.deleted': ['authz', 'delete'],

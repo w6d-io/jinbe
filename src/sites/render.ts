@@ -259,6 +259,10 @@ export function render(site: Site, platform: Platform): Rendered {
   for (const id of site.login?.twoFactor.routes ?? []) {
     if (!seenIds.has(id) && id !== CATCH_ALL_ID) fail('unknown_2fa_route', `2FA is asked on route '${id}', which the site does not have`, 'login.twoFactor.routes')
   }
+  const landing = site.login?.defaultReturnUrl
+  if (landing && new URL(landing).hostname.toLowerCase() !== host) {
+    fail('return_url_host', `the landing page must be on the site's host ${host}`, 'login.defaultReturnUrl')
+  }
   if (with2fa && !platform.accessUrl && site.gates.some((g) => g.errors === 'website')) {
     fail('access_url_missing', 'per-site 2FA needs the sign-in step-up page (SITES_ACCESS_URL) configured on the platform', 'login.twoFactor')
   }

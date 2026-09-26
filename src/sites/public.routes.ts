@@ -3,14 +3,16 @@ import { z } from 'zod'
 import { sitesConfig } from './config.js'
 import { handle, nameOf, parse } from './http.js'
 import { accessReason, getLogo, publicLoginByHost, publicLoginByName } from './login.js'
+import { mySites } from './mine.js'
 
 /**
  * /api/public/sites — what login-ui needs about a site before anyone is signed in (site-ux §11.2).
  *
  * No session gate (listed in require-auth PUBLIC_ROUTES): these only say what the site's own
  * address already shows — name, logo, colour, welcome line, help link, 2FA bar. Exact match only,
- * nothing lists sites, every route is rate limited per IP. The one route that is about a person,
- * access-reason, takes that person's own Kratos session cookie and answers one word.
+ * nothing lists sites to an anonymous caller, every route is rate limited per IP. The routes about a
+ * person — access-reason, mine — take that person's own Kratos session cookie: access-reason answers
+ * one word, mine lists only the sites the policy lets them open.
  */
 
 const hostParams = z.object({ host: z.string().min(1).max(253).regex(/^[A-Za-z0-9.-]+$/) })
@@ -24,6 +26,13 @@ export async function publicSitesRoutes(fastify: FastifyInstance) {
     handle(async (request, reply) => {
       const out = await publicLoginByHost(parse(hostParams, request.params).host)
       reply.header('cache-control', CACHE)
+      return out
+    }))
+
+  fastify.get('/mine', doc('The sites the signed-in visitor (own Kratos session cookie) can open: [{name, displayName, url, logoUrl, accent}]; 401 without a session'),
+    handle(async (request: FastifyRequest, reply) => {
+      const out = await mySites(request.headers.cookie)
+      reply.header('cache-control', 'private, no-store')
       return out
     }))
 

@@ -3,9 +3,10 @@ import type { ZodSchema } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { requireRecentMfa, requireSitesApply, requireSuperAdmin } from '../middleware/require-admin.js'
 import {
-  applyBodySchema, checkHostBodySchema, diffBodySchema, draftBodySchema, matchBodySchema, nameParamsSchema,
-  previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema,
+  applyBodySchema, checkHostBodySchema, createZoneBodySchema, diffBodySchema, draftBodySchema, matchBodySchema, nameParamsSchema,
+  previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema, suggestZoneBodySchema, zoneParamsSchema,
 } from './schemas.js'
+import * as zones from './zones.service.js'
 import * as sites from './sites.service.js'
 import * as ops from './apply.service.js'
 import { actorOf, handle, nameOf, parse } from './http.js'
@@ -51,6 +52,23 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.get('/zones', doc('The admin-defined wildcard zones a site host can live under, with SSO (login cookie) coverage'),
     handle(async () => sites.zones()))
+
+  // Zones (zones.auth.w6d.io, cluster-scoped): creating or deleting one changes what the platform
+  // serves, so it is gated like an apply.
+  fastify.get('/zones/:name', doc('A zone: spec, operator status (IngressReady, CertificateReady, DomainTaken), the sites it serves'),
+    handle(async (request) => zones.getZone(parse(zoneParamsSchema, request.params).name)))
+
+  fastify.post('/zones', { ...gateway, ...doc('Create a zone (Zone CR): domain under SITES_ZONE_ALLOWED_PARENTS, TLS default | issuer | secret. The operator makes the wildcard Ingress and certificate', createZoneBodySchema) },
+    handle(async (request, reply) => {
+      const out = await zones.createZone(parse(createZoneBodySchema, request.body), actorOf(request))
+      return reply.status(201).send(out)
+    }))
+
+  fastify.delete('/zones/:name', { ...gateway, ...doc('Delete a zone; refused (409, with the sites) while a saved site has a host under it') },
+    handle(async (request) => zones.deleteZone(parse(zoneParamsSchema, request.params).name, actorOf(request))))
+
+  fastify.post('/zones/suggest', doc('The zone to create for a host outside every zone: its parent domain, allow-list, wildcard DNS probe, TLS choices, SSO coverage. Writes nothing', suggestZoneBodySchema),
+    handle(async (request) => zones.suggestZone(parse(suggestZoneBodySchema, request.body).host)))
 
   fastify.post('/check-host', { ...write, ...doc('Resolve a host against the zones: zone, SSO coverage, possible exposures (zone / vanity), owner', checkHostBodySchema) },
     handle(async (request) => sites.checkHost(parse(checkHostBodySchema, request.body))))

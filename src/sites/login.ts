@@ -26,7 +26,7 @@ export function siteLoginOf(site: Pick<Site, 'login'>): SiteLogin | null {
 }
 
 /** The applied intent of an applied site, or null. */
-async function liveSite(name: string): Promise<Site | null> {
+export async function liveSite(name: string): Promise<Site | null> {
   const record = await sitesRepository.get(name)
   if (!record?.applied) return null
   return (await sitesRepository.version(name, record.applied.version))?.site ?? null
@@ -47,6 +47,8 @@ export interface PublicSiteLogin {
   helpUrl: string | null
   minAal: 'aal1' | 'aal2'
   scope: 'none' | 'writes' | 'all' | 'routes'
+  /** Where login-ui sends the visitor after sign-in; null = Kratos' default return URL. */
+  defaultReturnUrl: string | null
 }
 
 async function publicView(site: Site | null): Promise<PublicSiteLogin> {
@@ -62,6 +64,7 @@ async function publicView(site: Site | null): Promise<PublicSiteLogin> {
     helpUrl: b?.helpUrl ?? null,
     minAal: siteLoginOf(site) ? 'aal2' : 'aal1',
     scope: site.login?.twoFactor.scope ?? 'none',
+    defaultReturnUrl: site.login?.defaultReturnUrl ?? null,
   }
 }
 

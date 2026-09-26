@@ -56,7 +56,7 @@ vi.mock('../../../services/redis-lock.js', () => ({ withRedisLock: (_n: string, 
 
 import { recertService } from '../../../services/recert.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
-import { auditSite, auditAccessCheck, recordApiKeyUse } from '../../../audit/record.js'
+import { auditSite, auditZone, auditAccessCheck, recordApiKeyUse } from '../../../audit/record.js'
 import { legacyToV1 } from '../../../audit/v1/legacy-map.js'
 import type { AuditEvent } from '../../../services/audit-types.js'
 
@@ -138,6 +138,18 @@ describe('access check, API-key use, sites', () => {
       await settle()
       expect(lastEvent()).toMatchObject({ v1Event: key, targetType: 'site', targetId: 'payroll', service: 'payroll', actor: { id: 'admin-1' } })
     }
+  })
+
+  it('auditZone → zone.created / zone.deleted with the domain and TLS mode, landing on its own key', async () => {
+    auditZone('create', 'apps-stairfleet-com', ACTOR, { domain: 'apps.stairfleet.com', tls: 'issuer', issuer: 'letsencrypt-dns', ingressClass: undefined })
+    await settle()
+    const created = lastEvent()
+    expect(created).toMatchObject({ v1Event: 'zone.created', targetType: 'zone', targetId: 'apps-stairfleet-com', actor: { id: 'admin-1' }, details: { domain: 'apps.stairfleet.com', tls: 'issuer', issuer: 'letsencrypt-dns' } })
+    expect('ingressClass' in created.details).toBe(false)
+    expect(legacyToV1(created as AuditEvent).event).toBe('zone.created')
+    auditZone('delete', 'apps-stairfleet-com', ACTOR, { domain: 'apps.stairfleet.com', tls: 'issuer' })
+    await settle()
+    expect(legacyToV1(lastEvent() as AuditEvent).event).toBe('zone.deleted')
   })
 
   it('the sites module\'s current emits (category service, target site:<name>) no longer land on system.unmapped', () => {
