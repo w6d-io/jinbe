@@ -279,3 +279,22 @@ describe('render — Site CR', () => {
     }
   })
 })
+
+describe('render — upstream allow-list (exact namespace/service exceptions)', () => {
+  const inPlatform = { ...platform, platformNamespaces: ['auth-dev'], upstreamAllow: ['auth-dev/echo'] }
+  const withUpstream = (namespace: string, service: string) =>
+    payrollSite({ upstream: { ...payrollSite().upstream, namespace, service } })
+
+  it('lets the one allow-listed service in a platform namespace through', () => {
+    expect(errors(render(withUpstream('auth-dev', 'echo'), inPlatform))).not.toContain('upstream_platform_namespace')
+  })
+
+  it('still refuses any other service of that namespace', () => {
+    expect(errors(render(withUpstream('auth-dev', 'jinbe'), inPlatform))).toContain('upstream_platform_namespace')
+  })
+
+  it('never lets a platform data service through, allow-listed or not', () => {
+    const p = { ...inPlatform, upstreamAllow: ['auth-dev/kratos-admin'] }
+    expect(errors(render(withUpstream('auth-dev', 'kratos-admin'), p))).toContain('upstream_forbidden_service')
+  })
+})

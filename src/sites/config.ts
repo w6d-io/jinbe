@@ -13,6 +13,7 @@ import type { Zone } from './host.js'
  *                          zones; a site host must be exactly one label under one.
  *   SITES_COOKIE_DOMAIN    Kratos session cookie domain (e.g. .dev.stairling.com): SSO coverage.
  *   SITES_PLATFORM_NAMESPACES  comma-separated namespaces no site upstream may point into.
+ *   SITES_UPSTREAM_ALLOW       exact `namespace/service` exceptions to it (e.g. auth-dev/echo).
  *   SITES_RESERVED_HOSTS   comma-separated platform hosts no site may take (kuma, login, auth…).
  *   SITES_RULES_LOADED_TIMEOUT_MS  how long an apply waits for RulesLoaded before rolling back (120 s).
  *   SITES_APPLY_POLL_MS    how often an apply/cut-over watches the Site CRs (1000; 0 = no watcher).
@@ -55,6 +56,12 @@ const schema = z.object({
     .string()
     .default('auth,kube-system,kube-public,kube-node-lease,cert-manager,ingress-nginx,envoy-gateway-system,monitoring')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // Exact `namespace/service` pairs allowed as upstreams despite SITES_PLATFORM_NAMESPACES. Platform data
+  // services (kratos-admin, OPA, OPAL, Redis, Postgres) stay refused whatever this says.
+  SITES_UPSTREAM_ALLOW: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter((s) => /^[a-z0-9-]+\/[a-z0-9-]+$/.test(s))),
   SITES_RESERVED_HOSTS: z
     .string()
     .default('')

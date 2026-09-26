@@ -175,7 +175,7 @@ describe('KratosSessionService', () => {
 
       const result = KratosSessionService.extractSessionCookie(cookieHeader)
 
-      expect(result).toBe('session123')
+      expect(result).toBe('ory_kratos_session=session123')
     })
 
     it('should return null when cookie header is undefined', () => {
@@ -197,7 +197,7 @@ describe('KratosSessionService', () => {
 
       const result = KratosSessionService.extractSessionCookie(cookieHeader)
 
-      expect(result).toBe('abc=def=ghi')
+      expect(result).toBe('ory_kratos_session=abc=def=ghi')
     })
 
     it('should handle single cookie', () => {
@@ -205,7 +205,7 @@ describe('KratosSessionService', () => {
 
       const result = KratosSessionService.extractSessionCookie(cookieHeader)
 
-      expect(result).toBe('mysession')
+      expect(result).toBe('ory_kratos_session=mysession')
     })
 
     it('should handle cookies with whitespace', () => {
@@ -213,7 +213,7 @@ describe('KratosSessionService', () => {
 
       const result = KratosSessionService.extractSessionCookie(cookieHeader)
 
-      expect(result).toBe('session123')
+      expect(result).toBe('ory_kratos_session=session123')
     })
   })
 })
