@@ -5,8 +5,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
-vi.mock('../../../services/authorization-model.service.js', async () =>
-  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),

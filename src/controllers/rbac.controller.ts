@@ -366,8 +366,7 @@ export class RbacController {
   // the screens over them showed an error whatever was asked.
   //
   // Replaying a real decision is worth having back: it answers "would this person be allowed to
-  // call that", which the enforced-configuration screen cannot — it shows the chain, not the
-  // verdict. It needs an engine this service can reach, and the one that enforces listens on the
+  // call that" — the verdict, not the chain. It needs an engine this service can reach, and the one that enforces listens on the
   // loopback of the proxy pod. A preview engine of its own, off the request path, is the shape.
   //
   // The hypothetical half is not: `impact-preview` asked "what changes if I edit the model", and

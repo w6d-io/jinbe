@@ -5,8 +5,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
-vi.mock('../../../services/authorization-model.service.js', async () =>
-  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
@@ -58,13 +58,13 @@ import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
 import {
-  AuthorizationModelUnavailableError,
+  GroupCatalogueUnavailableError,
   groupFacts,
-} from '../../../services/authorization-model.service.js'
+} from '../../../services/group-catalogue.js'
 import {
-  authorizationModel,
-  resetAuthorizationModel,
-} from '../../helpers/authorization-model-mock.js'
+  groupCatalogue,
+  resetGroupCatalogue,
+} from '../../helpers/group-catalogue-mock.js'
 
 /** What one call to the atomic write took away, and what it gave. */
 const revokedIn = (call: unknown[]) => call[1] as string[]
@@ -655,7 +655,7 @@ describe('applyGroupUpdate — denied writes emit an audit event (A2)', () => {
 describe('userGroupsService.applyGroupUpdate — the model the engine decides against', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resetAuthorizationModel()
+    resetGroupCatalogue()
     holds()
     vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
@@ -666,7 +666,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     // organisation, and the predicates that used to decide whether handing it out needed the
     // actor's authority and the target's second factor asked a store that had never heard of it —
     // so all of them answered "not needed", silently, for the most powerful group there is.
-    authorizationModel.groups['platform-admin'] = { '*': ['platform-admin'] }
+    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
     vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
       Object.assign(new Error('not a platform admin'), { statusCode: 403 }),
     )
@@ -685,7 +685,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
   })
 
   it('requires the target of that grant to hold a second factor', async () => {
-    authorizationModel.groups['platform-admin'] = { '*': ['platform-admin'] }
+    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
     vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
 
     const result = await userGroupsService.applyGroupUpdate({
@@ -703,7 +703,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
   it('does NOT gate a grant scoped to one organisation', async () => {
     // Scope is what separates a platform grant from a tenant one, now that the model has no `*`
     // permission to spot. A role held in a single organisation is an ordinary tenant role.
-    authorizationModel.groups['premium-operator'] = { 'org-9': ['operator'] }
+    groupCatalogue.groups['premium-operator'] = { 'org-9': ['operator'] }
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
@@ -756,7 +756,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     // "Confers nothing" and "I could not tell what it confers" are opposite facts. Reading the
     // second as the first is how a grant slips past every gate at once.
     vi.mocked(groupFacts).mockRejectedValueOnce(
-      new AuthorizationModelUnavailableError('ConfigMaps unreachable'),
+      new GroupCatalogueUnavailableError('ConfigMaps unreachable'),
     )
 
     const result = await userGroupsService.applyGroupUpdate({
@@ -776,7 +776,7 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
 describe('userGroupsService.applyGroupUpdate — a membership the display copy never had', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resetAuthorizationModel()
+    resetGroupCatalogue()
     vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
   })
@@ -840,7 +840,7 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
 describe('userGroupsService.applyGroupUpdate — a change lands whole or not at all', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resetAuthorizationModel()
+    resetGroupCatalogue()
     vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
   })
@@ -870,7 +870,7 @@ describe('userGroupsService.applyGroupUpdate — a change lands whole or not at 
     // The five-group change measured in dev: refused on the actor's step-up, and the screen then
     // showed the PREVIOUS state — which reads as "three of five failed" unless the refusal says it
     // applied nothing.
-    authorizationModel.groups['platform-admin'] = { '*': ['platform-admin'] }
+    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
     holds('premium-operator')
 
     const result = await userGroupsService.applyGroupUpdate({

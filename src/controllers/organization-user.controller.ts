@@ -20,7 +20,7 @@ import {
 } from '../schemas/organization-user.schema.js'
 import { env } from '../config/index.js'
 import { addMember, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
-import { declaredGroups } from '../services/authorization-model.service.js'
+import { declaredGroups } from '../services/group-catalogue.js'
 import {
   identitiesInOrganisation,
   isMemberOf,

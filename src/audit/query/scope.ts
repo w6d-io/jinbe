@@ -1,7 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { holdsPlatformPermission } from '../../services/authorization-model.service.js'
-import { callerOrganisations } from '../../services/caller-organisations.js'
-import { administersOrganisation } from '../../services/org-admin.js'
+import { holds, manageableOrgs, rights } from '../../authz/opa.js'
 import { enforcing } from '../../policy/declared-routes.js'
 
 /**
@@ -13,8 +11,9 @@ import { enforcing } from '../../policy/declared-routes.js'
  *     filter is injected into the query HERE, never taken from the client.
  *   - anyone else: 403.
  *
- * "Holds nothing" and "cannot tell" stay apart, as in the other gates: a model that could not be read
- * is a 503, never a quiet narrowing.
+ * Both asked of OPA (`rbac.user_info` for jinbe, `rbac.delegation.manageable_orgs`). "Holds nothing"
+ * and "cannot tell" stay apart, as in the other gates: OPA unreachable is a 503, never a quiet
+ * narrowing.
  */
 
 export type AuditScope = { platform: true; orgs: [] } | { platform: false; orgs: string[] }
@@ -38,18 +37,12 @@ async function tell<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function resolveAuditScope(request: FastifyRequest, permission: string): Promise<AuditScope | null> {
-  const subject = request.userContext?.id
-  if (!subject) return null
-  const platform = await tell(async () => (await holdsPlatformPermission(subject, permission)) || (await holdsPlatformPermission(subject, PLATFORM_READ)))
-  if (platform) return { platform: true, orgs: [] }
+  const email = request.userContext?.email
+  if (!request.userContext?.id || !email || email === 'unknown') return null
+  const held = (await tell(() => rights(email))).permissions
+  if (holds(held, permission) || holds(held, PLATFORM_READ)) return { platform: true, orgs: [] }
 
-  const orgs = await tell(() => callerOrganisations(request))
-  const administered: string[] = []
-  for (const org of orgs) {
-    const verdict = await administersOrganisation(request, org)
-    if (verdict === null) throw new ScopeUnknown()
-    if (verdict) administered.push(org)
-  }
+  const administered = await tell(() => manageableOrgs(email))
   return { platform: false, orgs: [...new Set(administered)].sort() }
 }
 

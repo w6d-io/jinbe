@@ -6,10 +6,10 @@ import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
 import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
 import {
-  AuthorizationModelUnavailableError,
+  GroupCatalogueUnavailableError,
   groupFacts,
   type GroupFacts,
-} from './authorization-model.service.js'
+} from './group-catalogue.js'
 
 /** Actor threaded from a request — audit fields (A4) + the R2 step-up state. */
 export type GroupUpdateActor = {
@@ -209,7 +209,7 @@ class UserGroupsService {
     try {
       facts = await groupFacts([...newlyAdded, ...removed])
     } catch (error) {
-      if (!(error instanceof AuthorizationModelUnavailableError)) throw error
+      if (!(error instanceof GroupCatalogueUnavailableError)) throw error
       // "Confers nothing" and "I could not tell what it confers" are opposite facts, and the second
       // one must never quietly hand out a group unguarded.
       return {
@@ -219,7 +219,7 @@ class UserGroupsService {
           applied: false,
           error: 'authorization_model_unavailable',
           message:
-            'The authorization model could not be read, so this change could not be checked; no change was made. Please retry.',
+            'The group catalogue could not be read, so this change could not be checked; no change was made. Please retry.',
           targetEmail: identity.email,
         },
       }

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { validate, type InUse } from '../../gateway/validate.js'
 import { maskConfig, resolveSecrets, MASK } from '../../gateway/secrets.js'
-import { handlerMeta } from '../../gateway/catalog.js'
 import type { GatewaySpec } from '../../gateway/kube-gateway.js'
 
 // GW-2: what a proposed Gateway spec is checked against, and how secrets are kept out of it.
@@ -91,6 +90,13 @@ describe('validate', () => {
     expect(codes(s)).toContain('field_invalid')
   })
 
+  it('refuses pre-authorization and hydrator basic auth, which need a platform secret', () => {
+    const s = base()
+    s.authenticators.oauth2_introspection = { enabled: true, config: { introspection_url: 'http://h', pre_authorization: { enabled: true, client_id: 'c', token_url: 'http://t' } } }
+    s.mutators.hydrator = { enabled: true, config: { api: { url: 'http://h', auth: { basic: { username: 'u' } } } } }
+    expect(validate(s, base(), noUse()).issues.filter((i) => i.code === 'needs_platform_secret').map((i) => i.handler)).toEqual(['oauth2_introspection', 'hydrator'])
+  })
+
   it('refuses jwt required scopes with scope strategy none (every request 500)', () => {
     const s = base()
     s.authenticators.jwt = { enabled: true, config: { jwks_urls: ['https://h/jwks.json'], required_scope: ['read'] } }
@@ -108,37 +114,39 @@ describe('validate', () => {
   })
 })
 
-describe('secrets', () => {
-  const intro = handlerMeta('authenticator', 'oauth2_introspection')
-  const saved = { introspection_url: 'http://hydra', pre_authorization: { client_secret: 'vault:auth/hydra#secret' }, introspection_request_headers: { Authorization: 'Basic c2VjcmV0' } }
+describe('secrets (set by the platform, never in the Gateway)', () => {
+  const saved = { introspection_url: 'http://hydra', introspection_request_headers: { 'X-Tenant': 'acme', Authorization: 'Basic c2VjcmV0c2VjcmV0' }, pre_authorization: { client_id: 'jinbe', client_secret: 'clear!' } }
 
-  it('masks clear secret values, shows Vault references', () => {
-    const out = maskConfig(intro, saved)!
-    expect(out.introspection_request_headers).toEqual({ Authorization: MASK })
-    expect((out.pre_authorization as Record<string, unknown>).client_secret).toBe('vault:auth/hydra#secret')
+  it('masks secret keys and credential-looking values', () => {
+    const out = maskConfig(saved)!
+    expect(out.introspection_request_headers).toEqual({ 'X-Tenant': 'acme', Authorization: MASK })
+    expect(out.pre_authorization).toEqual({ client_id: 'jinbe', client_secret: MASK })
     expect(out.introspection_url).toBe('http://hydra')
   })
 
-  it('keeps the saved value where *** is sent back', () => {
-    const { config, issues } = resolveSecrets(intro, { ...saved, introspection_request_headers: { Authorization: MASK } }, saved, true)
+  it('drops a secret key sent back as ***, and refuses one with a value', () => {
+    const a = resolveSecrets({ pre_authorization: { client_id: 'jinbe', client_secret: MASK } }, saved)
+    expect(a.issues).toEqual([])
+    expect(a.config).toEqual({ pre_authorization: { client_id: 'jinbe' } })
+    const b = resolveSecrets({ api: { auth: { basic: { password: 'vault:kv/x#y' } } } }, undefined)
+    expect(b.issues.map((i) => i.code)).toEqual(['secret_set_by_platform'])
+    const c = resolveSecrets({ headers: { Authorization: 'vault:kv/hydra#basic' } }, undefined)
+    expect(c.issues.map((i) => `${i.code}:${i.path}`)).toEqual(['secret_set_by_platform:headers.Authorization'])
+  })
+
+  it('matches secret keys like the operator: exact name, any depth, any case (token_url is fine)', () => {
+    expect(resolveSecrets({ token_url: 'http://t', headers: { Token: 'x' } }, undefined).issues.map((i) => i.path)).toEqual(['headers.Token'])
+  })
+
+  it('refuses a credential-looking value, and *** over a live credential', () => {
+    expect(resolveSecrets({ headers: { Authorization: 'Bearer abcdefghij' } }, undefined).issues.map((i) => i.code)).toEqual(['secret_in_config'])
+    expect(resolveSecrets({ introspection_request_headers: { Authorization: MASK } }, saved).issues.map((i) => i.code)).toEqual(['secret_in_config'])
+    expect(resolveSecrets({ headers: { 'X-New': MASK } }, saved).issues.map((i) => i.code)).toEqual(['secret_nothing_to_keep'])
+  })
+
+  it('keeps a masked non-credential value from the saved config', () => {
+    const { config, issues } = resolveSecrets({ introspection_request_headers: { 'X-Tenant': MASK } }, saved)
     expect(issues).toEqual([])
-    expect(config!.introspection_request_headers).toEqual({ Authorization: 'Basic c2VjcmV0' })
-  })
-
-  it('refuses a clear secret, and *** with nothing to keep', () => {
-    const a = resolveSecrets(intro, { introspection_request_headers: { Authorization: 'Bearer abc' } }, saved, true)
-    expect(a.issues.map((i) => i.code)).toEqual(['secret_not_a_vault_ref'])
-    const b = resolveSecrets(intro, { introspection_request_headers: { 'X-New': MASK } }, saved, true)
-    expect(b.issues.map((i) => i.code)).toEqual(['secret_nothing_to_keep'])
-  })
-
-  it('refuses keeping a clear secret read from the live config (it would enter the CR)', () => {
-    const { issues } = resolveSecrets(intro, { introspection_request_headers: { Authorization: MASK } }, saved, false)
-    expect(issues.map((i) => i.code)).toEqual(['secret_not_a_vault_ref'])
-  })
-
-  it('accepts a Vault reference', () => {
-    const { issues } = resolveSecrets(intro, { introspection_request_headers: { Authorization: 'vault:auth/hydra#basic' } }, undefined, false)
-    expect(issues).toEqual([])
+    expect(config).toEqual({ introspection_request_headers: { 'X-Tenant': 'acme' } })
   })
 })

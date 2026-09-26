@@ -8,24 +8,21 @@ import { FakeLoki, MemoryRedis, line } from './mocks.js'
 
 const h = vi.hoisted(() => ({
   platform: new Set<string>(['root']),
-  orgsOf: { 'org-admin-a': ['org-a'], 'org-admin-ab': ['org-a', 'org-b'], nobody: ['org-a'] } as Record<string, string[]>,
   admins: { 'org-admin-a': ['org-a'], 'org-admin-ab': ['org-a', 'org-b'] } as Record<string, string[]>,
   members: { 'user-in-a': ['org-a'], 'user-in-b': ['org-b'] } as Record<string, string[]>,
   emit: vi.fn(async () => '1-0'),
   redis: null as unknown,
 }))
 
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  holdsPlatformPermission: vi.fn(async (subject: string) => {
-    if (subject === 'broken') throw new Error('model down')
-    return h.platform.has(subject)
+// The scope is OPA's: what the caller holds in jinbe, and the orgs they administer (roster ∧ member).
+const who = (email: string) => email.split('@')[0]
+vi.mock('../../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
+  rights: vi.fn(async (email: string) => {
+    if (who(email) === 'broken') throw new Error('OPA is unreachable')
+    return { groups: [], roles: [], permissions: h.platform.has(who(email)) ? ['admin:read'] : [] }
   }),
-}))
-vi.mock('../../../services/caller-organisations.js', () => ({
-  callerOrganisations: vi.fn(async (request: { userContext?: { id: string } }) => h.orgsOf[request.userContext?.id ?? ''] ?? []),
-}))
-vi.mock('../../../services/org-admin.js', () => ({
-  administersOrganisation: vi.fn(async (request: { userContext?: { id: string } }, org: string) => (h.admins[request.userContext?.id ?? ''] ?? []).includes(org)),
+  manageableOrgs: vi.fn(async (email: string) => h.admins[who(email)] ?? []),
 }))
 vi.mock('../../../services/organisation-store.js', () => ({
   organisationsForSubject: vi.fn(async (id: string) => h.members[id] ?? []),

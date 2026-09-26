@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 // requireSitesApply: `sites:apply`, held only through the global "*" (super_admin). An admin with
-// admin:write is refused; a model that cannot be read is 503, never 403.
+// admin:write is refused; OPA unreachable is 503, never 403.
 
 const m = vi.hoisted(() => ({ held: null as string[] | null, env: { DEV_BYPASS_AUTH: false, NODE_ENV: 'test' } }))
 vi.mock('../../config/env.js', () => ({ env: m.env }))
-vi.mock('../../services/authorization-model.service.js', () => ({
-  platformRightsOf: vi.fn(async () => {
-    if (!m.held) throw new Error('model unavailable')
+vi.mock('../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../authz/opa.js')>()),
+  rights: vi.fn(async () => {
+    if (!m.held) throw new Error('OPA is unreachable')
     return { groups: [], roles: [], permissions: m.held }
   }),
 }))
@@ -50,7 +51,7 @@ describe('requireSitesApply', () => {
     expect(await run()).toBe(403)
   })
 
-  it('answers 503 when the model cannot be read', async () => {
+  it('answers 503 when OPA cannot be asked', async () => {
     expect(await run()).toBe(503)
   })
 })

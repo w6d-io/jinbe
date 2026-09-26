@@ -1,307 +1,66 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { platformRightsOf } from '../services/authorization-model.service.js'
-import { permits } from '../services/authorization-resolution.js'
+import { holds, rights } from '../authz/opa.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 import { enforcing } from '../policy/declared-routes.js'
-
-/** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
-const READ_ADMIN = 'admin:read'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 import { denyAudit } from '../audit/deny.js'
 
+/** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
+const READ_ADMIN = 'admin:read'
+/** Writing the administration API. Verbs do not imply one another, so this is not `admin:read`. */
+const WRITE_ADMIN = 'admin:write'
+const SITES_APPLY = 'sites:apply'
 
-/**
- * Extend FastifyRequest to include RBAC info
- */
 declare module 'fastify' {
   interface FastifyRequest {
     rbacInfo?: UserRbacInfo
   }
 }
 
-/**
- * Check if user belongs to any of the specified groups
- */
-function hasAnyGroup(userGroups: string[], requiredGroups: string[]): boolean {
-  return requiredGroups.some((group) =>
-    userGroups.some((userGroup) => userGroup.toLowerCase() === group.toLowerCase())
-  )
-}
+/** What local development is stamped with: the coarse pair every administration gate refines. */
+const DEV_RIGHTS = { groups: ['platform-admin'], roles: ['platform-admin'], permissions: [READ_ADMIN, WRITE_ADMIN] }
 
 /**
- * Authorization middleware for admin routes
+ * A gate on one platform permission, asked of OPA — what the caller holds in jinbe, global roles
+ * included (`rbac.user_info`), the same resolution the gateway decides with.
  *
- * Requires the user to be a member of 'admin' or 'superadmin' group.
- * Must be registered AFTER extractIdentity and requireAuth middleware.
- *
- * Fetches RBAC info from OPAL and attaches it to request.rbacInfo
- * for downstream handlers.
- *
- * In DEV mode with DEV_BYPASS_AUTH=true, skips OPAL check and grants admin access.
+ * "Holds nothing" is a decision and answers 403; "cannot be established" is an outage and answers
+ * 503. Letting the second pass as the first would turn every failure of the engine into a permission
+ * somebody would go and ask about.
  */
-/**
- * What the caller holds across the platform, or null when that could not be established.
- *
- * The distinction is the whole point of this file: "holds nothing" is a decision and answers 403,
- * "cannot be established" is an outage and answers 503. Letting the second pass as the first would
- * turn every failure of the model into a permission somebody would go and ask about.
- *
- * Read from the model the engine decides against, keyed on the immutable identity. It used to come
- * from Kratos metadata through a cache — the previous model — so what let somebody into the console
- * was decided by something nobody enforces.
- */
-async function resolveOrNull(subjectId: string, email: string): Promise<UserRbacInfo | null> {
-  try {
-    return { email, ...(await platformRightsOf(subjectId)) }
-  } catch {
-    return null
-  }
-}
-
-async function requireAdminHandler(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const email = request.userContext?.email
-
-  if (!email || email === 'unknown') {
-    // This shouldn't happen if requireAuth is used first
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Authentication required',
-    })
-  }
-
-  // DEV MODE: Bypass OPAL check and grant admin access
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    request.log.warn(
-      { email },
-      '⚠️  DEV MODE: Admin authorization bypassed'
-    )
-    request.rbacInfo = {
-      email,
-      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
-      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
-      // have been refused by the very gate this bypass exists to skip.
-      groups: ['platform-admin'],
-      roles: ['platform-admin'],
-      permissions: ['admin:read', 'admin:write'],
-    }
-    return
-  }
-
-  const subject = request.userContext?.id
-  if (!subject || subject === 'unknown') {
-    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-  }
-
-  const rbacInfo = await resolveOrNull(subject, email)
-
-  if (!rbacInfo) {
-    request.log.warn(
-      { email },
-      'Could not resolve what this caller holds — refusing rather than guessing'
-    )
-    return reply.status(503).send({
-      error: 'Service Unavailable',
-      message: 'Unable to verify authorization. Please try again later.',
-    })
-  }
-
-  // Attach RBAC info to request for downstream use
-  request.rbacInfo = rbacInfo
-
-  // A DECLARED PERMISSION, not a list of group names. This matched `super_admins` or `admins` by
-  // name, so a group named like an admin group waved somebody through whatever it granted, and a
-  // group granting everything under another name did not. Reading the administration API needs
-  // `admin:read`, and the coverage rule admits `admin:read` held on any ancestor.
-  if (!permits(rbacInfo.permissions, READ_ADMIN)) {
-    request.log.warn(
-      {
-        email,
-        subject,
-        permissions: rbacInfo.permissions,
-        required: READ_ADMIN,
-      },
-      'Access denied — the caller does not hold the permission this API requires'
-    )
-    denyAudit(request, 'not_admin')
-    return reply.status(403).send({
-      error: 'Forbidden',
-      message: 'Admin or superadmin access required',
-    })
-  }
-
-  request.log.debug(
-    {
-      email,
-      groups: rbacInfo.groups,
-    },
-    'Admin access granted'
-  )
-}
-
-/**
- * Factory function to create a middleware that checks for specific groups
- *
- * @param allowedGroups - Array of group names that grant access
- * @returns Fastify preHandler middleware
- *
- * @example
- * // Require user to be in 'developers' or 'admins' group
- * fastify.get('/protected', { preHandler: requireGroups(['developers', 'admins']) }, handler)
- */
-export function requireGroups(allowedGroups: string[]) {
+function platformGate(required: string, denyReason: string, message: string, dev: string[] = DEV_RIGHTS.permissions) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
     const subject = request.userContext?.id
+    if (!email || email === 'unknown' || !subject || subject === 'unknown') {
+      return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+    }
 
-    if (!subject || subject === 'unknown' || !email || email === 'unknown') {
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Authentication required',
+    if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
+      request.log.warn({ email, required }, '⚠️  DEV MODE: authorization bypassed')
+      request.rbacInfo = { email, ...DEV_RIGHTS, permissions: dev }
+      return
+    }
+
+    let rbacInfo: UserRbacInfo
+    try {
+      rbacInfo = { email, ...(await rights(email)) }
+    } catch (err) {
+      request.log.warn({ email, err: (err as Error).message }, 'OPA could not say what the caller holds — refusing rather than guessing')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Unable to verify authorization. Please try again later.',
       })
     }
+    request.rbacInfo = rbacInfo
 
-    // Fetch RBAC info from OPAL if not already fetched
-    if (!request.rbacInfo) {
-      const rbacInfo = await resolveOrNull(subject, email)
-
-      if (!rbacInfo) {
-        request.log.warn(
-          { email },
-          'Could not resolve what this caller holds — refusing rather than guessing'
-        )
-        return reply.status(503).send({
-          error: 'Service Unavailable',
-          message: 'Unable to verify authorization. Please try again later.',
-        })
-      }
-
-      request.rbacInfo = rbacInfo
+    if (!holds(rbacInfo.permissions, required)) {
+      request.log.warn({ email, subject, permissions: rbacInfo.permissions, required }, 'Access denied — missing the permission this API requires')
+      denyAudit(request, denyReason)
+      return reply.status(403).send({ error: 'Forbidden', message })
     }
-
-    // Named groups still, because this factory is CALLED with a list of names by its callers. The
-    // holder's groups now come from the model, so the names it matches are the model's — but naming
-    // a group is still weaker than naming a permission, and this is the last gate that does it.
-    if (!hasAnyGroup(request.rbacInfo.groups, allowedGroups)) {
-      request.log.warn(
-        {
-          email,
-          groups: request.rbacInfo.groups,
-          requiredGroups: allowedGroups,
-        },
-        'Access denied - user not in required group'
-      )
-      return reply.status(403).send({
-        error: 'Forbidden',
-        message: `Access requires membership in one of: ${allowedGroups.join(', ')}`,
-      })
-    }
-
-    request.log.debug(
-      {
-        email,
-        groups: request.rbacInfo.groups,
-        allowedGroups,
-      },
-      'Group-based access granted'
-    )
   }
-}
-
-/**
- * Super admin groups that grant access to sensitive operations.
- *
- * Canonical name from groups.json: "super_admins"
- * Also accept legacy/shorthand variants for robustness.
- */
-/** Writing the administration API. Verbs do not imply one another, so this is not `admin:read`. */
-const WRITE_ADMIN = 'admin:write'
-
-/**
- * Middleware requiring super_admin group membership
- *
- * Use for sensitive operations like changing user groups.
- * More restrictive than requireAdmin - only super_admins allowed.
- */
-async function requireSuperAdminHandler(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const email = request.userContext?.email
-
-  if (!email || email === 'unknown') {
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Authentication required',
-    })
-  }
-
-  // DEV MODE: Bypass OPAL check and grant super admin access
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    request.log.warn(
-      { email },
-      '⚠️  DEV MODE: Super admin authorization bypassed'
-    )
-    request.rbacInfo = {
-      email,
-      // The model's shape, not the previous one's. It stamped `*`, which covers nothing here: a
-      // permission is `<resource>:<verb>` and there is no wildcard — so local development would
-      // have been refused by the very gate this bypass exists to skip.
-      groups: ['platform-admin'],
-      roles: ['platform-admin'],
-      permissions: ['admin:read', 'admin:write'],
-    }
-    return
-  }
-
-  const subject = request.userContext?.id
-  if (!subject || subject === 'unknown') {
-    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-  }
-
-  const rbacInfo = await resolveOrNull(subject, email)
-
-  if (!rbacInfo) {
-    request.log.warn(
-      { email },
-      'Could not resolve what this caller holds — refusing rather than guessing'
-    )
-    return reply.status(503).send({
-      error: 'Service Unavailable',
-      message: 'Unable to verify authorization. Please try again later.',
-    })
-  }
-
-  request.rbacInfo = rbacInfo
-
-  // Writing the administration API. `admin:write` covers every write under it, and the roles that
-  // carry it are declared in the model rather than matched by name.
-  if (!permits(rbacInfo.permissions, WRITE_ADMIN)) {
-    request.log.warn(
-      {
-        email,
-        permissions: rbacInfo.permissions,
-        required: WRITE_ADMIN,
-      },
-      'Access denied — the caller does not hold the permission this write requires'
-    )
-    denyAudit(request, 'not_super_admin')
-    return reply.status(403).send({
-      error: 'Forbidden',
-      message: 'Super admin access required to modify user groups',
-    })
-  }
-
-  request.log.debug(
-    {
-      email,
-      groups: rbacInfo.groups,
-    },
-    'Super admin access granted'
-  )
 }
 
 /**
@@ -312,14 +71,6 @@ async function requireSuperAdminHandler(
  * strip the body) when the factor is absent or stale. Fail-closed on missing
  * AAL/timestamp. The dev-bypass identity is stamped AAL2, so local dev passes.
  */
-// The super-admin gate that read a resolved flag from an engine is gone with the routes it kept:
-// the access-rule and service writes that propagated to the gateway at runtime. It asked
-// `data.rbac.simulate`, a path that stopped existing when the model became `strada.authz`, so it
-// had been refusing every one of those writes in silence.
-//
-// What decides who may hand out rights now is `rbacService.assertSuperAdmin`, which reads the same
-// documents the engine decides against.
-
 export async function requireRecentMfa(request: FastifyRequest, reply: FastifyReply) {
   const stepUp = {
     aal: request.userContext?.aal,
@@ -348,40 +99,29 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
   }
 }
 
-// The two fixed gates, marked with what they require so the published route table is read off the
+// The fixed gates, marked with what they require so the published route table is read off the
 // guard rather than written beside it. Two spellings of one rule are two rules.
-export const requireAdmin = enforcing(requireAdminHandler, READ_ADMIN)
-export const requireSuperAdmin = enforcing(requireSuperAdminHandler, WRITE_ADMIN)
-
-const SITES_APPLY = 'sites:apply'
+export const requireAdmin = enforcing(
+  platformGate(READ_ADMIN, 'not_admin', 'Admin or superadmin access required'),
+  READ_ADMIN,
+)
+export const requireSuperAdmin = enforcing(
+  platformGate(WRITE_ADMIN, 'not_super_admin', 'Super admin access required to modify user groups'),
+  WRITE_ADMIN,
+)
 
 /**
  * Changing what the gateway serves through the Sites API — apply, rollback, pause, delete, restore,
  * approving a request, the migration cut-over (owner decision: "admin:write drafts and requests;
- * super_admin applies"). Held through the global `*` role (super_admin) or `sites:apply` itself; an
- * administrator with `admin:write` only may draft, save and ask. Pair with requireRecentMfa.
+ * super_admin applies"). Held through `*` (super_admin) or `sites:apply` itself; an administrator with
+ * `admin:write` only may draft, save and ask. Pair with requireRecentMfa.
  */
-async function requireSitesApplyHandler(request: FastifyRequest, reply: FastifyReply) {
-  const email = request.userContext?.email
-  const subject = request.userContext?.id
-  if (!email || email === 'unknown' || !subject || subject === 'unknown') {
-    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-  }
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    request.log.warn({ email }, '⚠️  DEV MODE: sites:apply authorization bypassed')
-    request.rbacInfo = { email, groups: ['platform-admin'], roles: ['platform-admin'], permissions: ['admin:read', 'admin:write', SITES_APPLY] }
-    return
-  }
-  const rbacInfo = await resolveOrNull(subject, email)
-  if (!rbacInfo) {
-    return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
-  }
-  request.rbacInfo = rbacInfo
-  if (!rbacInfo.permissions.includes('*') && !permits(rbacInfo.permissions, SITES_APPLY)) {
-    request.log.warn({ email, required: SITES_APPLY }, 'Access denied — applying sites needs a super admin')
-    denyAudit(request, 'not_super_admin')
-    return reply.status(403).send({ error: 'Forbidden', message: 'Only a super admin can change what the gateway serves; send a request instead' })
-  }
-}
-
-export const requireSitesApply = enforcing(requireSitesApplyHandler, SITES_APPLY)
+export const requireSitesApply = enforcing(
+  platformGate(
+    SITES_APPLY,
+    'not_super_admin',
+    'Only a super admin can change what the gateway serves; send a request instead',
+    [...DEV_RIGHTS.permissions, SITES_APPLY],
+  ),
+  SITES_APPLY,
+)

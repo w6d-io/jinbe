@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { callerOrganisations } from '../services/caller-organisations.js'
+import { memberOrgs } from '../authz/opa.js'
 import { denyAudit } from '../audit/deny.js'
 
 /**
@@ -14,13 +14,11 @@ import { denyAudit } from '../audit/deny.js'
  *    admin whose role is `*`) keeps UNRESTRICTED reach across the service —
  *    the pre-delegation behaviour, unchanged.
  *  - Any other caller (e.g. a delegated org admin holding `org:manage_users`
- *    but not `*`) is confined to `manageable_orgs`: the request org must be one
- *    they are a member of AND administer. This is what stops an org admin of
- *    one org reaching a sibling org in the same service (tenant isolation).
+ *    but not `*`) is confined to the organisations OPA says they belong to
+ *    (`rbac.caller_organizations`, the membership the org layer reads). This is
+ *    what stops an org admin of one org reaching a sibling org (tenant isolation).
  *
- * FAIL-CLOSED: manageable_orgs is resolved by OPA from OPAL data by email;
- * callerOrganisations returns `[]` on any resolution error, so an unreachable
- * OPA denies rather than grants.
+ * FAIL-CLOSED: OPA unreachable → 503, never an allow and never a quiet 403.
  */
 export function requireManageableOrg(paramName = 'organizationId') {
   return async function (request: FastifyRequest, reply: FastifyReply) {
@@ -55,9 +53,17 @@ export function requireManageableOrg(paramName = 'organizationId') {
 
     const organizationId = (request.params as Record<string, string>)[paramName]
 
-    // Resolved server-side — never trusted from input. From this service own model, or from the
-    // verified token when the deployment has delegated who belongs where to its issuer.
-    const manageable = await callerOrganisations(request)
+    // Resolved server-side by OPA — never trusted from input.
+    let manageable: string[]
+    try {
+      manageable = await memberOrgs(email)
+    } catch (err) {
+      request.log.warn({ email, organizationId, err: (err as Error).message }, '[requireManageableOrg] OPA could not be asked')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Unable to verify authorization. Please try again later.',
+      })
+    }
 
     if (!manageable.includes(organizationId)) {
       request.log.warn(

@@ -16,7 +16,7 @@ describe('the routes that carry their own credential', () => {
 
   it('still gates everything that has no hook of its own', () => {
     expect(isPublicRoute('/api/admin/users')).toBe(false)
-    expect(isPublicRoute('/api/admin/enforced-config')).toBe(false)
+    expect(isPublicRoute('/api/admin/assignable-groups')).toBe(false)
   })
 
   it('does not open a path that merely starts with the same letters', () => {

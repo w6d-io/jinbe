@@ -13,26 +13,17 @@ vi.mock('../../middleware/require-admin.js', async () => {
     requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
       if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
     }, 'admin:write'),
+    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
+    },
     // Same contract as the real guard: `*` or `sites:apply` (super_admin) — keyed on x-test-perm here.
     requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
       if (request.headers['x-test-perm'] !== 'sites:apply') return reply.status(403).send({ error: 'Forbidden', message: 'This needs sites:apply.' })
     }, 'sites:apply'),
-    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-    },
   }
 })
-vi.mock('../../middleware/require-platform-permission.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  return {
-    requirePlatformPermission: (required: string) => enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (request.headers['x-test-perm'] !== required) return reply.status(403).send({ error: 'Forbidden', message: `This needs ${required}.` })
-    }, required),
-  }
-})
-
 import { gatewayRoutes, setRolloutPolling } from '../../gateway/routes.js'
-import { setKubeGateway, PREVIOUS_SPEC_ANNOTATION, type GatewayCr, type GatewaySpec, type KubeGateway } from '../../gateway/kube-gateway.js'
+import { setKubeGateway, toCrSpec, PREVIOUS_SPEC_ANNOTATION, type GatewayCr, type GatewaySpec, type KubeGateway } from '../../gateway/kube-gateway.js'
 import { GATEWAY_ROUTE_AUDIT } from '../../gateway/audit.js'
 import { KubeUnavailable, type SiteCrObject } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
@@ -45,7 +36,7 @@ const spec = (): GatewaySpec => ({
   authenticators: {
     noop: { enabled: true },
     cookie_session: { enabled: true, config: { check_session_url: 'http://kratos/sessions/whoami' } },
-    oauth2_introspection: { enabled: true, config: { introspection_url: 'http://hydra/introspect', introspection_request_headers: { Authorization: 'vault:auth/hydra#basic', 'X-Key': 'plain-legacy' } } },
+    oauth2_introspection: { enabled: true, config: { introspection_url: 'http://hydra/introspect', introspection_request_headers: { 'X-Tenant': 'acme' } } },
   },
   authorizers: { allow: { enabled: true }, deny: { enabled: true }, remote_json: { enabled: true, config: { remote: 'http://opa/allow', payload: '{}' } } },
   mutators: { noop: { enabled: true }, header: { enabled: true, config: { headers: { 'X-User': '{{ print .Subject }}' } } } },
@@ -64,7 +55,7 @@ const site = (name: string, authenticator: string): SiteCrObject => ({
 })
 
 const LIVE_YAML = {
-  authenticators: { noop: { enabled: true }, cookie_session: { enabled: true, config: { check_session_url: 'http://kratos/sessions/whoami' } }, oauth2_introspection: { enabled: true, config: { introspection_url: 'http://hydra', pre_authorization: { client_secret: 'clear!' } } } },
+  authenticators: { noop: { enabled: true }, cookie_session: { enabled: true, config: { check_session_url: 'http://kratos/sessions/whoami' } }, oauth2_introspection: { enabled: true, config: { introspection_url: 'http://hydra', introspection_request_headers: { Authorization: 'Bearer live-credential' }, pre_authorization: { client_id: 'jinbe', client_secret: 'clear!' } } } },
   authorizers: { allow: { enabled: true }, deny: { enabled: true }, remote_json: { enabled: true, config: { remote: 'http://opa', payload: '{}' } } },
   mutators: { noop: { enabled: true }, header: { enabled: true, config: { headers: { 'X-User': 'u' } } } },
   errors: { fallback: ['json'], handlers: { json: { enabled: true }, redirect: { enabled: false } } },
@@ -94,11 +85,17 @@ class FakeKube implements KubeGateway {
 let kube: FakeKube
 let app: FastifyInstance
 
+const READY = [
+  { type: 'Validated', status: 'True', reason: 'Valid' },
+  { type: 'Applied', status: 'True', reason: 'Applied' },
+  { type: 'Rolled', status: 'True', reason: 'Rolled' },
+  { type: 'Ready', status: 'True', reason: 'Ready', message: 'serving on 2/2 pods', lastTransitionTime: '2026-09-26T10:00:00Z' },
+]
 const managed = (s = spec(), annotations: Record<string, string> = {}): GatewayCr => ({
   apiVersion: 'auth.w6d.io/v1alpha1', kind: 'Gateway',
-  metadata: { name: 'gateway', namespace: 'auth', resourceVersion: '7', generation: 3, annotations },
-  spec: s,
-  status: { observedGeneration: 3, conditions: [{ type: 'Ready', status: 'True' }], rollout: { phase: 'Complete', replicas: 2, updatedReplicas: 2, readyReplicas: 2 } },
+  metadata: { name: 'default', namespace: 'auth', resourceVersion: '7', generation: 3, annotations },
+  spec: toCrSpec(s),
+  status: { observedGeneration: 3, conditions: READY, configHash: 'abc', inUse: [{ handler: 'authenticators/cookie_session', usedBy: ['rule/kuma-app', 'shop'] }] },
 })
 
 beforeAll(async () => {
@@ -194,9 +191,10 @@ describe('GET /gateway', () => {
     const res = await get()
     expect(res.headers.etag).toBe('"rv:7"')
     const body = res.json()
-    expect(body).toMatchObject({ managed: true, source: 'gateway-cr', status: { generation: 3, observedGeneration: 3, lastRollout: { phase: 'Complete' } } })
-    const headers = (byName(body, 'authenticator', 'oauth2_introspection').config as { introspection_request_headers: Record<string, string> }).introspection_request_headers
-    expect(headers).toEqual({ Authorization: 'vault:auth/hydra#basic', 'X-Key': '***' })
+    expect(body).toMatchObject({ managed: true, source: 'gateway-cr', errorFallback: ['redirect', 'json'], status: { generation: 3, observedGeneration: 3, lastRollout: { phase: 'Complete', message: 'serving on 2/2 pods', configHash: 'abc' } } })
+    // The operator's inUse replaces the built-in platform list: it names the platform's rules.
+    expect(byName(body, 'authenticator', 'cookie_session').inUse).toEqual(['rule/kuma-app', 'shop'])
+    expect(byName(body, 'authorizer', 'remote_json').inUse).toEqual([])
   })
 
   it('503 when the Kubernetes API cannot answer', async () => {
@@ -246,7 +244,7 @@ describe('PUT /gateway', () => {
   it('writes the spec at the read resourceVersion, keeps masked secrets, records the previous spec, audits without values', async () => {
     kube.cr = managed()
     const s = spec()
-    s.authenticators.oauth2_introspection.config!.introspection_request_headers = { Authorization: 'vault:auth/hydra#basic', 'X-Key': '***' }
+    s.authenticators.oauth2_introspection.config!.introspection_request_headers = { 'X-Tenant': '***' }
     s.authenticators.oauth2_introspection.config!.required_scope = ['read']
     const res = await put({ spec: s, note: 'scope' })
     expect(res.statusCode).toBe(200)
@@ -254,37 +252,42 @@ describe('PUT /gateway', () => {
     expect(res.json().changes).toEqual([{ kind: 'authenticator', handler: 'oauth2_introspection', change: 'config', changedKeys: ['required_scope'] }])
     const [w] = kube.writes
     expect(w.rv).toBe('7')
-    expect(w.cr.spec.authenticators.oauth2_introspection.config!.introspection_request_headers).toEqual({ Authorization: 'vault:auth/hydra#basic', 'X-Key': 'plain-legacy' })
+    expect(w.cr.metadata.name).toBe('default')
+    expect(w.cr.spec.errors).toEqual({ handlers: spec().errors, fallback: ['redirect', 'json'] })
+    expect(w.cr.spec.authenticators!.oauth2_introspection.config!.introspection_request_headers).toEqual({ 'X-Tenant': 'acme' })
     expect(JSON.parse(w.cr.metadata.annotations![PREVIOUS_SPEC_ANNOTATION])).toEqual(spec())
     await vi.waitFor(() => expect(h.emit).toHaveBeenCalledTimes(1))
     const ev = h.emit.mock.calls[0][0]
     expect(ev).toMatchObject({ v1Event: 'gateway.changed', targetType: 'gateway', actor: { email: 'sam@x.test' } })
-    expect(JSON.stringify(ev)).not.toContain('plain-legacy')
-    expect(JSON.stringify(ev)).not.toContain('vault:')
+    expect(JSON.stringify(ev)).not.toContain('acme')
+    expect(JSON.stringify(ev)).not.toContain('http://hydra')
   })
 
-  it('refuses a clear secret', async () => {
+  it('refuses a secret key and a credential-looking value', async () => {
     kube.cr = managed()
     const s = spec()
-    s.authenticators.oauth2_introspection.config!.introspection_request_headers = { Authorization: 'Basic abc' }
+    s.authenticators.oauth2_introspection.config!.introspection_request_headers = { Authorization: 'Basic abcdefghijk' }
+    s.mutators.header.config = { headers: { 'X-User': 'u' }, secret: 'x' }
     const res = await put({ spec: s })
     expect(res.statusCode).toBe(422)
-    expect(res.json().issues[0]).toMatchObject({ code: 'secret_not_a_vault_ref', path: 'introspection_request_headers.Authorization' })
+    expect(res.json().issues.map((i: { code: string; path: string }) => `${i.code}:${i.path}`)).toEqual(expect.arrayContaining([
+      'secret_in_config:introspection_request_headers.Authorization', 'secret_set_by_platform:secret',
+    ]))
+    expect(kube.writes).toEqual([])
   })
 
   it('adopts the live config: creates the CR (If-Match "unmanaged"), with no previous spec', async () => {
     const s = spec()
-    s.authenticators.oauth2_introspection.config!.introspection_request_headers = { Authorization: 'vault:auth/hydra#basic' }
     const res = await put({ spec: s }, { ...APPLY, 'if-match': '"unmanaged"' })
     expect(res.statusCode).toBe(200)
     expect(kube.writes[0].rv).toBeNull()
     expect(kube.writes[0].cr.metadata.annotations?.[PREVIOUS_SPEC_ANNOTATION]).toBeUndefined()
-    expect(kube.writes[0].cr).toMatchObject({ kind: 'Gateway', metadata: { name: 'gateway', namespace: 'auth' } })
+    expect(kube.writes[0].cr).toMatchObject({ kind: 'Gateway', metadata: { name: 'default', namespace: 'auth' } })
   })
 
-  it('adopting refuses to copy a clear live secret into the CR', async () => {
+  it('adopting drops platform secrets and refuses to copy a live credential into the CR', async () => {
     const s = spec()
-    s.authenticators.oauth2_introspection.config = { introspection_url: 'http://hydra', pre_authorization: { client_secret: '***' } }
+    s.authenticators.oauth2_introspection.config = { introspection_url: 'http://hydra', introspection_request_headers: { Authorization: '***' }, pre_authorization: { client_id: 'jinbe', client_secret: '***' } }
     const res = await put({ spec: s }, { ...APPLY, 'if-match': '"unmanaged"' })
     expect(res.statusCode).toBe(422)
     expect(kube.writes).toEqual([])
@@ -306,7 +309,7 @@ describe('rollback', () => {
     kube.cr = managed(spec(), { [PREVIOUS_SPEC_ANNOTATION]: JSON.stringify(before) })
     const res = await rollback()
     expect(res.statusCode).toBe(200)
-    expect(kube.writes[0].cr.spec).toEqual(before)
+    expect(kube.writes[0].cr.spec).toEqual(toCrSpec(before))
     expect(JSON.parse(kube.writes[0].cr.metadata.annotations![PREVIOUS_SPEC_ANNOTATION])).toEqual(spec())
     await vi.waitFor(() => expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ v1Event: 'gateway.rolled_back' })))
   })
@@ -327,20 +330,28 @@ describe('rollout', () => {
   it('reports the status and whether the rollout settled', async () => {
     kube.cr = managed()
     kube.cr.metadata.generation = 4
-    kube.cr.status!.rollout = { phase: 'Progressing', replicas: 2, updatedReplicas: 1 }
     const body = (await app.inject({ method: 'GET', url: '/gateway/rollout' })).json()
-    expect(body).toMatchObject({ managed: true, settled: false, generation: 4, observedGeneration: 3, rollout: { phase: 'Progressing' } })
+    expect(body).toMatchObject({ managed: true, settled: false, generation: 4, observedGeneration: 3, rollout: { phase: 'Pending' } })
+    kube.cr.status = { observedGeneration: 4, conditions: [{ type: 'Validated', status: 'True' }] }
+    expect((await app.inject({ method: 'GET', url: '/gateway/rollout' })).json().rollout).toMatchObject({ phase: 'Pending' })
+    kube.cr.status = { observedGeneration: 4, conditions: [{ type: 'Validated', status: 'True' }, { type: 'Rolled', status: 'False', reason: 'RollingOut', message: '1/2 pods updated, 1 ready, 2 total' }] }
+    expect((await app.inject({ method: 'GET', url: '/gateway/rollout' })).json().rollout).toMatchObject({ phase: 'Progressing', pods: { updated: 1, ready: 1, total: 2 } })
+    kube.cr.status = { observedGeneration: 4, conditions: [{ type: 'Validated', status: 'True' }, { type: 'Ready', status: 'False', reason: 'RolloutFailed', message: 'pod crashloop' }] }
+    expect((await app.inject({ method: 'GET', url: '/gateway/rollout' })).json()).toMatchObject({ settled: true, rollout: { phase: 'Failed', reason: 'RolloutFailed' } })
+    kube.cr.status = { observedGeneration: 4, conditions: [{ type: 'Validated', status: 'False', reason: 'HandlerInUse', message: 'authenticators/jwt (used by shop)' }] }
+    expect((await app.inject({ method: 'GET', url: '/gateway/rollout' })).json()).toMatchObject({ settled: true, rollout: { phase: 'Failed', reason: 'HandlerInUse' } })
+    kube.cr.status = { observedGeneration: 4, failedHash: 'bad', conditions: [{ type: 'Validated', status: 'True' }, { type: 'Applied', status: 'False', reason: 'RolledBack' }, { type: 'Ready', status: 'True' }] }
+    expect((await app.inject({ method: 'GET', url: '/gateway/rollout' })).json()).toMatchObject({ settled: true, rollout: { phase: 'RolledBack', failedHash: 'bad' } })
   })
 
   it('streams status changes as SSE until settled', async () => {
     kube.cr = managed()
     kube.cr.metadata.generation = 4
-    kube.cr.status!.rollout = { phase: 'Progressing', replicas: 2, updatedReplicas: 1 }
     let calls = 0
     const orig = kube.get.bind(kube)
     kube.get = async () => {
       calls += 1
-      if (calls === 3) kube.cr!.status = { observedGeneration: 4, rollout: { phase: 'Complete', replicas: 2, updatedReplicas: 2, readyReplicas: 2 } }
+      if (calls === 3) kube.cr!.status = { observedGeneration: 4, conditions: READY }
       return orig()
     }
     const res = await app.inject({ method: 'GET', url: '/gateway/rollout/events' })

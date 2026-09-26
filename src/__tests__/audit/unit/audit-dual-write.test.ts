@@ -13,8 +13,8 @@ const { redis } = vi.hoisted(() => {
   return { redis: r }
 })
 vi.mock('../../../services/redis-client.service.js', () => ({ getRedisClient: () => redis }))
-vi.mock('../../../services/authorization-model.service.js', async () =>
-  (await import('../../helpers/authorization-model-mock.js')).authorizationModelMock())
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 vi.mock('../../../services/organisation-store.js', () => ({
   applyGroupChange: vi.fn().mockResolvedValue(undefined),
   groupsForSubjects: vi.fn().mockResolvedValue(new Map()),

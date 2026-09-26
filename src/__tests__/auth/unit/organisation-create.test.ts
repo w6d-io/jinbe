@@ -55,8 +55,8 @@ describe('createOrganisation (store)', () => {
 })
 
 vi.mock('../../../services/organisation-store.js', () => store)
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  holdsPlatformPermission: vi.fn(async () => true),
+vi.mock('../../../authz/opa.js', () => ({
+  holdsInJinbe: vi.fn(async () => true),
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn(async () => {}) },

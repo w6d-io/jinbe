@@ -14,11 +14,10 @@ vi.mock('../../../config/env.js', () => ({
   env: mockState.env,
 }))
 
-// What this session holds, from the model the engine decides against — keyed on the IDENTITY. What
-// it replaces resolved Kratos metadata and Redis roles from the ADDRESS, and answered `super_admin`
-// and `*`: two names this model does not define.
-vi.mock('../../../services/authorization-model.service.js', () => ({
-  platformRightsOf: vi.fn().mockImplementation(async () => mockState.rbacInfo),
+// What this session holds is OPA's answer (rbac.user_info for jinbe) — the engine the gateway and
+// every guard decide with.
+vi.mock('../../../authz/opa.js', () => ({
+  rights: vi.fn().mockImplementation(async () => mockState.rbacInfo),
 }))
 
 // Mock kratosService — the whoami handler best-effort extends the session
@@ -32,7 +31,7 @@ vi.mock('../../../services/kratos.service.js', () => ({
 
 // Import after mocking
 import { whoamiRoutes } from '../../../routes/whoami.routes.js'
-import { platformRightsOf } from '../../../services/authorization-model.service.js'
+import { rights } from '../../../authz/opa.js'
 import { kratosService } from '../../../services/kratos.service.js'
 
 // Helper types
@@ -190,9 +189,7 @@ describe('whoamiRoutes', () => {
       expect(reply._body?.email).toBeNull()
     })
 
-    it('resolves what the session holds from the identity, never the address', async () => {
-      // An address changes hands; the identity does not. Keyed on the address, a console painted
-      // itself from whatever the previous holder had been granted.
+    it('asks OPA what the session holds, for the session address', async () => {
       const request = createMockRequest({
         validatedSession: {
           email: 'user@example.com',
@@ -204,26 +201,26 @@ describe('whoamiRoutes', () => {
 
       await handler(request, reply)
 
-      expect(platformRightsOf).toHaveBeenCalledWith('identity-456')
+      expect(rights).toHaveBeenCalledWith('user@example.com')
       expect(reply._body?.groups).toEqual(['users'])
       expect(reply._body?.roles).toEqual(['viewer'])
       expect(reply._body?.permissions).toEqual(['read'])
     })
 
-    it('resolves nothing without an identity to key on', async () => {
+    it('asks nothing without a signed-in address', async () => {
       const request = createMockRequest({})
       const reply = createMockReply()
 
       await handler(request, reply)
 
-      expect(platformRightsOf).not.toHaveBeenCalled()
+      expect(rights).not.toHaveBeenCalled()
       expect(reply._body?.groups).toEqual([])
       expect(reply._body?.roles).toEqual([])
       expect(reply._body?.permissions).toEqual([])
     })
 
-    it('still says who you are when the model cannot be read', async () => {
-      vi.mocked(platformRightsOf).mockRejectedValueOnce(new Error('the model could not be read'))
+    it('still says who you are when OPA cannot be asked', async () => {
+      vi.mocked(rights).mockRejectedValueOnce(new Error('OPA is unreachable'))
 
       const request = createMockRequest({
         validatedSession: {

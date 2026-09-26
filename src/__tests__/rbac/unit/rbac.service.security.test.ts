@@ -60,14 +60,11 @@ vi.mock('../../../services/kratos.service.js', () => ({
   },
 }))
 
-// The gate reads the MODEL, not an engine: it asks whether the actor holds a group granting in
-// every organisation, from the same ConfigMaps the artefact carries.
-// The gates the J1 case drives read the model. See the helper for why they read a model rather than
-// a set of predicates each of which could be mocked into agreeing.
-vi.mock('../../../services/authorization-model.service.js', async () => ({
-  ...(await import('../../helpers/authorization-model-mock.js')).authorizationModelMock(),
-  holdsPlatformPermission: vi.fn(),
-}))
+// The gate asks OPA whether the actor holds admin.membership:write in jinbe; the J1 case's gates read
+// the group catalogue (see the helper for why one catalogue rather than independent predicates).
+vi.mock('../../../services/group-catalogue.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
+vi.mock('../../../authz/opa.js', () => ({ holdsInJinbe: vi.fn() }))
 
 // The pre-image of a group change comes from the store that decides, so the J1 case below needs it
 // mocked: unmocked, the guard it exercises is never reached — the read fails closed first.
@@ -82,7 +79,7 @@ vi.mock('../../../services/organisation-store.js', () => ({
 }))
 
 import { RbacService } from '../../../services/rbac.service.js'
-import { holdsPlatformPermission } from '../../../services/authorization-model.service.js'
+import { holdsInJinbe } from '../../../authz/opa.js'
 import { kratosService } from '../../../services/kratos.service.js'
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 
@@ -100,51 +97,49 @@ describe('RbacService - security helpers', () => {
   // src/services/rbac.service.ts:165-176, 213-215
   // ===========================================================================
   describe('assertSuperAdmin (rbac.service.ts:213-215, 165-176)', () => {
-    it('throws 401 when the actor has no immutable identity', async () => {
-      // Keyed on the identity, never on the address: an address can be changed by its owner and
-      // reused by somebody else, and this gate decides who may hand out rights.
+    it('throws 401 when the actor is not identified', async () => {
       await expect(service.assertSuperAdmin('do something dangerous')).rejects.toMatchObject({
         message: 'Authentication required for this operation',
         statusCode: 401,
       })
-      expect(holdsPlatformPermission).not.toHaveBeenCalled()
+      expect(holdsInJinbe).not.toHaveBeenCalled()
     })
 
-    it('throws 401 when only an address is presented', async () => {
+    it('throws 401 when no address is presented (OPA bindings are keyed on it)', async () => {
       await expect(
-        service.assertSuperAdmin('reason', { email: 'root@example.com' }),
+        service.assertSuperAdmin('reason', { id: 'subject-root' }),
       ).rejects.toMatchObject({ statusCode: 401 })
-      expect(holdsPlatformPermission).not.toHaveBeenCalled()
+      expect(holdsInJinbe).not.toHaveBeenCalled()
     })
 
     it('resolves when the actor holds the permission to hand out a group', async () => {
-      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(true)
+      vi.mocked(holdsInJinbe).mockResolvedValueOnce(true)
 
       await expect(
         service.assertSuperAdmin('do x', { id: 'subject-root', email: 'root@example.com' }),
       ).resolves.toBeUndefined()
 
-      expect(holdsPlatformPermission).toHaveBeenCalledWith('subject-root', 'admin.membership:write')
+      expect(holdsInJinbe).toHaveBeenCalledWith('root@example.com', 'admin.membership:write')
     })
 
     it('throws 403 when the actor does not hold it', async () => {
-      vi.mocked(holdsPlatformPermission).mockResolvedValueOnce(false)
+      vi.mocked(holdsInJinbe).mockResolvedValueOnce(false)
 
       await expect(
-        service.assertSuperAdmin('elevate role', { id: 'subject-admin' }),
+        service.assertSuperAdmin('elevate role', { id: 'subject-admin', email: 'admin@example.com' }),
       ).rejects.toMatchObject({
         statusCode: 403,
         message: 'Only admin.membership:write may elevate role',
       })
     })
 
-    it('throws 503 when the model cannot be read, rather than deciding without it', async () => {
+    it('throws 503 when OPA cannot be asked, rather than deciding without it', async () => {
       // "Nobody is powerful" and "I could not tell" are opposite facts. Answering 403 here would
       // read as a missing right; answering 200 would authorize on ignorance.
-      vi.mocked(holdsPlatformPermission).mockRejectedValueOnce(new Error('configmaps is forbidden'))
+      vi.mocked(holdsInJinbe).mockRejectedValueOnce(new Error('OPA is unreachable'))
 
       await expect(
-        service.assertSuperAdmin('do y', { id: 'subject-someone' }),
+        service.assertSuperAdmin('do y', { id: 'subject-someone', email: 'someone@example.com' }),
       ).rejects.toMatchObject({ statusCode: 503 })
     })
   })

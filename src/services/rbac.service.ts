@@ -7,7 +7,8 @@ import { assertOrgParams } from '../policy/route-org-param.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { ASSIGN_MEMBERSHIP, holdsPlatformPermission } from './authorization-model.service.js'
+import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
+import { holdsInJinbe } from '../authz/opa.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {
@@ -266,22 +267,16 @@ export class RbacService {
    * Privilege escalation guard: refuses the mutation unless the actor holds `admin.membership:write`
    * across the platform.
    *
-   * A DECLARED PERMISSION, not a shape. What this held before asked whether the actor was in any
-   * group granting under `*` — which conflated "operator of one API everywhere" with "administrator
-   * of the platform", and was a predicate invented here rather than something the model says. The
-   * model says it now, and the coverage rule that admits `admin:write` for it is the same one the
-   * engine applies to a route.
+   * A DECLARED PERMISSION, not a shape, asked of OPA (what the actor holds in jinbe, global roles
+   * included): `*`, `admin.membership:write` or an ancestor of it (`admin:write`).
    *
-   * Keyed on the IMMUTABLE identity rather than an address: this is the gate that says who may hand
-   * out rights, so it must not move when somebody changes their email, nor follow a reused one.
-   *
-   * FAIL-CLOSED on every uncertainty: no identity, or a model that cannot be read, both refuse.
+   * FAIL-CLOSED on every uncertainty: no identity, or OPA unreachable, both refuse.
    */
   private async requireSuperAdmin(
     reason: string,
     actor?: { id?: string | null; email?: string | null },
   ): Promise<void> {
-    if (!actor?.id) {
+    if (!actor?.id || !actor.email) {
       throw Object.assign(
         new Error('Authentication required for this operation'),
         { statusCode: 401 },
@@ -289,10 +284,10 @@ export class RbacService {
     }
     let powerful: boolean
     try {
-      powerful = await holdsPlatformPermission(actor.id, ASSIGN_MEMBERSHIP)
+      powerful = await holdsInJinbe(actor.email, ASSIGN_MEMBERSHIP)
     } catch (err) {
       throw Object.assign(
-        new Error(`The authorization model could not be read, so nobody may ${reason}: ${(err as Error).message}`),
+        new Error(`OPA could not be asked, so nobody may ${reason}: ${(err as Error).message}`),
         { statusCode: 503 },
       )
     }
@@ -303,12 +298,6 @@ export class RbacService {
       )
     }
   }
-
-  // `isSuperAdmin` lived here and asked the previous model — Kratos read through a cache — for a
-  // `*` permission this model deliberately does not define. So what an administrator could see was
-  // decided by metadata nobody enforces, keyed on an address. Its one caller now asks
-  // `holdsPlatformPermission` for the permission it actually needs, on the immutable identity.
-
 
   /**
    * Returns true when the resource is flagged `system: true` in its
@@ -335,12 +324,6 @@ export class RbacService {
   ): Promise<void> {
     return this.requireSuperAdmin(reason, actor)
   }
-
-  // The group predicates that used to live here — admin power, global power, emptiness, and the
-  // MFA gate built on them — read this store's group and role definitions. The engine decides
-  // against a model carried in the bundle, which this store does not hold, so for every group that
-  // model declares they answered "confers nothing". `authorization-model.service` answers them now,
-  // from the documents the bundle carries.
 
   // Public: call after any user-group mutation that bypasses rbacService methods.
   //
