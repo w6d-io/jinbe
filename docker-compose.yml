@@ -12,6 +12,9 @@ services:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: mongodb://mongo:27017/jinbe
       OPA_URL: http://opa:8181
+      OPA_TOKEN: local-dev-opa-token-0123456789abcdef
+      RATE_LIMIT_MAX: '10000'
+      GATEKIT_URL: http://gatekit:8080
       OPA_DATA_URL: http://opa:8181
       DEV_BYPASS_AUTH: '${DEV_BYPASS_AUTH:-true}'
       DEV_USER_EMAIL: dev@localhost.dev
@@ -45,6 +48,13 @@ services:
       - redis
       - mongo
       - opa
+    restart: unless-stopped
+    networks:
+      - jinbe-network
+
+  gatekit:
+    image: gatekit:local
+    container_name: jinbe-gatekit
     restart: unless-stopped
     networks:
       - jinbe-network
