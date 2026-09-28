@@ -11,6 +11,7 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+import { POLICY_UNAVAILABLE } from '../authz/opa.js'
 
 /**
  * POST /api/admin/rbac/access-check — "can X do METHOD PATH, and why?" for the console.
@@ -99,7 +100,7 @@ export async function accessCheckRoutes(fastify: FastifyInstance) {
       return reply.send(answer)
     } catch (err) {
       if (err instanceof AccessCheckUnavailableError) {
-        return reply.status(503).send({ error: 'Service Unavailable', message: err.message })
+        return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: err.message })
       }
       if (err instanceof OpaQueryError) {
         request.log.warn({ reason: err.message }, 'access-check: OPA did not answer')

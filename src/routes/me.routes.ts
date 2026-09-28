@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerRights } from '../middleware/require-permission.js'
-import { rights as opaRights } from '../authz/opa.js'
+import { rights as opaRights, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
@@ -141,7 +141,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         } catch (err) {
           // Same rule as jinbe's own: "could not tell" is not "holds nothing".
           request.log.warn({ err: (err as Error).message }, '[me/permissions] OPA could not answer for kuma')
-          return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+          return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
         }
       }
       return reply.send({

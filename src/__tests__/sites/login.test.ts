@@ -162,15 +162,20 @@ describe('per-site 2FA on the gateway', () => {
         when: [{ error: ['forbidden'], request: { header: { accept: ['text/html'] } } }],
       },
     })
-    expect(web.errors?.slice(1)).toEqual([{ handler: 'redirect' }, { handler: 'json' }])
+    // Sign-in keeps unauthorized; json takes what no browser redirect does.
+    expect(web.errors?.slice(1).map((h) => [h.handler, (h.config as { when: Array<{ error: string[] }> }).when.map((w) => w.error)])).toEqual([
+      ['redirect', [['unauthorized']]],
+      ['json', [['not_found', 'internal_server_error'], ['unauthorized', 'forbidden']]],
+    ])
     expect(String((web.authorizer.config as { payload: string }).payload)).toContain('"aal"')
     // The public gate (platform errors) is untouched.
     expect(r.siteCr.spec.gates.find((g) => g.name === 'public')!.errors).toBeUndefined()
   })
 
-  it('a site without 2FA renders exactly as before', () => {
+  it('a site without 2FA has no /access redirect', () => {
     const web = render(payrollSite(), { ...platform, accessUrl: 'https://auth.dev.example.com/access' }).siteCr.spec.gates.find((g) => g.name === 'web')!
-    expect(web.errors).toEqual([{ handler: 'redirect' }, { handler: 'json' }])
+    expect(web.errors?.map((h) => h.handler)).toEqual(['redirect', 'json'])
+    expect(web.errors?.[0].config).toEqual({ when: [{ error: ['unauthorized', 'forbidden'], request: { header: { accept: ['text/html'] } } }] })
     expect(String((web.authorizer.config as { payload: string }).payload)).not.toContain('"aal"')
   })
 

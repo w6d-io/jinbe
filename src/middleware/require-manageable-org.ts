@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { memberOrgs } from '../authz/opa.js'
+import { memberOrgs, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { denyAudit } from '../audit/deny.js'
 
 /**
@@ -60,7 +60,7 @@ export function requireManageableOrg(paramName = 'organizationId') {
     } catch (err) {
       request.log.warn({ email, organizationId, err: (err as Error).message }, '[requireManageableOrg] OPA could not be asked')
       return reply.status(503).send({
-        error: 'Service Unavailable',
+        error: POLICY_UNAVAILABLE,
         message: 'Unable to verify authorization. Please try again later.',
       })
     }

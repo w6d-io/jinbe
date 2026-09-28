@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/index.js'
-import { decide, manageableOrgs, rights } from '../authz/opa.js'
+import { decide, manageableOrgs, rights, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import type { HeldRights } from '../services/authorization-resolution.js'
 import { ORG_ADMIN_PERMISSIONS, ORG_ADMIN_ROLE } from '../services/org-admin.js'
 import { denyAudit } from '../audit/deny.js'
@@ -74,7 +74,7 @@ export function requireServiceAdmin(
     } catch (err) {
       request.log.warn({ subject, organizationId, err: (err as Error).message }, '[requireServiceAdmin] OPA could not be asked')
       return reply.status(503).send({
-        error: 'Service Unavailable',
+        error: POLICY_UNAVAILABLE,
         message: 'Unable to verify authorization. Please try again later.',
       })
     }

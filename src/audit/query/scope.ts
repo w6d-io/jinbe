@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { holds, manageableOrgs, rights } from '../../authz/opa.js'
+import { holds, manageableOrgs, rights, POLICY_UNAVAILABLE } from '../../authz/opa.js'
 import { enforcing } from '../../policy/declared-routes.js'
 
 /**
@@ -61,7 +61,7 @@ export function requireAuditScope(permission = 'audit:read') {
       scope = await resolveAuditScope(request, permission)
     } catch {
       request.log.warn({ subject }, '[audit] could not resolve what the caller may read — 503')
-      return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
     }
     if (!scope || (!scope.platform && scope.orgs.length === 0)) {
       return reply.status(403).send({ error: 'Forbidden', message: 'You can only see audit events for organisations you administer.' })

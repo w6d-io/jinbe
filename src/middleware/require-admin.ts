@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { holds, rights } from '../authz/opa.js'
+import { holds, rights, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
@@ -49,7 +49,7 @@ function platformGate(required: string, denyReason: string, message: string, dev
     } catch (err) {
       request.log.warn({ email, err: (err as Error).message }, 'OPA could not say what the caller holds — refusing rather than guessing')
       return reply.status(503).send({
-        error: 'Service Unavailable',
+        error: POLICY_UNAVAILABLE,
         message: 'Unable to verify authorization. Please try again later.',
       })
     }
