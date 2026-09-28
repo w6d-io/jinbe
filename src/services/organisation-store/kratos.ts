@@ -74,7 +74,9 @@ const orgsOfBinding = (b: IdentityBinding) =>
 export async function organisationsForSubject(subjectId: string): Promise<string[]> {
   if (!subjectId) return []
   try {
-    return organisationsOn(stateOf(await kratosService.getIdentityCached(subjectId)))
+    // Scopes what the caller may see (callerOrganisations → audit, directory): never older than the
+    // 5 s bound OPA's own membership data has. A change made straight in Kratos shows within that.
+    return organisationsOn(stateOf(await kratosService.getIdentityCached(subjectId, { maxAgeMs: 5000 })))
   } catch (err) {
     if (err instanceof KratosApiError && err.statusCode === 404) return []
     throw err

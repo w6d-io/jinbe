@@ -630,8 +630,8 @@ export class KratosService {
    * (updateIdentity's merge, a guard comparing before/after) calls getIdentity, which always asks.
    * Carries no credentials.
    */
-  async getIdentityCached(id: string): Promise<KratosIdentity> {
-    return identityCache.get(id, () => this.getIdentity(id))
+  async getIdentityCached(id: string, opts: ReadOptions = {}): Promise<KratosIdentity> {
+    return identityCache.get(id, () => this.getIdentity(id), opts)
   }
 
   /**
