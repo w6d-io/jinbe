@@ -128,7 +128,10 @@ describe('access check, API-key use, sites', () => {
     expect(h.emit).toHaveBeenCalledTimes(2)
     expect((h.emit.mock.calls[0] as unknown as [Record<string, any>])[0]).toMatchObject({
       v1Event: 'apikey.used', targetType: 'oauth2_client', targetId: 'client-1', details: { organizationId: 'org-9' },
+      // The client is the caller: a machine, not "anonymous".
+      actor: { type: 'service', id: 'client-1' },
     })
+    expect(legacyToV1((h.emit.mock.calls[0] as unknown as [AuditEvent])[0]).actor).toMatchObject({ type: 'service', id: 'client-1' })
   })
 
   it('auditSite maps each Site command onto its own catalog key', async () => {
@@ -159,5 +162,17 @@ describe('access check, API-key use, sites', () => {
     expect(legacyToV1(rich('resume')).event).toBe('site.resumed')
     expect(legacyToV1(rich('delete')).event).toBe('site.deleted')
     expect(legacyToV1(rich('update')).event).toBe('site.saved')
+    // What the sandbox trail showed as system.unmapped (7 days: 241 service.sync, 20 permissions_published).
+    expect(legacyToV1(rich('sync')).event).toBe('site.synced')
+    expect(legacyToV1(rich('address_change')).event).toBe('site.address_changed')
+    expect(legacyToV1(rich('request')).event).toBe('site.apply_requested')
+    expect(legacyToV1(rich('approve')).event).toBe('site.request_approved')
+    expect(legacyToV1(rich('reject')).event).toBe('site.request_rejected')
+    for (const verb of ['migration_preview', 'migration_dualrun_start', 'migration_cutover', 'migration_rollback']) {
+      expect(legacyToV1(rich(verb)).event).toBe('site.migration_changed')
+    }
+    const published: AuditEvent = { category: 'rbac', kind: 'change', verb: 'update', target: 'site:payroll', result: 'ok', actor: { email: null } }
+    expect(legacyToV1(published, 'site.permissions_published').event).toBe('site.permissions_published')
+    expect(legacyToV1(published, 'site.permissions_removed').event).toBe('site.permissions_removed')
   })
 })

@@ -149,7 +149,8 @@ export async function recordApiKeyUse(clientId: string, organizationId: string |
     targetType: 'oauth2_client',
     targetId: clientId,
     result: 'ok',
-    actor: { email: null },
+    // The client is the caller: a machine, never "anonymous" (it was filed as one).
+    actor: { type: 'service', id: clientId, email: null },
     details: { organizationId },
     source: 'jinbe-api',
     v1Event: 'apikey.used',

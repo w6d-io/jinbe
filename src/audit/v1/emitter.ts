@@ -22,6 +22,8 @@ export interface AuditV1Input {
   severity?: AuditEventV1Body['severity']
   flags?: string[]
   actor: {
+    /** Said by a caller that knows (a machine client, a rollup); otherwise derived below. */
+    type?: AuditEventV1Body['actor']['type']
     id?: string | null
     email?: string | null
     ip?: string | null
@@ -46,13 +48,24 @@ export interface AuditV1Sinks {
   chain?: HashChain
 }
 
-const SYSTEM = new Set(['system', 'bootstrap'])
+/**
+ * Who acted, as a kind. A person has an id or an address; a label that is neither (`system`,
+ * `bootstrap`, `jinbe (sync)`) is jinbe itself acting on its own schedule — it was filed as a user
+ * with no id, which the console could only show as "anonymous". Nobody at all is an unauthenticated
+ * caller.
+ */
+export function actorTypeOf(a: AuditV1Input['actor']): AuditEventV1Body['actor']['type'] {
+  if (a.type) return a.type
+  const email = a.email && a.email !== 'anonymous' && a.email !== 'unknown' ? a.email : null
+  if (email?.endsWith(`@${env.K8S_SA_EMAIL_DOMAIN}`)) return 'service'
+  if (a.id) return 'user'
+  if (email) return email.includes('@') ? 'user' : 'system'
+  return 'anonymous'
+}
 
 function actorOf(a: AuditV1Input['actor']): AuditEventV1Body['actor'] {
   const email = a.email && a.email !== 'anonymous' && a.email !== 'unknown' ? a.email : null
-  const type = email && SYSTEM.has(email) ? 'system'
-    : email?.endsWith(`@${env.K8S_SA_EMAIL_DOMAIN}`) ? 'service'
-    : a.id || email ? 'user' : 'anonymous'
+  const type = actorTypeOf(a)
   const auth = a.aal || a.method ? { aal: a.aal ?? undefined, method: a.method ?? undefined } : undefined
   return {
     type,

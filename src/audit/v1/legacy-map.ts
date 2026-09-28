@@ -41,6 +41,8 @@ const BY_TYPE: Record<string, AuditEventType> = {
   'rbac.org_service_mapping_set': 'org.services.changed',
   'rbac.org_service_mapping_deleted': 'org.services.changed',
   'rbac.org_admins_set': 'org.admins.changed',
+  'site.permissions_published': 'site.permissions_published',
+  'site.permissions_removed': 'site.permissions_removed',
 }
 
 /** Rich emits, keyed `category.verb` (and `source:` for the ones only the source tells apart). */
@@ -76,6 +78,11 @@ const SITE: Record<string, AuditEventType> = {
   pause: 'site.paused',
   resume: 'site.resumed',
   delete: 'site.deleted',
+  sync: 'site.synced',
+  address_change: 'site.address_changed',
+  request: 'site.apply_requested',
+  approve: 'site.request_approved',
+  reject: 'site.request_rejected',
 }
 
 function eventOf(rich: AuditEvent, legacyType?: string): AuditEventType {
@@ -84,6 +91,8 @@ function eventOf(rich: AuditEvent, legacyType?: string): AuditEventType {
   if (rich.source === 'scim' && rich.kind === 'change') return BY_VERB[`scim:${rich.verb}`] ?? 'system.unmapped'
   if (rich.target.startsWith('recert:') && RECERT[rich.verb]) return RECERT[rich.verb]
   if (rich.target.startsWith('site:') && SITE[rich.verb]) return SITE[rich.verb]
+  // preview, dualrun_<action>, cutover, rollback: one key, the verb stays in the summary.
+  if (rich.target.startsWith('site:') && rich.verb.startsWith('migration_')) return 'site.migration_changed'
   if (rich.target === 'auth-methods') return 'config.auth_methods.changed'
   if (rich.target === 'second-factor-groups') return 'config.second_factor.changed'
   if (rich.target === 'sign-in-protection') return 'config.sign_in_protection.changed'
@@ -138,7 +147,7 @@ export function legacyToV1(rich: AuditEvent, legacyType?: string): AuditV1Input 
     severity: rich.severity === 'high' ? 'high' : undefined,
     flags: rich.changes?.flags ?? [],
     actor: {
-      id: rich.actor?.id, email: rich.actor?.email, ip: rich.actor?.ip, ua: rich.actor?.ua, sessionId: rich.actor?.sessionId,
+      type: rich.actor?.type, id: rich.actor?.id, email: rich.actor?.email, ip: rich.actor?.ip, ua: rich.actor?.ua, sessionId: rich.actor?.sessionId,
       // How a Kratos flow was authenticated; the webhook's allow-listed details carry it.
       ...(rich.source === 'kratos-webhook' ? { aal: details.aal as string | undefined, method: details.method as string | undefined } : {}),
     },

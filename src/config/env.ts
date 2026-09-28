@@ -279,6 +279,10 @@ export const envSchema = z.object({
   LOKI_AUDIT_SELECTOR: z.enum(['label', 'json']).default('json'),
   // The container that writes the audit lines, for `json` mode (the chart's container name).
   LOKI_AUDIT_CONTAINER: z.string().regex(/^[a-z0-9-]{1,63}$/).default('jinbe'),
+  // The gateway's container in LOKI_NAMESPACE: its "Access request granted/denied" lines are what the
+  // audit reads gateway decisions from (audit/gateway). `ACCESS_ROLLUP=off` stops the hourly summary.
+  LOKI_GATEWAY_CONTAINER: z.string().regex(/^[a-z0-9-]{1,63}$/).default('oathkeeper'),
+  ACCESS_ROLLUP: z.enum(['on', 'off']).default('on'),
   TEMPO_URL: z.string().url().optional(),
   // Prometheus / Mimir, read by the Home (certificate expiry today). Unset: those tiles say
   // "not connected" (not_configured), never zero.
