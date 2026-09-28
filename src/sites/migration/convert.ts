@@ -183,7 +183,7 @@ function convertGroup(site: string, kind: 'site' | 'system', rules: OathkeeperRu
     hosts,
     upstream: siteUpstream ?? { service: 'unknown', namespace: opts.namespace, port: 80, scheme: 'http', preserveHost: false },
     gates,
-    exposure: { mode: 'zone' },
+    exposure: { mode: 'zone', tls: 'wildcard' },
     paused: false,
     ...(kind === 'system' ? { system: true } : {}),
   }

@@ -65,7 +65,7 @@ export interface SiteCr {
     upstream: { service: string; namespace: string; port: number; scheme: 'http' | 'https'; preserveHost: boolean; stripPath?: string }
     gates: SiteCrGate[]
     /** zone: the zone's wildcard Ingress serves the host. vanity: a per-site Ingress. */
-    exposure: { mode: 'zone' } | { mode: 'vanity'; tls: 'wildcard' | 'per-site' }
+    exposure: { mode: 'zone'; tls: 'wildcard' } | { mode: 'vanity'; tls: 'wildcard' | 'per-site' }
     paused: boolean
     /** A platform-owned site (migrated built-ins); read-only in kuma. */
     system?: boolean
@@ -391,7 +391,9 @@ export function render(site: Site, platform: Platform): Rendered {
     hosts: [host],
     upstream: { service: u.service, namespace: u.namespace, port: u.port, scheme: u.scheme ?? 'http', preserveHost: u.preserveHost ?? false, ...(u.stripPath ? { stripPath: u.stripPath } : {}) },
     gates: crGates,
-    exposure: site.exposure.mode === 'vanity' ? { mode: 'vanity', tls: placement.tls === 'per-site' ? 'per-site' : 'wildcard' } : { mode: 'zone' },
+    // tls spelled out for zone mode too: the Site CRD defaults it to 'wildcard', so leaving it out made the
+    // sync loop see drift on every tick and rewrite every Site CR forever.
+    exposure: site.exposure.mode === 'vanity' ? { mode: 'vanity', tls: placement.tls === 'per-site' ? 'per-site' : 'wildcard' } : { mode: 'zone', tls: 'wildcard' },
     paused: site.state === 'paused',
   }
   const siteCr: SiteCr = {

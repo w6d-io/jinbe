@@ -219,6 +219,17 @@ describe('render — roles and groups', () => {
   })
 })
 
+describe('render — no perpetual drift against CRD defaults', () => {
+  it('spells out the exposure.tls the Site CRD would default, so the sync loop sees no drift', async () => {
+    const { specDiff } = await import('../../sites/status.js')
+    const { siteCr } = render(payrollSite(), platform)
+    // What the apiserver returns after defaulting (+kubebuilder:default=wildcard on exposure.tls).
+    const live = JSON.parse(JSON.stringify(siteCr.spec))
+    live.exposure = { ...live.exposure, tls: live.exposure.tls ?? 'wildcard' }
+    expect(specDiff(siteCr.spec, live, 'spec')).toEqual([])
+  })
+})
+
 describe('render — Site CR', () => {
   it('is the auth.w6d.io/v1alpha1 Site the operator reconciles (site-operator api/v1alpha1)', () => {
     const { siteCr } = render(payrollSite(), platform)
@@ -229,7 +240,7 @@ describe('render — Site CR', () => {
     expect(siteCr.spec.hosts).toEqual(['payroll.dev.example.com'])
     expect(siteCr.spec.upstream).toEqual({ service: 'payroll', namespace: 'payroll', port: 8080, scheme: 'http', preserveHost: false })
     // A zone host rides the zone's wildcard Ingress: no per-site Ingress.
-    expect(siteCr.spec.exposure).toEqual({ mode: 'zone' })
+    expect(siteCr.spec.exposure).toEqual({ mode: 'zone', tls: 'wildcard' })
     expect(siteCr.spec.paused).toBe(false)
     expect(siteCr.spec.gates.map((g) => g.name).sort()).toEqual(['public', 'web', 'web-preflight'])
     expect(siteCr.metadata.annotations['auth.w6d.io/spec-hash']).toMatch(/^[0-9a-f]{64}$/)
