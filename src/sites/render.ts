@@ -28,7 +28,7 @@ export interface Platform {
   platformNamespaces?: string[]
   /** Exact `namespace/service` exceptions to platformNamespaces (e.g. a sandbox echo in the gateway namespace). */
   upstreamAllow?: string[]
-  /** login-ui's /access page: where a 2FA site's browser gates send `forbidden` (SITES_ACCESS_URL). */
+  /** login-ui's /access page: where every site's browser gates send `forbidden` (SITES_ACCESS_URL). */
   accessUrl?: string
   /** Headers upstreams trust from the gateway (default PLATFORM_IDENTITY_HEADERS); see identity-headers. */
   identityHeaders?: string[]
@@ -308,7 +308,10 @@ export function render(site: Site, platform: Platform): Rendered {
     handlerOk('authorizers', authorizer, at)
     const mutators = guard(gate, authorizer)
     mutators.forEach((h) => handlerOk('mutators', h, at))
-    const errors = errorHandlers(gate.errors, name, with2fa ? platform.accessUrl : undefined)
+    // Every website gate, 2FA site or not: /access asks jinbe why and says so (step up, enrol for the
+    // platform's required-second-factor groups, or a branded "no access") — a sign-in redirect is the
+    // wrong answer for somebody already signed in.
+    const errors = errorHandlers(gate.errors, name, platform.accessUrl)
     errors?.forEach((h) => handlerOk('errors', h, at))
     // gatekit does not model error handlers: two answering one refusal is a 500 only this catches.
     for (const problem of errorHandlerProblems(errors ?? [])) fail('error_handlers_ambiguous', `gate '${gate.id}': ${problem}`, `${at}.errors`)

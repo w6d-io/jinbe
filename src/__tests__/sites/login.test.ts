@@ -172,14 +172,24 @@ describe('per-site 2FA on the gateway', () => {
     expect(r.siteCr.spec.gates.find((g) => g.name === 'public')!.errors).toBeUndefined()
   })
 
-  it('a site without 2FA has no /access redirect', () => {
+  it('a site without 2FA also sends forbidden+html to /access (needs_2fa for a required group, or no access)', () => {
     const web = render(payrollSite(), { ...platform, accessUrl: 'https://auth.dev.example.com/access' }).siteCr.spec.gates.find((g) => g.name === 'web')!
-    expect(web.errors?.map((h) => h.handler)).toEqual(['redirect', 'json'])
-    expect(web.errors?.[0].config).toEqual({ when: [{ error: ['unauthorized', 'forbidden'], request: { header: { accept: ['text/html'] } } }] })
+    expect(web.errors?.map((h) => h.handler)).toEqual(['redirect', 'redirect', 'json'])
+    expect(web.errors?.[0].config).toEqual({
+      to: 'https://auth.dev.example.com/access?site=payroll',
+      return_to_query_param: 'return_to',
+      when: [{ error: ['forbidden'], request: { header: { accept: ['text/html'] } } }],
+    })
     // The payload still carries aal + client: the platform's required-second-factor groups apply on
     // every app, 2FA site or not.
     expect(String((web.authorizer.config as { payload: string }).payload)).toContain('"aal"')
     expect(String((web.authorizer.config as { payload: string }).payload)).toContain('"client"')
+  })
+
+  it('without an access page configured, a site without 2FA keeps the sign-in redirect for both', () => {
+    const web = render(payrollSite(), platform).siteCr.spec.gates.find((g) => g.name === 'web')!
+    expect(web.errors?.map((h) => h.handler)).toEqual(['redirect', 'json'])
+    expect(web.errors?.[0].config).toEqual({ when: [{ error: ['unauthorized', 'forbidden'], request: { header: { accept: ['text/html'] } } }] })
   })
 
   it('2FA on with no access page configured is an error', () => {
