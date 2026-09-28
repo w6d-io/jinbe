@@ -1,4 +1,5 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { providerStatus } from './captcha.js'
 
 /**
  * The platform setting "how the public sign-in flows are protected" — rbac:config
@@ -11,7 +12,8 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
  *                          (an administrator creates accounts)
  *   registration.*         the allow-list, the extra deny-list, and the built-in disposable list
  *
- * Unset means today's behaviour: no bot check, open sign-up. Read by the Kratos web_hook on every
+ * Unset: open sign-up, and the bot check on every flow as soon as a provider is configured (a flow
+ * left out of the stored document follows the same default; one stored `false` stays off). Read by the Kratos web_hook on every
  * guarded submit, so it is cached for a few seconds; a write refreshes the cache at once.
  */
 
@@ -41,8 +43,9 @@ export const EMAIL = /^[a-z0-9._%+'-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.
 export const DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
 
 export function defaultSignInProtection(): SignInProtection {
+  const on = providerStatus().configured
   return {
-    captcha: { flows: { registration: false, login: false, recovery: false, verification: false }, failMode: 'closed' },
+    captcha: { flows: { registration: on, login: on, recovery: on, verification: on }, failMode: 'closed' },
     registration: { mode: 'open', allowEmails: [], allowDomains: [], denyDomains: [], blockDisposable: false },
   }
 }
@@ -104,7 +107,7 @@ export function validateSignInProtection(input: unknown, opts: { forSave?: boole
   return problems.length ? { ok: false, problems } : { ok: true, value }
 }
 
-/** A stored value as a clean document; a missing or unreadable one is the default (open, no check). */
+/** A stored value as a clean document; a missing or unreadable one is the default (open sign-up, check on when configured). */
 export function parseSignInProtection(raw: string | undefined): SignInProtection {
   if (raw === undefined) return defaultSignInProtection()
   try {

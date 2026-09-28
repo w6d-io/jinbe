@@ -3,14 +3,13 @@ import http from 'node:http'
 import https from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
 import { env } from '../config/index.js'
-import { gateRefusalBody, gateSubmit, gatewayClientIp, hashForLog, parseSubmitBody } from './gate.js'
-import type { CaptchaFlow } from './settings.js'
+import { gateRefusalBody, gateSubmit, gatewayClientIp, hashForLog, parseSubmitBody, submitToken, type GateFlow } from './gate.js'
 
 /**
  * POST /api/public/sign-in-protection/gate/self-service/:flow — the sign-in gate's front door (gate.ts).
  *
  * Oathkeeper's `selfservice-gate` rule (bootstrap build-rules.ts) sends every
- * POST /self-service/{login,registration,recovery,verification} on the sign-in domain here, with the
+ * POST /self-service/{login,registration,recovery,verification,settings} on the sign-in domain here, with the
  * original path appended, query and headers untouched. A submit the gate allows is replayed to
  * Kratos public byte for byte and Kratos' answer (status, Set-Cookie, redirect, body) goes back as
  * is; a refused one gets a 403/429 JSON error and never reaches Kratos.
@@ -19,7 +18,7 @@ import type { CaptchaFlow } from './settings.js'
  */
 
 export const GATE_TOKEN_HEADER = 'x-captcha-token'
-const FLOWS = new Set<CaptchaFlow>(['login', 'registration', 'recovery', 'verification'])
+const FLOWS = new Set<GateFlow>(['login', 'registration', 'recovery', 'verification', 'settings'])
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'host'])
 const MAX_BODY = 64 * 1024
 const KRATOS_TIMEOUT_MS = 15_000
@@ -38,23 +37,32 @@ function forwardHeaders(headers: IncomingHttpHeaders, body: Buffer): http.Outgoi
 }
 
 /**
- * Whether the submit comes with a live Kratos session (second factor, refresh). The session cookie
- * was already validated by extractIdentity (request.validatedSession); an API flow's X-Session-Token
- * is asked of Kratos here.
+ * The live Kratos session the submit carries (second factor, refresh, settings), with its email. The
+ * session cookie was already validated by extractIdentity (request.validatedSession); an API flow's
+ * X-Session-Token is asked of Kratos here.
  */
-async function kratosSession(request: FastifyRequest, fetchImpl: typeof fetch): Promise<boolean> {
-  if (request.validatedSession) return true
+async function kratosSession(request: FastifyRequest, fetchImpl: typeof fetch): Promise<{ email: string | null } | null> {
+  if (request.validatedSession) return { email: request.validatedSession.email || null }
   const token = request.headers['x-session-token']
-  if (typeof token !== 'string' || !token) return false
+  if (typeof token !== 'string' || !token) return null
   try {
     const res = await fetchImpl(`${env.KRATOS_PUBLIC_URL.replace(/\/+$/, '')}/sessions/whoami`, {
       headers: { 'x-session-token': token, accept: 'application/json' },
       signal: AbortSignal.timeout(2000),
     })
-    return res.ok
+    if (!res.ok) return null
+    const body = (await res.json()) as { identity?: { traits?: { email?: unknown } } }
+    const email = body.identity?.traits?.email
+    return { email: typeof email === 'string' ? email : null }
   } catch {
-    return false
+    return null
   }
+}
+
+/** The Kratos flow id from `?flow=`, when it looks like one. */
+function flowIdOf(query: unknown): string | null {
+  const v = (query as Record<string, unknown> | null)?.flow
+  return typeof v === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(v) ? v : null
 }
 
 export interface GateRouteOptions {
@@ -86,18 +94,20 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
       hide: true,
     },
   }, async (request, reply) => {
-    const flow = request.params.flow as CaptchaFlow
+    const flow = request.params.flow as GateFlow
     if (!FLOWS.has(flow)) return reply.status(404).send({ error: { code: 404, status: 'Not Found', message: 'Not Found' } })
 
     const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)
     const ip = gatewayClientIp(request.headers, request.ip ?? null)
     const tokenHeader = request.headers[GATE_TOKEN_HEADER]
+    const fields = parseSubmitBody(request.headers['content-type'], body)
     const decision = await gateSubmit({
       flow,
-      fields: parseSubmitBody(request.headers['content-type'], body),
-      token: typeof tokenHeader === 'string' && tokenHeader ? tokenHeader : null,
+      flowId: flowIdOf(request.query),
+      fields,
+      token: submitToken(typeof tokenHeader === 'string' && tokenHeader ? tokenHeader : null, fields),
       ip,
-      hasSession: () => kratosSession(request, fetchImpl),
+      session: () => kratosSession(request, fetchImpl),
     }, fetchImpl)
 
     if (!decision.allow) {
