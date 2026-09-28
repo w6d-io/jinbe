@@ -5137,6 +5137,8 @@ paths:
                     - namespace
                     - name
                   additionalProperties: false
+                acknowledgeNoWaf:
+                  type: boolean
               required:
                 - domain
               additionalProperties: false
@@ -5214,6 +5216,8 @@ paths:
                     - $ref: "#/properties/gateway/properties/name"
                   nullable: true
                 confirm:
+                  type: boolean
+                acknowledgeNoWaf:
                   type: boolean
               additionalProperties: false
       parameters:
@@ -11361,6 +11365,7 @@ paths:
                                     id:
                                       type: string
                                       enum:
+                                        - waf
                                         - gateway
                                         - gateway_rules
                                         - opa

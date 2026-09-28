@@ -34,7 +34,7 @@ export type SourceDetail = z.infer<typeof sourceDetailSchema>
 // ─── health ──────────────────────────────────────────────────────────────────
 
 export const componentIdSchema = z.enum([
-  'gateway', 'gateway_rules', 'opa', 'opal_data', 'kratos', 'jinbe', 'redis', 'audit_store', 'audit_archive', 'certificates',
+  'waf', 'gateway', 'gateway_rules', 'opa', 'opal_data', 'kratos', 'jinbe', 'redis', 'audit_store', 'audit_archive', 'certificates',
 ])
 export const componentStateSchema = z.enum(['ok', 'degraded', 'down', 'unknown', 'not_deployed'])
 export const pageLinkSchema = z.object({ page: z.string(), params: z.record(z.string()).optional(), anchor: z.string().optional() })
@@ -42,7 +42,7 @@ export const linkSchema = z.union([pageLinkSchema, z.object({ grafana: z.string(
 
 export const healthSchema = z.object({
   environment: z.object({ name: z.string(), production: z.boolean() }),
-  /** In request order: gateway → gateway rules → policy engine → policy sync → sign-in → console API → data store → audit → certificates. */
+  /** In request order: WAF (edge) → gateway → gateway rules → policy engine → policy sync → sign-in → console API → data store → audit → certificates. */
   components: z.array(z.object({
     id: componentIdSchema,
     state: componentStateSchema,

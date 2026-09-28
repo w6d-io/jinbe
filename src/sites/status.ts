@@ -6,7 +6,7 @@ import { loadPlatform } from './platform.js'
 import { kubeSites, type SiteCrObject } from './kube-sites.js'
 import { withVersion } from './applies.js'
 import { assertNotSystem, siteError } from './checks.js'
-import { getRecord } from './sites.service.js'
+import { getRecord, protectionLookup } from './sites.service.js'
 import type { Actor } from './audit.js'
 
 /**
@@ -18,10 +18,13 @@ import type { Actor } from './audit.js'
 const IMPORTANT = ['Validated', 'RulesSynced', 'RulesLoaded', 'Ready'] as const
 
 export async function siteStatus(name: string) {
-  await getRecord(name)
-  const cr = await kubeSites().get(name)
-  if (!cr) return { exists: false, generation: null, observedGeneration: null, conditions: [], children: [] }
+  const record = await getRecord(name)
+  const [cr, protectionOf] = await Promise.all([kubeSites().get(name), protectionLookup()])
+  // Behind the WAF or not: the zone of the saved host, its Gateway and that Gateway's policies.
+  const protection = protectionOf(record.site.address.host)
+  if (!cr) return { exists: false, generation: null, observedGeneration: null, conditions: [], children: [], protection }
   return {
+    protection,
     exists: true,
     generation: cr.metadata.generation ?? null,
     observedGeneration: cr.status?.observedGeneration ?? null,

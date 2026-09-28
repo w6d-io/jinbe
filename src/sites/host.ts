@@ -61,8 +61,11 @@ export function placeHost(host: string, zones: readonly Zone[], platformCookieDo
   return { zone: zone.suffix, tooDeep: false, cookieDomain, sso, modes: ['zone', 'vanity'], tls: zone.wildcardTls === false ? 'per-site' : 'wildcard' }
 }
 
-/** The zones as kuma shows them (`GET /api/admin/sites/zones`). */
-export function zonesView(zones: readonly Zone[], platformCookieDomain: string | undefined) {
+/**
+ * The zones as kuma shows them (`GET /api/admin/sites/zones`). `protection`, when given, says whether
+ * each zone is behind the WAF (`protection.ts`).
+ */
+export function zonesView<P>(zones: readonly Zone[], platformCookieDomain: string | undefined, protection?: (z: Zone) => P) {
   return zones.map((z) => {
     const { cookieDomain, sso } = ssoOf(z, platformCookieDomain)
     return {
@@ -76,6 +79,7 @@ export function zonesView(zones: readonly Zone[], platformCookieDomain: string |
       ...(z.ingress ? { ingress: z.ingress } : {}),
       ...(z.gateway ? { gateway: z.gateway } : {}),
       ...(z.ready !== undefined ? { ready: z.ready } : {}),
+      ...(protection && protection(z) != null ? { protection: protection(z) } : {}),
       source: z.source ?? 'config',
     }
   })

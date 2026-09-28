@@ -10,6 +10,8 @@ import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liv
 import { diffArtefacts, riskOf } from './diff.js'
 import { gatekit, type RenderSample } from './gatekit.client.js'
 import { placeHost, zonesView, type Zone } from './host.js'
+import { cachedGateways } from './gateways.service.js'
+import { protectionFor, type ProtectionStatus } from './protection.js'
 import { auditSite, type Actor } from './audit.js'
 import { suggestFor } from './zones.service.js'
 import { clusterGatewayObjects, clusterIngresses, collisionChecks, routeCollisions } from './host-collisions.js'
@@ -28,9 +30,27 @@ export function statusOf(r: SiteRecord): SiteStatus {
   return r.applied.version === r.version ? 'live' : 'attention'
 }
 
+/**
+ * Whether each host is behind the WAF, from the zones and the Gateways discovered (cached 30 s).
+ * Null when the cluster cannot say: a listing never fails for it.
+ */
+export async function protectionLookup(): Promise<(host: string | null) => ProtectionStatus | null> {
+  try {
+    const [zones, gateways] = await Promise.all([loadZones(), cachedGateways()])
+    const cookie = sitesConfig().SITES_COOKIE_DOMAIN
+    return (host) => {
+      if (!host) return null
+      const placed = placeHost(host, zones, cookie).zone
+      return protectionFor(placed ? zones.find((z) => z.suffix === placed) : null, gateways)
+    }
+  } catch {
+    return () => null
+  }
+}
+
 export async function listSites() {
-  // Two reads for the whole list (it was one draft read per site).
-  const [records, drafts] = await Promise.all([sitesRepository.list(), sitesRepository.drafts()])
+  // Two reads for the whole list (it was one draft read per site), and the zones + Gateways once.
+  const [records, drafts, protectionOf] = await Promise.all([sitesRepository.list(), sitesRepository.drafts(), protectionLookup()])
   const draftOf = new Map(drafts.map((d) => [d.name, d.draft]))
   const saved = records.map((r) => {
     const draft = draftOf.get(r.site.name)
@@ -44,6 +64,7 @@ export async function listSites() {
       appliedAt: r.applied?.at ?? null,
       appliedBy: r.applied?.by ?? null,
       orgs: r.site.orgs.length,
+      protection: protectionOf(r.site.address.host),
       ...(draft ? { draft: { by: draft.updatedBy, at: draft.updatedAt } } : {}),
     }
   })
@@ -61,6 +82,7 @@ export async function listSites() {
       appliedAt: null,
       appliedBy: null,
       orgs: 0,
+      protection: protectionOf(typeof site.address?.host === 'string' ? site.address.host : null),
       draft: { by: draft.updatedBy, at: draft.updatedAt },
     }
   })
@@ -261,7 +283,8 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
 }
 
 export async function zones() {
-  return zonesView(await loadZones(), sitesConfig().SITES_COOKIE_DOMAIN)
+  const [zones, gateways] = await Promise.all([loadZones(), cachedGateways().catch(() => [])])
+  return zonesView(zones, sitesConfig().SITES_COOKIE_DOMAIN, (z) => (z.source === 'zone' ? protectionFor(z, gateways) : null))
 }
 
 /** Best route-map row for a path, by the policy's specificity (rbac.rego `route_specificity`). */

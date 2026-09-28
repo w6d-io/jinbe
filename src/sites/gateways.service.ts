@@ -8,8 +8,9 @@ import { siteError } from './checks.js'
  * whether their Gateway-level policies put every route behind the WAF and the IP reputation check.
  *
  * "Protected" is read from the cluster, never assumed from the allow-list: an EnvoyExtensionPolicy
- * loading a WAF module (Coraza) and a SecurityPolicy with extAuth (the CrowdSec bouncer), both
- * targeting the whole Gateway and accepted by Envoy Gateway. Every listener and ListenerSet of that
+ * loading a WAF module (Coraza) that targets the whole Gateway and that Envoy Gateway accepted. The IP
+ * reputation check (a SecurityPolicy with extAuth: the CrowdSec bouncer) is reported beside it, wanted
+ * but not required (owner decision 2026-09-28). Every listener and ListenerSet of that
  * Gateway inherits them; a route-level policy that could replace them is refused by the operator's
  * admission policy (site-operator-route-policies) in the gateway namespace.
  */
@@ -31,7 +32,7 @@ export interface Protection {
   waf: { policy: string | null; modules: string[]; accepted: boolean }
   ipReputation: { policy: string | null; backend: string | null; failOpen: boolean | null; accepted: boolean }
   denylist: { policy: string | null }
-  /** WAF and IP reputation both in force on the whole Gateway. */
+  /** The WAF is in force on the whole Gateway (the IP reputation check is reported, not required). */
   protected: boolean
   summary: string
 }
@@ -63,15 +64,15 @@ export function protectionOf(name: string, policies: readonly EdgePolicy[]): Pro
   const deny = gatewayLevel.find((p) => p.kind === 'SecurityPolicy' && p.features.includes('authorization'))
   const wafOn = !!waf && waf.accepted === true
   const extOn = !!ext && ext.accepted === true
-  const missing = [...(wafOn ? [] : [waf ? `WAF policy ${waf.name} not accepted` : 'no WAF policy']), ...(extOn ? [] : [ext ? `IP reputation policy ${ext.name} not accepted` : 'no IP reputation (ext_authz) policy'])]
+  const bans = extOn ? `IP bans (${ext!.extAuth?.backend ?? 'ext_authz'}${ext!.extAuth?.failOpen ? ', fail-open' : ''})` : null
   return {
     waf: { policy: waf ? `${waf.namespace}/${waf.name}` : null, modules: waf?.modules ?? [], accepted: wafOn },
     ipReputation: { policy: ext ? `${ext.namespace}/${ext.name}` : null, backend: ext?.extAuth?.backend ?? null, failOpen: ext?.extAuth?.failOpen ?? null, accepted: extOn },
     denylist: { policy: deny ? `${deny.namespace}/${deny.name}` : null },
-    protected: wafOn && extOn,
-    summary: wafOn && extOn
-      ? `Every route is inspected by the WAF (${waf!.modules.join(', ')}) and checked against IP bans (${ext!.extAuth?.backend ?? 'ext_authz'}${ext!.extAuth?.failOpen ? ', fail-open' : ''})`
-      : `Not protected: ${missing.join('; ')}`,
+    protected: wafOn,
+    summary: wafOn
+      ? `Every route is inspected by the WAF (${waf!.modules.join(', ')})${bans ? ` and checked against ${bans}` : `; no IP bans (${ext ? `policy ${ext.name} not accepted` : 'no ext_authz policy'})`}`
+      : `Not protected: ${waf ? `WAF policy ${waf.name} not accepted` : 'no WAF policy'}`,
   }
 }
 
@@ -120,6 +121,27 @@ export async function gatewayView(key: string): Promise<GatewayView> {
 export async function listGateways(): Promise<{ gateways: GatewayView[] }> {
   if (sitesConfig().SITES_KUBE === 'off') return { gateways: [] }
   return { gateways: await Promise.all(sitesConfig().SITES_GATEWAYS.map((k) => gatewayView(k))) }
+}
+
+const CACHE_MS = 30_000
+let cache: { at: number; views: Promise<GatewayView[]> } | null = null
+
+/**
+ * The allowed Gateways for listings (zones, sites, Home), read at most every 30 s. Decisions that
+ * write (zone create/edit) read them fresh through `listGateways`.
+ */
+export function cachedGateways(now = Date.now()): Promise<GatewayView[]> {
+  if (!cache || now - cache.at > CACHE_MS) {
+    const views = listGateways().then((r) => r.gateways)
+    views.catch(() => { cache = null })
+    cache = { at: now, views }
+  }
+  return cache.views
+}
+
+/** Test seam. */
+export function resetGatewayCache(): void {
+  cache = null
 }
 
 /**

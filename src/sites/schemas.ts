@@ -221,6 +221,8 @@ export const createZoneBodySchema = z
     tls: zoneTls.default({ mode: 'default' }),
     ingressClass: k8sName.optional(),
     gateway: zoneGateway.optional(),
+    /** Create on the nginx Ingress although a WAF-protected Gateway exists (explicit, audited). */
+    acknowledgeNoWaf: z.boolean().optional(),
   })
   .strict()
   .superRefine((b, ctx) => {
@@ -237,6 +239,8 @@ export const updateZoneBodySchema = z
     tls: zoneTls.optional(),
     ingressClass: k8sName.nullable().optional(),
     confirm: z.boolean().optional(),
+    /** Detach the Gateway although a WAF-protected one exists (explicit, audited). */
+    acknowledgeNoWaf: z.boolean().optional(),
   })
   .strict()
   .refine((b) => b.ingress !== undefined || b.gateway !== undefined || b.tls !== undefined || b.ingressClass !== undefined, 'nothing to change')
