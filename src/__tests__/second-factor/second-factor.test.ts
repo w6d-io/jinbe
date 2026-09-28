@@ -248,14 +248,14 @@ describe('GET /api/public/second-factor (login-ui, own session only)', () => {
   })
 })
 
-describe('server-side enforcement (onRequest hook, the policy\'s needs_2fa)', () => {
+describe('server-side enforcement (onRequest hook: the policy\'s second_factor_required, then needs_2fa)', () => {
   const call = (headers: Record<string, string>, url = '/api/admin/users') => app.inject({ method: 'GET', url, headers })
 
   it('super admin session at aal1 → 422 second_factor_required, handler never runs', async () => {
     const res = await call({ 'x-email': 'root@x.io', 'x-aal': 'aal1' })
     expect(res.statusCode).toBe(422)
     expect(res.json()).toMatchObject({ error: 'second_factor_required', stepUp: { requiredAal: 'aal2' } })
-    expect(h.opa).toHaveBeenCalledWith('rbac/decision', expect.objectContaining({ email: 'root@x.io', object: '/api/admin/users', action: 'GET', app: 'jinbe', aal: 'aal1', client: false }))
+    expect(h.opa).toHaveBeenCalledWith('rbac/second_factor_required', { email: 'root@x.io' })
   })
 
   it('super admin at aal2 passes', async () => {
@@ -267,6 +267,26 @@ describe('server-side enforcement (onRequest hook, the policy\'s needs_2fa)', ()
   })
 
   it('a normal user at aal1 passes', async () => {
+    expect((await call({ 'x-email': 'nina@x.io', 'x-aal': 'aal1' })).statusCode).toBe(200)
+  })
+
+  it('a route jinbe\'s route_map does not describe is still gated (sandbox: GET /api/admin/sites at aal1 was 200)', async () => {
+    h.opa.mockImplementation(async (rule: string, input: Record<string, unknown>) =>
+      rule === 'rbac/decision' ? { allow: false, reason: 'not_found' } : opaWorld(rule, input))
+    const res = await call({ 'x-email': 'root@x.io', 'x-aal': 'aal1' }, '/api/admin/users')
+    expect(res.statusCode).toBe(422)
+    expect(h.opa).toHaveBeenCalledWith('rbac/second_factor_required', { email: 'root@x.io' })
+  })
+
+  it('jinbe\'s own per-site 2FA (the gateway\'s needs_2fa) still applies to someone the group rule does not name', async () => {
+    h.opa.mockImplementation(async (rule: string, input: Record<string, unknown>) =>
+      rule === 'rbac/decision' && input.email === 'nina@x.io' ? { allow: false, reason: 'needs_2fa' } : opaWorld(rule, input))
+    expect((await call({ 'x-email': 'nina@x.io', 'x-aal': 'aal1' })).statusCode).toBe(422)
+  })
+
+  it('a policy that predates the rule (no answer) falls back to the gateway decision, never a refusal of its own', async () => {
+    h.opa.mockImplementation(async (rule: string, input: Record<string, unknown>) =>
+      rule === 'rbac/second_factor_required' ? undefined : opaWorld(rule, input))
     expect((await call({ 'x-email': 'nina@x.io', 'x-aal': 'aal1' })).statusCode).toBe(200)
   })
 

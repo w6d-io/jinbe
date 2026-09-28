@@ -1,24 +1,26 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/index.js'
-import { decide } from '../authz/opa.js'
+import { decide, secondFactorRequired } from '../authz/opa.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { denyAudit } from '../audit/deny.js'
 
 /**
  * Server-side half of mandatory 2FA: a member of a group that must hold a second factor
- * (data.second_factor, rbac.rego § 8c) — or a caller of a route inside jinbe's own per-site 2FA
- * scope — is refused below aal2, whatever login-ui did or did not show them.
+ * (data.second_factor, rbac.rego § 8c) is refused below aal2 on EVERY jinbe API route except the
+ * exemptions listed below, whatever login-ui did or did not show them.
  *
- * ONE ENGINE: the question is the gateway's own (`rbac.decision` for this method + path + aal), and
- * only its `needs_2fa` answer acts here. Every other answer is left to the route's own gate, which
- * already turns "not granted" into 403 and "OPA unreachable" into 503 — so an outage never turns into
- * a 2FA refusal, and a missing permission never turns into "go and step up".
+ * ONE ENGINE: who must hold a second factor is OPA's answer (`rbac.second_factor_required`), never
+ * re-derived here. It is asked per caller, not per route: jinbe's route_map in OPA describes only
+ * part of its API (the admin routes are published for display, not decided on), so a per-route
+ * `rbac.decision` answered not_found for them and let /api/admin/sites through at aal1. The
+ * gateway's own `needs_2fa` for this route is still honoured on top (per-site 2FA of jinbe itself).
+ * An unanswerable question falls through to the route's own gate, which turns "OPA unreachable" into
+ * 503 — so an outage never turns into a 2FA refusal.
  *
  * Only a browser session is judged: it is the one credential that carries a readable level. A bearer
  * token or a ServiceAccount asserts none, so asking them to step up would loop forever
  * (`step_up_unavailable` in require-admin says the same for the R2 gate); their human was held to the
- * rule when the token was issued through login-ui. Public routes (whoami, /api/public/*) are never
- * judged, so the person can always find out what to do.
+ * rule when the token was issued through login-ui.
  *
  * 422, not 403: the cluster ingress replaces 401/403/404 bodies with its error page, and the console
  * needs `error` to send the person to enrol or step up (same reason as `reauth_required`).
@@ -26,20 +28,56 @@ import { denyAudit } from '../audit/deny.js'
 
 export const SECOND_FACTOR_REQUIRED = 'second_factor_required'
 
+/**
+ * Every route the gate does not judge, and why. All of them answer without a session or with a
+ * credential of their own (require-auth PUBLIC_ROUTES), so there is no session level to hold them to.
+ * A public route added without an entry here fails the route-table test.
+ */
+export const SECOND_FACTOR_EXEMPT: ReadonlyArray<{ prefix: string; reason: string }> = [
+  { prefix: '/api/health', reason: 'readiness probe; answers without a session' },
+  { prefix: '/api/whoami', reason: 'says who is signed in, at any level; the console needs it to draw the two-step banner' },
+  { prefix: '/api/telemetry', reason: 'where the browser reports, needed before and during sign-in; holds nothing private' },
+  { prefix: '/api/public', reason: "login-ui and the console before sign-in completes: site branding, access-reason and the caller's own second-factor status — how a person learns they must enrol" },
+  { prefix: '/api/webhooks/kratos', reason: 'Kratos after-hooks, authenticated by a shared secret, not a session' },
+  { prefix: '/api/directory', reason: 'machine callers with a hashed directory token, not a session' },
+  { prefix: '/api/opa', reason: 'the policy engine fetching bundles with its machine token, not a session' },
+  { prefix: '/api/oathkeeper/rules', reason: 'the gateway fetching its rules; no session' },
+  { prefix: '/api/admin/rbac/opal', reason: 'OPAL data sources, guarded by the OPAL client token, not a session' },
+  { prefix: '/api/admin/rbac/bindings', reason: 'OPAL data source (identity bindings), guarded by the OPAL client token' },
+  { prefix: '/api/admin/rbac/develop/', reason: 'compat path of the OPAL data sources, guarded by the OPAL client token' },
+  { prefix: '/docs', reason: 'the published API description; public' },
+  { prefix: '/scim/v2', reason: "IdP provisioning with its own bearer token; no session and outside the console's API" },
+]
+
+export type SecondFactorScope = { gated: true } | { gated: false; reason: string | null }
+
+/** Whether the gate judges a path; for an exempt one, the listed reason (null = exempt but unlisted: a bug). */
+export function secondFactorScope(path: string): SecondFactorScope {
+  if (path.startsWith('/api/') && !isPublicRoute(path)) return { gated: true }
+  const entry = SECOND_FACTOR_EXEMPT.find((e) => path === e.prefix || path.startsWith(e.prefix.endsWith('/') ? e.prefix : `${e.prefix}/`) || path.startsWith(`${e.prefix}-`))
+  return { gated: false, reason: entry?.reason ?? null }
+}
+
+async function needsSecondFactor(email: string, method: string, path: string, aal: string): Promise<boolean> {
+  try {
+    if (aal !== 'aal2' && (await secondFactorRequired(email))) return true
+  } catch {
+    // Unanswerable (OPA down, or a policy that predates the rule): the route gate answers the outage.
+  }
+  try {
+    return (await decide({ email, method, path, aal, client: false })).reason === 'needs_2fa'
+  } catch {
+    return false
+  }
+}
+
 export async function requireSecondFactor(request: FastifyRequest, reply: FastifyReply) {
   const ctx = request.userContext
   if (!ctx || ctx.authVia !== 'session' || !ctx.email) return
   if (env.NODE_ENV === 'development' && env.DEV_BYPASS_AUTH) return
   const path = (request.url || '').split('?')[0]
-  if (!path.startsWith('/api/') || isPublicRoute(path)) return
-
-  let reason: string
-  try {
-    ;({ reason } = await decide({ email: ctx.email, method: request.method, path, aal: ctx.aal ?? 'aal1', client: false }))
-  } catch {
-    return // the route's own gate answers the outage
-  }
-  if (reason !== 'needs_2fa') return
+  if (!secondFactorScope(path).gated) return
+  if (!(await needsSecondFactor(ctx.email, request.method, path, ctx.aal ?? 'aal1'))) return
 
   denyAudit(request, SECOND_FACTOR_REQUIRED, { statusCode: 422, severity: 'warn' })
   return reply.status(422).send({

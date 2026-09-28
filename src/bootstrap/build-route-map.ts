@@ -18,6 +18,10 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/health' },
   { method: 'GET',    path: '/api/whoami' },
   { method: 'GET',    path: '/docs/:any*' },
+  // The caller's own two-step status (second-factor/status.ts), asked by kuma on its own host. Marked
+  // public: a signed-in caller below aal2 must still reach it (per-site and platform 2FA gate every
+  // other signed-in row), or the console cannot tell them to enrol.
+  { method: 'GET',    path: '/api/public/second-factor', public: true },
 
   // SCIM 2.0 provisioning (IdP → jinbe). Public at the OPA layer so the
   // gateway forwards them — the routes enforce their OWN bearer-token auth
