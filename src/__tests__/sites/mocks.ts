@@ -15,6 +15,7 @@ export class InlineRedisMock {
   async hdel(k: string, f: string) { return this.hashes.get(k)?.delete(f) ? 1 : 0 }
   async hgetall(k: string) { return Object.fromEntries(this.hashes.get(k)?.entries() ?? []) }
   async get(k: string) { return this.strings.get(k) ?? null }
+  async mget(...ks: string[]) { return ks.map((k) => this.strings.get(k) ?? null) }
   async set(k: string, v: string) { this.strings.set(k, v); return 'OK' }
   async del(k: string) { return this.strings.delete(k) || this.lists.delete(k) || this.sets.delete(k) ? 1 : 0 }
   async sadd(k: string, v: string) {

@@ -166,9 +166,12 @@ class SitesRepository {
   /** Every name that has a draft, with it (a stale set member is dropped). */
   async drafts(): Promise<Array<{ name: string; draft: SiteDraft }>> {
     const out: Array<{ name: string; draft: SiteDraft }> = []
-    for (const name of await this.redis.smembers(DRAFTS)) {
-      const draft = await this.getDraft(name)
-      if (draft) out.push({ name, draft })
+    const names = await this.redis.smembers(DRAFTS)
+    // One round trip for every draft, not one each.
+    const raws = names.length ? await this.redis.mget(...names.map(draftKey)) : []
+    for (const [i, name] of names.entries()) {
+      const raw = raws[i]
+      if (raw) out.push({ name, draft: JSON.parse(raw) as SiteDraft })
       else await this.redis.srem(DRAFTS, name)
     }
     return out.sort((a, b) => a.name.localeCompare(b.name))

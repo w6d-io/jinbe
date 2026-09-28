@@ -16,7 +16,7 @@ import {
 } from '../schemas/admin.schema.js'
 import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
 import { declaredGroups } from '../services/group-catalogue.js'
-import { rights } from '../authz/opa.js'
+import { rightsForDisplay } from '../authz/opa.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -161,7 +161,9 @@ export class AdminController {
       // What OPA — the engine that enforces — resolves for them in jinbe, global roles included: an
       // editing screen that saves one truth while displaying another turns a bad read into a bad
       // write.
-      const held = await rights(email)
+      // Cached for display (rightsForDisplay) — dropped on every RBAC change, so a list page of 250
+      // does not ask OPA 250 times on each visit.
+      const held = await rightsForDisplay(email)
 
       return {
         ...identity,
@@ -230,22 +232,14 @@ export class AdminController {
     const q = (request.query.q ?? '').toString()
     const limit = Math.min(Math.max(parseInt(request.query.limit ?? '50', 10) || 50, 1), 200)
     const data = await kratosService.searchIdentities(q, limit)
-    // Enrich each hit with its REAL second-factor status so the search table shows
-    // ON/OFF instead of "—". searchIdentities is a lightweight cache (no
-    // credentials), so hasMFA is resolved per hit here — bounded by `limit`, run in
-    // parallel, and fail-soft (an error → undefined → that row shows "unknown"
-    // rather than failing the whole search).
-    const withMfa = await Promise.all(
-      data.map(async (u) => {
-        let mfa: boolean | undefined
-        try {
-          mfa = await kratosService.hasMFA(u.id)
-        } catch {
-          mfa = undefined
-        }
-        return { ...u, mfa }
-      }),
-    )
+    // Each hit's REAL second-factor status so the table shows ON/OFF instead of "—": one batched,
+    // cached read for all hits (it was one Kratos call per hit). Fail-soft — unknown rows stay
+    // undefined and show "unknown" rather than failing the search.
+    const mfa = await kratosService.mfaByIds(data.map((u) => u.id)).catch(() => null)
+    const withMfa = data.map((u) => {
+      const methods = mfa?.get(u.id)
+      return { ...u, mfa: methods ? methods.length > 0 : undefined }
+    })
     return reply.send({ data: withMfa })
   }
 

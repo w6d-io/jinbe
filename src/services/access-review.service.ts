@@ -1,4 +1,5 @@
 import { kratosService } from './kratos.service.js'
+import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { redisRbacRepository, type FlatRolesMap } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
 import { getRedisClient } from './redis-client.service.js'
@@ -169,7 +170,7 @@ class AccessReviewService {
     // Fail-closed core reads: any of these throwing aborts the whole review so
     // the caller sees a load error, never an empty "clean" posture.
     const [bindings, groupDefs, services, orgAdminMap] = await Promise.all([
-      kratosService.getAllIdentitiesWithBindings(),
+      kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS }),
       redisRbacRepository.getGroups(),
       redisRbacRepository.getServices(),
       redisRbacRepository.getOrgAdminMap(),

@@ -19,6 +19,7 @@ const { redisMock } = vi.hoisted(() => {
     async hdel(k: string, f: string) { return this.hashes.get(k)?.delete(f) ? 1 : 0 }
     async hgetall(k: string) { return Object.fromEntries(this.hashes.get(k)?.entries() ?? []) }
     async get(k: string) { return this.strings.get(k) ?? null }
+    async mget(...ks: string[]) { return ks.map((k) => this.strings.get(k) ?? null) }
     async set(k: string, v: string, ...args: unknown[]) {
       this.strings.set(k, v)
       if (args[0] === 'EX') this.ttl.set(k, args[1] as number)

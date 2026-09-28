@@ -29,9 +29,11 @@ export function statusOf(r: SiteRecord): SiteStatus {
 }
 
 export async function listSites() {
-  const records = await sitesRepository.list()
-  const saved = await Promise.all(records.map(async (r) => {
-    const draft = await sitesRepository.getDraft(r.site.name)
+  // Two reads for the whole list (it was one draft read per site).
+  const [records, drafts] = await Promise.all([sitesRepository.list(), sitesRepository.drafts()])
+  const draftOf = new Map(drafts.map((d) => [d.name, d.draft]))
+  const saved = records.map((r) => {
+    const draft = draftOf.get(r.site.name)
     return {
       name: r.site.name,
       displayName: r.site.displayName,
@@ -44,10 +46,10 @@ export async function listSites() {
       orgs: r.site.orgs.length,
       ...(draft ? { draft: { by: draft.updatedBy, at: draft.updatedAt } } : {}),
     }
-  }))
+  })
   // A site being plugged has only a draft until its first save: list it too, at version 0.
   const known = new Set(records.map((r) => r.site.name))
-  const draftOnly = (await sitesRepository.drafts()).filter((d) => !known.has(d.name)).map(({ name, draft }) => {
+  const draftOnly = drafts.filter((d) => !known.has(d.name)).map(({ name, draft }) => {
     const site = (draft.site ?? {}) as { displayName?: unknown; address?: { host?: unknown } }
     return {
       name,

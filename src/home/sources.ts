@@ -1,4 +1,5 @@
 import { env } from '../config/env.js'
+import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { isBootstrapReady } from '../bootstrap/ready-state.js'
 import { redisClientService, getRedisClient } from '../services/redis-client.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
@@ -179,8 +180,8 @@ export async function orgMembers(orgId: string): Promise<string[]> {
   return [...new Set((await membersOf(orgId)).map((m) => m.subjectId))]
 }
 
-/** email → {id, name, active}: the light directory walk (cached 5 s by kratosService, shared with OPAL). */
+/** email → {id, name, active}: the light directory walk (the shared kratos.directory cache). */
 export async function identityDirectory(): Promise<Map<string, { id: string; name: string | null; active: boolean }>> {
-  const bindings = await kratosService.getAllIdentitiesWithBindings()
+  const bindings = await kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS })
   return new Map([...bindings].map(([email, b]) => [email, { id: b.id, name: b.name, active: b.active }]))
 }
