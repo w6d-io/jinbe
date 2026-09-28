@@ -43,6 +43,20 @@ export const opalDatasourceLastSuccess = new Gauge({
   labelNames: ['entry'] as const,
 })
 
+// The push the other way: jinbe telling opal-server to have every client refetch the manifest.
+// One count per burst of mutations, not per mutation (the push is debounced and retried).
+
+export const opalPushes = new Counter({
+  name: 'jinbe_opal_push_total',
+  help: 'Datasource pushes to opal-server, by result (ok, failed after every retry)',
+  labelNames: ['result'] as const,
+})
+
+export const opalPushLastSuccess = new Gauge({
+  name: 'jinbe_opal_push_last_success_timestamp_seconds',
+  help: 'Unix time of the last datasource push opal-server accepted',
+})
+
 // ─── Oathkeeper rules ────────────────────────────────────────────────────────
 
 export const rulesGenerated = new Gauge({

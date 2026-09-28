@@ -205,6 +205,14 @@ export const envSchema = z.object({
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
 
+  // opal-server, told to refetch the datasource manifest after every RBAC change (POST /data/config).
+  // Unset: no push, and nothing logged about OPAL.
+  OPAL_SERVER_URL: z.string().url().optional(),
+  // Bearer for that push, when opal-server runs with OPAL_AUTH_MASTER_TOKEN (a datasource JWT).
+  OPAL_SERVER_TOKEN: z.string().min(1).optional(),
+  // Each manifest entry's periodic_update_interval: the OPAL client refetches it this often even if a
+  // push is lost. 0 leaves it out (fetched on connect and on push only).
+  OPAL_DATA_REFRESH_SECONDS: z.string().transform(Number).pipe(z.number().nonnegative()).default('60'),
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.
   JINBE_INTERNAL_URL: z.string().url().default('http://jinbe:8080'),

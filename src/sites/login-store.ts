@@ -1,4 +1,5 @@
 import { getRedisClient } from '../services/redis-client.service.js'
+import { opalPublisher } from '../services/opal-publisher.js'
 
 /**
  * Per-site login data in Redis.
@@ -38,6 +39,8 @@ export const siteLoginStore = {
   async set(site: string, login: SiteLogin | null): Promise<void> {
     if (login) await getRedisClient().hset(LOGIN, site, JSON.stringify(login))
     else await getRedisClient().hdel(LOGIN, site)
+    // Written after the permissions publish of an apply, so its own push may already be gone.
+    opalPublisher.schedule(`site_login.${site}`)
   },
 
   async getLogo(site: string): Promise<StoredLogo | null> {

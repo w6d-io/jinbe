@@ -10,6 +10,7 @@ import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperR
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
 import { holdsInJinbe } from '../authz/opa.js'
 import { realtimeService } from './realtime.service.js'
+import { opalPublisher } from './opal-publisher.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {
   isHandlerEnabled,
@@ -355,11 +356,10 @@ export class RbacService {
     // Push a real-time signal so connected admin browsers refetch at once.
     realtimeService.publish(eventType ?? 'rbac')
 
-    // Notify OPAL server for real-time WebSocket push to all OPA clients (<100ms)
-    // The OPAL push that used to be here is gone: no OPAL runs in this namespace, and the engine
-    // pulls a bundle instead of being pushed data. It failed on every mutation, logging a DNS
-    // error for a component that never existed here. The etag invalidation and the real-time
-    // notification above DO serve, and stay.
+    // Have opal-server tell every OPAL client to refetch, so OPA sees this change now rather than at
+    // the next client restart or periodic poll. Debounced, retried, never awaited; a no-op without
+    // OPAL_SERVER_URL.
+    opalPublisher.schedule(eventType ?? 'rbac')
 
     if (eventType && opts.audit !== false) {
       auditEventService.emit({

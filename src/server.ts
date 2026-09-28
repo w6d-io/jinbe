@@ -47,6 +47,7 @@ import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bo
 import { MarkerCorruptError } from './bootstrap/marker.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
 import { realtimeService } from './services/realtime.service.js'
+import { opalPublisher } from './services/opal-publisher.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
 import { rootLogger, fastifyLoggingOptions } from './telemetry/logger.js'
@@ -238,7 +239,9 @@ async function start() {
       // Push a full datasource refresh to opal-server. Defends against the
       // race where opal-server booted first, hit a 503 from us, and ended
       // up with an empty OPA dataset. Non-fatal — opal-server may also be
-      // unreachable here, in which case the next admin mutation re-pushes.
+      // unreachable here, in which case the push retries, then the manifest's periodic refresh
+      // catches up. No-op without OPAL_SERVER_URL.
+      void opalPublisher.refreshAll('jinbe-startup')
 
       // Scheduled RBAC-bundle backup, run by jinbe itself (self-authenticated +
       // holds S3 creds). No-op unless backup is enabled. Replaces the external
