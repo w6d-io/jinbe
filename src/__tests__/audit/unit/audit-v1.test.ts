@@ -14,7 +14,7 @@ vi.mock('../../../config/index.js', () => mockEnv)
 vi.mock('../../../services/redis-client.service.js', () => ({ getRedisClient: () => ({}) }))
 
 import { register } from 'prom-client'
-import { AuditV1Emitter, type AuditEventV1, type AuditOutbox } from '../../../audit/v1/emitter.js'
+import { AuditV1Emitter, actorTypeOf, buildEvent, type AuditEventV1, type AuditOutbox } from '../../../audit/v1/emitter.js'
 import { auditEventV1Schema } from '../../../audit/v1/schema.js'
 import { HashChain, verifyChain } from '../../../audit/v1/chain.js'
 import { uuidv7 } from '../../../audit/v1/ids.js'
@@ -160,5 +160,30 @@ describe('audit/v1 — durable outbox (AUD-1b)', () => {
     await emitter.emit({ event: 'apikey.revoked', actor: ADMIN })
     expect(lines).toHaveLength(1)
     expect(await failures('outbox')).toBe(before + 1)
+  })
+})
+
+describe('actor kinds (why the console showed "anonymous")', () => {
+  it('a label that is not an address and no id is jinbe itself — system, not a user nobody can name', () => {
+    expect(actorTypeOf({ id: null, email: 'jinbe (sync)' })).toBe('system')
+    expect(actorTypeOf({ email: 'system' })).toBe('system')
+    expect(actorTypeOf({ email: 'bootstrap' })).toBe('system')
+  })
+
+  it('a person has an id or an address; a service account is a service; nobody is anonymous', () => {
+    expect(actorTypeOf({ id: 'u-1' })).toBe('user')
+    expect(actorTypeOf({ email: 'ana@example.com' })).toBe('user')
+    expect(actorTypeOf({ id: 'u-1', email: 'ci@serviceaccount.cluster.local' })).toBe('service')
+    expect(actorTypeOf({ email: null, ip: '203.0.113.9' })).toBe('anonymous')
+    expect(actorTypeOf({ email: 'anonymous' })).toBe('anonymous')
+  })
+
+  it('a caller that knows the kind says it', () => {
+    expect(actorTypeOf({ type: 'service', id: 'client-1' })).toBe('service')
+    const e = buildEvent({ event: 'site.synced', actor: { email: 'jinbe (sync)' } })
+    expect(e.actor).toMatchObject({ type: 'system', id: null })
+    // No HMAC of a label: it identifies nobody.
+    expect(e.actor.identifier_hmac).toBeUndefined()
+    expect(auditEventV1Schema.safeParse(e).success).toBe(true)
   })
 })

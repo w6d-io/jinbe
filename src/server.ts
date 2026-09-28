@@ -28,6 +28,7 @@ import { orgGrantsRoutes } from './routes/org-grants.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
 import { startSitesBackground } from './sites/sync.js'
+import { startAccessRollup } from './audit/gateway/rollup.js'
 import { secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-factor/routes.js'
 import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
@@ -265,6 +266,9 @@ async function start() {
 
       // Sites: re-create missing/drifted Site CRs from the intent, tick the migration dual run.
       startSitesBackground(fastify.log)
+
+      // Audit: gateway decisions into the trail, one event per subject and host per hour.
+      startAccessRollup(fastify.log)
 
       // Home: keeps the platform-scope briefing warm (leader only, Redis lock).
       startHomeBackground(fastify.log)

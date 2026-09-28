@@ -16,6 +16,8 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 const EVENT = /^[a-z][a-z_]*(\.[a-z_]+)*(\.\*)?$/
 
+export const ACTOR_TYPES = ['user', 'service', 'system', 'anonymous'] as const
+
 const eventKey = z.string().regex(EVENT).refine(
   (e) => (e.endsWith('.*') ? AUDIT_EVENT_TYPES.some((k) => k.startsWith(e.slice(0, -1))) : (AUDIT_EVENT_TYPES as readonly string[]).includes(e)),
   'not an audit/v1 catalog key or prefix',
@@ -27,6 +29,7 @@ const many = <T extends z.ZodTypeAny>(item: T) =>
 export const filterFields = {
   org: z.string().regex(ID).optional(),
   actor: z.string().regex(ID).optional(),
+  actor_type: many(z.enum(ACTOR_TYPES)).optional(),
   target: z.string().regex(/^[A-Za-z0-9._:/ -]{1,256}$/).optional(),
   site: z.string().regex(/^[a-z0-9_-]{1,63}$/).optional(),
   event: many(eventKey).optional(),
@@ -92,7 +95,7 @@ export function windowMs(window: string): number {
 
 export function toFilter(f: Filters, orgs: string[] | undefined): AuditFilter {
   return {
-    orgs, actor: f.actor, target: f.target, site: f.site, events: f.event, category: f.category,
+    orgs, actor: f.actor, actorTypes: f.actor_type, target: f.target, site: f.site, events: f.event, category: f.category,
     result: f.result, severity: f.severity, traceId: f.trace_id, q: f.q,
   }
 }

@@ -119,6 +119,18 @@ only once `{log_type="audit", namespace="…"}` returns lines in Grafana.
 Beyond the selector, both modes build the same query — the org scope, the field filters, the
 escaping of every caller value into one literal, the limits and the windows.
 
+**What it costs.** A raw-line filter does not spare Loki the reading: in `json` mode every count
+decompresses all of jinbe's lines in the window (auth-dev, 7 days: 5.5 M lines, 455 MB, for ~440
+audit events). Facet and histogram counts are therefore asked as range queries at a fixed step
+(`countsOver` in `audit/query/reader.ts`), which Loki's results cache keeps per interval: the first
+view of a week reads it once (~1.3 s on auth-dev), a reload only the newest step (~0.1 s). `label`
+mode removes the reading itself; it is the bigger win on any window nobody has asked for yet.
+
+**Gateway decisions.** `GET /api/audit/access` (platform readers) counts the gateway's own
+`Access request granted/denied` lines (`LOKI_GATEWAY_CONTAINER`, default `oathkeeper`) by subject and
+host, and every hour jinbe copies those counts into the trail as `access.summary` events, one per
+subject and host (`ACCESS_ROLLUP=off` stops it). Paths are not grouped on: they are open-ended.
+
 ## Known rough edge
 
 `module.register()`, which the ESM instrumentation hook needs, is deprecated from Node 26 and prints

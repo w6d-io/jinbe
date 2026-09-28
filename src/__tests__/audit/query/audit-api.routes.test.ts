@@ -213,12 +213,25 @@ describe('Loki down → 503, never an empty list (AU-11)', () => {
 })
 
 describe('facets, summary, event by id, timeline, me/logins', () => {
-  it('facets: counts per event/category/result/site/actor for the whole range', async () => {
-    loki.samples = [{ metric: { event: 'org.grants.changed' }, value: 3 }]
+  it('facets: counts per event/category/result/site/actor kind/actor, a total and a histogram, for the whole range', async () => {
+    loki.samples = []
+    loki.series = [{ metric: { event: 'org.grants.changed', category: 'authz', result: 'success', actor_type: 'user' }, values: [[Math.floor(NOW / 1000 / 3600) * 3600, 3]] }]
     const body = (await get(`/api/audit/facets?${week}`)).json()
-    expect(Object.keys(body.facets).sort()).toEqual(['actor', 'category', 'event', 'result', 'site'])
+    expect(Object.keys(body.facets).sort()).toEqual(['actor', 'actor_type', 'category', 'event', 'result', 'site'])
     expect(body.facets.event[0]).toEqual({ key: 'org.grants.changed', count: 3 })
-    expect(loki.queries.some((q) => q.includes('sum by (event)') && q.includes('count_over_time'))).toBe(true)
+    expect(body.facets.actor_type[0]).toEqual({ key: 'user', count: 3 })
+    expect(body.total).toBe(3)
+    expect(body.series.reduce((a: number, b: { total: number }) => a + b.total, 0)).toBe(3)
+    // The five small facets in one grouped count, not one query each.
+    expect(loki.queries.some((q) => q.includes('sum by (event, category, result, site, actor_type)') && q.includes('count_over_time'))).toBe(true)
+  })
+
+  it('facets and events take actor_type (repeatable) — how unauthenticated noise is hidden', async () => {
+    const res = await get(`/api/audit/events?${week}&actor_type=user&actor_type=service&actor_type=system`)
+    expect(res.statusCode).toBe(200)
+    expect(loki.queries[0]).toContain('| actor_type=~"user|service|system"')
+    expect(res.json().events.every((e: { actor: { type: string } }) => e.actor.type !== 'anonymous')).toBe(true)
+    expect((await get(`/api/audit/events?${week}&actor_type=robot`)).statusCode).toBe(400)
   })
 
   it('summary: window label is a string, with prev and series', async () => {

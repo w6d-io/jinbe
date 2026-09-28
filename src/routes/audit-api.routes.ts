@@ -10,6 +10,7 @@ import {
 import { orUnavailable, outOfScope, parse, perUserRate, recordPluginRoutes, scopeOf } from '../audit/query/http.js'
 import { auditWorkflowRoutes } from './audit-workflow.routes.js'
 import { auditTailRoute } from '../audit/query/tail.js'
+import { gatewayAccessRoute } from '../audit/gateway/routes.js'
 
 /**
  * /api/audit/* — the audit trail read from Loki (audit-tab.md §4.4, AUD-9).
@@ -144,5 +145,6 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
   })
 
   await fastify.register(auditTailRoute)
+  await fastify.register(gatewayAccessRoute)
   await fastify.register(auditWorkflowRoutes)
 }

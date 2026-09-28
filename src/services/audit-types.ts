@@ -25,6 +25,8 @@ export interface AuditActor {
   ip?:       string | null
   ua?:       string | null    // User-Agent (truncated)
   sessionId?: string | null
+  /** The kind, when the caller knows it (a machine client); audit/v1 derives it otherwise. */
+  type?:     'user' | 'service' | 'system' | 'anonymous'
 }
 
 /**

@@ -2,7 +2,7 @@ import { env } from '../../config/env.js'
 import { auditEventV1Schema, type AuditEventV1 } from '../v1/schema.js'
 import { GENESIS, verifyChain } from '../v1/chain.js'
 import { auditQuery, countBy, type AuditFilter } from './logql.js'
-import { lokiClient, msToNs, MAX_ENTRIES } from './loki.js'
+import { lokiClient, msToNs, MAX_ENTRIES, LokiUnavailableError } from './loki.js'
 import { DAY_MS, encodeCursor, type Cursor } from './params.js'
 
 /**
@@ -34,6 +34,7 @@ export function matches(e: AuditEventV1, f: AuditFilter, line: string): boolean 
   if (f.orgs && !f.orgs.includes(e.org_id ?? '')) return false
   if (f.subject && e.actor?.id !== f.subject && e.target?.id !== f.subject) return false
   if (f.actor && e.actor?.id !== f.actor) return false
+  if (f.actorTypes?.length && !f.actorTypes.includes(e.actor?.type)) return false
   if (f.target && e.target?.id !== f.target) return false
   if (f.site && e.site !== f.site) return false
   if (f.events?.length && !f.events.some((k) => (k.endsWith('.*') ? e.event.startsWith(k.slice(0, -1)) : e.event === k))) return false
@@ -93,8 +94,13 @@ export async function readPage(f: AuditFilter, fromMs: number, toMs: number, lim
 // ─── Facets and summary ─────────────────────────────────────────────────────
 
 export type Count = { key: string; count: number }
+export type Bucket = { t: string; total: number; failed: number; denied: number }
 
-const FACETS = { event: 'event', category: 'category', result: 'result', site: 'site', actor: 'actor_id' } as const
+const FACETS = { event: 'event', category: 'category', result: 'result', site: 'site', actor_type: 'actor_type', actor: 'actor_id' } as const
+type FacetName = keyof typeof FACETS
+// Every facet but the actor id comes out of ONE grouped query: each is a function of few values, so
+// the combinations stay far under Loki's series limit. The actor id is the one open-ended field.
+const GROUPED = ['event', 'category', 'result', 'site', 'actor_type'] as const
 const TOP = 20
 
 function label(metric: Record<string, string>, field: string): string {
@@ -102,72 +108,181 @@ function label(metric: Record<string, string>, field: string): string {
 }
 
 function counts(samples: Array<{ metric: Record<string, string>; value: number }>, field: string): Count[] {
-  return samples
-    .map((s) => ({ key: label(s.metric, field), count: s.value }))
-    .filter((c) => c.key !== '')
-    .sort((a, b) => b.count - a.count)
+  const by = new Map<string, number>()
+  for (const s of samples) {
+    const key = label(s.metric, field)
+    if (key !== '') by.set(key, (by.get(key) ?? 0) + s.value)
+  }
+  return [...by.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count)
 }
 
-export async function facets(f: AuditFilter, fromMs: number, toMs: number): Promise<{ facets: Record<keyof typeof FACETS, Count[]>; total: number; truncated: boolean }> {
+/** Histogram widths, smallest first: the first that draws the range in at most 60 bars is used. */
+const STEPS_S = [60, 300, 900, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86_400]
+/** The widest step a count is ASKED at; wider bars are sums of hourly points (see countsOver). */
+const QUERY_STEP_MAX_S = 3600
+
+export function histogramStep(rangeS: number): number {
+  return STEPS_S.find((s) => rangeS / s <= 60) ?? STEPS_S[STEPS_S.length - 1]
+}
+
+type Sample = { metric: Record<string, string>; value: number }
+/** Counts per group over the window, and the same counts per step (keyed by the step's END, in s). */
+interface Windowed { total: Sample[]; points: Map<number, Sample[]>; stepS: number }
+
+const metricKey = (m: Record<string, string>) => JSON.stringify(Object.entries(m).sort(([a], [b]) => a.localeCompare(b)))
+
+function add(into: Map<string, Sample>, metric: Record<string, string>, value: number) {
+  const k = metricKey(metric)
+  const cur = into.get(k)
+  if (cur) cur.value += value
+  else into.set(k, { metric, value })
+}
+
+/**
+ * `sum by (<by>) (count_over_time(<query>))` over (from, to], whole and per step, asked the way
+ * Loki's results cache can keep it.
+ *
+ * An instant query over seven days re-reads seven days of lines every time (the cache does not keep
+ * those), and the audit selector has to read every jinbe line to find the few audit ones. A RANGE
+ * query at a fixed step is cached per interval: a reload re-reads only the newest step. So the window
+ * is cut in three: the whole steps in the middle as one range query (start and end on step boundaries,
+ * which is also what Loki aligns to), and the two partial steps at the edges as instant queries over
+ * less than a step each — cheap, and exact, so the totals match an instant query over the window.
+ */
+export async function countsOver(query: string, by: string, fromMs: number, toMs: number, displayStepS: number): Promise<Windowed> {
+  const stepS = Math.min(displayStepS, QUERY_STEP_MAX_S)
+  const fromS = Math.floor(fromMs / 1000)
+  const toS = Math.ceil(toMs / 1000)
+  const a = Math.ceil(fromS / stepS) * stepS
+  const b = Math.floor(toS / stepS) * stepS
+  const expr = (rangeS: number) => `sum by (${by}) (count_over_time(${query} [${Math.max(1, rangeS)}s]))`
+  const client = lokiClient()
+  const points = new Map<number, Sample[]>()
+  const total = new Map<string, Sample>()
+  const put = (t: number, samples: Sample[]) => {
+    points.set(t, [...(points.get(t) ?? []), ...samples])
+    for (const x of samples) add(total, x.metric, x.value)
+  }
+  if (b <= a) {
+    // Inside one step: nothing whole to cache.
+    put(Math.ceil(toS / stepS) * stepS, await client.instant(expr(toS - fromS), toS))
+  } else {
+    const [middle, head, tail] = await Promise.all([
+      client.range(expr(stepS), a + stepS, b, stepS),
+      a > fromS ? client.instant(expr(a - fromS), a) : Promise.resolve([]),
+      toS > b ? client.instant(expr(toS - b), toS) : Promise.resolve([]),
+    ])
+    put(a, head)
+    for (const series of middle) for (const [t, v] of series.values) put(t, [{ metric: series.metric, value: v }])
+    put(b + stepS, tail)
+  }
+  return { total: [...total.values()], points, stepS }
+}
+
+/** Buckets of `displayStepS` over the window from per-step result counts; `t` is a bucket's START. */
+export function toBuckets(w: Windowed, fromMs: number, toMs: number, displayStepS: number): Bucket[] {
+  const first = Math.floor(fromMs / 1000 / displayStepS) * displayStepS
+  const last = Math.ceil(toMs / 1000 / displayStepS) * displayStepS
+  const buckets = new Map<number, Bucket>()
+  for (let t = first; t < last; t += displayStepS) buckets.set(t, { t: new Date(t * 1000).toISOString(), total: 0, failed: 0, denied: 0 })
+  for (const [end, samples] of w.points) {
+    // A point counts (end - step, end]: it belongs to the bucket its last second falls in.
+    const start = Math.floor((end - 1) / displayStepS) * displayStepS
+    const bucket = buckets.get(start)
+    if (!bucket) continue
+    for (const x of samples) {
+      const result = label(x.metric, 'result')
+      bucket.total += x.value
+      if (result !== 'success') bucket.failed += x.value
+      if (result === 'denied') bucket.denied += x.value
+    }
+  }
+  return [...buckets.values()]
+}
+
+/** Loki refused the grouped query (too many series): the facets are asked one by one instead. */
+const tooWide = (err: unknown) => err instanceof LokiUnavailableError && err.status === 400
+
+type GroupedName = (typeof GROUPED)[number]
+
+async function perFacet(query: string, rangeS: number, atS: number): Promise<Record<GroupedName, Count[]>> {
+  const client = lokiClient()
+  const each = await Promise.all(GROUPED.map((g) => client.instant(countBy(query, g, rangeS, TOP + 1), atS)))
+  return Object.fromEntries(GROUPED.map((g, i) => [g, counts(each[i], g)])) as Record<GroupedName, Count[]>
+}
+
+/**
+ * Facet counts, the total and the histogram for the whole range. The page used to ask twelve
+ * instant queries for this (six facets, six for the summary it drew the histogram from), each
+ * re-reading the whole window; Loki's five-way querier ran them mostly one after the other.
+ * Now: the five small facets and the histogram from ONE grouped count, the actor ids from another,
+ * both cacheable (countsOver).
+ */
+export async function facets(f: AuditFilter, fromMs: number, toMs: number): Promise<{ facets: Record<FacetName, Count[]>; total: number; truncated: boolean; series: Bucket[] }> {
   const query = auditQuery(f, env.LOKI_NAMESPACE)
   const rangeS = (toMs - fromMs) / 1000
-  const client = lokiClient()
-  const names = Object.keys(FACETS) as Array<keyof typeof FACETS>
-  const [totalSamples, ...perFacet] = await Promise.all([
-    client.instant(countBy(query, null, rangeS), toMs / 1000),
-    // One more than shown: that is how "there were more" is known without a second query.
-    ...names.map((n) => client.instant(countBy(query, FACETS[n], rangeS, TOP + 1), toMs / 1000)),
+  const display = histogramStep(rangeS)
+  const [grouped, actors] = await Promise.all([
+    countsOver(query, GROUPED.join(', '), fromMs, toMs, display).catch((err) => (tooWide(err) ? null : Promise.reject(err))),
+    countsOver(query, FACETS.actor, fromMs, toMs, display).catch((err) => (tooWide(err) ? null : Promise.reject(err))),
   ])
+  const all = {} as Record<FacetName, Count[]>
+  if (grouped) for (const g of GROUPED) all[g] = counts(grouped.total, g)
+  else Object.assign(all, await perFacet(query, rangeS, toMs / 1000))
+  all.actor = counts(actors ? actors.total : await lokiClient().instant(countBy(query, FACETS.actor, rangeS, TOP + 1), toMs / 1000), FACETS.actor)
   let truncated = false
-  const out = {} as Record<keyof typeof FACETS, Count[]>
-  names.forEach((n, i) => {
-    const list = counts(perFacet[i], FACETS[n])
-    if (list.length > TOP) truncated = true
-    out[n] = list.slice(0, TOP)
-  })
-  return { facets: out, total: totalSamples.reduce((a, s) => a + s.value, 0), truncated }
+  const out = {} as Record<FacetName, Count[]>
+  for (const n of Object.keys(FACETS) as FacetName[]) {
+    if (all[n].length > TOP) truncated = true
+    out[n] = all[n].slice(0, TOP)
+  }
+  const series = grouped ? toBuckets(grouped, fromMs, toMs, display) : await histogram(query, fromMs, toMs)
+  return { facets: out, total: all.result.reduce((a, c) => a + c.count, 0), truncated, series }
+}
+
+/** Events per bucket over [from, to], split by result. */
+export async function histogram(query: string, fromMs: number, toMs: number): Promise<Bucket[]> {
+  const display = histogramStep((toMs - fromMs) / 1000)
+  return toBuckets(await countsOver(query, 'result', fromMs, toMs, display), fromMs, toMs, display)
 }
 
 const sumBy = (list: Count[]) => Object.fromEntries(list.map((c) => [c.key, c.count]))
 const failedOf = (byResult: Record<string, number>) => Object.entries(byResult).filter(([k]) => k !== 'success').reduce((a, [, v]) => a + v, 0)
 
+/** The top `n` of one field over the window: cached like the rest, an instant top-k if it has too many values. */
+async function topOver(query: string, field: string, fromMs: number, toMs: number, display: number, n: number): Promise<Count[]> {
+  try {
+    return counts((await countsOver(query, field, fromMs, toMs, display)).total, field).slice(0, n)
+  } catch (err) {
+    if (!tooWide(err)) throw err
+    return counts(await lokiClient().instant(countBy(query, field, (toMs - fromMs) / 1000, n), toMs / 1000), field).slice(0, n)
+  }
+}
+
 export async function summary(f: AuditFilter, window: string, wMs: number, now = Date.now()) {
   const query = auditQuery(f, env.LOKI_NAMESPACE)
   const denied = auditQuery({ ...f, result: 'denied' }, env.LOKI_NAMESPACE)
-  const client = lokiClient()
-  const wS = wMs / 1000
-  const nowS = now / 1000
-  const stepS = Math.max(60, Math.floor(wS / 24))
-  const [byCategory, byResult, prevByResult, series, topDenied, topActors] = await Promise.all([
-    client.instant(countBy(query, 'category', wS), nowS),
-    client.instant(countBy(query, 'result', wS), nowS),
-    client.instant(countBy(query, 'result', wS), nowS - wS),
-    client.range(`sum by (result) (count_over_time(${query} [${stepS}s]))`, nowS - wS, nowS, stepS),
-    client.instant(countBy(denied, 'target_id', wS, 10), nowS),
-    client.instant(countBy(query, 'actor_id', wS, 10), nowS),
+  const display = histogramStep(wMs / 1000)
+  const from = now - wMs
+  const [both, prev, topDenied, topActors] = await Promise.all([
+    countsOver(query, 'category, result', from, now, display),
+    // The previous window is all past: once asked, Loki serves it from its cache.
+    countsOver(query, 'result', from - wMs, from, display),
+    topOver(denied, 'target_id', from, now, display, 10),
+    topOver(query, 'actor_id', from, now, display, 10),
   ])
-  const results = sumBy(counts(byResult, 'result'))
-  const prevResults = sumBy(counts(prevByResult, 'result'))
-  const buckets = new Map<number, { total: number; failed: number }>()
-  for (const s of series) {
-    const failed = label(s.metric, 'result') !== 'success'
-    for (const [t, v] of s.values) {
-      const b = buckets.get(t) ?? { total: 0, failed: 0 }
-      b.total += v
-      if (failed) b.failed += v
-      buckets.set(t, b)
-    }
-  }
+  const results = sumBy(counts(both.total, 'result'))
+  const prevResults = sumBy(counts(prev.total, 'result'))
   const total = Object.values(results).reduce((a, v) => a + v, 0)
   return {
     window,
     total,
     prev: { total: Object.values(prevResults).reduce((a, v) => a + v, 0), failed: failedOf(prevResults), denied: prevResults.denied ?? 0 },
-    byCategory: sumBy(counts(byCategory, 'category')),
+    byCategory: sumBy(counts(both.total, 'category')),
     byResult: results,
-    series: [...buckets.entries()].sort(([a], [b]) => a - b).map(([t, b]) => ({ t: new Date(t * 1000).toISOString(), ...b })),
-    topDenied: counts(topDenied, 'target_id').slice(0, 10),
-    topActors: counts(topActors, 'actor_id').slice(0, 10).map((c) => ({ actorId: c.key, count: c.count })),
+    series: toBuckets(both, from, now, display).map(({ t, total: n, failed }) => ({ t, total: n, failed })),
+    topDenied,
+    topActors: topActors.map((c) => ({ actorId: c.key, count: c.count })),
   }
 }
 

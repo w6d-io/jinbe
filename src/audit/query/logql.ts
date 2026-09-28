@@ -39,6 +39,8 @@ export interface AuditFilter {
   /** undefined = every org (platform reader). An array = exactly these; empty is refused. */
   orgs?: string[]
   actor?: string
+  /** Only these kinds of actor (user / service / system / anonymous) — how unauthenticated noise is hidden. */
+  actorTypes?: string[]
   target?: string
   /** The user as actor OR target (timeline, own logins). */
   subject?: string
@@ -96,6 +98,7 @@ export function auditPipeline(f: AuditFilter, stream = auditStream()): string {
   if (f.orgs) stages.push(f.orgs.length === 1 ? `| org_id=${quote(f.orgs[0])}` : `| org_id=~${regexAlternation(f.orgs)}`)
   if (f.subject) stages.push(`| actor_id=${quote(f.subject)} or target_id=${quote(f.subject)}`)
   if (f.actor) stages.push(`| actor_id=${quote(f.actor)}`)
+  if (f.actorTypes?.length) stages.push(f.actorTypes.length === 1 ? `| actor_type=${quote(f.actorTypes[0])}` : `| actor_type=~${regexAlternation(f.actorTypes)}`)
   if (f.target) stages.push(`| target_id=${quote(f.target)}`)
   if (f.site) stages.push(`| site=${quote(f.site)}`)
   if (f.events?.length) stages.push(`| ${eventFilter(f.events)}`)

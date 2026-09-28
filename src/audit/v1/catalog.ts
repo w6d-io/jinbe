@@ -73,6 +73,11 @@ export const AUDIT_EVENTS = {
   'site.logo_changed': ['authz', 'update'],
   'site.logo_removed': ['authz', 'delete'],
   'site.migration_changed': ['authz', 'apply', 'warn'],
+  'site.address_changed': ['authz', 'update', 'warn'],
+  // The sync loop rewrote a Site CR that no longer matched the applied intent (sites/sync.ts).
+  'site.synced': ['authz', 'restore'],
+  'site.permissions_published': ['authz', 'update'],
+  'site.permissions_removed': ['authz', 'delete'],
 
   // Zones: a wildcard domain the platform serves (one Ingress, maybe a certificate) — what is exposed.
   'zone.created': ['config', 'create', 'warn'],
@@ -125,6 +130,9 @@ export const AUDIT_EVENTS = {
   'access.denied': ['access', 'access', 'warn'],
   'access.decision': ['access', 'access'],
   'access.checked': ['access', 'read'],
+  // Gateway decisions, one event per subject and host per hour (audit/gateway/rollup.ts): what was
+  // allowed, not only what was refused, without one line per request.
+  'access.summary': ['access', 'access'],
 
   'audit.exported': ['audit', 'export', 'warn'],
   'audit.queried': ['audit', 'read'],
