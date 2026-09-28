@@ -20,10 +20,10 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapUrls } from './types.js
  *
  * With the sign-in gate on (`signInGate`), kratos-public keeps every method but POST, and POSTs are
  * split between two more rules on the auth domain:
- *   - selfservice-gate        — POST /self-service/{login,registration,recovery,verification}: through
- *                               jinbe's gate (sign-in-protection/gate.ts), which passes it on to Kratos
- *   - selfservice-kratos-post — the other POSTs Kratos serves (settings, social callbacks, FedCM,
- *                               sessions): straight to Kratos. Any other POST matches no rule (404).
+ *   - selfservice-gate        — POST /self-service/{login,registration,recovery,verification,settings}:
+ *                               through jinbe's gate (sign-in-protection/gate.ts), which passes it on to Kratos
+ *   - selfservice-kratos-post — the other POSTs Kratos serves (social callbacks, FedCM, sessions):
+ *                               straight to Kratos. Any other POST matches no rule (404).
  */
 
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
@@ -112,7 +112,7 @@ export function buildKratosPublicRule(authDomain: string, kratosPublicUrl: strin
 }
 
 /**
- * The submits that can make Kratos send an email, through jinbe's gate. Oathkeeper appends the
+ * The submits that can make Kratos look an address up or send an email, through jinbe's gate. Oathkeeper appends the
  * original path to the upstream's, so jinbe receives /api/public/sign-in-protection/gate/self-service/<flow>.
  * Oathkeeper matches the path without the query, so `?flow=` never changes which rule applies.
  */
@@ -121,7 +121,7 @@ export function buildSelfserviceGateRule(authDomain: string, jinbeInternalUrl: s
     id: 'selfservice-gate',
     upstream: { url: `${jinbeInternalUrl.replace(/\/+$/, '')}/api/public/sign-in-protection/gate`, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<self-service/(login|registration|recovery|verification)(.*)>`,
+      url: `http<(s?)>://${authDomain}/<self-service/(login|registration|recovery|verification|settings)(.*)>`,
       methods: ['POST'],
     },
     authenticators: [{ handler: 'noop' }],
@@ -130,13 +130,13 @@ export function buildSelfserviceGateRule(authDomain: string, jinbeInternalUrl: s
   }
 }
 
-/** Every other POST Kratos public serves, straight to it (settings needs a session Kratos checks itself). */
+/** Every other POST Kratos public serves, straight to it. */
 export function buildKratosPublicPostRule(authDomain: string, kratosPublicUrl: string): OathkeeperRule {
   return {
     id: 'selfservice-kratos-post',
     upstream: { url: kratosPublicUrl, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<(\\.well-known|sessions|schemas|self-service/(settings|methods|fed-cm))(.*)>`,
+      url: `http<(s?)>://${authDomain}/<(\\.well-known|sessions|schemas|self-service/(methods|fed-cm))(.*)>`,
       methods: ['POST'],
     },
     authenticators: [{ handler: 'noop' }],

@@ -42,7 +42,7 @@ vi.mock('../../services/redis-client.service.js', () => {
 })
 
 import { signInGateRoutes } from '../../sign-in-protection/gate-routes.js'
-import { classifySubmit, gateSubmit, gatewayClientIp, parseSubmitBody } from '../../sign-in-protection/gate.js'
+import { classifySubmit, gateSubmit, gatewayClientIp, parseSubmitBody, type GateFlow } from '../../sign-in-protection/gate.js'
 import { guardFlow } from '../../sign-in-protection/guard.js'
 import { SIGN_IN_PROTECTION_KEY, defaultSignInProtection, resetSignInProtectionCache, type CaptchaFlow } from '../../sign-in-protection/settings.js'
 import { buildBuiltInRules } from '../../bootstrap/build-rules.js'
@@ -110,45 +110,88 @@ describe('what a submit is', () => {
 })
 
 describe('gate decisions', () => {
-  const noSession = async () => false
+  const OFF = { registration: false, login: false, recovery: false, verification: false }
+  const noSession = async () => null
+  const FLOW = '6a1f2c3d-0000-4000-8000-000000000001'
   const send = (over: Partial<Parameters<typeof gateSubmit>[0]> = {}) =>
-    ({ flow: 'login' as CaptchaFlow, fields: { method: 'code', identifier: 'ann@corp.io' }, token: TOKEN, ip: '176.1.2.3', hasSession: noSession, ...over })
+    ({ flow: 'login' as GateFlow, flowId: FLOW, fields: { method: 'code', identifier: 'ann@corp.io' }, token: TOKEN, ip: '176.1.2.3', session: noSession, ...over })
+  const ok = () => siteverify({ success: true })
+  const spent = () => siteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] })
 
-  it('a flow without the bot check still gets the code limits', async () => {
-    const f = siteverify({ success: true })
+  it('unset settings with a configured provider: every flow is checked', async () => {
+    expect(await gateSubmit(send({ token: null }), ok())).toMatchObject({ allow: false, result: 'captcha_missing' })
+  })
+
+  it('a flow without the bot check still gets the code limits, and no provider call', async () => {
+    guard(OFF)
+    const f = ok()
     expect(await gateSubmit(send({ token: null }), f)).toMatchObject({ allow: true, result: 'not_guarded' })
+    expect(await gateSubmit(send({ token: null, fields: { method: 'password', identifier: 'a@b.io', password: 'x' } }), f)).toMatchObject({ allow: true, result: 'passed' })
     expect(f).not.toHaveBeenCalled()
   })
 
-  it('a guarded send needs a token the provider accepts, spent here and left verified for the hook', async () => {
-    guard({ login: true })
-    expect(await gateSubmit(send({ token: null }), siteverify({ success: true }))).toMatchObject({ allow: false, status: 403, result: 'captcha_missing' })
+  it('every submit of a checked flow needs a token — the address step, a password, a profile step — before Kratos looks anything up', async () => {
+    for (const fields of [
+      { method: 'identifier_first', identifier: 'ann@corp.io' },
+      { method: 'password', identifier: 'ann@corp.io', password: 'pw' },
+      { method: 'code', identifier: 'ann@corp.io', code: '123456' },
+      { method: 'oidc', provider: 'google' },
+    ]) expect(await gateSubmit(send({ token: null, fields }), ok())).toMatchObject({ allow: false, status: 403, result: 'captcha_missing' })
+    expect(await gateSubmit(send({ flow: 'registration', token: null, fields: { method: 'profile', traits: { email: 'a@corp.io' } } }), ok())).toMatchObject({ allow: false, result: 'captcha_missing' })
+    expect(await gateSubmit(send({ flow: 'recovery', token: null, fields: { method: 'link', email: 'a@corp.io' } }), ok())).toMatchObject({ allow: false, result: 'captcha_missing' })
     expect(await gateSubmit(send(), siteverify({ success: false, 'error-codes': ['invalid-input-response'] }))).toMatchObject({ allow: false, result: 'captcha_invalid' })
-
-    expect(await gateSubmit(send(), siteverify({ success: true }))).toMatchObject({ allow: true, result: 'allowed' })
-    // The provider would now refuse the token (timeout-or-duplicate); the hook takes the gate's word, once.
-    const spent = siteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] })
-    expect(await guardFlow({ flow: 'login', method: 'code', captchaToken: TOKEN }, spent)).toMatchObject({ allow: true, result: 'allowed' })
-    expect(spent).not.toHaveBeenCalled()
-    expect(await guardFlow({ flow: 'login', method: 'code', captchaToken: TOKEN }, spent)).toMatchObject({ allow: false, result: 'captcha_invalid' })
   })
 
-  it('a token verified for one flow is not a pass for another', async () => {
-    guard({ login: true, registration: true })
-    await gateSubmit(send(), siteverify({ success: true }))
-    const spent = siteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] })
-    expect(await guardFlow({ flow: 'registration', method: 'code', captchaToken: TOKEN, traits: { email: 'a@b.io' } }, spent)).toMatchObject({ allow: false })
+  it('a solved check sends one code; the code typed after it rides on the pass; the guard hook takes the gate’s word once', async () => {
+    expect(await gateSubmit(send(), ok())).toMatchObject({ allow: true, step: 'send', result: 'allowed' })
+    const s = spent()
+    expect(await gateSubmit(send({ fields: { method: 'code', identifier: 'ann@corp.io', code: '123456' } }), s)).toMatchObject({ allow: true, result: 'flow_pass' })
+    expect(await gateSubmit(send({ fields: { method: 'code', code: '654321' } }), s)).toMatchObject({ allow: true, result: 'flow_pass' })
+    expect(s).not.toHaveBeenCalled()
+    expect(await guardFlow({ flow: 'login', method: 'code', captchaToken: TOKEN }, s)).toMatchObject({ allow: true, result: 'allowed' })
+    expect(await guardFlow({ flow: 'login', method: 'code', captchaToken: TOKEN }, s)).toMatchObject({ allow: false, result: 'captcha_invalid' })
   })
 
-  it('a code typed or a password goes on without a token', async () => {
-    guard({ login: true })
-    expect(await gateSubmit(send({ token: null, fields: { method: 'code', identifier: 'ann@corp.io', code: '123456' } }))).toMatchObject({ allow: true, step: 'other' })
-    expect(await gateSubmit(send({ token: null, fields: { method: 'password', identifier: 'ann@corp.io', password: 'pw' } }))).toMatchObject({ allow: true, step: 'other' })
+  it('the pass never covers a second email, another address, or another flow', async () => {
+    await gateSubmit(send(), ok())
+    expect(await gateSubmit(send({ fields: { method: 'code', identifier: 'ann@corp.io', resend: 'code' } }), spent())).toMatchObject({ allow: false, result: 'captcha_invalid' })
+    expect(await gateSubmit(send({ fields: { method: 'code', identifier: 'bob@corp.io' } }), spent())).toMatchObject({ allow: false, result: 'captcha_invalid' })
+    expect(await gateSubmit(send({ fields: { method: 'code', identifier: 'bob@corp.io', code: '1' } }), spent())).toMatchObject({ allow: false })
+    expect(await gateSubmit(send({ flowId: '6a1f2c3d-0000-4000-8000-000000000002', fields: { method: 'code', code: '1' } }), spent())).toMatchObject({ allow: false })
+    const other = await gateSubmit(send({ token: 'OTHER.TOKEN', fields: { method: 'code', code: '1' } }), spent())
+    expect(other).toMatchObject({ allow: false })
   })
 
-  it('a signed-in person (second factor, refresh) needs no token', async () => {
-    guard({ login: true })
-    expect(await gateSubmit(send({ token: null, hasSession: async () => true }))).toMatchObject({ allow: true, result: 'session' })
+  it('sign-up: the details step’s solve also sends the one code for that address', async () => {
+    const reg = (fields: Record<string, unknown>) => send({ flow: 'registration', fields })
+    expect(await gateSubmit(reg({ method: 'profile', traits: { email: 'ann@corp.io', name: 'Ann' } }), ok())).toMatchObject({ allow: true, step: 'other', result: 'allowed' })
+    expect(await gateSubmit(reg({ method: 'code', traits: { email: 'ann@corp.io' } }), spent())).toMatchObject({ allow: true, step: 'send', result: 'flow_pass' })
+    expect(await gateSubmit(reg({ method: 'code', traits: { email: 'ann@corp.io' }, code: '123456' }), spent())).toMatchObject({ allow: true, result: 'flow_pass' })
+    expect(await gateSubmit(reg({ method: 'code', traits: { email: 'ann@corp.io' }, resend: 'code' }), spent())).toMatchObject({ allow: false })
+  })
+
+  it('a pass has a few uses', async () => {
+    await gateSubmit(send(), ok())
+    const results = []
+    for (let i = 0; i < 10; i++) results.push((await gateSubmit(send({ fields: { method: 'code', code: String(i) } }), spent())).allow)
+    expect(results.filter(Boolean)).toHaveLength(8)
+  })
+
+  it('a signed-in person signing in again (second factor, refresh) needs no token; other flows still do', async () => {
+    const session = async () => ({ email: 'ann@corp.io' })
+    expect(await gateSubmit(send({ token: null, session }))).toMatchObject({ allow: true, result: 'session' })
+    expect(await gateSubmit(send({ flow: 'recovery', token: null, session, fields: { method: 'code', email: 'x@corp.io' } }), ok())).toMatchObject({ allow: false })
+  })
+
+  it('settings: an email change is checked (verification toggle) and limited; any other save is not', async () => {
+    const session = async () => ({ email: 'ann@corp.io' })
+    const set = (fields: Record<string, unknown>, token: string | null = null) => send({ flow: 'settings', token, session, fields })
+    expect(await gateSubmit(set({ method: 'profile', traits: { email: 'ann@corp.io', name: 'A' } }))).toMatchObject({ allow: true, step: 'other', result: 'passed' })
+    expect(await gateSubmit(set({ method: 'totp', totp_code: '1' }))).toMatchObject({ allow: true })
+    expect(await gateSubmit(set({ method: 'profile', traits: { email: 'victim@gmail.com' } }))).toMatchObject({ allow: false, result: 'captcha_missing' })
+    expect(await gateSubmit(set({ method: 'profile', traits: { email: 'victim@gmail.com' } }, TOKEN), ok())).toMatchObject({ allow: true, step: 'send', result: 'allowed' })
+    guard({ ...OFF, login: true })
+    expect(await gateSubmit(set({ method: 'profile', traits: { email: 'victim2@gmail.com' } }))).toMatchObject({ allow: true, result: 'not_guarded' })
   })
 
   it('provider down: closed refuses, open lets it through', async () => {
@@ -159,7 +202,17 @@ describe('gate decisions', () => {
     expect(await gateSubmit(rec, siteverify('down'))).toMatchObject({ allow: true, result: 'fail_open' })
   })
 
+  it('a code sign-up the policy refuses is refused before any code is sent', async () => {
+    const d = defaultSignInProtection()
+    h.config[SIGN_IN_PROTECTION_KEY] = JSON.stringify({ ...d, captcha: { ...d.captcha, flows: OFF }, registration: { ...d.registration, mode: 'allowlist', allowDomains: ['corp.io'] } })
+    resetSignInProtectionCache()
+    const reg = (email: string) => send({ flow: 'registration', fields: { method: 'code', traits: { email } } })
+    expect(await gateSubmit(reg('victim@gmail.com'))).toMatchObject({ allow: false, status: 403, result: 'registration_not_allowed', message: expect.stringMatching(/@corp\.io/) })
+    expect(await gateSubmit(reg('ann@corp.io'))).toMatchObject({ allow: true })
+  })
+
   it('5 codes per address and 20 per IP per window, with the wait', async () => {
+    guard(OFF)
     h.env.SIGN_IN_GATE_CODES_PER_ADDRESS = 5
     h.env.SIGN_IN_GATE_CODES_PER_IP = 20
     for (let i = 0; i < 5; i++) expect((await gateSubmit(send())).allow).toBe(true)
@@ -174,26 +227,16 @@ describe('gate decisions', () => {
     expect((await gateSubmit(send({ ip: '176.9.9.9', fields: { method: 'code', identifier: 'other@corp.io' } }))).allow).toBe(true)
   })
 
-  it('a code sign-up the policy refuses is refused before any code is sent', async () => {
-    const d = defaultSignInProtection()
-    h.config[SIGN_IN_PROTECTION_KEY] = JSON.stringify({ ...d, registration: { ...d.registration, mode: 'allowlist', allowDomains: ['corp.io'] } })
-    resetSignInProtectionCache()
-    const reg = (email: string) => send({ flow: 'registration', fields: { method: 'code', traits: { email } } })
-    expect(await gateSubmit(reg('victim@gmail.com'))).toMatchObject({ allow: false, status: 403, result: 'registration_not_allowed', message: expect.stringMatching(/@corp\.io/) })
-    expect(await gateSubmit(reg('ann@corp.io'))).toMatchObject({ allow: true })
-  })
-
   it('a refused bot check does not use up the address budget', async () => {
-    guard({ login: true })
     for (let i = 0; i < 10; i++) await gateSubmit(send({ token: null }))
-    expect(await gateSubmit(send(), siteverify({ success: true }))).toMatchObject({ allow: true })
+    expect(await gateSubmit(send(), ok())).toMatchObject({ allow: true })
   })
 
-  it('Redis down: the limits are skipped, the bot check still applies', async () => {
-    guard({ login: true })
+  it('Redis down: no pass and no limits, the bot check still applies to every submit', async () => {
     h.redisDown = true
     expect(await gateSubmit(send({ token: null }))).toMatchObject({ allow: false, result: 'captcha_missing' })
-    for (let i = 0; i < 8; i++) expect((await gateSubmit(send(), siteverify({ success: true }))).allow).toBe(true)
+    for (let i = 0; i < 8; i++) expect((await gateSubmit(send(), ok())).allow).toBe(true)
+    expect(await gateSubmit(send({ fields: { method: 'code', code: '1' } }), spent())).toMatchObject({ allow: false })
   })
 })
 
@@ -259,6 +302,7 @@ describe('gate route (proxy to Kratos)', () => {
   })
 
   it('over the limit: 429 with Retry-After', async () => {
+    guard({ registration: false, login: false, recovery: false, verification: false })
     h.env.SIGN_IN_GATE_CODES_PER_ADDRESS = 1
     expect((await post('recovery', { method: 'code', email: 'c@x.io' })).statusCode).toBe(400)
     const res = await post('recovery', { method: 'code', email: 'c@x.io' })
@@ -277,11 +321,12 @@ describe('gate route (proxy to Kratos)', () => {
     })
     expect(res.statusCode).toBe(400)
     expect(seen[0]).toMatchObject({ url: '/self-service/verification?flow=v', body: 'method=link&email=d%40x.io' })
-    expect((await post('settings', { method: 'profile' })).statusCode).toBe(404)
+    expect((await post('sessions', { method: 'profile' })).statusCode).toBe(404)
     expect(seen).toHaveLength(1)
   })
 
   it('Kratos unreachable: 502, not a hang', async () => {
+    guard({ registration: false, login: false, recovery: false, verification: false })
     const down = Fastify()
     await down.register(signInGateRoutes, { prefix: '/g', kratosUrl: 'http://127.0.0.1:1' })
     const res = await down.inject({ method: 'POST', url: '/g/self-service/login?flow=x', headers: { 'content-type': 'application/json' }, payload: '{"method":"password"}' })
@@ -309,11 +354,11 @@ describe('bootstrap rules with the gate', () => {
     const rules = buildBuiltInRules({ domains, urls, signInGate: true })
     const gate = rules.find((r) => r.id === 'selfservice-gate')!
     expect(gate.upstream).toEqual({ url: 'http://jinbe:8080/api/public/sign-in-protection/gate', preserve_host: true })
-    for (const flow of ['login', 'registration', 'recovery', 'verification']) {
+    for (const flow of ['login', 'registration', 'recovery', 'verification', 'settings']) {
       expect(matching(rules, 'POST', `https://auth.example.com/self-service/${flow}`)).toEqual(['selfservice-gate'])
       expect(matching(rules, 'GET', `https://auth.example.com/self-service/${flow}/browser`)).toEqual(['kratos-public'])
     }
-    for (const path of ['self-service/settings', 'self-service/methods/oidc/callback/apple', 'self-service/fed-cm/token', 'sessions/token-exchange']) {
+    for (const path of ['self-service/methods/oidc/callback/apple', 'self-service/fed-cm/token', 'sessions/token-exchange']) {
       expect(matching(rules, 'POST', `https://auth.example.com/${path}`)).toEqual(['selfservice-kratos-post'])
     }
     expect(matching(rules, 'OPTIONS', 'https://auth.example.com/self-service/login')).toEqual(['kratos-public'])

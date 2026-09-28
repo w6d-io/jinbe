@@ -1,6 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { createHash } from 'crypto'
-import { getRedisClient } from '../services/redis-client.service.js'
 import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -62,35 +60,6 @@ const providerSchema = {
   },
 }
 
-/**
- * A recovery or verification flow POSTs to the same URL to send the email and to submit the code, and
- * the gateway cannot tell them apart. So a token that passed once becomes a short pass for that flow:
- * a few more gateway checks within ten minutes are answered from Redis, without the provider (which
- * would refuse a second use). Redis down: every check asks the provider.
- */
-export const GATEWAY_PASS_TTL_S = 600
-export const GATEWAY_PASS_USES = 5
-const passKey = (token: string) => `sip:pass:${createHash('sha256').update(token).digest('hex')}`
-
-async function gatewayPass(token: string): Promise<'valid' | 'spent' | 'unknown'> {
-  try {
-    const redis = getRedisClient()
-    const key = passKey(token)
-    if (!(await redis.exists(key))) return 'unknown'
-    return (await redis.incr(key)) <= GATEWAY_PASS_USES ? 'valid' : 'spent'
-  } catch {
-    return 'unknown'
-  }
-}
-
-async function rememberGatewayPass(token: string): Promise<void> {
-  try {
-    await getRedisClient().set(passKey(token), '1', 'EX', GATEWAY_PASS_TTL_S)
-  } catch {
-    // Without the pass the next check of this flow asks the provider again.
-  }
-}
-
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
 
 /**
@@ -136,9 +105,8 @@ export async function signInGuardHook(request: FastifyRequest, reply: FastifyRep
 }
 
 /**
- * Public, for login-ui and the gateway:
- *   GET  /api/public/sign-in-protection        which flows show the widget, the site key, the sign-up mode
- *   POST /api/public/sign-in-protection/check  the gateway's bot check for flows Kratos cannot interrupt
+ * Public, for login-ui: GET /api/public/sign-in-protection — which flows show the widget, the site key,
+ * the sign-up mode. (The gateway's side is the sign-in gate, gate-routes.ts.)
  */
 export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
@@ -173,36 +141,6 @@ export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
       },
       protectedTraits: protectedTraits(),
     }
-  })
-
-  // Called by an Oathkeeper remote_json authorizer on POST /self-service/{recovery,verification}
-  // (charts), with the token login-ui put in the `stl_kcap` cookie. 200 lets the request through,
-  // 403 stops it. Unauthenticated on purpose: it only says whether a one-time token is good, and
-  // spends it doing so.
-  fastify.post('/check', {
-    config: { rateLimit: { max: 1200, timeWindow: '1 minute' } },
-    schema: {
-      description: 'Gateway bot check for recovery and verification submits: 200 when the flow does not ask for it or the token passes, 403 otherwise.',
-      tags: ['sign-in-protection'],
-      body: {
-        type: 'object',
-        required: ['flow'],
-        properties: { flow: { type: 'string', enum: ['recovery', 'verification'] }, token: { type: 'string', maxLength: 4096 }, ip: { type: 'string', maxLength: 64 } },
-      },
-    },
-  }, async (request, reply) => {
-    const b = request.body as { flow: 'recovery' | 'verification'; token?: string; ip?: string }
-    if (b.token) {
-      const pass = await gatewayPass(b.token)
-      if (pass === 'valid') return { ok: true }
-      if (pass === 'spent') return reply.status(403).send({ error: 'captcha_invalid', message: 'The bot check has expired. Please complete it again.' })
-    }
-    const decision = await guardFlow({ flow: b.flow, captchaToken: b.token || null, ip: b.ip || null })
-    if (decision.allow) {
-      if (b.token && decision.result === 'allowed') await rememberGatewayPass(b.token)
-      return { ok: true }
-    }
-    return reply.status(403).send({ error: decision.result, message: decision.message.text })
   })
 }
 

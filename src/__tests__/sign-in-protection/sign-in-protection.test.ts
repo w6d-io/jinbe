@@ -106,11 +106,19 @@ describe('settings', () => {
       registration: { mode: 'allowlist', allowEmails: [' Bob@Example.com ', 'bob@example.com'], allowDomains: ['Corp.IO', '*.corp.io'] },
     })
     expect(ok.ok && ok.value.registration).toMatchObject({ allowEmails: ['bob@example.com'], allowDomains: ['*.corp.io', 'corp.io'] })
-    expect(ok.ok && ok.value.captcha.flows).toEqual({ registration: true, login: false, recovery: false, verification: false })
+    // A flow left out follows the default: on, since a provider is configured here.
+    expect(ok.ok && ok.value.captcha.flows).toEqual({ registration: true, login: true, recovery: true, verification: true })
 
     const bad = validateSignInProtection({ captcha: { failMode: 'maybe' }, registration: { mode: 'invite', allowEmails: ['nope'], denyDomains: ['http://x.io'] } })
     expect(bad.ok).toBe(false)
     expect(!bad.ok && bad.problems.map((p) => p.field).sort()).toEqual(['captcha.failMode', 'registration.allowEmails', 'registration.denyDomains', 'registration.mode'])
+  })
+
+  it('unset: the bot check is on for every flow once a provider is configured, off without one', () => {
+    expect(parseSignInProtection(undefined).captcha.flows).toEqual({ registration: true, login: true, recovery: true, verification: true })
+    expect(parseSignInProtection(JSON.stringify({ captcha: { flows: { login: false } } })).captcha.flows.login).toBe(false)
+    h.env.CAPTCHA_SECRET_KEY = undefined
+    expect(parseSignInProtection(undefined).captcha.flows).toEqual({ registration: false, login: false, recovery: false, verification: false })
   })
 
   it('an allow-list needs at least one entry to be saved, but an empty one read back lets nobody in', () => {
@@ -211,6 +219,7 @@ describe('provider (Turnstile)', () => {
 
 describe('guard decisions', () => {
   it('nothing switched on: every flow goes on, registration included', async () => {
+    store({ captcha: { flows: { registration: false, login: false, recovery: false, verification: false } } })
     const never = vi.fn() as unknown as typeof fetch
     expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS }, never)).toEqual({ allow: true, result: 'allowed' })
     expect(await guardFlow({ flow: 'login', method: 'password' }, never)).toEqual({ allow: true, result: 'not_guarded' })
@@ -300,7 +309,6 @@ describe('routes', () => {
   it('the hook paths answer without a session, and the two-step gate exempts them', () => {
     expect(isPublicRoute('/api/webhooks/kratos/guard')).toBe(true)
     expect(isPublicRoute('/api/public/sign-in-protection')).toBe(true)
-    expect(isPublicRoute('/api/public/sign-in-protection/check')).toBe(true)
     expect(isPublicRoute('/api/admin/settings/sign-in-protection')).toBe(false)
     expect(secondFactorScope('/api/webhooks/kratos/guard')).toMatchObject({ gated: false })
     expect(secondFactorScope('/api/admin/settings/sign-in-protection')).toEqual({ gated: true })
@@ -313,8 +321,9 @@ describe('routes', () => {
   })
 
   it('hook: allowed → 200 {}; refused → 400 in the shape Kratos turns into a form message', async () => {
+    store({ captcha: { flows: { registration: false, login: false, recovery: false, verification: false } } })
     expect((await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'a@b.io', traits: { email: 'a@b.io' } })).json()).toEqual({})
-    store({ registration: { mode: 'allowlist', allowDomains: ['corp.io'] } })
+    store({ captcha: { flows: { registration: false, login: false, recovery: false, verification: false } }, registration: { mode: 'allowlist', allowDomains: ['corp.io'] } })
     const res = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'scanner@mailinator.com', traits: { email: 'scanner@mailinator.com' } })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({
@@ -346,30 +355,6 @@ describe('routes', () => {
     })
     expect(res.body).not.toContain(PASS_SECRET)
     expect(res.body).not.toContain('vip@gmail.com')
-  })
-
-  it('gateway check: 200 when the flow does not ask, 403 without a token, 200 with a good one', async () => {
-    const check = (payload: Record<string, unknown>) => app.inject({ method: 'POST', url: '/api/public/sign-in-protection/check', payload })
-    expect((await check({ flow: 'recovery', token: '' })).statusCode).toBe(200)
-    store({ captcha: { flows: { registration: false, login: false, recovery: true, verification: false } } })
-    const refused = await check({ flow: 'recovery', token: '' })
-    expect(refused.statusCode).toBe(403)
-    expect(refused.json()).toMatchObject({ error: 'captcha_missing' })
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
-    expect((await check({ flow: 'recovery', token: DUMMY_TOKEN })).statusCode).toBe(200)
-    expect((await check({ flow: 'registration', token: DUMMY_TOKEN })).statusCode).toBe(400)
-  })
-
-  it('gateway check: a passing token is a short pass for the flow (send email, submit code, resend), then spent', async () => {
-    store({ captcha: { flows: { registration: false, login: false, recovery: true, verification: false } } })
-    const check = () => app.inject({ method: 'POST', url: '/api/public/sign-in-protection/check', payload: { flow: 'recovery', token: 'tok-1' } })
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
-    expect((await check()).statusCode).toBe(200)
-    for (let i = 0; i < 4; i++) expect((await check()).statusCode).toBe(200)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const spent = await check()
-    expect(spent.statusCode).toBe(403)
-    expect(spent.json()).toMatchObject({ error: 'captcha_invalid' })
   })
 
   it('admin: read needs admin; write needs super_admin and a recent second factor', async () => {
