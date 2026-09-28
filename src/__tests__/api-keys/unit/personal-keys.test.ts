@@ -8,7 +8,7 @@ const s = vi.hoisted(() => ({
   env: { DELEGATED_TOKENS_ENABLED: true, DELEGATED_TOKEN_AUDIENCE: 'https://mcp.test' },
   hydra: { createClient: vi.fn(), getClient: vi.fn(), deleteClient: vi.fn(), listClientsByOwner: vi.fn(), listAllClients: vi.fn(), clientCredentialsToken: vi.fn() },
   identity: vi.fn(),
-  catalog: vi.fn(async () => [] as { scope: string; sites: string[] }[]),
+  catalog: vi.fn(async () => [] as { scope: string; sites: string[]; kind?: string }[]),
   used: vi.fn(),
   validate: vi.fn(async () => {}),
   policy: vi.fn(async () => ({ personal_keys: 'allowed' })),
@@ -29,7 +29,9 @@ vi.mock('../../../services/hydra.service.js', () => {
 vi.mock('../../../services/api-key-policy.js', () => ({ getApiKeyPolicy: s.policy }))
 vi.mock('../../../authz/opa.js', () => ({ isSuperAdmin: s.superAdmin, memberOrgs: s.memberOrgs }))
 vi.mock('../../../services/opal-publisher.js', () => ({ opalPublisher: { schedule: s.schedule } }))
-vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: s.catalog }))
+vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: vi.fn(async () => []) }))
+// Site ∪ jinbe permissions (services/platform-scopes.ts, tested on its own).
+vi.mock('../../../services/platform-scopes.js', () => ({ personalScopeCatalog: s.catalog }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.identity } }))
 vi.mock('../../../audit/record.js', () => ({ recordApiKeyUse: s.used }))
 vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch, forgetApiKeyUse: s.forget }))
@@ -68,7 +70,7 @@ describe('PersonalKeyService', () => {
   it('creates a user-owned client bound to the org, audience-bound, with an expiry', async () => {
     s.hydra.createClient.mockResolvedValue({ client_id: 'pk', client_secret: 'once', scope: 'payroll:read', metadata: { organization_id: ORG, kind: 'personal', subject: 'user-1', expires_at: '2026-10-05T00:00:00Z' } })
     const out = await personalKeyService.create(ME, body)
-    expect(s.validate).toHaveBeenCalledWith(ORG, 'ann@acme.io', ['payroll:read'])
+    expect(s.validate).toHaveBeenCalledWith(ORG, 'ann@acme.io', ['payroll:read'], s.catalog)
     const arg = s.hydra.createClient.mock.calls[0][0]
     // `mcp` rides along so auth-mcp accepts the key's tokens.
     expect(arg).toMatchObject({ organizationId: ORG, personal: { subject: 'user-1' }, audience: ['https://mcp.test'], scopes: ['payroll:read', 'mcp'] })
@@ -163,6 +165,13 @@ describe('PersonalKeyService.exchange', () => {
     expect(s.catalog).toHaveBeenCalledWith(ORG, 'ann@acme.io')
     expect(s.used).toHaveBeenCalledWith('pk', ORG)
     expect(s.touch).toHaveBeenCalledWith('pk')
+  })
+
+  it('re-checks jinbe permissions the same way: a platform scope the holder lost is dropped', async () => {
+    s.hydra.getClient.mockResolvedValue({ ...key(), scope: 'admin:read users:read org:manage_users mcp' })
+    s.catalog.mockResolvedValue([{ scope: 'admin:read', sites: ['platform'], kind: 'platform' }, { scope: 'org:manage_users', sites: ['platform'], kind: 'platform' }])
+    await personalKeyService.exchange('pk', 'secret', NOW)
+    expect(s.hydra.clientCredentialsToken).toHaveBeenCalledWith('pk', 'secret', ['admin:read', 'org:manage_users', 'mcp'], 'https://mcp.test')
   })
 
   it.each([

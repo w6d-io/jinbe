@@ -121,7 +121,8 @@ export const scopeCatalogResponseJsonSchema = {
         type: 'object',
         properties: {
           scope: { type: 'string', description: 'A permission (resource:verb)' },
-          sites: { type: 'array', items: { type: 'string' }, description: 'The sites whose routes require it' },
+          sites: { type: 'array', items: { type: 'string' }, description: "The sites whose routes require it; 'platform' for jinbe's own API (personal keys only)" },
+          kind: { type: 'string', enum: ['site', 'platform'], description: "Personal keys only: 'platform' when only jinbe's own API requires it" },
         },
       },
     },

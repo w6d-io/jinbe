@@ -26,7 +26,8 @@ export interface ScopeCatalogEntry {
   sites: string[]
 }
 
-async function heldIn(email: string, site: string, grantedGroups: readonly string[]): Promise<string[]> {
+/** What `email` holds in one site: site grants ∪ the granted groups' roles there (org_permissions). */
+export async function heldIn(email: string, site: string, grantedGroups: readonly string[]): Promise<string[]> {
   const held = new Set((await rights(email, site)).permissions)
   if (grantedGroups.length > 0) {
     // org_permissions(email, org, svc) in org.rego: the granted groups' roles IN THIS SITE only.
@@ -39,7 +40,7 @@ async function heldIn(email: string, site: string, grantedGroups: readonly strin
   return [...held]
 }
 
-function withinCeiling(scope: string): boolean {
+export function withinCeiling(scope: string): boolean {
   const ceiling = env.API_KEY_ALLOWED_SCOPES
   return ceiling.length === 0 || ceiling.some((c) => covers(c, scope))
 }
