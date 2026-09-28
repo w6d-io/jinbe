@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { cacheInvalidations, cacheRefreshDuration, cacheRefreshes, cacheRequests } from '../telemetry/metrics.js'
 import { CHANNEL, ORIGIN, applyLocally, cacheEnabled, ensureBus, getStore, registerCache } from './runtime.js'
 
-export { cacheEnabled, configureCache, onInvalidate, resetCaches } from './runtime.js'
+export { broadcastInvalidation, cacheEnabled, configureCache, ensureBus, onInvalidate, resetCaches } from './runtime.js'
 
 /**
  * The shared read cache: stale-while-revalidate over slow upstream reads, one engine for all of them.

@@ -1,6 +1,7 @@
 import { env } from '../config/index.js'
 import { withRedisLock } from './redis-lock.js'
 import { SwrCache, type ReadOptions } from '../cache/swr.js'
+import { forgetSession, forgetSessionsOf } from './kratos-session.service.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -460,6 +461,7 @@ export class KratosService {
    */
   async revokeSession(sessionId: string): Promise<void> {
     await this.request<void>(`/admin/sessions/${sessionId}`, { method: 'DELETE' })
+    forgetSession(sessionId)
   }
 
   /**
@@ -478,6 +480,7 @@ export class KratosService {
    */
   async revokeAllIdentitySessions(identityId: string): Promise<void> {
     await this.request<void>(`/admin/identities/${identityId}/sessions`, { method: 'DELETE' })
+    forgetSessionsOf(identityId)
   }
 
   /**
@@ -602,12 +605,20 @@ export class KratosService {
   /** One identity changed: its cached copy, and every listing it appears in. */
   invalidateIdentity(id: string): void {
     void identityCache.invalidate(id)
+    // Deactivated, deleted or re-addressed: its sessions must be asked about again.
+    forgetSessionsOf(id)
     this.invalidateGroupsCache()
+  }
+
+  /** Drop the cached validations of every session of this identity, on every replica. */
+  forgetSessions(identityId: string): void {
+    forgetSessionsOf(identityId)
   }
 
   /** One identity's second factors changed (enrolled, removed, reset). */
   invalidateSecondFactors(id: string): void {
     void mfaCache.invalidate(id)
+    forgetSessionsOf(id)
   }
 
   /**

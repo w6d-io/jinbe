@@ -91,10 +91,15 @@ function v1EventOf(flowType: string, method: string | undefined, removed: boolea
 
 /**
  * Self-service flows change identities behind jinbe's back: drop what the shared read cache holds about
- * this one (src/cache). A login changes nothing cached; a registration adds somebody to the directory;
+ * this one (src/cache). A login re-validates the identity's sessions; a registration adds somebody to the directory;
  * settings change the profile or a second factor; recovery and verification change the addresses.
  */
 export function invalidateCachedIdentity(flowType: string, method: string | undefined, identityId: string | null): void {
+  // A login (a step-up included) changes what the identity's sessions assert: validate them afresh.
+  if (flowType === 'login') {
+    if (identityId) kratosService.forgetSessions(identityId)
+    return
+  }
   if (flowType === 'registration') {
     kratosService.invalidateGroupsCache()
     return

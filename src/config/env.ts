@@ -272,6 +272,12 @@ export const envSchema = z.object({
   // How long the Kratos directory walk is served without a refresh. Mutations made through jinbe and
   // Kratos self-service flows (webhook) invalidate it at once; this bounds changes made behind jinbe.
   CACHE_DIRECTORY_FRESH_MS: z.string().transform(Number).pipe(z.number().int().positive()).default('15000'),
+  // How long a Kratos session validation (/sessions/whoami) is reused for READS (GET/HEAD/OPTIONS) on
+  // the replica that made it. Writes always validate afresh. 0 turns it off (as does the
+  // `kratos.session` namespace in CACHE_DISABLED_NAMESPACES, or CACHE_ENABLED=false). Trade-off: a
+  // session revoked outside jinbe (Kratos logout, "revoke other sessions") can still READ for up to
+  // this long; revocations made through jinbe drop it on every replica at once.
+  SESSION_CACHE_TTL_MS: z.string().transform(Number).pipe(z.number().int().nonnegative().max(10_000)).default('5000'),
   // Cap on the global audit stream (approximate, ~ trimming). Per-entity
   // fan-out keys carry their own tighter cap. Retention is bounded by this
   // number — there is no tamper-evident/WORM store in this pass.
