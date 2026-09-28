@@ -22,10 +22,17 @@ process.env.LOG_LEVEL = 'error'
 // Suites that mock Redis for the legacy stream would otherwise also print every audit/v1 line to
 // stdout. The audit/v1 suites set AUDIT_SINK themselves.
 process.env.AUDIT_SINK = 'legacy'
+// The shared read cache keeps its entries in process memory under test, and starts empty in every
+// test (below), so no suite sees another's cached upstream reads.
+process.env.CACHE_STORE = 'memory'
 // Remove BASE_URL if it exists to avoid validation errors
 delete process.env.BASE_URL
 
 // Reset all mocks between tests
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
+  // Imported lazily: most suites mock config/env, and a static import here would load the real one
+  // before they could.
+  const { resetCaches } = await import('../cache/swr.js').catch(() => ({ resetCaches: () => {} }))
+  resetCaches()
 })

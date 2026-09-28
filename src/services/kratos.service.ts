@@ -1,5 +1,6 @@
 import { env } from '../config/index.js'
 import { withRedisLock } from './redis-lock.js'
+import { SwrCache, type ReadOptions } from '../cache/swr.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -49,10 +50,29 @@ export interface IdentityBinding {
   name: string | null
 }
 
-interface IdentityBindingsCache {
-  data: Map<string, IdentityBinding> // email → binding
-  expiresAt: number
-}
+/**
+ * The Kratos reads worth caching (src/cache/swr.ts), shared by every replica through Redis. Each holds
+ * raw upstream data keyed by what it is about — never credentials: identities are cached as Kratos
+ * returns them WITHOUT include_credential, and second factors only as the list of enrolled methods.
+ *
+ * Every write this service makes drops the entries it affects (see invalidate* below), Kratos
+ * self-service flows do through the webhook, and the fresh windows bound changes made behind jinbe.
+ */
+const MINUTE = 60_000
+const directoryCache = new SwrCache<Map<string, IdentityBinding>>({
+  namespace: 'kratos.directory',
+  freshMs: env.CACHE_DIRECTORY_FRESH_MS ?? 15_000,
+  staleMs: 10 * MINUTE,
+  encode: (m) => [...m],
+  decode: (raw) => new Map(raw as Array<[string, IdentityBinding]>),
+  l1Max: 1,
+})
+const identityCache = new SwrCache<KratosIdentity>({ namespace: 'kratos.identity', freshMs: 30_000, staleMs: 5 * MINUTE, l1Max: 5_000 })
+const mfaCache = new SwrCache<MfaMethod[]>({ namespace: 'kratos.mfa', freshMs: MINUTE, staleMs: 10 * MINUTE, l1Max: 20_000 })
+const orgMembersCache = new SwrCache<KratosIdentity[]>({ namespace: 'kratos.org', freshMs: 15_000, staleMs: 5 * MINUTE, l1Max: 200 })
+
+/** What the identity list endpoint accepts per request for an `ids` filter. */
+const IDS_PER_REQUEST = 100
 
 /**
  * Kratos Admin API Service
@@ -60,8 +80,6 @@ interface IdentityBindingsCache {
  */
 export class KratosService {
   private adminUrl: string
-  private identityBindingsCache: IdentityBindingsCache | null = null
-  private readonly CACHE_TTL_MS = 5_000 // 5 seconds — short TTL as fallback; explicit invalidation handles mutations
 
   constructor() {
     this.adminUrl = env.KRATOS_ADMIN_URL
@@ -247,6 +265,7 @@ export class KratosService {
    */
   async deleteSecondFactor(id: string, type: MfaMethod): Promise<void> {
     await this.request<void>(`/admin/identities/${id}/credentials/${type}`, { method: 'DELETE' })
+    this.invalidateSecondFactors(id)
   }
 
   /**
@@ -291,10 +310,12 @@ export class KratosService {
    * Create new identity
    */
   async createIdentity(data: KratosIdentityCreate): Promise<KratosIdentity> {
-    return this.request<KratosIdentity>('/admin/identities', {
+    const created = await this.request<KratosIdentity>('/admin/identities', {
       method: 'POST',
       body: JSON.stringify(data),
     })
+    this.invalidateGroupsCache()
+    return created
   }
 
   /**
@@ -321,10 +342,12 @@ export class KratosService {
         data.metadata_admin ?? currentIdentity.metadata_admin ?? undefined,
     }
 
-    return this.request<KratosIdentity>(`/admin/identities/${id}`, {
+    const updated = await this.request<KratosIdentity>(`/admin/identities/${id}`, {
       method: 'PUT',
       body: JSON.stringify(updatedData),
     })
+    this.invalidateIdentity(id)
+    return updated
   }
 
   /**
@@ -335,10 +358,12 @@ export class KratosService {
     id: string,
     patches: Array<{ op: string; path: string; value: unknown }>
   ): Promise<KratosIdentity> {
-    return this.request<KratosIdentity>(`/admin/identities/${id}`, {
+    const patched = await this.request<KratosIdentity>(`/admin/identities/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patches),
     })
+    this.invalidateIdentity(id)
+    return patched
   }
 
   /**
@@ -348,6 +373,8 @@ export class KratosService {
     await this.request<void>(`/admin/identities/${id}`, {
       method: 'DELETE',
     })
+    this.invalidateIdentity(id)
+    this.invalidateSecondFactors(id)
   }
 
   /**
@@ -435,8 +462,11 @@ export class KratosService {
 
   /**
    * Get all identities with their full RBAC binding (groups + organizations +
-   * primary organization) from a SINGLE paginated directory scan. Cached for
-   * CACHE_TTL_MS so repeated OPAL polls don't hammer Kratos.
+   * primary organization) from a SINGLE paginated directory scan. Served from
+   * the shared cache (kratos.directory): one walk per fresh window for the
+   * whole cluster, stale-while-revalidate after it, dropped on every identity
+   * write. A caller feeding authorization (the OPAL bindings) passes
+   * `maxAgeMs` and never gets an older snapshot than that.
    *
    * This is the one place the directory is walked; getAllIdentitiesWithGroups
    * and the OPAL /bindings feed both project from this, so the notion of "who
@@ -449,15 +479,11 @@ export class KratosService {
    *
    * @returns Map of email → { groups, organizations, primaryOrganization }
    */
-  async getAllIdentitiesWithBindings(): Promise<Map<string, IdentityBinding>> {
-    // Return cached data if valid
-    if (
-      this.identityBindingsCache &&
-      Date.now() < this.identityBindingsCache.expiresAt
-    ) {
-      return this.identityBindingsCache.data
-    }
+  async getAllIdentitiesWithBindings(opts: ReadOptions = {}): Promise<Map<string, IdentityBinding>> {
+    return directoryCache.get('all', () => this.walkDirectory(), opts)
+  }
 
+  private async walkDirectory(): Promise<Map<string, IdentityBinding>> {
     const result = new Map<string, IdentityBinding>()
 
     let pageToken: string | undefined
@@ -501,12 +527,6 @@ export class KratosService {
       const next = response.nextPageToken
       if (!next || next === pageToken || response.identities.length === 0) break
       pageToken = next
-    }
-
-    // Update cache
-    this.identityBindingsCache = {
-      data: result,
-      expiresAt: Date.now() + this.CACHE_TTL_MS,
     }
 
     return result
@@ -555,7 +575,88 @@ export class KratosService {
    * Call this after updating user groups/orgs to ensure OPAL gets fresh data.
    */
   invalidateGroupsCache(): void {
-    this.identityBindingsCache = null
+    void directoryCache.invalidate()
+    void orgMembersCache.invalidate()
+  }
+
+  /** One identity changed: its cached copy, and every listing it appears in. */
+  invalidateIdentity(id: string): void {
+    void identityCache.invalidate(id)
+    this.invalidateGroupsCache()
+  }
+
+  /** One identity's second factors changed (enrolled, removed, reset). */
+  invalidateSecondFactors(id: string): void {
+    void mfaCache.invalidate(id)
+  }
+
+  /**
+   * An identity by id, from the shared cache. For READ-ONLY views: anything that reads to write back
+   * (updateIdentity's merge, a guard comparing before/after) calls getIdentity, which always asks.
+   * Carries no credentials.
+   */
+  async getIdentityCached(id: string): Promise<KratosIdentity> {
+    return identityCache.get(id, () => this.getIdentity(id))
+  }
+
+  /**
+   * Many identities by id in one Kratos call per 100 (the `ids` filter), through the same cache.
+   * Ids that do not exist are absent from the result.
+   */
+  async getIdentitiesByIds(ids: readonly string[]): Promise<Map<string, KratosIdentity>> {
+    return identityCache.getMany(ids, async (missing) => {
+      const out = new Map<string, KratosIdentity>()
+      for (const identity of await this.listIdentitiesByIds(missing)) out.set(identity.id, identity)
+      return out
+    })
+  }
+
+  /**
+   * The second factors enrolled by each of these identities, for DISPLAY (list columns, counts): one
+   * Kratos call per 100 identities, cached a minute. The gates that decide on a second factor (group
+   * grants, the enforcement check) call hasMFA / mfaMethodsOf, which always ask Kratos.
+   */
+  async mfaByIds(ids: readonly string[]): Promise<Map<string, MfaMethod[]>> {
+    return mfaCache.getMany(ids, async (missing) => {
+      const out = new Map<string, MfaMethod[]>()
+      for (const identity of await this.listIdentitiesByIds(missing, [...MFA_METHODS])) {
+        out.set(identity.id, this.mfaMethods(identity.credentials))
+      }
+      return out
+    })
+  }
+
+  /**
+   * `GET /admin/identities?ids=…` in chunks. Anything the filter did not return is fetched one by one,
+   * so an older Kratos that ignores `ids` answers correctly, only slower.
+   */
+  private async listIdentitiesByIds(
+    ids: readonly string[],
+    includeCredential: Array<'totp' | 'webauthn' | 'lookup_secret'> = [],
+  ): Promise<KratosIdentity[]> {
+    const wanted = new Set(ids)
+    const found = new Map<string, KratosIdentity>()
+    const unique = [...wanted]
+    for (let i = 0; i < unique.length; i += IDS_PER_REQUEST) {
+      const chunk = unique.slice(i, i + IDS_PER_REQUEST)
+      const params = new URLSearchParams({ page_size: String(chunk.length) })
+      for (const id of chunk) params.append('ids', id)
+      for (const c of includeCredential) params.append('include_credential', c)
+      const page = await this.request<KratosIdentity[]>(`/admin/identities?${params.toString()}`)
+      for (const identity of page ?? []) if (wanted.has(identity.id)) found.set(identity.id, identity)
+    }
+    for (const id of unique) {
+      if (found.has(id)) continue
+      const params = new URLSearchParams()
+      for (const c of includeCredential) params.append('include_credential', c)
+      const qs = params.toString()
+      try {
+        found.set(id, await this.request<KratosIdentity>(`/admin/identities/${id}${qs ? `?${qs}` : ''}`))
+      } catch (err) {
+        if ((err as { statusCode?: number }).statusCode !== 404) throw err
+      }
+    }
+    return [...found.values()]
   }
 
   /**
@@ -670,6 +771,19 @@ export class KratosService {
     }
 
     return { identities: collected, nextPageToken: undefined }
+  }
+
+  /**
+   * listIdentitiesByOrganization through the shared cache (kratos.org), keyed by the organisation and
+   * the identifier filter — the raw member list of THAT organisation, whoever asks. Who may ask is the
+   * route guard's business and runs before this; nothing here is shaped by the caller. For display.
+   */
+  async listIdentitiesByOrganizationCached(
+    organizationId: string,
+    opts: { pageSize?: number; credentialsIdentifier?: string } = {}
+  ): Promise<KratosIdentity[]> {
+    const key = `${organizationId}\u0000${opts.credentialsIdentifier ?? ''}`
+    return orgMembersCache.get(key, async () => (await this.listIdentitiesByOrganization(organizationId, opts)).identities)
   }
 
   /**

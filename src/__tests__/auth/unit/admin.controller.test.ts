@@ -69,13 +69,15 @@ vi.mock('../../../services/rbac.service.js', () => ({
 }))
 
 // What a person holds is OPA's answer (rbac.user_info for jinbe) — the engine that enforces.
-vi.mock('../../../authz/opa.js', () => ({
-  rights: vi.fn().mockImplementation(async () => ({
+// The users screens read it through the display cache, which asks exactly this.
+vi.mock('../../../authz/opa.js', () => {
+  const rights = vi.fn().mockImplementation(async () => ({
     groups: mockState.opalUserInfo?.groups || [],
     roles: mockState.opalUserInfo?.roles || [],
     permissions: mockState.opalUserInfo?.permissions || [],
-  })),
-}))
+  }))
+  return { rights, rightsForDisplay: (email: string) => rights(email) }
+})
 
 // Import after mocking
 import { AdminController } from '../../../controllers/admin.controller.js'

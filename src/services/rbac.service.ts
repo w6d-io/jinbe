@@ -1,4 +1,5 @@
 import { allGroupMemberships } from './organisation-store.js'
+import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { kratosService } from './kratos.service.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
@@ -9,7 +10,7 @@ import { accessReviewService } from './access-review.service.js'
 import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { holdsInJinbe } from '../authz/opa.js'
+import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
@@ -257,6 +258,9 @@ export class SystemResourceImmutable extends Error {
  */
 const RETIRED_AUTHORIZER = 'http://retired.invalid:8080/v1/data/strada/authz/decision'
 
+/** The oldest directory snapshot the authorization feeds (OPAL bindings, the OPA bundle) accept. */
+export const AUTHZ_DIRECTORY_MAX_AGE_MS = 5_000
+
 export class RbacService {
   // ===========================================================================
   // Private Helpers
@@ -346,6 +350,8 @@ export class RbacService {
   // cascade child-events correlate by requestId.
   async invalidateBundle(eventType?: string, target?: { type?: string; id?: string; service?: string; services?: string[] }, actor?: AuditActorInput, changes?: AuditChanges, opts: { audit?: boolean } = {}): Promise<void> {
     await redisRbacRepository.invalidateBundleEtag()
+    // What OPA answers about anybody may have changed: drop the cached answers on every replica.
+    invalidateAuthz()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
     // stats cache so the next dashboard read recomputes. Best-effort; covers
@@ -383,7 +389,7 @@ export class RbacService {
   // ===========================================================================
 
   async getUsers(): Promise<UsersResponse> {
-    const bindings = await this.getBindingsFromKratos()
+    const bindings = await this.getBindingsFromKratos({})
     const groups = await redisRbacRepository.getGroups()
     const groupNames = Object.keys(groups)
 
@@ -398,28 +404,26 @@ export class RbacService {
       users.push({ email, groupMembership })
     }
 
-    // Enrich with names + identity ids from Kratos. The credentials
-    // payload (TOTP / WebAuthn / lookup_secret) is only present if the
-    // request includes ?include_credential=…; we still surface mfa when
-    // it is, so kuma can disable admin-group assignment on un-enrolled
-    // users without an extra round trip per user.
+    // Names + identity ids from the cached directory (every page of it — this used to read one page of
+    // 250 per call, credentials included), and second-factor enrolment from the batched, cached
+    // per-identity read: enrolment-artefact check shared with hasMFA, so the two cannot disagree.
+    // Absent (unknown) rather than false when it cannot be read — the UI decides whether to fail
+    // closed.
     try {
-      const kratosResponse = await kratosService.listIdentities(250, undefined, undefined, ['totp', 'webauthn', 'lookup_secret'])
-      const byEmail = new Map(kratosResponse.identities.map((u) => [u.traits.email as string, u]))
+      const directory = await kratosService.getAllIdentitiesWithBindings()
+      const ids: string[] = []
       for (const user of users) {
-        const ident = byEmail.get(user.email)
-        if (!ident) continue
-        user.name = ident.traits.name || undefined
-        user.identityId = ident.id
-        const creds = (ident.credentials ?? {}) as Record<string, unknown>
-        // mfa = true only when a real factor is ENROLLED. Absence of
-        // `credentials` (listIdentities called without include_credential)
-        // leaves mfa unset rather than defaulting to false — the UI decides
-        // whether to fail closed. Use the shared enrolment-artefact check so
-        // this agrees with the authoritative hasMFA(); key presence alone
-        // (esp. Kratos's auto-created empty webauthn) is a false positive.
-        if (Object.keys(creds).length > 0) {
-          user.mfa = kratosService.mfaFromCredentials(creds)
+        const b = directory.get(user.email)
+        if (!b) continue
+        user.name = b.name || undefined
+        user.identityId = b.id
+        if (b.id) ids.push(b.id)
+      }
+      const mfa = await kratosService.mfaByIds(ids).catch(() => null)
+      if (mfa) {
+        for (const user of users) {
+          const methods = user.identityId ? mfa.get(user.identityId) : undefined
+          if (methods) user.mfa = methods.length > 0
         }
       }
     } catch { /* Kratos unavailable */ }
@@ -509,7 +513,7 @@ export class RbacService {
       // while the memberships that decide requests sat in `group_members`, uncounted. A screen
       // saying nobody holds a group is the one answer that is certainly wrong.
       const [bindings, wildGroups, groupDefs, memberships] = await Promise.all([
-        kratosService.getAllIdentitiesWithBindings(),
+        kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS }),
         this.wildcardGroupNames(),
         redisRbacRepository.getGroups(),
         allGroupMemberships().catch(() => null),
@@ -1217,10 +1221,15 @@ export class RbacService {
   // Kratos Bindings
   // ===========================================================================
 
-  async getBindingsFromKratos(): Promise<KratosBindingsResponse> {
+  /**
+   * `maxAgeMs` defaults to the authorization bound: this is the OPAL /bindings feed, which must not be
+   * handed a snapshot older than the 5s the in-process cache used to keep. A display caller passes a
+   * larger one and gets the shared snapshot at once.
+   */
+  async getBindingsFromKratos(opts: { maxAgeMs?: number } = { maxAgeMs: AUTHZ_DIRECTORY_MAX_AGE_MS }): Promise<KratosBindingsResponse> {
     // Single directory scan → groups + org membership + primary org, so OPA's
     // group view and its tenant (org) view come from the same snapshot.
-    const bindings = await kratosService.getAllIdentitiesWithBindings()
+    const bindings = await kratosService.getAllIdentitiesWithBindings(opts)
     const group_membership: Record<string, string[]> = {}
     const user_organizations: Record<string, string[]> = {}
     const user_organization_primary: Record<string, string> = {}

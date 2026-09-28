@@ -253,6 +253,25 @@ export const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().transform(Number).pipe(z.number().min(0)).default('0'),
   REDIS_AUDIT_STREAM: z.string().default('auth:audit:events'),
+  // Shared read cache (src/cache): Redis-backed stale-while-revalidate over the heavy upstream reads
+  // (Kratos directory walk, identity by id, second-factor state, org member lists) plus the
+  // in-process OPA answer cache. CACHE_ENABLED=false is the kill switch: every read goes upstream
+  // and nothing is cached, OPA answers included. CACHE_DISABLED_NAMESPACES turns off single
+  // namespaces (e.g. `kratos.directory,opa`).
+  CACHE_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v !== 'false'),
+  CACHE_DISABLED_NAMESPACES: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // `redis` (default) shares entries across replicas; `memory` keeps them per process (tests, and a
+  // deployment without Redis).
+  CACHE_STORE: z.enum(['redis', 'memory']).default('redis'),
+  // How long the Kratos directory walk is served without a refresh. Mutations made through jinbe and
+  // Kratos self-service flows (webhook) invalidate it at once; this bounds changes made behind jinbe.
+  CACHE_DIRECTORY_FRESH_MS: z.string().transform(Number).pipe(z.number().int().positive()).default('15000'),
   // Cap on the global audit stream (approximate, ~ trimming). Per-entity
   // fan-out keys carry their own tighter cap. Retention is bounded by this
   // number — there is no tamper-evident/WORM store in this pass.

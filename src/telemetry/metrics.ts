@@ -94,3 +94,31 @@ export const signInGuardDecisions = new Counter({
   help: 'Kratos flow submits judged by the sign-in guard, by flow and result',
   labelNames: ['flow', 'result'] as const,
 })
+
+// ─── Shared read cache (src/cache) ───────────────────────────────────────────
+// Label values are the cache namespaces, a fixed set declared in code.
+
+export const cacheRequests = new Counter({
+  name: 'jinbe_cache_requests_total',
+  help: 'Cache reads, by namespace and result (hit, stale, miss, bypass)',
+  labelNames: ['namespace', 'result'] as const,
+})
+
+export const cacheRefreshes = new Counter({
+  name: 'jinbe_cache_refresh_total',
+  help: 'Cache refreshes, by namespace and outcome (ok, error, skipped)',
+  labelNames: ['namespace', 'outcome'] as const,
+})
+
+export const cacheRefreshDuration = new Histogram({
+  name: 'jinbe_cache_refresh_duration_seconds',
+  help: 'Time spent computing a cache entry from its upstream',
+  labelNames: ['namespace'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 15],
+})
+
+export const cacheInvalidations = new Counter({
+  name: 'jinbe_cache_invalidations_total',
+  help: 'Cache invalidations, by namespace and scope (all, key)',
+  labelNames: ['namespace', 'scope'] as const,
+})

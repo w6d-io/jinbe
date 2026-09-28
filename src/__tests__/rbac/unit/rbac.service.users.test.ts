@@ -44,11 +44,12 @@ vi.mock('../../../services/kratos.service.js', () => ({
     }),
     getAllIdentitiesWithBindings: vi.fn().mockResolvedValue(
       new Map([
-        ['admin@example.com', { groups: ['admins', 'devs'], organizations: [], primaryOrganization: null }],
-        ['dev@example.com', { groups: ['devs'], organizations: [], primaryOrganization: null }],
-        ['viewer@example.com', { groups: ['viewers'], organizations: [], primaryOrganization: null }],
+        ['admin@example.com', { groups: ['admins', 'devs'], organizations: [], primaryOrganization: null, id: 'user-1', name: 'Admin User' }],
+        ['dev@example.com', { groups: ['devs'], organizations: [], primaryOrganization: null, id: 'user-2', name: 'Developer User' }],
+        ['viewer@example.com', { groups: ['viewers'], organizations: [], primaryOrganization: null, id: 'user-3', name: null }],
       ])
     ),
+    mfaByIds: vi.fn().mockResolvedValue(new Map([['user-1', ['totp']], ['user-2', []]])),
     removeGroupFromAllUsers: vi.fn().mockResolvedValue(0),
   },
 }))
@@ -109,11 +110,19 @@ describe('RbacService - Users', () => {
       expect(adminUser?.name).toBe('Admin User')
     })
 
-    it('should continue without names if Kratos unavailable', async () => {
-      vi.mocked(kratosService.listIdentities).mockRejectedValueOnce(new Error('Kratos unavailable'))
+    it('should report second-factor enrolment from the batched read, and leave unknown unset', async () => {
+      const result = await service.getUsers()
+      expect(result.users.find(u => u.email === 'admin@example.com')?.mfa).toBe(true)
+      expect(result.users.find(u => u.email === 'dev@example.com')?.mfa).toBe(false)
+      expect(result.users.find(u => u.email === 'viewer@example.com')?.mfa).toBeUndefined()
+      expect(kratosService.mfaByIds).toHaveBeenCalledTimes(1)
+    })
+
+    it('should continue without enrolment if Kratos unavailable', async () => {
+      vi.mocked(kratosService.mfaByIds).mockRejectedValueOnce(new Error('Kratos unavailable'))
       const result = await service.getUsers()
       expect(result.users).toHaveLength(3)
-      expect(result.users[0].name).toBeUndefined()
+      expect(result.users[0].mfa).toBeUndefined()
     })
 
     it('should return empty users array when Kratos returns no users', async () => {

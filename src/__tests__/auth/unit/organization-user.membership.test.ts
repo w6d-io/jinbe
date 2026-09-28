@@ -48,6 +48,12 @@ vi.mock('../../../services/kratos.service.js', () => ({
     listIdentitiesByOrganization: vi.fn(async (org: string) => ({
       identities: [...state.identities.values()].filter((i) => i.organization_id === org),
     })),
+    listIdentitiesByOrganizationCached: vi.fn(async (org: string) =>
+      [...state.identities.values()].filter((i) => i.organization_id === org),
+    ),
+    getIdentitiesByIds: vi.fn(async (ids: string[]) =>
+      new Map(ids.filter((id) => state.identities.has(id)).map((id) => [id, state.identities.get(id)])),
+    ),
     deleteIdentity: vi.fn(async () => {}),
     updateIdentity: vi.fn(async (id: string, data: Record<string, unknown>) => {
       const next = { ...state.identities.get(id), ...data }

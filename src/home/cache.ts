@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getRedisClient } from '../services/redis-client.service.js'
+import { cacheEnabled } from '../cache/swr.js'
+import { cacheRefreshDuration, cacheRefreshes, cacheRequests } from '../telemetry/metrics.js'
 import type { Connect, HomeModuleName, ModuleReason, SourceDetail } from './types.js'
 
 /**
@@ -15,7 +17,13 @@ import type { Connect, HomeModuleName, ModuleReason, SourceDetail } from './type
  *
  * Invalidation bumps a per-module epoch that is part of the key: no SCAN, no DEL pattern, and a
  * refresh that started before the bump writes under the old epoch where nobody reads it.
+ *
+ * The Home keeps its own envelope (a module result that can say `unavailable`) but shares the platform
+ * cache's kill switch and metrics (src/cache/swr.ts, namespace `home`): CACHE_ENABLED=false or `home`
+ * in CACHE_DISABLED_NAMESPACES and every read computes, nothing is stored.
  */
+
+const NS = 'home'
 
 export type ModuleResult<T = unknown> =
   | { status: 'ok'; data: T; sources: Record<string, SourceDetail> }
@@ -51,8 +59,15 @@ export async function readEpochs(modules: readonly HomeModuleName[]): Promise<Re
 /** One round trip for every cached module. A Redis blip reads as a miss, never as an error. */
 export async function readMany(keys: string[]): Promise<Array<Stored | null>> {
   if (keys.length === 0) return []
+  if (!cacheEnabled(NS)) {
+    cacheRequests.inc({ namespace: NS, result: 'bypass' }, keys.length)
+    return keys.map(() => null)
+  }
   try {
     const values = await getRedisClient().mget(...keys)
+    const hits = values.filter(Boolean).length
+    if (hits) cacheRequests.inc({ namespace: NS, result: 'hit' }, hits)
+    if (keys.length - hits) cacheRequests.inc({ namespace: NS, result: 'miss' }, keys.length - hits)
     return values.map((v) => {
       if (!v) return null
       try {
@@ -77,6 +92,15 @@ const inflight = new Map<string, Promise<Stored | null>>()
  * a cold key it is stored as `source_down` for one fresh window so a dead source is not hammered.
  */
 export function refresh<T>(key: string, freshMs: number, compute: () => Promise<ModuleResult<T>>): Promise<Stored<T> | null> {
+  if (!cacheEnabled(NS)) {
+    return (async () => {
+      try {
+        return { asOf: Date.now(), freshMs, result: await compute() }
+      } catch {
+        return { asOf: Date.now(), freshMs, result: { status: 'unavailable', reason: 'source_down', sources: {} } }
+      }
+    })()
+  }
   const running = inflight.get(key)
   if (running) return running as Promise<Stored<T> | null>
   const p = (async (): Promise<Stored<T> | null> => {
@@ -93,12 +117,17 @@ export function refresh<T>(key: string, freshMs: number, compute: () => Promise<
     if (!locked) return null
     try {
       let stored: Stored<T>
+      const stop = cacheRefreshDuration.startTimer({ namespace: NS })
       try {
         stored = { asOf: Date.now(), freshMs, result: await compute() }
+        cacheRefreshes.inc({ namespace: NS, outcome: 'ok' })
       } catch {
+        cacheRefreshes.inc({ namespace: NS, outcome: 'error' })
         const previous = (await readMany([key]))[0]
         if (previous?.result.status === 'ok') return previous as Stored<T>
         stored = { asOf: Date.now(), freshMs, result: { status: 'unavailable', reason: 'source_down', sources: {} } }
+      } finally {
+        stop()
       }
       await redis.set(key, JSON.stringify(stored), 'PX', freshMs * TTL_FACTOR).catch(() => {})
       return stored

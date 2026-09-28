@@ -1,5 +1,6 @@
 import { queryOpa } from '../services/opa-client.js'
 import { permits, type HeldRights } from '../services/authorization-resolution.js'
+import { SwrCache } from '../cache/swr.js'
 
 /**
  * Every authorization question jinbe asks about its own API, answered by the engine that enforces
@@ -10,7 +11,14 @@ import { permits, type HeldRights } from '../services/authorization-resolution.j
  *
  * Cached for a few seconds per question: a guard runs on every request and a console fires several
  * at once. Short enough that a removed group stops granting almost at once. Only answers are cached —
- * a failure is asked again next time.
+ * a failure is asked again next time. Concurrent askers of one question share ONE query (a console
+ * opening fires dozens of guarded requests at once, and each used to ask OPA itself).
+ *
+ * In process only (the `opa` namespace of src/cache is `local`): an authorization answer never goes
+ * to a store another process can write. Every RBAC change drops the answers on every replica
+ * (invalidateAuthz, from rbacService.invalidateBundle), and again once OPA has had time to load the
+ * change, so an answer read in between is not kept either. Never stale: an answer older than the TTL
+ * is asked again, never served while refreshing.
  *
  * Fails closed: OPA unconfigured, unreachable, or answering nothing (no policy loaded) throws
  * `AuthzUnavailableError`, and the guard answers 503 — never an allow, and never a 403 that would
@@ -24,26 +32,48 @@ export const JINBE_APP = 'jinbe'
 
 export class AuthzUnavailableError extends Error {}
 
-const cache = new Map<string, { at: number; value: unknown }>()
+/**
+ * How long after an RBAC change OPA may still answer from the data it had: the OPAL push is debounced
+ * (OPAL_PUSH_WINDOW_MS) and the client then fetches. Answers are dropped again after this.
+ */
+export const AUTHZ_PROPAGATION_MS = 2_000
+
+// Bounded: a burst of distinct callers must not grow this for ever (oldest dropped first).
+const answers = new SwrCache<unknown>({ namespace: 'opa', freshMs: AUTHZ_TTL_MS, staleMs: AUTHZ_TTL_MS, local: true, l1Max: 10_000 })
 
 async function ask<T>(rule: string, input: Record<string, unknown>, read: (result: unknown) => T | undefined): Promise<T> {
   const key = `${rule}\u0000${JSON.stringify(input)}`
-  const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < AUTHZ_TTL_MS) return hit.value as T
+  return answers.get(key, async () => {
+    let result: unknown
+    try {
+      result = await queryOpa<unknown>(rule, input)
+    } catch (err) {
+      throw new AuthzUnavailableError((err as Error).message)
+    }
+    const value = read(result)
+    if (value === undefined) throw new AuthzUnavailableError(`OPA answered nothing usable for ${rule}`)
+    return value
+  }) as Promise<T>
+}
 
-  let result: unknown
-  try {
-    result = await queryOpa<unknown>(rule, input)
-  } catch (err) {
-    throw new AuthzUnavailableError((err as Error).message)
-  }
-  const value = read(result)
-  if (value === undefined) throw new AuthzUnavailableError(`OPA answered nothing usable for ${rule}`)
+const displayAnswers = new SwrCache<HeldRights>({ namespace: 'opa.display', freshMs: 30_000, staleMs: 5 * 60_000, local: true, l1Max: 20_000 })
 
-  // Bounded: a burst of distinct callers must not grow this for ever.
-  if (cache.size >= 10_000) cache.clear()
-  cache.set(key, { at: Date.now(), value })
-  return value
+let propagationTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * The RBAC data changed: drop every cached answer on every replica now, and once more after OPA has
+ * loaded the change (an answer asked in between may predate it).
+ */
+export function invalidateAuthz(): void {
+  void answers.invalidate()
+  void displayAnswers.invalidate()
+  if (propagationTimer) clearTimeout(propagationTimer)
+  propagationTimer = setTimeout(() => {
+    propagationTimer = null
+    void answers.invalidate()
+    void displayAnswers.invalidate()
+  }, AUTHZ_PROPAGATION_MS)
+  propagationTimer.unref?.()
 }
 
 const strings = (v: unknown): string[] | undefined =>
@@ -62,6 +92,18 @@ export function rights(email: string, app: string = JINBE_APP): Promise<HeldRigh
     const permissions = strings(info.permissions ?? [])
     return groups && roles && permissions ? { groups, roles, permissions } : undefined
   })
+}
+
+/**
+ * What somebody holds, for DISPLAY — a list of users showing each one's groups and roles. Never for a
+ * decision: guards call `rights`.
+ *
+ * A users page asks this once per row, so it is kept longer than a decision (fresh 30s, then served
+ * while refreshed, for up to 5 min) and dropped with every other answer on each RBAC change
+ * (invalidateAuthz). In process only, like every answer.
+ */
+export function rightsForDisplay(email: string, app: string = JINBE_APP): Promise<HeldRights> {
+  return displayAnswers.get(`${app}\u0000${email}`, () => rights(email, app))
 }
 
 export interface RouteQuestion {
@@ -141,5 +183,6 @@ export async function holdsInJinbe(email: string, required: string): Promise<boo
 
 /** Test seam. */
 export function clearAuthzCache(): void {
-  cache.clear()
+  answers.resetLocal()
+  displayAnswers.resetLocal()
 }

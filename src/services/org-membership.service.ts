@@ -117,7 +117,7 @@ export async function identitiesInOrganisation(
   organisationId: string,
   opts: { pageSize?: number; credentialsIdentifier?: string } = {},
 ): Promise<KratosIdentity[]> {
-  const { identities } = await kratosService.listIdentitiesByOrganization(organisationId, opts)
+  const identities = await kratosService.listIdentitiesByOrganizationCached(organisationId, opts)
   if (!ownsMembership()) return identities
 
   const seen = new Set(identities.map((identity) => identity.id))
@@ -126,14 +126,13 @@ export async function identitiesInOrganisation(
   )
 
   const wanted = opts.credentialsIdentifier?.toLowerCase()
+  // One batched read for every secondary member (it used to be one Kratos call each, in sequence). A
+  // row naming an identity that no longer exists is skipped, not reported as a person; any other
+  // failure is raised: a short list would say the rest are not members.
+  const found = others.length ? await kratosService.getIdentitiesByIds(others) : new Map<string, KratosIdentity>()
   const extra: KratosIdentity[] = []
   for (const id of others) {
-    // A row naming an identity that no longer exists is skipped, not reported as a person. Any other
-    // failure is raised: a short list would say the rest are not members.
-    const identity = await kratosService.getIdentity(id).catch((err: { statusCode?: number }) => {
-      if (err?.statusCode === 404) return null
-      throw err
-    })
+    const identity = found.get(id)
     if (!identity) continue
     if (wanted && String(identity.traits?.email ?? '').toLowerCase() !== wanted) continue
     extra.push(identity)

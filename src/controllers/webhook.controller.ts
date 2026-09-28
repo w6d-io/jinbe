@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { env } from '../config/env.js'
 import { auditEventService, type AuditEvent } from '../services/audit-event.service.js'
 import type { AuditEventType } from '../audit/v1/catalog.js'
+import { kratosService } from '../services/kratos.service.js'
 
 /**
  * Kratos after-hook webhook (A5).
@@ -88,6 +89,28 @@ function v1EventOf(flowType: string, method: string | undefined, removed: boolea
   }
 }
 
+/**
+ * Self-service flows change identities behind jinbe's back: drop what the shared read cache holds about
+ * this one (src/cache). A login changes nothing cached; a registration adds somebody to the directory;
+ * settings change the profile or a second factor; recovery and verification change the addresses.
+ */
+export function invalidateCachedIdentity(flowType: string, method: string | undefined, identityId: string | null): void {
+  if (flowType === 'registration') {
+    kratosService.invalidateGroupsCache()
+    return
+  }
+  if (!identityId) {
+    if (flowType === 'settings' || flowType === 'recovery' || flowType === 'verification') kratosService.invalidateGroupsCache()
+    return
+  }
+  if (flowType === 'settings') {
+    if (method && MFA_METHODS.has(method)) kratosService.invalidateSecondFactors(identityId)
+    else kratosService.invalidateIdentity(identityId)
+  } else if (flowType === 'recovery' || flowType === 'verification') {
+    kratosService.invalidateIdentity(identityId)
+  }
+}
+
 export class WebhookController {
   /** POST /api/webhooks/kratos */
   async kratos(request: FastifyRequest, reply: FastifyReply) {
@@ -115,6 +138,8 @@ export class WebhookController {
     else if (flowType === 'recovery' || flowType === 'verification') verb = flowType
 
     const failed = /fail|error|denied/i.test(outcome)
+
+    if (!failed) invalidateCachedIdentity(flowType, method, identityId)
 
     const event: AuditEvent = {
       category: 'auth',

@@ -91,7 +91,8 @@ class OpaBundleService {
     try {
       // The full bindings rather than getAllIdentitiesWithGroups: that projection drops the
       // identity id, which is the one attribute a subject keeps across an email change.
-      const bindings = await kratosService.getAllIdentitiesWithBindings()
+      // Authorization data: never older than the in-process cache used to allow.
+      const bindings = await kratosService.getAllIdentitiesWithBindings({ maxAgeMs: 5_000 })
       const group_membership: Record<string, string[]> = {}
       const group_membership_by_id: Record<string, string[]> = {}
       for (const [email, binding] of bindings) {

@@ -105,11 +105,18 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     await service.getAllIdentitiesWithGroups()
     expect(mockFetch).toHaveBeenCalledTimes(1)
 
-    // Advance time past TTL (5 seconds)
-    vi.advanceTimersByTime(6_000)
-
-    // Fourth call (after TTL) - should fetch again
+    // Past the fresh window the snapshot is served stale while ONE refresh runs in the background.
+    vi.advanceTimersByTime(16_000)
     await service.getAllIdentitiesWithGroups()
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('never serves the OPAL feed a snapshot older than it asks for', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(mockIdentities) })
+    await service.getAllIdentitiesWithBindings()
+    vi.advanceTimersByTime(6_000)
+    // Waits for the walk instead of taking the 6s-old snapshot.
+    await service.getAllIdentitiesWithBindings({ maxAgeMs: 5_000 })
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
