@@ -4,11 +4,12 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { siteLoginStore } from '../sites/login-store.js'
 import { getSecondFactorGroups } from '../second-factor/settings.js'
-import { buildOpalDatasourceEntries } from '../services/opal-datasource.js'
+import { buildOpalDatasourceEntries, opalRolesDataset, opalRouteMapsDataset } from '../services/opal-datasource.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
 import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSuccess } from '../telemetry/metrics.js'
 import { mirrorOpalFetch } from '../home/runtime.js'
+import { apiClientsDataset } from '../services/api-clients.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -113,6 +114,29 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // Org API keys: { client_id: {org, scopes, expires_at?} } (feeds data.api_clients) — what the policy
+  // needs to decide a machine caller on a site. 503 when Hydra cannot be read: an empty 200 would
+  // replace what OPA holds and cut every integration off until the next fetch.
+  fastify.get('/opal/api_clients', {
+    schema: {
+      description:
+        'OPAL data source: org API keys (Hydra client_credentials clients) by client_id — organization, registered ' +
+        'scopes, expiry (data.api_clients). 503 when Hydra cannot be read, so OPAL keeps the last good data.',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send(await apiClientsDataset())
+    } catch (err) {
+      request.log.error({ err: (err as Error).message }, 'api_clients: Hydra unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'API clients could not be read from the OAuth2 server. Keep the last good data and retry.',
+      })
+    }
+  })
+
   // Platform 2FA: { groups: [...] } (feeds data.second_factor; default ["super_admins"]). 503 on a store
   // error — an empty 200 would silently let every privileged account sign in without a second factor.
   fastify.get('/opal/second_factor', {
@@ -135,14 +159,26 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Roles per service
+  // Roles of every service plus "global": { <svc>: roles } (feeds data.roles). No try/catch: a read
+  // error answers 500 and OPAL keeps what OPA holds — this entry replaces the whole subtree.
+  fastify.get('/opal/roles', async (_request, reply) => {
+    return reply.send(await opalRolesDataset())
+  })
+
+  // Route map of every service that has one: { <svc>: {rules} } (feeds data.route_map). Same rule.
+  fastify.get('/opal/route_maps', async (_request, reply) => {
+    return reply.send(await opalRouteMapsDataset())
+  })
+
+  // Roles per service. No longer in the manifest; kept for an OPAL client still polling the entries
+  // of the manifest it pulled before the aggregate entries shipped.
   fastify.get('/opal/roles/:service', async (request, reply) => {
     const { service } = request.params as { service: string }
     const roles = await redisRbacRepository.getRoles(service)
     return reply.send(roles || {})
   })
 
-  // Route map per service
+  // Route map per service (same: kept for clients on an older manifest)
   fastify.get('/opal/route_map/:service', async (request, reply) => {
     const { service } = request.params as { service: string }
     const routeMap = await redisRbacRepository.getRouteMap(service)
@@ -170,6 +206,8 @@ async function recordDatasourceFetch(request: FastifyRequest, reply: FastifyRepl
   opalDatasourceDuration.labels(entry).observe(reply.elapsedTime / 1000)
   if (status < 300) {
     opalDatasourceLastSuccess.labels(entry).set(Date.now() / 1000)
-    mirrorOpalFetch(entry)
+    // The manifest is read once, when a client connects: it is not data, and counting it made the Home
+    // call policy sync stale for as long as the client had been up.
+    if (entry !== 'opal-datasource') mirrorOpalFetch(entry)
   }
 }

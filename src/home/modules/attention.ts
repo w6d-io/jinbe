@@ -21,6 +21,8 @@ import { CONNECT, DAY, HOUR, MINUTE, ago, iso, ok, probe, src, type ModuleContex
 const MAX_ITEMS = 50
 const PROBE_MS = 250
 const INBOX_MS = 150
+/** The info item shows once the capped outbox (no archiver) is this full. */
+const OUTBOX_NEAR_CAP = 0.9
 
 /** A cached item: the public shape plus what only the per-caller pass may read (stripped before sending). */
 type Staged = AttentionItem & { _requester?: string; _audience?: 'super_admin'; _approval?: boolean }
@@ -86,7 +88,19 @@ function platformBroken(f: PlatformFacts): Staged[] {
       }))
     }
   }
-  if (f.outbox?.oldestMs && f.now - f.outbox.oldestMs >= HOUR) {
+  // Lag means something only when an archiver is meant to drain the outbox. Without one the outbox is
+  // capped, so what is worth knowing is that the oldest events are about to be dropped.
+  if (!sources.archiveEnabled()) {
+    const cap = sources.outboxMaxLen()
+    if (f.outbox && f.outbox.length >= OUTBOX_NEAR_CAP * cap) {
+      out.push(item({
+        id: 'audit_outbox_near_cap:outbox', kind: 'audit_outbox_near_cap', severity: 'info',
+        title: `Audit outbox holds ${f.outbox.length} of ${cap} events — the oldest are dropped past the cap`,
+        detail: 'no archiver is configured (AUDIT_ARCHIVE_ENABLED); the audit log in Loki is unaffected',
+        since: iso(f.outbox.oldestMs ?? f.now), target: { page: 'audit', params: {} }, metrics: { count: f.outbox.length, cap }, _audience: 'super_admin',
+      }))
+    }
+  } else if (f.outbox?.oldestMs && f.now - f.outbox.oldestMs >= HOUR) {
     const age = f.now - f.outbox.oldestMs
     out.push(item({
       id: 'audit_archive_lag:outbox', kind: 'audit_archive_lag', severity: age >= DAY ? 'critical' : 'warning',

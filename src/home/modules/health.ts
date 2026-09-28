@@ -16,6 +16,8 @@ export interface PlatformFacts {
   now: number
   gateway: { kind: 'off' } | { kind: 'down' } | { kind: 'unmanaged' } | { kind: 'ok'; settled: boolean; phase: string; since: string | null; message: string | null }
   engines: { serving: string | null; since: number | null; reporting: number; current: number; silent: number }
+  /** OPA's /health, asked only when OPA_URL is set; read when no engine has ever reported. */
+  opaDirect: 'ok' | 'down' | null
   opal: { entries: number; oldestMs: number | null }
   rules: { at: number; count: number; compileErrors: number } | null
   outbox: { length: number; oldestMs: number | null } | null
@@ -29,7 +31,7 @@ export interface PlatformFacts {
 export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
   const sourcesOut: Record<string, SourceDetail> = {}
   const kubeOff = sources.kubeMode() === 'off'
-  const [rollout, serving, engineList, opal, rules, outbox, failures, certJob, dead] = await Promise.all([
+  const [rollout, serving, engineList, opal, rules, outbox, failures, certJob, dead, opaUp] = await Promise.all([
     kubeOff ? Promise.resolve(null) : probe(() => sources.gatewayRollout(), PROBE_MS),
     probe(() => sources.servingRevision(), PROBE_MS),
     probe(() => sources.engines(), PROBE_MS),
@@ -39,6 +41,7 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
     probe(() => sources.auditFailures(now), PROBE_MS),
     sources.prom() ? probe(() => readJob('certificates', now), PROBE_MS) : Promise.resolve(null),
     probe(() => sources.notificationsDeadLettered(), PROBE_MS),
+    sources.opaConfigured() ? sources.opaHealthy(PROBE_MS) : Promise.resolve(null),
   ])
 
   let gateway: PlatformFacts['gateway']
@@ -82,6 +85,7 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
     now,
     gateway,
     engines,
+    opaDirect: opaUp === null ? null : opaUp ? 'ok' : 'down',
     opal: { entries: opalValues.length, oldestMs: opalValues.length ? Math.min(...opalValues) : null },
     rules: rules.ok ? rules.value : null,
     outbox: outbox?.ok ? outbox.value : null,
@@ -121,9 +125,11 @@ export function opaComponent(f: PlatformFacts): HealthComponent {
   const link = { page: 'gateway', anchor: 'engines' }
   const e = f.engines
   if (e.reporting === 0) {
-    return e.silent > 0
-      ? component('opa', 'down', 'no engine reporting', { link })
-      : component('opa', 'unknown', 'no engine has reported', { link })
+    if (e.silent > 0) return component('opa', 'down', 'no engine reporting', { link })
+    // No engine ever reported: OPA is not pulling jinbe's bundle (OPAL feeds it). Ask OPA itself.
+    if (f.opaDirect === 'ok') return component('opa', 'ok', 'reachable (OPAL-managed)', { link })
+    if (f.opaDirect === 'down') return component('opa', 'down', 'OPA did not answer', { link })
+    return component('opa', 'unknown', 'no engine has reported', { link })
   }
   if (!e.serving) return component('opa', 'unknown', `${e.reporting} reporting, revision unknown`, { link })
   const summary = `${e.current}/${e.reporting} engines on ${e.serving.slice(0, 8)}`
@@ -140,9 +146,10 @@ export function opalComponent(f: PlatformFacts): HealthComponent {
   return component('opal_data', state, `${ago(age)} ago`, { link, ...(state !== 'ok' ? { since: iso(f.opal.oldestMs) } : {}) })
 }
 
-function archiveComponent(f: PlatformFacts): HealthComponent {
+export function archiveComponent(f: PlatformFacts): HealthComponent {
   const link = { page: 'audit' }
   if (sources.auditSink() === 'legacy') return component('audit_archive', 'not_deployed', 'audit/v1 is off', { link })
+  if (!sources.archiveEnabled()) return component('audit_archive', 'not_deployed', 'no archiver configured', { link })
   if (!f.outbox) return component('audit_archive', 'unknown', 'outbox not readable', { link })
   if (f.outbox.oldestMs === null) return component('audit_archive', 'ok', 'up to date', { link })
   const age = f.now - f.outbox.oldestMs
@@ -172,13 +179,15 @@ export function certificatesComponent(f: PlatformFacts): HealthComponent {
  * Edge protection: the live sites behind the WAF (a zone on a Gateway whose Coraza policy is in force,
  * no Ingress left). Any site without it is `degraded` — reachable around the WAF, or with no WAF at all.
  */
-export function wafComponent(w: { total: number; waf: number; unknown: number } | null): HealthComponent {
-  const link = { link: { page: 'settings', anchor: 'zones' } }
-  if (!w) return component('waf', 'unknown', 'could not be read', link)
-  if (w.total === 0) return component('waf', 'ok', 'no live sites', link)
+export function wafComponent(w: { total: number; waf: number; unknown: number; unprotectedHosts: number } | null): HealthComponent {
+  const link = { page: 'settings', anchor: 'zones' }
+  if (!w) return component('waf', 'unknown', 'could not be read', { link })
+  // Unprotected sites next to their distinct hosts: several sites can share one host.
+  const metrics = { total: w.total, waf: w.waf, unknown: w.unknown, unprotected: w.total - w.waf - w.unknown, unprotectedHosts: w.unprotectedHosts }
+  if (w.total === 0) return component('waf', 'ok', 'no live sites', { link, metrics })
   const summary = `${w.waf}/${w.total} sites behind the WAF`
-  if (w.unknown > 0) return component('waf', 'unknown', summary, link)
-  return component('waf', w.waf === w.total ? 'ok' : 'degraded', summary, link)
+  if (w.unknown > 0) return component('waf', 'unknown', summary, { link, metrics })
+  return component('waf', w.waf === w.total ? 'ok' : 'degraded', summary, { link, metrics })
 }
 
 export const healthModule: ModuleDef<Health> = {

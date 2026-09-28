@@ -1,4 +1,4 @@
-import { redisRbacRepository } from './redis-rbac.repository.js'
+import { redisRbacRepository, type FlatRolesMap, type RouteMap } from './redis-rbac.repository.js'
 import { env } from '../config/env.js'
 
 /**
@@ -18,19 +18,24 @@ export interface OpalDataSourceEntry {
 /**
  * Everything OPA needs from jinbe. Serves GET /opal-datasource AND the push to opal-server after a
  * change, so the two can never list different entries.
+ *
+ * The list is FIXED: it never depends on which services exist. Roles and route maps go out as one
+ * entry each, covering every service. The OPAL client builds its periodic-refresh set from the
+ * manifest it pulls on connect, so a per-service entry for a service registered after that connect
+ * was refreshed only on push — a lost push left it stale until the client reconnected.
  */
 export async function buildOpalDatasourceEntries(): Promise<OpalDataSourceEntry[]> {
-  const services = await redisRbacRepository.getServices()
   const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
 
   const entries = [
     { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
     { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
-    // Global roles are always part of OPA's dataset, even though "global"
-    // is not listed in the services registry — they hold the platform-wide
-    // wildcard ("*") used by the super_admin role and the rego super_admin
-    // detector relies on data.roles.global being populated.
-    { url: `${jinbeUrl}/api/admin/rbac/opal/roles/global`, topics: ['policy_data'], dst_path: '/roles/global' },
+    // Roles of every service plus "global" (data.roles.<svc>). Global is not in the services registry
+    // but always present: it holds the platform-wide wildcard ("*") of the super_admin role, and the
+    // rego super_admin detector relies on data.roles.global being populated.
+    { url: `${jinbeUrl}/api/admin/rbac/opal/roles`, topics: ['policy_data'], dst_path: '/roles' },
+    // Route map of every service that has one (data.route_map.<svc>).
+    { url: `${jinbeUrl}/api/admin/rbac/opal/route_maps`, topics: ['policy_data'], dst_path: '/route_map' },
     // Org → service map (data.org_service_map): the delegation rego resolves
     // which service a target org's RBAC lives under from this.
     { url: `${jinbeUrl}/api/admin/rbac/opal/org_service_map`, topics: ['policy_data'], dst_path: '/org_service_map' },
@@ -44,18 +49,39 @@ export async function buildOpalDatasourceEntries(): Promise<OpalDataSourceEntry[
     { url: `${jinbeUrl}/api/admin/rbac/opal/site_login`, topics: ['policy_data'], dst_path: '/site_login' },
     // Platform 2FA (data.second_factor): groups whose members need aal2 on every permission route.
     { url: `${jinbeUrl}/api/admin/rbac/opal/second_factor`, topics: ['policy_data'], dst_path: '/second_factor' },
+    // Org API keys (data.api_clients): a machine caller's organization and registered scopes, so a site
+    // route is granted to a client only in its own org and only as far as its scopes reach.
+    { url: `${jinbeUrl}/api/admin/rbac/opal/api_clients`, topics: ['policy_data'], dst_path: '/api_clients' },
   ]
-
-  for (const svc of services) {
-    entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/roles/${svc}`, topics: ['policy_data'], dst_path: `/roles/${svc}` })
-    const routeMap = await redisRbacRepository.getRouteMap(svc)
-    if (routeMap) {
-      entries.push({ url: `${jinbeUrl}/api/admin/rbac/opal/route_map/${svc}`, topics: ['policy_data'], dst_path: `/route_map/${svc}` })
-    }
-  }
 
   // The client sends this on every data fetch.
   const config = { headers: { Authorization: `Bearer ${env.OPAL_CLIENT_TOKEN}` } }
   const refresh = env.OPAL_DATA_REFRESH_SECONDS > 0 ? { periodic_update_interval: env.OPAL_DATA_REFRESH_SECONDS } : {}
   return entries.map((entry) => ({ ...entry, config, ...refresh }))
+}
+
+/**
+ * An entry's name as the fetch metrics and the Home file it (`bindings`, `opal/roles`): its path
+ * under /admin/rbac/.
+ */
+export function opalEntryName(url: string): string {
+  return new URL(url).pathname.replace(/^.*\/admin\/rbac\/(develop\/)?/, '')
+}
+
+/**
+ * data.roles: { <svc>: roles } for "global" and every registered service — `{}` for one with no roles,
+ * exactly what the former per-service entries wrote. A read error throws: the route answers 5xx and
+ * OPAL keeps what OPA holds, never a partial map (the entry replaces the whole subtree).
+ */
+export async function opalRolesDataset(): Promise<Record<string, FlatRolesMap>> {
+  const services = [...new Set(['global', ...(await redisRbacRepository.getServices())])]
+  const roles = await Promise.all(services.map(async (svc) => [svc, (await redisRbacRepository.getRoles(svc)) || {}] as const))
+  return Object.fromEntries(roles)
+}
+
+/** data.route_map: { <svc>: route map } for every registered service that has one. Throws like roles. */
+export async function opalRouteMapsDataset(): Promise<Record<string, RouteMap>> {
+  const services = await redisRbacRepository.getServices()
+  const maps = await Promise.all(services.map(async (svc) => [svc, await redisRbacRepository.getRouteMap(svc)] as const))
+  return Object.fromEntries(maps.filter((m): m is readonly [string, RouteMap] => !!m[1]))
 }
