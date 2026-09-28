@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// The per-identity write lock is Redis infrastructure; passthrough so the fake Kratos is all this needs.
+vi.mock('../../services/redis-lock.js', () => ({ withRedisLock: (_name: string, fn: () => unknown) => fn() }))
 import { KratosService } from '../../services/kratos.service.js'
 import { invalidateCachedIdentity } from '../../controllers/webhook.controller.js'
 import { configureCache } from '../../cache/swr.js'
@@ -55,7 +58,15 @@ const fetchMock = vi.fn(async (url: string, init: RequestInit = {}) => {
     const i = kratos.get(one[1])!
     const body = JSON.parse(String(init.body))
     if (method === 'PUT') Object.assign(i, { traits: body.traits, metadata_admin: body.metadata_admin, state: body.state })
-    else for (const p of body) (i as unknown as Record<string, unknown>)[p.path.slice(1)] = p.value
+    else {
+      // JSON Patch, one level deep: /organization_id, /metadata_admin, /metadata_admin/<key>.
+      for (const p of body as Array<{ path: string; value: unknown }>) {
+        const [top, key] = p.path.slice(1).split('/')
+        const target = i as unknown as Record<string, unknown>
+        if (key) target[top] = { ...((target[top] as Record<string, unknown>) ?? {}), [key]: p.value }
+        else target[top] = p.value
+      }
+    }
     return reply(strip(i, false))
   }
   const cred = u.pathname.match(/^\/admin\/identities\/([^/]+)\/credentials\/([^/]+)$/)

@@ -1,37 +1,57 @@
-import { randomUUID } from 'node:crypto'
-import { Pool } from 'pg'
 import { env } from '../config/index.js'
+import { invalidateHome } from '../home/cache.js'
+import { kratosService } from './kratos.service.js'
+import * as kratos from './organisation-store/kratos.js'
+import * as postgres from './organisation-store/postgres.js'
+import {
+  OrganisationStoreNotConfiguredError,
+  type ApplyOutcome,
+  type Organisation,
+  type OrganisationChange,
+  type OrganisationDeployment,
+  type OrganisationMember,
+  type OrganisationRecord,
+} from './organisation-store/types.js'
+
+export * from './organisation-store/types.js'
 
 /**
- * Organisations as records this service owns, rather than a set inferred from group names.
+ * Organisations as records this service owns: one interface, two stores.
  *
- * The inferred model cannot hold what a directory knows about an organisation — a label somebody
- * can read, which namespace it deploys into, which applications it runs, what tier it is on — and
- * it cannot answer about a subject the caller is not. Both are needed the moment this service is
- * the place other services ask.
+ *   kratos   — memberships (and org-scoped roles, and groups) on the Kratos identity, the registry
+ *              (name, tenant, settings, entitlements) in Redis. The default without a database URL:
+ *              one source of truth, nothing extra to run. See organisation-store/kratos.ts.
+ *   postgres — rows in ORGANISATION_DATABASE_URL. Still works, no longer required.
  *
- * Deliberately relational and deliberately not the document store this service uses for the
- * platform it manages: these rows are structure, they are joined and constrained, and losing one
- * silently is not recoverable from a cache.
+ * Every route, the policy bundle and the OPAL feeds go through the functions below and never ask
+ * which store answered. What they get is the same shape from either.
  *
- * Whatever else a directory carries — a tier, a contract, a commercial range — travels in
- * `attributes` rather than in columns named after one deployment's vocabulary. Anything that
- * decides an entitlement MUST be carried here, because an organisation imported without it grants
- * differently than the one it was copied from, and nothing says so.
+ * Every write here ends with the same fan-out: the directory cache is dropped (on every replica), the
+ * home screens recount, and the engine is told to refetch (OPAL push) — so a membership change is
+ * enforced now, not at the next poll.
  */
-export class OrganisationStoreUnavailableError extends Error {}
 
-/**
- * Not an outage: this deployment was never given a database. Kept apart so the console can say what
- * to set instead of "try again", which would never help.
- */
-export class OrganisationStoreNotConfiguredError extends OrganisationStoreUnavailableError {
-  constructor() {
-    super('No organisation database is configured: set ORGANISATION_DATABASE_URL.')
-  }
+export type OrganisationStoreMode = 'kratos' | 'postgres'
+
+export function organisationStoreMode(): OrganisationStoreMode {
+  return env.ORGANISATION_STORE ?? (env.ORGANISATION_DATABASE_URL ? 'postgres' : 'kratos')
 }
 
-/** The 503 every organisation route answers when there is no database at all. */
+/** Whether this deployment has somewhere to keep organisations. Only a `postgres` store without a URL has not. */
+export function organisationStoreConfigured(): boolean {
+  return organisationStoreMode() === 'kratos' || postgres.postgresConfigured()
+}
+
+/**
+ * Whether memberships are kept as ROWS beside the identity (the `postgres` store), so the screens
+ * that edit the identity must also reconcile the rows. In the `kratos` store the identity is the
+ * record and there is nothing to mirror.
+ */
+export function membershipRowsKept(): boolean {
+  return env.ORGANISATION_SOURCE === 'directory' && organisationStoreMode() === 'postgres' && postgres.postgresConfigured()
+}
+
+/** The 503 every organisation route answers when there is nowhere to keep them. */
 export function organisationStoreNotConfigured() {
   return {
     error: 'organisation_directory_unavailable',
@@ -40,600 +60,103 @@ export function organisationStoreNotConfigured() {
   } as const
 }
 
-export interface Organisation {
-  readonly id: string
-  readonly name: string
-  readonly tenant: string
-  readonly attributes: Readonly<Record<string, unknown>>
-}
+const store = () => (organisationStoreMode() === 'postgres' ? postgres : kratos)
 
-export interface OrganisationDeployment {
-  readonly application: string
-  readonly enabled: boolean
-}
-
-export interface OrganisationMember {
-  readonly subjectId: string
-  readonly role: string
-}
-
-/**
- * The schema, applied on first use and safe to apply again.
- *
- * `tenant` carries no unique constraint on purpose: a namespace is measured to host more than one
- * organisation, and a constraint that assumed otherwise would merge two of them into one on import
- * — silently, and with the memberships of both.
- *
- * `group_members` holds the one fact that grows with the company: which groups a person is in. What
- * a group GIVES — roles, per organisation — is deliberately not here: it changes at a release, it
- * must be reviewed, and a diff of it is the only way anybody can see a permission change coming. So
- * it lives in the repository, and this table stays one row per person per group, whatever the number
- * of organisations.
- *
- * Keyed on the subject, never the address: an address is a trait its owner can change, and a changed
- * one must not move an entitlement — nor a reused one inherit the last holder's.
- */
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS organisations (
-  id          uuid PRIMARY KEY,
-  name        text NOT NULL,
-  tenant      text NOT NULL,
-  attributes  jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS organisations_tenant_idx ON organisations (tenant);
-
-CREATE TABLE IF NOT EXISTS organisation_deployments (
-  organisation_id uuid NOT NULL REFERENCES organisations (id) ON DELETE CASCADE,
-  application     text NOT NULL,
-  enabled         boolean NOT NULL,
-  PRIMARY KEY (organisation_id, application)
-);
-
-CREATE TABLE IF NOT EXISTS organisation_members (
-  organisation_id uuid NOT NULL REFERENCES organisations (id) ON DELETE CASCADE,
-  subject_id      text NOT NULL,
-  role            text NOT NULL,
-  PRIMARY KEY (organisation_id, subject_id, role)
-);
-CREATE INDEX IF NOT EXISTS organisation_members_subject_idx ON organisation_members (subject_id);
-
-CREATE TABLE IF NOT EXISTS group_members (
-  subject_id  text NOT NULL,
-  group_name  text NOT NULL,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  created_by  text,
-  PRIMARY KEY (subject_id, group_name)
-);
-CREATE INDEX IF NOT EXISTS group_members_group_idx ON group_members (group_name);
-`
-
-let pool: Pool | null = null
-let schemaReady: Promise<void> | null = null
-
-/** Whether this deployment has somewhere to keep organisations. */
-export function organisationStoreConfigured(): boolean {
-  return Boolean(env.ORGANISATION_DATABASE_URL)
-}
-
-function connection(): Pool {
-  if (!env.ORGANISATION_DATABASE_URL) throw new OrganisationStoreNotConfiguredError()
-  pool ??= new Pool({
-    connectionString: env.ORGANISATION_DATABASE_URL,
-    max: env.ORGANISATION_DATABASE_POOL_MAX,
-    // A request waiting on a connection for ever is a request nobody times out. Refusing is worse
-    // for one caller and better for the service, and it is visible.
-    connectionTimeoutMillis: env.ORGANISATION_DATABASE_TIMEOUT_MS,
-    // Named authority: the certificate is still checked, against the one the deployment says signed
-    // it. Disabling the check instead would encrypt the connection to whatever answered, which is
-    // the shape of protection that reads as protection and is not.
-    ...(env.ORGANISATION_DATABASE_CA
-      ? { ssl: { ca: env.ORGANISATION_DATABASE_CA, rejectUnauthorized: true } }
-      : {}),
-  })
-  return pool
-}
-
-/** Applied once per process, and awaited by every read so none can run against a missing table. */
-async function ready(): Promise<void> {
-  schemaReady ??= connection()
-    .query(SCHEMA)
-    .then(() => undefined)
-    .catch((failure: unknown) => {
-      // Cleared so the next caller tries again: a database that was starting up must not leave the
-      // process convinced for ever that its schema cannot be applied.
-      schemaReady = null
-      throw new OrganisationStoreUnavailableError(`Could not prepare the organisation store: ${String(failure)}`)
-    })
-  return schemaReady
-}
-
-async function query<T>(sql: string, values: readonly unknown[]): Promise<T[]> {
-  await ready()
+/** After a committed write: never awaited, never able to fail the write it follows. */
+function changed(reason: string, target: { type: string; id?: string }): void {
   try {
-    const result = await connection().query(sql, values as unknown[])
-    return result.rows as T[]
-  } catch (failure) {
-    // Never an empty answer: "cannot tell" and "belongs to nothing" are opposite facts, and one of
-    // them must not be allowed to authorise anything.
-    throw new OrganisationStoreUnavailableError(`The organisation store did not answer: ${String(failure)}`)
+    kratosService.invalidateGroupsCache?.()
+    invalidateHome(['people', 'attention'])
+  } catch {
+    // A cache that could not be dropped expires on its own TTL.
   }
+  import('./rbac.service.js')
+    .then(({ rbacService }) =>
+      rbacService.invalidateBundle(`organisation.${reason}`, target, undefined, undefined, { audit: false }),
+    )
+    .catch(() => {})
 }
 
-/**
- * The organisations a subject is a member of.
- *
- * Keyed on the subject, never on an address: an address is a trait its owner can change, and a
- * changed address must not move an entitlement — nor must a reused one inherit the last holder's.
- */
-export async function organisationsForSubject(subjectId: string): Promise<string[]> {
-  if (!subjectId) return []
-  const rows = await query<{ organisation_id: string }>(
-    'SELECT DISTINCT organisation_id FROM organisation_members WHERE subject_id = $1',
-    [subjectId],
-  )
-  return rows.map((row) => row.organisation_id)
+async function write<T>(reason: string, target: { type: string; id?: string }, run: () => Promise<T>): Promise<T> {
+  const result = await run()
+  changed(reason, target)
+  return result
 }
 
-/**
- * What each of these subjects belongs to, in one query.
- *
- * A listing asks about everybody on the page, and asking per row turns one screen into as many
- * round trips as it has rows — which is how a list becomes slow enough that somebody caches it and
- * then shows a stale one.
- */
-export async function membershipsForSubjects(
-  subjectIds: readonly string[],
-): Promise<Map<string, string[]>> {
-  const held = new Map<string, string[]>()
-  if (subjectIds.length === 0) return held
+// ─── Reads ───
 
-  const rows = await query<{ subject_id: string; organisation_id: string }>(
-    `SELECT DISTINCT subject_id, organisation_id
-     FROM organisation_members
-     WHERE subject_id = ANY($1::text[])`,
-    [subjectIds],
-  )
+export const organisationsForSubject = (subjectId: string): Promise<string[]> => store().organisationsForSubject(subjectId)
+export const membershipsForSubjects = (subjectIds: readonly string[]): Promise<Map<string, string[]>> =>
+  store().membershipsForSubjects(subjectIds)
+export const groupsForSubjects = (subjectIds: readonly string[]): Promise<Map<string, string[]>> =>
+  store().groupsForSubjects(subjectIds)
+export const allGroupMemberships = (): Promise<Map<string, string[]>> => store().allGroupMemberships()
+export const membersOfGroup = (groupName: string): Promise<string[]> => store().membersOfGroup(groupName)
+export const membersOf = (organisationId: string): Promise<OrganisationMember[]> => store().membersOf(organisationId)
+export const allOrganisations = (): Promise<Organisation[]> => store().allOrganisations()
+export const organisationsById = (ids: readonly string[]): Promise<Organisation[]> => store().organisationsById(ids)
+export const deploymentsOf = (organisationId: string): Promise<OrganisationDeployment[]> => store().deploymentsOf(organisationId)
+export const allEntitlements = (): Promise<Map<string, string[]>> => store().allEntitlements()
 
-  for (const row of rows) {
-    const already = held.get(row.subject_id)
-    if (already) already.push(row.organisation_id)
-    else held.set(row.subject_id, [row.organisation_id])
-  }
-  return held
-}
+// ─── Groups (the group editor notifies for itself) ───
 
-/**
- * Which groups a person is in.
- *
- * The whole page in one query, for the same reason as the memberships above: asking per row is how
- * a list becomes slow enough that somebody caches it and then shows a stale one.
- *
- * A subject with no group is ABSENT from the map rather than present with an empty list — the caller
- * decides what "belongs to no group" should look like on its screen, and defaulting here would make
- * "has none" and "was not asked about" the same answer.
- */
-export async function groupsForSubjects(
-  subjectIds: readonly string[],
-): Promise<Map<string, string[]>> {
-  const held = new Map<string, string[]>()
-  if (subjectIds.length === 0) return held
-
-  const rows = await query<{ subject_id: string; group_name: string }>(
-    `SELECT subject_id, group_name
-     FROM group_members
-     WHERE subject_id = ANY($1::text[])
-     ORDER BY group_name`,
-    [subjectIds],
-  )
-
-  for (const row of rows) {
-    const already = held.get(row.subject_id)
-    if (already) already.push(row.group_name)
-    else held.set(row.subject_id, [row.group_name])
-  }
-  return held
-}
-
-/**
- * Everybody's groups, for building the artefact the authorization engine decides against.
- *
- * One query and no paging: this is the fact that grows with the company, and it is exactly the thing
- * that must be read whole — a partial answer here would silently remove somebody's access rather
- * than fail.
- */
-export async function allGroupMemberships(): Promise<Map<string, string[]>> {
-  const held = new Map<string, string[]>()
-  const rows = await query<{ subject_id: string; group_name: string }>(
-    'SELECT subject_id, group_name FROM group_members ORDER BY subject_id, group_name',
-    [],
-  )
-  for (const row of rows) {
-    const already = held.get(row.subject_id)
-    if (already) already.push(row.group_name)
-    else held.set(row.subject_id, [row.group_name])
-  }
-  return held
-}
-
-/** Who is in one group, for the screen that administers it. */
-export async function membersOfGroup(groupName: string): Promise<string[]> {
-  const rows = await query<{ subject_id: string }>(
-    'SELECT subject_id FROM group_members WHERE group_name = $1 ORDER BY subject_id',
-    [groupName],
-  )
-  return rows.map((row) => row.subject_id)
-}
-
-/**
- * Put somebody in a group.
- *
- * Idempotent: assigning twice is not an error, so a repair can be re-run and a double click cannot
- * fail. `created_by` is recorded because "who granted this" is the first question asked when
- * somebody turns out to hold more than expected.
- */
-export async function addToGroup(
-  subjectId: string,
-  groupName: string,
-  createdBy?: string,
-): Promise<void> {
-  await query(
-    `INSERT INTO group_members (subject_id, group_name, created_by)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (subject_id, group_name) DO NOTHING`,
-    [subjectId, groupName, createdBy ?? null],
-  )
-}
-
-/**
- * Apply a whole group change at once, or none of it.
- *
- * The revocations and the grants of one change belong together: applied one statement at a time, a
- * failure halfway leaves a person holding some of what was asked for and some of what was not — a
- * state nobody requested and nothing records. The gates upstream decide the change as a whole, so
- * the store commits it as a whole.
- *
- * The ORDER inside the transaction still matters for a reader of the audit trail, and it is the same
- * one the caller relies on: what is taken away goes first.
- */
-export async function applyGroupChange(
+export const addToGroup = (subjectId: string, groupName: string, createdBy?: string): Promise<void> =>
+  write('group_member_added', { type: 'user', id: subjectId }, () => store().addToGroup(subjectId, groupName, createdBy))
+export const removeFromGroup = (subjectId: string, groupName: string): Promise<void> =>
+  write('group_member_removed', { type: 'user', id: subjectId }, () => store().removeFromGroup(subjectId, groupName))
+export const applyGroupChange = (
   subjectId: string,
   revoked: readonly string[],
   granted: readonly string[],
   createdBy?: string,
-): Promise<void> {
-  if (revoked.length === 0 && granted.length === 0) return
-  await ready()
-  const client = await connection()
-    .connect()
-    .catch((failure: unknown) => {
-      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
-    })
+): Promise<void> => store().applyGroupChange(subjectId, revoked, granted, createdBy)
+export const forgetGroupsOf = (subjectId: string): Promise<void> => store().forgetGroupsOf(subjectId)
 
-  try {
-    await client.query('BEGIN')
-    for (const groupName of revoked) {
-      await client.query('DELETE FROM group_members WHERE subject_id = $1 AND group_name = $2', [
-        subjectId,
-        groupName,
-      ])
+/**
+ * Make somebody's groups exactly this set, in whichever store holds them — for imports and the
+ * migration between stores, not for the group editor (which gates every change and notifies itself).
+ */
+export async function setGroupsOf(subjectId: string, groups: readonly string[]): Promise<void> {
+  const wanted = [...new Set(groups)].sort()
+  await write('groups_set', { type: 'user', id: subjectId }, async () => {
+    if (organisationStoreMode() === 'kratos') {
+      await kratosService.updateAdminState(subjectId, (state) => ({
+        ...state,
+        metadataAdmin: { ...state.metadataAdmin, groups: wanted },
+      }))
+      return
     }
-    for (const groupName of granted) {
-      await client.query(
-        `INSERT INTO group_members (subject_id, group_name, created_by)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (subject_id, group_name) DO NOTHING`,
-        [subjectId, groupName, createdBy ?? null],
-      )
-    }
-    await client.query('COMMIT')
-  } catch (failure) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw new OrganisationStoreUnavailableError(`The groups were not changed: ${String(failure)}`)
-  } finally {
-    client.release()
-  }
-}
-
-/** Take somebody out of a group. Removing what is not there is not an error either. */
-export async function removeFromGroup(subjectId: string, groupName: string): Promise<void> {
-  await query('DELETE FROM group_members WHERE subject_id = $1 AND group_name = $2', [
-    subjectId,
-    groupName,
-  ])
-}
-
-/**
- * Clear every group of a subject that no longer exists.
- *
- * A row left behind names a subject nobody can look up, and would grant to whoever is issued that
- * identifier next.
- */
-export async function forgetGroupsOf(subjectId: string): Promise<void> {
-  await query('DELETE FROM group_members WHERE subject_id = $1', [subjectId])
-}
-
-/** Members of one organisation, for the screens that administer it. */
-export async function membersOf(organisationId: string): Promise<OrganisationMember[]> {
-  const rows = await query<{ subject_id: string; role: string }>(
-    'SELECT subject_id, role FROM organisation_members WHERE organisation_id = $1 ORDER BY subject_id, role',
-    [organisationId],
-  )
-  return rows.map((row) => ({ subjectId: row.subject_id, role: row.role }))
-}
-
-/** Every organisation, for a caller entitled to see them all. */
-export async function allOrganisations(): Promise<Organisation[]> {
-  const rows = await query<{ id: string; name: string; tenant: string; attributes: Record<string, unknown> }>(
-    'SELECT id, name, tenant, attributes FROM organisations ORDER BY tenant, name',
-    [],
-  )
-  return rows.map((row) => ({ id: row.id, name: row.name, tenant: row.tenant, attributes: row.attributes ?? {} }))
-}
-
-/** The named organisations, in the order asked, skipping any this store does not hold. */
-export async function organisationsById(ids: readonly string[]): Promise<Organisation[]> {
-  if (ids.length === 0) return []
-  const rows = await query<{ id: string; name: string; tenant: string; attributes: Record<string, unknown> }>(
-    'SELECT id, name, tenant, attributes FROM organisations WHERE id = ANY($1::uuid[])',
-    [ids],
-  )
-  const held = new Map(rows.map((row) => [row.id, row]))
-  return ids
-    .map((id) => held.get(id))
-    .filter((row): row is NonNullable<typeof row> => row !== undefined)
-    .map((row) => ({ id: row.id, name: row.name, tenant: row.tenant, attributes: row.attributes ?? {} }))
-}
-
-/** Which applications an organisation runs, and whether each is on. */
-export async function deploymentsOf(organisationId: string): Promise<OrganisationDeployment[]> {
-  const rows = await query<{ application: string; enabled: boolean }>(
-    'SELECT application, enabled FROM organisation_deployments WHERE organisation_id = $1 ORDER BY application',
-    [organisationId],
-  )
-  return rows.map((row) => ({ application: row.application, enabled: row.enabled }))
-}
-
-/**
- * Which applications every organisation is entitled to, for the engine.
- *
- * The second dimension of the model, and a COMMERCIAL fact rather than a personal one: what a role
- * gives says what somebody may do, this says which applications their organisation has at all. The
- * two are kept apart because they change for different reasons — one when somebody is promoted, the
- * other when a contract or a deployment changes.
- *
- * Only what is ON. A row with `enabled = false` is a deployment somebody turned off, and reading it
- * as an entitlement would let a subscription that has lapsed keep deciding.
- */
-export async function allEntitlements(): Promise<Map<string, string[]>> {
-  const held = new Map<string, string[]>()
-  const rows = await query<{ organisation_id: string; application: string }>(
-    'SELECT organisation_id, application FROM organisation_deployments WHERE enabled = true ORDER BY organisation_id, application',
-    [],
-  )
-  for (const row of rows) {
-    const already = held.get(row.organisation_id)
-    if (already) already.push(row.application)
-    else held.set(row.organisation_id, [row.application])
-  }
-  return held
-}
-
-/**
- * Record that somebody belongs to an organisation.
- *
- * Idempotent on the three together, so assigning a role twice is not an error and re-running a
- * repair changes nothing. The subject is the immutable identity: an address is a trait its owner can
- * change, and one that moved would take an entitlement with it.
- *
- * Refuses when the organisation is not held, rather than creating a membership pointing at nothing:
- * an edge to an organisation this service does not know is invisible everywhere it matters and
- * impossible to explain later.
- */
-export async function addMember(
-  organisationId: string,
-  subjectId: string,
-  role: string,
-): Promise<void> {
-  await query(
-    `INSERT INTO organisation_members (organisation_id, subject_id, role)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (organisation_id, subject_id, role) DO NOTHING`,
-    [organisationId, subjectId, role],
-  )
-}
-
-/**
- * Take somebody out of an organisation, or out of one role in it.
- *
- * Silent when there was nothing to remove: the caller asked for an end state, and reporting a
- * failure for an absence would make every repair look broken.
- */
-export async function removeMember(
-  organisationId: string,
-  subjectId: string,
-  role?: string,
-): Promise<void> {
-  if (role) {
-    await query(
-      'DELETE FROM organisation_members WHERE organisation_id = $1 AND subject_id = $2 AND role = $3',
-      [organisationId, subjectId, role],
+    const current = (await postgres.groupsForSubjects([subjectId])).get(subjectId) ?? []
+    await postgres.applyGroupChange(
+      subjectId,
+      current.filter((g) => !wanted.includes(g)),
+      wanted.filter((g) => !current.includes(g)),
+      'import',
     )
-    return
-  }
-  await query('DELETE FROM organisation_members WHERE organisation_id = $1 AND subject_id = $2', [
-    organisationId,
-    subjectId,
-  ])
+  })
 }
 
-/** Every organisation somebody belongs to, so removing them everywhere takes one call. */
-export async function removeMemberEverywhere(subjectId: string): Promise<void> {
-  await query('DELETE FROM organisation_members WHERE subject_id = $1', [subjectId])
-}
+// ─── Organisations and memberships ───
 
-/**
- * Make somebody's memberships exactly this set.
- *
- * The screens that edit membership send an end state, not a change, so this replaces rather than
- * adds: merging would leave every removal in place for ever, which is a revoked access that still
- * works. One transaction, because a half-applied set is a membership list nobody chose.
- *
- * An empty set is a legitimate answer and removes them from everywhere. It is also what an
- * accidental empty request looks like, which is why only a caller holding the whole intended set
- * may use this — the create and delete paths add and drop one at a time instead.
- */
-export async function setMemberships(
-  subjectId: string,
-  organisationIds: readonly string[],
-  role = 'member',
-): Promise<void> {
-  await ready()
-  const client = await connection()
-    .connect()
-    .catch((failure: unknown) => {
-      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
-    })
+export const createOrganisation = (input: { name: string; tenant: string; attributes?: Readonly<Record<string, unknown>> }) =>
+  write('created', { type: 'organization' }, () => store().createOrganisation(input))
+export const updateOrganisation = (id: string, change: OrganisationChange): Promise<Organisation> =>
+  write('updated', { type: 'organization', id }, () => store().updateOrganisation(id, change))
+export const deleteOrganisation = (id: string): Promise<void> =>
+  write('deleted', { type: 'organization', id }, () => store().deleteOrganisation(id))
+export const setDeployments = (id: string, deployments: readonly OrganisationDeployment[]): Promise<void> =>
+  write('deployments_changed', { type: 'organization', id }, () => store().setDeployments(id, deployments))
+export const applyOrganisations = (records: readonly OrganisationRecord[]): Promise<ApplyOutcome> =>
+  write('imported', { type: 'organization' }, () => store().applyOrganisations(records))
 
-  try {
-    await client.query('BEGIN')
-    await client.query('DELETE FROM organisation_members WHERE subject_id = $1', [subjectId])
-    for (const organisationId of new Set(organisationIds)) {
-      await client.query(
-        `INSERT INTO organisation_members (organisation_id, subject_id, role)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (organisation_id, subject_id, role) DO NOTHING`,
-        [organisationId, subjectId, role],
-      )
-    }
-    await client.query('COMMIT')
-  } catch (failure) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw new OrganisationStoreUnavailableError(`The memberships were not changed: ${String(failure)}`)
-  } finally {
-    client.release()
-  }
-}
+export const addMember = (organisationId: string, subjectId: string, role: string): Promise<void> =>
+  write('member_added', { type: 'organization', id: organisationId }, () => store().addMember(organisationId, subjectId, role))
+export const removeMember = (organisationId: string, subjectId: string, role?: string): Promise<void> =>
+  write('member_removed', { type: 'organization', id: organisationId }, () => store().removeMember(organisationId, subjectId, role))
+export const removeMemberEverywhere = (subjectId: string): Promise<void> =>
+  write('member_removed', { type: 'user', id: subjectId }, () => store().removeMemberEverywhere(subjectId))
+export const setMemberships = (subjectId: string, organisationIds: readonly string[], role?: string): Promise<void> =>
+  write('memberships_set', { type: 'user', id: subjectId }, () => store().setMemberships(subjectId, organisationIds, role))
 
-/**
- * Create one organisation: a name and a tenant, nothing else.
- *
- * No deployment and no member come with it. An organisation is its own entity; which applications
- * it runs and who belongs to it are separate facts added later, and membership never decides site
- * access — so nothing has to be bundled for it to exist.
- */
-export async function createOrganisation(input: {
-  name: string
-  tenant: string
-  attributes?: Readonly<Record<string, unknown>>
-}): Promise<Organisation> {
-  const id = randomUUID()
-  const attributes = input.attributes ?? {}
-  await query(
-    'INSERT INTO organisations (id, name, tenant, attributes) VALUES ($1, $2, $3, $4::jsonb)',
-    [id, input.name, input.tenant, JSON.stringify(attributes)],
-  )
-  return { id, name: input.name, tenant: input.tenant, attributes }
-}
-
-export interface OrganisationRecord {
-  readonly id: string
-  readonly name: string
-  readonly tenant: string
-  readonly attributes?: Readonly<Record<string, unknown>>
-  readonly deployments?: readonly OrganisationDeployment[]
-  readonly members?: readonly OrganisationMember[]
-}
-
-export interface ApplyOutcome {
-  readonly organisations: number
-  readonly deployments: number
-  readonly members: number
-}
-
-/**
- * Write a set of organisations, all of them or none.
- *
- * One transaction, because a half-applied import is worse than a refused one: the rows that landed
- * grant access, the rows that did not are missing, and nothing on screen distinguishes that from a
- * deliberate state.
- *
- * Replayable by construction — every write is an upsert keyed on the identifier the source already
- * had, so running it twice changes nothing and running it after a partial failure completes it.
- * Deployments and memberships of a named organisation are REPLACED rather than merged: they
- * describe a whole set, and merging would leave yesterday's removals in place for ever.
- *
- * Nothing is ever deleted here. An organisation absent from the input is left alone, because an
- * input that is incomplete for any reason — a filtered query, a source half migrated — must not
- * read as an instruction to revoke.
- */
-export async function applyOrganisations(
-  records: readonly OrganisationRecord[],
-): Promise<ApplyOutcome> {
-  await ready()
-  const client = await connection()
-    .connect()
-    .catch((failure: unknown) => {
-      throw new OrganisationStoreUnavailableError(`Could not open a transaction: ${String(failure)}`)
-    })
-
-  try {
-    await client.query('BEGIN')
-    let deployments = 0
-    let members = 0
-
-    for (const record of records) {
-      await client.query(
-        `INSERT INTO organisations (id, name, tenant, attributes, updated_at)
-         VALUES ($1, $2, $3, $4::jsonb, now())
-         ON CONFLICT (id) DO UPDATE
-           SET name = EXCLUDED.name,
-               tenant = EXCLUDED.tenant,
-               attributes = EXCLUDED.attributes,
-               updated_at = now()`,
-        [record.id, record.name, record.tenant, JSON.stringify(record.attributes ?? {})],
-      )
-
-      if (record.deployments) {
-        await client.query('DELETE FROM organisation_deployments WHERE organisation_id = $1', [record.id])
-        for (const deployment of record.deployments) {
-          await client.query(
-            `INSERT INTO organisation_deployments (organisation_id, application, enabled)
-             VALUES ($1, $2, $3)`,
-            [record.id, deployment.application, deployment.enabled],
-          )
-          deployments += 1
-        }
-      }
-
-      if (record.members) {
-        await client.query('DELETE FROM organisation_members WHERE organisation_id = $1', [record.id])
-        for (const member of record.members) {
-          await client.query(
-            `INSERT INTO organisation_members (organisation_id, subject_id, role)
-             VALUES ($1, $2, $3)`,
-            [record.id, member.subjectId, member.role],
-          )
-          members += 1
-        }
-      }
-    }
-
-    await client.query('COMMIT')
-    return { organisations: records.length, deployments, members }
-  } catch (failure) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw new OrganisationStoreUnavailableError(`The import did not apply: ${String(failure)}`)
-  } finally {
-    client.release()
-  }
-}
-
-/** Released between tests, and on shutdown. */
-export async function closeOrganisationStore(): Promise<void> {
-  const held = pool
-  pool = null
-  schemaReady = null
-  await held?.end()
-}
+/** Released between tests, and on shutdown. Only the `postgres` store holds a connection. */
+export const closeOrganisationStore = (): Promise<void> => postgres.closeOrganisationStore()

@@ -14,7 +14,8 @@ const alice = {
 const bob = { id: 'b0b00000-0000-4000-8000-000000000000', state: 'inactive', traits: { email: 'bob@example.com' } }
 
 const k = vi.hoisted(() => ({
-  getIdentityWithSecondFactors: vi.fn(),
+  getIdentitiesByIds: vi.fn(),
+  mfaByIds: vi.fn(),
   listIdentities: vi.fn(),
   listIdentitiesByIdentifierPrefix: vi.fn(),
   searchIdentities: vi.fn(),
@@ -30,7 +31,8 @@ vi.mock('../../services/kratos.service.js', () => {
     KratosApiError,
     MFA_METHODS: ['totp', 'webauthn', 'lookup_secret'],
     kratosService: {
-      getIdentityWithSecondFactors: k.getIdentityWithSecondFactors,
+      getIdentitiesByIds: k.getIdentitiesByIds,
+      mfaByIds: k.mfaByIds,
       listIdentities: k.listIdentities,
       listIdentitiesByIdentifierPrefix: k.listIdentitiesByIdentifierPrefix,
       searchIdentities: k.searchIdentities,
@@ -41,8 +43,15 @@ vi.mock('../../services/kratos.service.js', () => {
 vi.mock('../../authz/opa.js', () => ({ rights: k.rights }))
 vi.mock('../../services/org-membership.service.js', () => ({ organisationsOf: k.organisationsOf }))
 
-import { KratosApiError } from '../../services/kratos.service.js'
 import { classify, lookupUsers } from '../../services/user-lookup.service.js'
+
+// The cached, batched reads: identities without credentials, and second factors as method lists.
+function known(...identities: Array<{ id: string; credentials?: unknown }>) {
+  k.getIdentitiesByIds.mockImplementation(async (ids: string[]) =>
+    new Map(identities.filter((i) => ids.includes(i.id)).map((i) => [i.id, i])))
+  k.mfaByIds.mockImplementation(async (ids: string[]) =>
+    new Map(identities.filter((i) => ids.includes(i.id)).map((i) => [i.id, i.credentials ? ['totp'] : []])))
+}
 
 beforeEach(() => {
   for (const f of Object.values(k)) f.mockReset()
@@ -61,10 +70,11 @@ describe('classify', () => {
 })
 
 describe('lookupUsers', () => {
-  it('answers a pasted Kratos id with one GET, and describes the person', async () => {
-    k.getIdentityWithSecondFactors.mockResolvedValue(alice)
+  it('answers a pasted Kratos id from the cached identity, and describes the person', async () => {
+    known(alice)
     const answer = await lookupUsers(`  ${ID.toUpperCase()} `)
-    expect(k.getIdentityWithSecondFactors).toHaveBeenCalledWith(ID)
+    expect(k.getIdentitiesByIds).toHaveBeenCalledWith([ID])
+    expect(k.mfaByIds).toHaveBeenCalledWith([ID])
     expect(k.listIdentities).not.toHaveBeenCalled()
     expect(k.searchIdentities).not.toHaveBeenCalled()
     expect(answer).toEqual({
@@ -74,7 +84,7 @@ describe('lookupUsers', () => {
   })
 
   it('answers an unknown id as nobody, not as an error', async () => {
-    k.getIdentityWithSecondFactors.mockRejectedValue(new KratosApiError(404, 'nope'))
+    known()
     expect(await lookupUsers(ID)).toEqual({ match: 'none', data: [] })
   })
 
@@ -101,7 +111,7 @@ describe('lookupUsers', () => {
   it('falls back to the substring search when no address starts with it', async () => {
     k.listIdentitiesByIdentifierPrefix.mockResolvedValue([])
     k.searchIdentities.mockResolvedValue([{ id: ID }])
-    k.getIdentityWithSecondFactors.mockResolvedValue(alice)
+    known(alice)
     const answer = await lookupUsers('example')
     expect(k.searchIdentities).toHaveBeenCalledWith('example', 10)
     expect(answer.match).toBe('contains')
@@ -115,7 +125,7 @@ describe('lookupUsers', () => {
   })
 
   it('marks groups and organisations unknown when they cannot be read, never "none"', async () => {
-    k.getIdentityWithSecondFactors.mockResolvedValue(alice)
+    known(alice)
     k.rights.mockRejectedValue(new Error('opa down'))
     k.organisationsOf.mockRejectedValue(new Error('store down'))
     const [hit] = (await lookupUsers(ID)).data

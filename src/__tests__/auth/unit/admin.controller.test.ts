@@ -32,6 +32,13 @@ vi.mock('../../../services/kratos.service.js', () => ({
       }
       return identity
     }),
+    // The locked metadata writer: applies the change to the stored identity, as Kratos would.
+    updateAdminState: vi.fn().mockImplementation(async (id: string, change: (s: { organizationId: string | null; metadataAdmin: Record<string, unknown> }) => { organizationId: string | null; metadataAdmin: Record<string, unknown> }) => {
+      const identity = mockState.identities.find((i) => i.id === id) as Record<string, unknown> | undefined
+      if (!identity) throw Object.assign(new Error('Not found'), { statusCode: 404 })
+      const next = change({ organizationId: (identity.organization_id as string | null) ?? null, metadataAdmin: { ...(identity.metadata_admin as Record<string, unknown> ?? {}) } })
+      return { ...identity, organization_id: next.organizationId, metadata_admin: next.metadataAdmin }
+    }),
     createIdentity: vi.fn().mockImplementation(async (data: unknown) => {
       const newIdentity = createKratosIdentity({
         id: '550e8400-e29b-41d4-a716-446655440099',
@@ -416,12 +423,10 @@ describe('AdminController', () => {
 
       await controller.setUserMetadata(request as FastifyRequest<{ Params: { id: string }; Body: typeof body }>, reply)
 
-      expect(kratosService.updateIdentity).toHaveBeenCalledWith(
-        ID,
-        expect.objectContaining({
-          metadata_admin: expect.objectContaining({ groups: ['users'], note: 'hello' }),
-        })
-      )
+      // Merged under the identity's lock from a fresh read: the current groups survive.
+      expect(kratosService.updateIdentity).not.toHaveBeenCalled()
+      const change = vi.mocked(kratosService.updateAdminState).mock.calls[0][1]
+      expect(change({ organizationId: null, metadataAdmin: { groups: ['users'] } }).metadataAdmin).toEqual({ groups: ['users'], note: 'hello' })
     })
   })
 

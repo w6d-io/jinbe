@@ -1,13 +1,13 @@
 import type { KratosIdentity } from '../schemas/admin.schema.js'
 import { rights } from '../authz/opa.js'
-import { KratosApiError, kratosService, MFA_METHODS } from './kratos.service.js'
+import { kratosService, MFA_METHODS } from './kratos.service.js'
 import { organisationsOf } from './org-membership.service.js'
 
 /**
  * "Who is this?" for a box somebody types into: a Kratos identity id, a whole address, or the start
  * of one — answered as-you-type without walking the directory.
  *
- *   id      — a pasted UUID: one GET by id.
+ *   id      — a pasted UUID: the cached identity, by id.
  *   email   — a whole address: Kratos's exact `credentials_identifier` match.
  *   prefix  — anything else: Kratos's own prefix match on the login identifier, one bounded query.
  *   contains — only when the prefix finds nobody: the substring search over the cached directory map
@@ -67,13 +67,22 @@ async function describe(identity: KratosIdentity, mfa: boolean | null): Promise<
 /** Fetched with its second factors, so 2FA is read from the same answer. */
 const withMfa = (identity: KratosIdentity) => describe(identity, kratosService.mfaFromCredentials(identity.credentials))
 
-async function byId(id: string): Promise<KratosIdentity | null> {
-  try {
-    return await kratosService.getIdentityWithSecondFactors(id)
-  } catch (err) {
-    if (err instanceof KratosApiError && err.statusCode === 404) return null
-    throw err
-  }
+/**
+ * Identities known by id, from the shared cache (never with credentials), and their second factors
+ * as the cached method lists — one batched call each, not one per hit.
+ */
+async function byIds(ids: readonly string[]): Promise<LookupHit[]> {
+  if (ids.length === 0) return []
+  const [found, mfa] = await Promise.all([kratosService.getIdentitiesByIds(ids), kratosService.mfaByIds(ids)])
+  const hits = await Promise.all(
+    ids.map((id) => {
+      const identity = found.get(id)
+      if (!identity) return null
+      const methods = mfa.get(id)
+      return describe(identity, methods ? methods.length > 0 : null)
+    }),
+  )
+  return hits.filter((h): h is LookupHit => h !== null)
 }
 
 export async function lookupUsers(raw: string, limit = LOOKUP_MAX): Promise<LookupAnswer> {
@@ -83,8 +92,8 @@ export async function lookupUsers(raw: string, limit = LOOKUP_MAX): Promise<Look
 
   const kind = classify(q)
   if (kind === 'id') {
-    const identity = await byId(q.toLowerCase())
-    return identity ? { match: 'id', data: [await withMfa(identity)] } : { match: 'none', data: [] }
+    const data = await byIds([q.toLowerCase()])
+    return data.length ? { match: 'id', data } : { match: 'none', data: [] }
   }
 
   if (kind === 'email') {
@@ -102,11 +111,5 @@ export async function lookupUsers(raw: string, limit = LOOKUP_MAX): Promise<Look
   if (q.length < 3) return { match: 'none', data: [] }
   const contained = await kratosService.searchIdentities(q, max)
   if (contained.length === 0) return { match: 'none', data: [] }
-  const hits = await Promise.all(
-    contained.map(async (row) => {
-      const identity = await byId(row.id)
-      return identity ? withMfa(identity) : null
-    }),
-  )
-  return { match: 'contains', data: hits.filter((h): h is LookupHit => h !== null) }
+  return { match: 'contains', data: await byIds(contained.map((row) => row.id)) }
 }

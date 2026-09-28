@@ -24,6 +24,8 @@ const BY_TYPE: Record<string, AuditEventType> = {
   'organization_user.grants_changed': 'org.grants.changed',
   'organization_user.grants_refused': 'org.grants.refused',
   'organization.created': 'org.created',
+  'organization.updated': 'org.updated',
+  'organization.deleted': 'org.deleted',
   'api_key.created': 'apikey.created',
   'api_key.revoked': 'apikey.revoked',
   'rbac.group_created': 'rbac.group.created',

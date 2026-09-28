@@ -85,14 +85,23 @@ describe('organisationsForSubject', () => {
     await expect(store.organisationsForSubject('s')).resolves.toEqual(['org-a'])
   })
 
-  it('refuses when the deployment named no store at all', async () => {
+  it('refuses when the deployment named the postgres store and gave it no database', async () => {
     envState.env.ORGANISATION_DATABASE_URL = undefined
+    envState.env.ORGANISATION_STORE = 'postgres'
     await store.closeOrganisationStore()
 
     await expect(store.organisationsForSubject('s')).rejects.toThrow(
-      store.OrganisationStoreUnavailableError,
+      store.OrganisationStoreNotConfiguredError,
     )
     expect(store.organisationStoreConfigured()).toBe(false)
+    envState.env.ORGANISATION_STORE = undefined
+  })
+
+  it('without a database URL and no store named, keeps organisations in Kratos and Redis', () => {
+    envState.env.ORGANISATION_DATABASE_URL = undefined
+    expect(store.organisationStoreMode()).toBe('kratos')
+    expect(store.organisationStoreConfigured()).toBe(true)
+    expect(store.membershipRowsKept()).toBe(false)
   })
 })
 

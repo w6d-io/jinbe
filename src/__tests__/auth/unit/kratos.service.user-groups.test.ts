@@ -140,13 +140,12 @@ describe('KratosService - User Groups Management', () => {
       expect(result.metadata_admin).toEqual({ groups: ['admins'] })
       expect(mockFetch).toHaveBeenCalledTimes(3)
 
-      // Verify PUT was called with correct body
-      const putCall = mockFetch.mock.calls[2]
-      expect(putCall[0]).toBe('http://kratos-admin:4434/admin/identities/user-123')
-      expect(putCall[1].method).toBe('PUT')
-
-      const body = JSON.parse(putCall[1].body)
-      expect(body.metadata_admin.groups).toEqual(['admins'])
+      // Only metadata_admin.groups is patched, from the fresh read: a PUT of the whole metadata
+      // from an older copy would put back whatever else it held.
+      const patchCall = mockFetch.mock.calls[2]
+      expect(patchCall[0]).toBe('http://kratos-admin:4434/admin/identities/user-123')
+      expect(patchCall[1].method).toBe('PATCH')
+      expect(JSON.parse(patchCall[1].body)).toEqual([{ op: 'add', path: '/metadata_admin/groups', value: ['admins'] }])
     })
 
     it('should preserve other metadata_admin fields', async () => {
@@ -179,10 +178,11 @@ describe('KratosService - User Groups Management', () => {
 
       await service.updateUserGroups('user@example.com', ['admins'])
 
-      const putCall = mockFetch.mock.calls[2]
-      const body = JSON.parse(putCall[1].body)
-      expect(body.metadata_admin.custom_field).toBe('value')
-      expect(body.metadata_admin.groups).toEqual(['admins'])
+      // The other fields are not written at all, so nothing can revert them.
+      const patchCall = mockFetch.mock.calls[2]
+      const body = JSON.parse(patchCall[1].body) as Array<{ path: string }>
+      expect(body).toEqual([{ op: 'add', path: '/metadata_admin/groups', value: ['admins'] }])
+      expect(body.some((p) => p.path.includes('custom_field'))).toBe(false)
     })
 
     it('should throw 404 when user not found', async () => {
@@ -338,11 +338,10 @@ describe('KratosService - User Groups Management', () => {
 
       await service.removeGroupFromAllUsers('devs')
 
-      // Verify update was called with ['users'] as default (PUT is the 5th
-      // fetch now: getAll, re-read, find, get, PUT).
-      const putCall = mockFetch.mock.calls[4]
-      const body = JSON.parse(putCall[1].body)
-      expect(body.metadata_admin.groups).toEqual(['users'])
+      // Verify update was called with ['users'] as default (the PATCH is the 5th
+      // fetch: getAll, re-read, find, get, PATCH).
+      const patchCall = mockFetch.mock.calls[4]
+      expect(JSON.parse(patchCall[1].body)).toEqual([{ op: 'add', path: '/metadata_admin/groups', value: ['users'] }])
     })
 
     it('should return 0 when no users have the group', async () => {
