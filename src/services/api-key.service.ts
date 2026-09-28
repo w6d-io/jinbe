@@ -3,6 +3,7 @@ import { ApiKeyCreateBody, ApiKeyView, ApiKeySecretView } from '../schemas/api-k
 import { scopeCatalog } from './api-key-scopes.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { apiClientsChanged } from './api-clients.js'
+import { forgetApiKeyUse } from './api-key-last-used.js'
 
 /** Raised for caller-facing validation/authorization failures. */
 export class ApiKeyError extends Error {
@@ -48,6 +49,8 @@ export function toView(client: HydraOAuth2Client): ApiKeyView {
     created_by: (meta.created_by as string) ?? null,
     created_at: client.created_at ?? null,
     expires_at: typeof meta.expires_at === 'string' ? meta.expires_at : null,
+    last_used_at: null,
+    created_by_email: null,
   }
 }
 
@@ -118,7 +121,7 @@ export class ApiKeyService {
     })
     apiClientsChanged('api_key.created')
 
-    return { ...toView(client), client_secret: client.client_secret ?? '' }
+    return { ...toView(client), created_by_email: createdBy && callerEmail ? callerEmail : null, client_secret: client.client_secret ?? '' }
   }
 
   async list(organizationId: string): Promise<ApiKeyView[]> {
@@ -136,6 +139,7 @@ export class ApiKeyService {
   async revoke(organizationId: string, clientId: string): Promise<void> {
     await this.getOwned(organizationId, clientId)
     await hydraService.deleteClient(clientId)
+    forgetApiKeyUse(clientId)
     apiClientsChanged('api_key.revoked')
   }
 

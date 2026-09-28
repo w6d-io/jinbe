@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/index.js'
 import { personalKeyService } from '../services/personal-key.service.js'
 import { handleError } from '../controllers/api-key.controller.js'
+import { decorateKeyViews } from '../services/api-key-views.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
@@ -9,8 +10,15 @@ import {
   apiKeySecretViewJsonSchema,
   personalKeyCreateBodyJsonSchema,
   personalKeyCreateBodySchema,
+  personalScopesQuerySchema,
+  scopeCatalogResponseJsonSchema,
 } from '../schemas/api-key.schema.js'
-import { forbiddenResponseSchema, notFoundResponseSchema, unauthorizedResponseSchema } from '../schemas/response-schemas.js'
+import {
+  forbiddenResponseSchema,
+  notFoundResponseSchema,
+  serviceUnavailableResponseSchema,
+  unauthorizedResponseSchema,
+} from '../schemas/response-schemas.js'
 
 /**
  * The caller's own API keys — /api/me/api-keys (services/personal-key.service.ts).
@@ -19,6 +27,7 @@ import { forbiddenResponseSchema, notFoundResponseSchema, unauthorizedResponseSc
  * personal keys, and a delegated caller never reaches here (middleware/delegation-gate.ts).
  *
  * GET    /            - the caller's keys (no secrets)
+ * GET    /scopes      - ?organization_id=: the scopes the caller may give a key there (what they hold)
  * POST   /            - create one (returns client_secret ONCE)
  * DELETE /:clientId   - revoke one of the caller's keys
  */
@@ -54,8 +63,38 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
     },
   }, async (request, reply) => {
     try {
-      const data = await personalKeyService.list(request.userContext!.id)
+      const data = await decorateKeyViews(request, await personalKeyService.list(request.userContext!.id))
       return reply.send({ data, total: data.length })
+    } catch (err) {
+      return handleError(err, reply)
+    }
+  })
+
+  fastify.get('/scopes', {
+    schema: {
+      description:
+        'The scopes you may give a personal key in one organization: the same catalog as its machine keys ' +
+        '(GET /api/organizations/:organizationId/api-keys/scopes), computed from what YOU hold there. ' +
+        '403 when you are not a member of it.',
+      tags: ['api-keys'],
+      querystring: {
+        type: 'object',
+        required: ['organization_id'],
+        properties: { organization_id: { type: 'string', format: 'uuid', description: 'The organization the key would act in' } },
+      },
+      response: {
+        200: scopeCatalogResponseJsonSchema,
+        400: bodyWithDetails,
+        401: unauthorizedResponseSchema,
+        403: bodyWithDetails,
+        404: notFoundResponseSchema,
+        503: serviceUnavailableResponseSchema,
+      },
+    },
+  }, async (request, reply) => {
+    const { organization_id } = personalScopesQuerySchema.parse(request.query)
+    try {
+      return reply.send({ scopes: await personalKeyService.scopes({ email: request.userContext!.email }, organization_id) })
     } catch (err) {
       return handleError(err, reply)
     }

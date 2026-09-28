@@ -213,6 +213,7 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // The caller's own personal API keys (404 unless DELEGATED_TOKENS_ENABLED). About the caller only;
   // jinbe refuses machine and delegated callers, and checks the org policy and scopes itself.
   { method: 'GET',    path: '/api/me/api-keys' },
+  { method: 'GET',    path: '/api/me/api-keys/scopes' },
   { method: 'POST',   path: '/api/me/api-keys' },
   { method: 'DELETE', path: '/api/me/api-keys/:clientId' },
 ] as const

@@ -5,9 +5,10 @@ import { apiKeyService, ApiKeyError, expiryFrom, isPersonal, toView } from './ap
 import { getApiKeyPolicy } from './api-key-policy.js'
 import { isSuperAdmin, memberOrgs } from '../authz/opa.js'
 import { kratosService } from './kratos.service.js'
-import { scopeCatalog } from './api-key-scopes.js'
+import { scopeCatalog, type ScopeCatalogEntry } from './api-key-scopes.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { recordApiKeyUse } from '../audit/record.js'
+import { forgetApiKeyUse, touchApiKeyUse } from './api-key-last-used.js'
 import type { ApiKeySecretView, ApiKeyView, PersonalKeyCreateBody } from '../schemas/api-key.schema.js'
 
 /**
@@ -46,11 +47,24 @@ function subjectOf(client: HydraOAuth2Client): string | undefined {
 
 const view = (client: HydraOAuth2Client): PersonalKeyView => ({ ...toView(client), kind: 'personal' })
 
+async function assertMember(email: string, org: string): Promise<void> {
+  const member = (await isSuperAdmin(email)) || (await memberOrgs(email)).includes(org)
+  if (!member) throw new ApiKeyError(403, 'You are not a member of that organization')
+}
+
 export class PersonalKeyService {
+  /**
+   * The scopes the caller may give a personal key in `org`: the same catalog as that org's machine
+   * keys, computed from what THEY hold there. A member only (or super_admin): 403 otherwise.
+   */
+  async scopes(caller: { email: string }, org: string): Promise<ScopeCatalogEntry[]> {
+    await assertMember(caller.email, org)
+    return scopeCatalog(org, caller.email)
+  }
+
   async create(caller: { id: string; email: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
     const org = body.organization_id
-    const member = (await isSuperAdmin(caller.email)) || (await memberOrgs(caller.email)).includes(org)
-    if (!member) throw new ApiKeyError(403, 'You are not a member of that organization')
+    await assertMember(caller.email, org)
     if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') {
       throw new ApiKeyError(403, 'This organization does not allow personal API keys', { reason: 'personal_keys_forbidden' })
     }
@@ -69,7 +83,7 @@ export class PersonalKeyService {
       ...(env.DELEGATED_TOKEN_AUDIENCE ? { audience: [env.DELEGATED_TOKEN_AUDIENCE] } : {}),
     })
     const secret = client.client_secret ?? ''
-    return { ...view(client), client_secret: secret, key: `${PERSONAL_KEY_PREFIX}${client.client_id}.${secret}` }
+    return { ...view(client), created_by_email: caller.email, client_secret: secret, key: `${PERSONAL_KEY_PREFIX}${client.client_id}.${secret}` }
   }
 
   /**
@@ -118,6 +132,7 @@ export class PersonalKeyService {
       throw err
     }
     void recordApiKeyUse(clientId, org)
+    touchApiKeyUse(clientId)
     // Never outlive the key.
     return { access_token: token.access_token, expires_in: Math.max(1, Math.min(token.expires_in, Math.floor((expiresAt - now) / 1000))) }
   }
@@ -138,6 +153,7 @@ export class PersonalKeyService {
     }
     if (!isPersonal(client) || subjectOf(client) !== subject) throw new ApiKeyError(404, 'API key not found')
     await hydraService.deleteClient(clientId)
+    forgetApiKeyUse(clientId)
     return view(client)
   }
 }

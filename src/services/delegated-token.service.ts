@@ -5,6 +5,7 @@ import { kratosService } from './kratos.service.js'
 import { getApiKeyPolicy } from './api-key-policy.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { componentLogger } from '../telemetry/logger.js'
+import { touchApiKeyUse } from './api-key-last-used.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -75,10 +76,10 @@ export class DelegatedTokenService {
 
     const key = createHash('sha256').update(token).digest('hex')
     const hit = this.cache.get(key)
-    if (hit && now < hit.until) return hit.result
+    if (hit && now < hit.until) return this.used(hit.result, now)
     if (hit) this.cache.delete(key)
 
-    const result = await this.evaluate(token, now)
+    const result = this.used(await this.evaluate(token, now), now)
     const ttl = 'principal' in result
       ? Math.min(env.DELEGATED_TOKEN_CACHE_MS, result.principal.expiresAt - now)
       : NEGATIVE_TTL_MS
@@ -86,6 +87,12 @@ export class DelegatedTokenService {
       if (this.cache.size >= MAX_ENTRIES) this.cache.clear()
       this.cache.set(key, { result, until: now + ttl })
     }
+    return result
+  }
+
+  /** A personal key's token accepted: the key was used (throttled, never awaited). */
+  private used(result: DelegatedResult, now: number): DelegatedResult {
+    if ('principal' in result && result.principal.kind === 'personal') touchApiKeyUse(result.principal.clientId, now)
     return result
   }
 

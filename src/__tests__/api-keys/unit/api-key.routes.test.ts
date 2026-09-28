@@ -31,7 +31,8 @@ vi.mock('../../../services/api-key.service.js', async (importOriginal) => {
           allowed_scopes: ['read', 'write'],
         })
       }),
-      list: vi.fn(async () => []),
+      list: vi.fn(async () => [{ client_id: 'k1', created_by: 'u2' }]),
+      get: vi.fn(async () => ({ client_id: 'k1', created_by: 'u2' })),
     },
   }
 })
@@ -44,6 +45,11 @@ vi.mock('../../../services/api-key-scopes.js', () => ({
     }
     return [{ scope: 'payroll:read', sites: ['payroll', `for-${org.slice(0, 4)}`] }]
   }),
+}))
+
+vi.mock('../../../services/api-key-views.js', () => ({
+  decorateKeyViews: vi.fn(async (_r: unknown, views: object[]) =>
+    views.map((v) => ({ ...v, last_used_at: '2026-09-28T12:00:00.000Z', created_by_email: 'bob@x.io' }))),
 }))
 
 import { apiKeyRoutes } from '../../../routes/api-key.routes.js'
@@ -86,6 +92,13 @@ describe('API-key routes', () => {
   it('the personal-key policy is 404 while delegated tokens are off', async () => {
     expect((await app.inject({ url: `/api/organizations/${ORG}/api-key-policy` })).statusCode).toBe(404)
     expect((await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/api-key-policy`, payload: { personal_keys: 'forbidden' } })).statusCode).toBe(404)
+  })
+
+  it('list and get carry last_used_at and created_by_email', async () => {
+    const list = await app.inject({ url: `/api/organizations/${ORG}/api-keys` })
+    expect(list.json()).toMatchObject({ total: 1, data: [{ client_id: 'k1', last_used_at: '2026-09-28T12:00:00.000Z', created_by_email: 'bob@x.io' }] })
+    const one = await app.inject({ url: `/api/organizations/${ORG}/api-keys/k1` })
+    expect(one.json()).toMatchObject({ client_id: 'k1', last_used_at: '2026-09-28T12:00:00.000Z', created_by_email: 'bob@x.io' })
   })
 
   it('a refused scope keeps details.allowed_scopes in the 400 body', async () => {
