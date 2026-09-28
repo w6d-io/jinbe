@@ -4,7 +4,8 @@ import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { administersOrganisation } from '../services/org-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { denyAudit } from '../audit/deny.js'
-import { isClient, requestPath } from './require-service-admin.js'
+import { delegationOf, isClient, requestPath } from './require-service-admin.js'
+import { delegationRefusal } from './delegation-gate.js'
 
 /**
  * Gates for routes that act on ONE organisation — the one named by the route parameter — decided by
@@ -79,6 +80,11 @@ export function requireOrgPermission(permission: string, paramName = 'organizati
     if (!email) return unauthenticated(reply)
     const organizationId = (request.params as Record<string, string>)[paramName]
 
+    // A user through a client: the token must cover THIS permission in THIS org, whatever the user
+    // holds (the global delegation gate asks too; this guard knows its permission for certain).
+    const narrowed = delegationRefusal(request, permission)
+    if (narrowed) return refuse(request, reply, organizationId, narrowed)
+
     let allow: boolean
     try {
       ;({ allow } = await decide({
@@ -87,6 +93,7 @@ export function requireOrgPermission(permission: string, paramName = 'organizati
         path: requestPath(request),
         aal: request.userContext?.aal,
         client: isClient(request),
+        delegation: delegationOf(request),
       }))
     } catch (err) {
       return unavailable(request, reply, organizationId, err)

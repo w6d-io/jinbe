@@ -11,6 +11,7 @@ import { orUnavailable, outOfScope, parse, perUserRate, recordPluginRoutes, scop
 import { auditWorkflowRoutes } from './audit-workflow.routes.js'
 import { auditTailRoute } from '../audit/query/tail.js'
 import { gatewayAccessRoute } from '../audit/gateway/routes.js'
+import { actorDirectory, userActorIds } from '../audit/query/actors.js'
 
 /**
  * /api/audit/* — the audit trail read from Loki (audit-tab.md §4.4, AUD-9).
@@ -20,6 +21,8 @@ import { gatewayAccessRoute } from '../audit/gateway/routes.js'
  * an org admin the orgs they administer (asking for another is 403). Every read is bounded — 30 days
  * per page, 400 days back, ≤200 rows, ≤5000 Loki entries — and says `scope` and `truncated`, so the
  * UI never implies completeness. Loki unreachable → 503 `audit_store_unavailable`, never `[]`.
+ * Pages that name people carry `actors` beside the events — who each user id is, resolved at read
+ * time for a caller holding users:read (audit/query/actors.ts); the events themselves hold no PII.
  *
  * Replaces /api/admin/audit/* (Redis) once AUDIT_READ switches; both live side by side until AUD-14.
  */
@@ -44,8 +47,9 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
     return orUnavailable(reply, async () => {
       const started = Date.now()
       const page = await readPage(toFilter(q, orgs), range.fromMs, range.toMs, q.limit, cursor)
+      const actors = await actorDirectory(request, userActorIds(page.events))
       return reply.send({
-        events: page.events, nextCursor: page.nextCursor, scope,
+        events: page.events, nextCursor: page.nextCursor, scope, ...(actors ? { actors } : {}),
         range: { from: new Date(range.fromMs).toISOString(), to: new Date(range.toMs).toISOString() },
         truncated: page.truncated, source: 'loki', queryMs: Date.now() - started,
       })
@@ -63,8 +67,9 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
     return orUnavailable(reply, async () => {
       const started = Date.now()
       const result = await facets(toFilter(q, orgs), range.fromMs, range.toMs)
+      const actors = await actorDirectory(request, userActorIds([], (result.facets.actor ?? []).map((c) => c.key)))
       return reply.send({
-        ...result, scope, range: { from: new Date(range.fromMs).toISOString(), to: new Date(range.toMs).toISOString() },
+        ...result, ...(actors ? { actors } : {}), scope, range: { from: new Date(range.fromMs).toISOString(), to: new Date(range.toMs).toISOString() },
         source: 'loki', queryMs: Date.now() - started,
       })
     })
@@ -95,7 +100,8 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
       const found = await eventById({ orgs: orgs ?? undefined }, id.data, q.ts ? Date.parse(q.ts) : null)
       // Out of scope and absent read the same: whether it exists is itself information.
       if (!found) return reply.status(404).send({ error: 'not_found', message: 'No such event in your scope.' })
-      return reply.send({ ...found, scope: scopeOf(request), source: 'loki' })
+      const actors = await actorDirectory(request, userActorIds([found.event as { actor?: { type?: string; id?: string } }]))
+      return reply.send({ ...found, ...(actors ? { actors } : {}), scope: scopeOf(request), source: 'loki' })
     })
   })
 
@@ -123,7 +129,8 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
     if (q.cursor && !cursor) return reply.status(400).send({ error: 'invalid_request', message: 'cursor: not a cursor this API issued' })
     return orUnavailable(reply, async () => {
       const page = await readPage({ orgs, subject: id.data }, range.fromMs, range.toMs, q.limit, cursor)
-      return reply.send({ ...page, scope, range: { from: new Date(range.fromMs).toISOString(), to: new Date(range.toMs).toISOString() }, source: 'loki' })
+      const actors = await actorDirectory(request, userActorIds(page.events))
+      return reply.send({ ...page, ...(actors ? { actors } : {}), scope, range: { from: new Date(range.fromMs).toISOString(), to: new Date(range.toMs).toISOString() }, source: 'loki' })
     })
   })
 

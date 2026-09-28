@@ -1,0 +1,6 @@
+openapi: 3.0.0
+info: { title: rootpublic, version: '1' }
+x-w6d: { defaultAccess: public }
+paths:
+  /things:
+    get: { operationId: listThings, tags: [things] }

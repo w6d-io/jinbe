@@ -38,6 +38,8 @@ import type { Zone } from './host.js'
  *   SITES_INGRESS_ADDRESSES  comma-separated IPs/hostnames of the platform ingress load balancer, which a
  *                          new zone's wildcard DNS must point at. Empty = learnt from the existing Zones.
  *   SITES_ZONE_DNS_TIMEOUT_MS  per DNS lookup of the wildcard probe (1500).
+ *   SITES_MAX_ROUTES       routes a site may hold (500; at most 2000). Imported routes on the catch-all gate
+ *                          cost no gateway regex; the others are also bounded by the Rule match URL (4096).
  *   SITES_GATEWAYS         comma-separated namespace/name of the Gateway API Gateways a zone may be attached to
  *                          (mirror the operator's --gateways: Gateways whose policies run the WAF and CrowdSec).
  *                          Empty = the gateway exposure is not offered and no Gateway API object is read.
@@ -99,6 +101,7 @@ const schema = z.object({
   SITES_ZONE_ISSUERS: z.string().default('').transform(list).pipe(z.array(z.string().regex(/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'a ClusterIssuer name'))),
   SITES_INGRESS_ADDRESSES: z.string().default('').transform(list),
   SITES_ZONE_DNS_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1500),
+  SITES_MAX_ROUTES: z.coerce.number().int().min(1).max(2000).default(500),
   SITES_GATEWAYS: z.string().default('').transform(list).pipe(z.array(z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'namespace/name'))),
 })
 

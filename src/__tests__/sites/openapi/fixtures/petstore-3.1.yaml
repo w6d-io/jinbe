@@ -1,0 +1,18 @@
+openapi: 3.1.0
+info: { title: Petstore 3.1, version: '2.0' }
+servers: [{ url: /api }]
+paths:
+  /orgs/{orgId}/pets:
+    $ref: '#/components/pathItems/OrgPets'
+webhooks:
+  newPet:
+    post:
+      operationId: newPetHook
+      responses: { '200': { description: ok } }
+components:
+  pathItems:
+    OrgPets:
+      parameters:
+        - { name: orgId, in: path, required: true, schema: { type: string } }
+      get: { operationId: listOrgPets, tags: [pets], responses: { '200': { description: ok } } }
+      delete: { operationId: deleteOrgPets, tags: [pets], deprecated: true, responses: { '204': { description: ok } } }

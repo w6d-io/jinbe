@@ -13,6 +13,7 @@ import * as ops from './apply.service.js'
 import { actorOf, handle, nameOf, parse } from './http.js'
 import { siteOpsRoutes } from './ops.routes.js'
 import { migrationRoutes } from './migration/routes.js'
+import { siteImportRoutes } from './openapi/routes.js'
 
 /**
  * /api/admin/sites — plug a site (SERVICE_PLUG.md, site-ux.md §14.2).
@@ -151,8 +152,9 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.get('/:name/blast-radius', docNamed('What deleting the site would take with it'), handle(async (request) => ops.blastRadius(nameOf(request))))
 
-  // Day-2 (status, drift, timelines, requests, logo) and the one-time migration.
+  // Day-2 (status, drift, timelines, requests, logo), OpenAPI import, and the one-time migration.
   await fastify.register(siteOpsRoutes)
+  await fastify.register(siteImportRoutes)
   await fastify.register(migrationRoutes, { prefix: '/migration' })
 }
 

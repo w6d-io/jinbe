@@ -199,11 +199,49 @@ export const envSchema = z.object({
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.
   HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
-  // Allowed API-key scopes catalog (comma-separated). Requested scopes are
-  // validated against this set server-side before a client is created.
+  // Hydra's public port: jinbe mints a personal key's short-lived token there (client_credentials),
+  // for POST /api/mcp/personal-keys/exchange.
+  HYDRA_PUBLIC_URL: z.string().url().default('http://auth-hydra-public:4444'),
+  // A CEILING on API-key scopes (comma-separated permissions). The scopes a key may be given are the
+  // permissions of the routes on the sites its organization runs that the creator holds there
+  // (services/api-key-scopes.ts); when this is set, only those it covers (equal or a dotted
+  // ancestor) are offered. Empty = no ceiling. Never widens the catalog, and '*' is never a scope.
   API_KEY_ALLOWED_SCOPES: z
     .string()
-    .default('api:read,api:write')
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+
+  // ── Delegated user tokens (MCP prerequisite) ─────────────────────────────
+  // Off by default. On: an OPAQUE Hydra access token sent as `Authorization: Bearer`, together with
+  // the calling service's projected ServiceAccount token in `X-Actor-Token`, authenticates the USER
+  // the token was issued to — narrowed to its scopes and its one organization. Needs
+  // K8S_SA_AUTH_ENABLED=true, since the actor is verified by TokenReview. The same flag turns on the
+  // personal-key API (/api/me/api-keys) and the org policy that may forbid personal keys.
+  DELEGATED_TOKENS_ENABLED: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('false'),
+  // The audience a delegated token MUST carry (e.g. https://mcp.<env>.example.com). Empty while
+  // enabled refuses every delegated token: a token for another resource is never one for this one.
+  DELEGATED_TOKEN_AUDIENCE: z.string().default(''),
+  // The actors (`namespace:serviceaccount`) allowed to present a delegated token. Empty refuses all.
+  DELEGATED_ACTOR_SUBJECTS: z
+    .string()
+    .default('auth:auth-mcp')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // How long an introspection answer is reused (ms), capped by the token's own exp. Bounds how long a
+  // revoked token still works here.
+  DELEGATED_TOKEN_CACHE_MS: z
+    .string()
+    .transform(Number)
+    .pipe(z.number().int().nonnegative().max(60_000))
+    .default('30000'),
+
+  // The in-cluster callers (`namespace:serviceaccount`, TokenReview-verified) allowed on
+  // /api/internal/*. Empty refuses everyone — no session, no user token ever reaches those routes.
+  INTERNAL_API_ALLOWED_SUBJECTS: z
+    .string()
+    .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
 
   // ── Kubernetes ServiceAccount authentication (in-cluster M2M) ────────────
@@ -309,8 +347,17 @@ export const envSchema = z.object({
   // Key for the HMACs that stand in for an IP, a session id or an unknown identifier in audit/v1.
   // Unset: those fields are left out (the truncated network is still written).
   AUDIT_HMAC_KEY: z.string().min(32).optional(),
-  // Durable copy of every v1 event until the archive confirms it. Never trimmed by count.
+  // Durable copy of every v1 event until the archive confirms it.
   AUDIT_OUTBOX_STREAM: z.string().default('auth:audit:outbox'),
+  // 'true' once an archiver (AUD-7: drain the outbox → Object-Lock bucket → ack) runs for this
+  // deployment. Then the outbox is never trimmed and the Home alarms on archive lag. Off (no archiver
+  // exists yet): nothing ever drains the outbox, so it is capped at AUDIT_OUTBOX_MAX_LEN (approximate
+  // MAXLEN, oldest dropped) and the Home shows the archive as not deployed.
+  AUDIT_ARCHIVE_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+  AUDIT_OUTBOX_MAX_LEN: z.string().transform(Number).pipe(z.number().int().positive()).default('100000'),
 
   // Observability backends read by /api/audit/* and /api/admin/observability/* (in-cluster, no
   // auth). Unset: the audit reads answer 503 audit_store_unavailable, the ops endpoints 404.

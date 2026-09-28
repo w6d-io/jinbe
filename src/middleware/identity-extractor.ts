@@ -10,6 +10,7 @@ import {
   type K8sServiceAccountPrincipal,
 } from '../services/k8s-token-review.service.js'
 import { oidcBearerService } from '../services/oidc-bearer.service.js'
+import { delegatedTokenService } from '../services/delegated-token.service.js'
 
 /**
  * User context derived from the validated Kratos session.
@@ -25,7 +26,12 @@ export interface UserContext {
   authenticatedAt?: Date
   secondFactorAt?: Date | null
   // How the caller was proven. Only a session carries a readable second factor.
-  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
+  /**
+   * Set only with authVia 'delegated': the client acting for this user, the scopes the token
+   * narrows them to, and the ONE organization it is bound to (middleware/delegation-gate.ts).
+   */
+  delegation?: Delegation
   /**
    * The organisations the caller's token asserts, when the deployment reads them from the token
    * rather than from this service's own model. Empty in `local` mode, where the model answers —
@@ -33,6 +39,16 @@ export interface UserContext {
    * they disagree.
    */
   organisations?: readonly string[]
+}
+
+/** A user acting through a client (an MCP server, a personal key). Audit records it as `act`. */
+export interface Delegation {
+  clientId: string
+  scopes: readonly string[]
+  org: string
+  kind: 'oauth' | 'personal'
+  /** The in-cluster service that presented the token (its ServiceAccount name, e.g. auth-mcp). */
+  via: string
 }
 
 declare module 'fastify' {
@@ -55,6 +71,21 @@ function extractBearerToken(header?: string): string | null {
   if (!header) return null
   const match = /^Bearer\s+(.+)$/i.exec(header.trim())
   return match ? match[1].trim() : null
+}
+
+/**
+ * The in-cluster service presenting a delegated token: its projected ServiceAccount token in
+ * X-Actor-Token, verified by TokenReview and listed in DELEGATED_ACTOR_SUBJECTS. Returns the
+ * ServiceAccount name, or null.
+ */
+export async function verifiedActor(request: FastifyRequest): Promise<string | null> {
+  const header = request.headers['x-actor-token']
+  const token = Array.isArray(header) ? undefined : header?.trim()
+  if (!token || !k8sTokenReviewService.looksLikeServiceAccountToken(token)) return null
+  const principal = await k8sTokenReviewService.verify(token)
+  if (!principal) return null
+  const allowed = env.DELEGATED_ACTOR_SUBJECTS
+  return allowed.includes(`${principal.namespace}:${principal.serviceAccount}`) ? principal.serviceAccount : null
 }
 
 /** A request that cannot change anything: the only kind a cached session validation may serve. */
@@ -160,6 +191,41 @@ async function secondFactorFromSession(request: FastifyRequest, subject: string)
     request.log.warn(
       { path: request.url, method: request.method },
       'Bearer ServiceAccount token present but TokenReview rejected it',
+    )
+  }
+
+  // A USER THROUGH A CLIENT (off by default, DELEGATED_TOKENS_ENABLED): an opaque Hydra token, only
+  // together with the presenting service's own ServiceAccount token in X-Actor-Token. The token alone
+  // is refused — stolen from the client, it cannot be replayed here — and so is the actor alone.
+  // Not on /api/mcp/*: there the token is the SUBJECT of the request (token-info, key exchange), not
+  // the caller's credential — the actor is the caller, checked by that plugin's own hook.
+  if (
+    bearer &&
+    delegatedTokenService.enabled &&
+    delegatedTokenService.looksOpaque(bearer) &&
+    !(request.url || '').startsWith('/api/mcp/')
+  ) {
+    const actor = await verifiedActor(request)
+    const result = actor ? await delegatedTokenService.resolve(bearer) : { error: 'actor_missing' }
+    if (actor && 'principal' in result) {
+      const p = result.principal
+      request.userContext = {
+        email: p.email,
+        id: p.subject,
+        name: p.name,
+        authVia: 'delegated',
+        delegation: { clientId: p.clientId, scopes: p.scopes, org: p.org, kind: p.kind, via: actor },
+      }
+      request.log.debug(
+        { subject: p.subject, clientId: p.clientId, org: p.org, kind: p.kind, via: actor, path: request.url },
+        'User identity validated via delegated token',
+      )
+      return
+    }
+    request.sessionError = 'delegated_token_rejected'
+    request.log.warn(
+      { path: request.url, method: request.method, reason: 'error' in result ? result.error : 'unknown' },
+      'Delegated token presented but refused',
     )
   }
 

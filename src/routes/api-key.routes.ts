@@ -3,6 +3,8 @@ import { apiKeyController } from '../controllers/api-key.controller.js'
 import { requireOrgPermission } from '../middleware/require-org-permission.js'
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
+import { requireInternalCaller } from '../middleware/require-internal-caller.js'
+import { apiKeyScopesController } from '../controllers/api-key-scopes.controller.js'
 import {
   organizationIdParamJsonSchema,
   apiKeyClientIdParamJsonSchema,
@@ -10,12 +12,15 @@ import {
   apiKeySecretViewJsonSchema,
   apiKeyViewJsonSchema,
   apiKeyListResponseJsonSchema,
+  apiKeyPolicyJsonSchema,
+  scopeCatalogResponseJsonSchema,
 } from '../schemas/api-key.schema.js'
 import {
   badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
   unauthorizedResponseSchema,
+  serviceUnavailableResponseSchema,
 } from '../schemas/response-schemas.js'
 
 /**
@@ -30,6 +35,9 @@ import {
  *
  * POST   /api-keys            - create a key (returns client_secret ONCE)
  * GET    /api-keys            - list keys (no secrets)
+ * GET    /api-keys/scopes     - the scopes a key may be given: permissions of this org's sites the caller holds
+ * GET    /api-key-policy      - may members create personal keys in this org (DELEGATED_TOKENS_ENABLED)
+ * PUT    /api-key-policy      - allow or forbid them
  * GET    /api-keys/:clientId  - get one key (no secret)
  * DELETE /api-keys/:clientId  - revoke a key
  */
@@ -81,6 +89,57 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
     apiKeyController.list.bind(apiKeyController)
   )
 
+  // The console offers these as choices instead of a free-text field it could only correct from a
+  // refused create's details.allowed_scopes. Same guard as every key route: the catalogue is shown to
+  // whoever may create a key in this organization, and is what THEY hold here.
+  fastify.get(
+    '/api-keys/scopes',
+    {
+      schema: {
+        description:
+          'The scopes an API key of this organization may be given: the permissions required by routes of the sites ' +
+          'this organization runs that the caller holds here (site grants and org grants), under API_KEY_ALLOWED_SCOPES ' +
+          'when set. Never a wildcard. Sorted by scope, each with the sites that ask for it.',
+        tags: ['api-keys'],
+        params: organizationIdParamJsonSchema,
+        response: {
+          200: scopeCatalogResponseJsonSchema,
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          503: serviceUnavailableResponseSchema,
+        },
+      },
+    },
+    apiKeyScopesController.catalog.bind(apiKeyScopesController)
+  )
+
+  fastify.get(
+    '/api-key-policy',
+    {
+      schema: {
+        description: 'Whether members may create personal API keys acting in this organization (404 unless delegated tokens are enabled).',
+        tags: ['api-keys'],
+        params: organizationIdParamJsonSchema,
+        response: { 200: apiKeyPolicyJsonSchema, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema },
+      },
+    },
+    apiKeyScopesController.getPolicy.bind(apiKeyScopesController)
+  )
+
+  fastify.put(
+    '/api-key-policy',
+    {
+      schema: {
+        description: 'Allow or forbid personal API keys in this organization. Forbidding stops the keys already issued at their next call.',
+        tags: ['api-keys'],
+        params: organizationIdParamJsonSchema,
+        body: apiKeyPolicyJsonSchema,
+        response: { 200: apiKeyPolicyJsonSchema, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema },
+      },
+    },
+    apiKeyScopesController.setPolicy.bind(apiKeyScopesController)
+  )
+
   fastify.get(
     '/api-keys/:clientId',
     {
@@ -119,13 +178,16 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
 }
 
 /**
- * Internal (no-auth) API-key routes for cluster-internal callers.
+ * Internal API-key routes for cluster-internal callers.
  *
- * Mounted under /api/internal — Oathkeeper does NOT route this prefix from the
- * public internet. Upstream services use it to resolve an injected X-Client-Id
- * header to its owning organization (Hydra spec §5.3 Option A).
+ * Mounted under /api/internal — Oathkeeper does NOT route this prefix from the public internet, and
+ * that is not relied on: every route takes an allowed in-cluster ServiceAccount token and nothing
+ * else (requireInternalCaller). Upstream services use it to resolve an injected X-Client-Id header to
+ * its owning organization (Hydra spec §5.3 Option A).
  */
 export async function apiKeyInternalRoutes(fastify: FastifyInstance) {
+  fastify.addHook('preHandler', requireInternalCaller)
+
   fastify.get(
     '/oauth-clients/:clientId/organization',
     {

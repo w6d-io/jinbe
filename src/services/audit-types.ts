@@ -27,6 +27,15 @@ export interface AuditActor {
   sessionId?: string | null
   /** The kind, when the caller knows it (a machine client); audit/v1 derives it otherwise. */
   type?:     'user' | 'service' | 'system' | 'anonymous'
+  /** A user acting THROUGH a client (delegated token): which client, via which service. */
+  act?:      AuditAct | null
+}
+
+/** RFC 8693-style actor chain, one link: the client that acted for the user, and how it came in. */
+export interface AuditAct {
+  client_id: string
+  via:       string
+  kind?:     'oauth' | 'personal'
 }
 
 /**
@@ -42,6 +51,7 @@ export interface AuditActorInput {
   ua?:        string | null
   sessionId?: string | null
   requestId?: string | null
+  act?:       AuditAct | null
 }
 
 /**
@@ -90,7 +100,7 @@ export interface AuditEvent {
 
 export interface LegacyAuditEvent {
   type: string
-  actor?: { id?: string | null; email?: string | null; ip?: string | null; name?: string | null; ua?: string | null; sessionId?: string | null; requestId?: string | null }
+  actor?: { id?: string | null; email?: string | null; ip?: string | null; name?: string | null; ua?: string | null; sessionId?: string | null; requestId?: string | null; act?: AuditAct | null }
   target?: { type?: string; id?: string; service?: string; services?: string[] }
   details?: Record<string, unknown>
   changes?: AuditChanges

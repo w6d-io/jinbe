@@ -47,6 +47,25 @@ export interface CreateClientInput {
   organizationId: string
   createdBy?: string
   audience?: string[]
+  /** RFC 3339. Recorded in metadata.expires_at; jinbe and the policy refuse the key past it. */
+  expiresAt?: string
+  /**
+   * A personal key: owned by the user (`owner = user:<id>`), not listed with the org's keys, and
+   * acting as that user. Absent = an org machine key.
+   */
+  personal?: { subject: string }
+}
+
+/** Hydra's introspection answer (RFC 7662 plus Hydra's `ext`), the fields jinbe reads. */
+export interface HydraIntrospection {
+  active: boolean
+  sub?: string
+  client_id?: string
+  scope?: string
+  aud?: string[]
+  exp?: number
+  token_use?: string
+  ext?: Record<string, unknown>
 }
 
 /**
@@ -115,6 +134,11 @@ export class HydraService {
       organization_id: input.organizationId, // mandatory
     }
     if (input.createdBy) metadata.created_by = input.createdBy
+    if (input.expiresAt) metadata.expires_at = input.expiresAt
+    if (input.personal) {
+      metadata.kind = 'personal'
+      metadata.subject = input.personal.subject
+    }
 
     const body = {
       client_name: input.label,
@@ -122,8 +146,9 @@ export class HydraService {
       response_types: ['token'],
       scope: input.scopes.join(' '),
       token_endpoint_auth_method: 'client_secret_post',
-      // owner mirrors organization_id so Hydra can filter lists server-side.
-      owner: input.organizationId,
+      // owner mirrors organization_id so Hydra can filter lists server-side — or names the user, so a
+      // personal key is never listed (nor revocable) as one of the org's machine keys.
+      owner: input.personal ? `user:${input.personal.subject}` : input.organizationId,
       ...(input.audience?.length ? { audience: input.audience } : {}),
       metadata,
     }
@@ -147,12 +172,94 @@ export class HydraService {
     return this.request<HydraOAuth2Client[]>(`/admin/clients?${params.toString()}`)
   }
 
+  /**
+   * Every client, following Hydra's `Link: rel="next"` page tokens. For the policy's client dataset;
+   * bounded so a runaway listing cannot grow for ever.
+   */
+  async listAllClients(pageSize = 500, maxPages = 50): Promise<HydraOAuth2Client[]> {
+    const out: HydraOAuth2Client[] = []
+    let token: string | null = null
+    for (let page = 0; page < maxPages; page++) {
+      const params = new URLSearchParams({ page_size: String(pageSize) })
+      if (token) params.set('page_token', token)
+      const url = `${this.adminUrl}/admin/clients?${params.toString()}`
+      let response: Response
+      try {
+        response = await fetch(url, { headers: { 'Content-Type': 'application/json' } })
+      } catch (err) {
+        throw new HydraUnavailableError(this.adminUrl, err)
+      }
+      if (!response.ok) throw new HydraApiError(response.status, `Hydra API error: ${response.statusText}`)
+      out.push(...((await response.json()) as HydraOAuth2Client[]))
+      token = nextPageToken(response.headers.get('link'))
+      if (!token) break
+    }
+    return out
+  }
+
+  /**
+   * A client_credentials token at Hydra's PUBLIC port, for exactly `scopes` and `audience`. A refused
+   * secret is HydraApiError 400/401 — the caller maps it to "key refused", never to an outage.
+   */
+  async clientCredentialsToken(
+    clientId: string,
+    secret: string,
+    scopes: readonly string[],
+    audience?: string,
+  ): Promise<{ access_token: string; expires_in: number }> {
+    const url = `${env.HYDRA_PUBLIC_URL}/oauth2/token`
+    const body = new URLSearchParams({ grant_type: 'client_credentials', scope: scopes.join(' ') })
+    if (audience) body.set('audience', audience)
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(secret)}`).toString('base64')}`,
+        },
+        body: body.toString(),
+        signal: AbortSignal.timeout(5_000),
+      })
+    } catch (err) {
+      throw new HydraUnavailableError(env.HYDRA_PUBLIC_URL, err)
+    }
+    if (!response.ok) throw new HydraApiError(response.status, `Hydra token endpoint: ${response.statusText}`)
+    const token = (await response.json()) as { access_token?: unknown; expires_in?: unknown }
+    if (typeof token.access_token !== 'string' || !token.access_token) throw new HydraApiError(502, 'Hydra issued no token')
+    return { access_token: token.access_token, expires_in: typeof token.expires_in === 'number' ? token.expires_in : 600 }
+  }
+
+  /** RFC 7662 introspection at the admin port. Never cached here — the caller decides for how long. */
+  async introspect(token: string): Promise<HydraIntrospection> {
+    return this.request<HydraIntrospection>('/admin/oauth2/introspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }).toString(),
+    })
+  }
+
   /** Delete (revoke) a client. Opaque tokens stop validating on next introspection. */
   async deleteClient(clientId: string): Promise<void> {
     await this.request<void>(`/admin/clients/${encodeURIComponent(clientId)}`, {
       method: 'DELETE',
     })
   }
+}
+
+/** The `page_token` of a `Link: <…?page_token=x>; rel="next"` header, or null on the last page. */
+export function nextPageToken(link: string | null): string | null {
+  if (!link) return null
+  for (const part of link.split(',')) {
+    const m = /<([^>]+)>\s*;\s*rel="?next"?/.exec(part)
+    if (!m) continue
+    try {
+      return new URL(m[1], 'http://hydra').searchParams.get('page_token')
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 export const hydraService = new HydraService()

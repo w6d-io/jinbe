@@ -1,0 +1,52 @@
+openapi: 3.0.3
+info:
+  title: Swagger Petstore
+  version: 1.0.0
+servers:
+  - url: https://petstore.example.com/{basePath}
+    variables:
+      basePath:
+        default: v1
+security:
+  - bearer: []
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      tags: [pets]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pets' }
+    post:
+      operationId: createPets
+      tags: [pets]
+      responses: { '201': { description: ok } }
+  /pets/{petId}:
+    parameters:
+      - $ref: '#/components/parameters/PetId'
+    get:
+      operationId: showPetById
+      tags: [pets]
+      responses: { '200': { description: ok } }
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses: { '200': { description: ok } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    PetId: { name: petId, in: path, required: true, schema: { type: string } }
+  schemas:
+    Pet:
+      type: object
+      properties:
+        id: { type: integer }
+        parent: { $ref: '#/components/schemas/Pet' }
+    Pets:
+      type: array
+      items: { $ref: '#/components/schemas/Pet' }

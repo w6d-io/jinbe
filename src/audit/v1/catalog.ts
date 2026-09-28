@@ -61,6 +61,7 @@ export const AUDIT_EVENTS = {
   'site.draft_saved': ['authz', 'update'],
   'site.draft_discarded': ['authz', 'delete'],
   'site.saved': ['authz', 'update'],
+  'site.imported': ['authz', 'update'],
   'site.applied': ['authz', 'apply', 'warn'],
   'site.rolled_back': ['authz', 'restore', 'warn'],
   'site.paused': ['authz', 'update', 'warn'],
@@ -103,6 +104,8 @@ export const AUDIT_EVENTS = {
   'apikey.created': ['secret', 'create'],
   'apikey.revoked': ['secret', 'delete'],
   'apikey.used': ['secret', 'use'],
+  // Whether members may mint personal keys acting in the org.
+  'apikey.policy_changed': ['secret', 'update', 'warn'],
 
   'infra.cluster.created': ['infra', 'create'],
   'infra.cluster.updated': ['infra', 'update'],

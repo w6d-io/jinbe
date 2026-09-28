@@ -398,6 +398,276 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/me/api-keys/:
+    get:
+      tags:
+        - api-keys
+      description: Your personal API keys (no secrets).
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        client_id:
+                          type: string
+                        organization_id:
+                          type: string
+                          format: uuid
+                        label:
+                          type: string
+                        scopes:
+                          type: array
+                          items:
+                            type: string
+                        created_by:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  total:
+                    type: number
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    post:
+      tags:
+        - api-keys
+      description: "Create a personal API key acting as you in ONE organization:
+        scopes among the permissions you hold there, expiry at most 30 days.
+        Returns client_secret ONCE. 403 when the organization forbids personal
+        keys."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+                - organization_id
+                - scopes
+              properties:
+                label:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                organization_id:
+                  type: string
+                  format: uuid
+                  description: The one organization the key acts in
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  description: Permissions you hold in that organization
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 30
+                  default: 30
+              additionalProperties: false
+      responses:
+        "201":
+          description: Returned ONCE on creation. Copy the client_secret now — it cannot
+            be retrieved again.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Returned ONCE on creation. Copy the client_secret now — it cannot
+                  be retrieved again.
+                properties:
+                  client_id:
+                    type: string
+                  organization_id:
+                    type: string
+                    format: uuid
+                  label:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  created_by:
+                    type: string
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  expires_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  client_secret:
+                    type: string
+                    description: Shown only once
+                  kind:
+                    type: string
+                    enum:
+                      - personal
+                  key:
+                    type: string
+                    description: "Shown only once: stk_mcp_<client_id>.<secret>, the header value an
+                      MCP client sends"
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/me/api-keys/{clientId}:
+    delete:
+      tags:
+        - api-keys
+      description: Revoke one of your personal API keys. Its tokens stop at the next
+        introspection.
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+          in: path
+          name: clientId
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   /api/clusters/:
     get:
       tags:
@@ -4898,6 +5168,10 @@ paths:
                                 default: manual
                               pinned:
                                 type: boolean
+                              op:
+                                type: string
+                                minLength: 1
+                                maxLength: 600
                             required:
                               - id
                               - methods
@@ -4905,7 +5179,7 @@ paths:
                               - gate
                               - access
                             additionalProperties: false
-                          maxItems: 500
+                          maxItems: 2000
                         catchAll:
                           type: object
                           properties:
@@ -4917,6 +5191,36 @@ paths:
                           required:
                             - gate
                             - access
+                          additionalProperties: false
+                        openapi:
+                          type: object
+                          properties:
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                            title:
+                              type: string
+                              maxLength: 200
+                            version:
+                              type: string
+                              maxLength: 64
+                            source:
+                              type: string
+                              enum:
+                                - upload
+                            importedAt:
+                              type: string
+                              format: date-time
+                            importedBy:
+                              type: string
+                              maxLength: 254
+                          required:
+                            - sha256
+                            - title
+                            - version
+                            - source
+                            - importedAt
+                            - importedBy
                           additionalProperties: false
                       required:
                         - items
@@ -4993,7 +5297,7 @@ paths:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
-                              maxItems: 500
+                              maxItems: 2000
                             clients:
                               type: string
                               enum:
@@ -5578,6 +5882,10 @@ paths:
                                 default: manual
                               pinned:
                                 type: boolean
+                              op:
+                                type: string
+                                minLength: 1
+                                maxLength: 600
                             required:
                               - id
                               - methods
@@ -5585,7 +5893,7 @@ paths:
                               - gate
                               - access
                             additionalProperties: false
-                          maxItems: 500
+                          maxItems: 2000
                         catchAll:
                           type: object
                           properties:
@@ -5597,6 +5905,36 @@ paths:
                           required:
                             - gate
                             - access
+                          additionalProperties: false
+                        openapi:
+                          type: object
+                          properties:
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                            title:
+                              type: string
+                              maxLength: 200
+                            version:
+                              type: string
+                              maxLength: 64
+                            source:
+                              type: string
+                              enum:
+                                - upload
+                            importedAt:
+                              type: string
+                              format: date-time
+                            importedBy:
+                              type: string
+                              maxLength: 254
+                          required:
+                            - sha256
+                            - title
+                            - version
+                            - source
+                            - importedAt
+                            - importedBy
                           additionalProperties: false
                       required:
                         - items
@@ -5673,7 +6011,7 @@ paths:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
-                              maxItems: 500
+                              maxItems: 2000
                             clients:
                               type: string
                               enum:
@@ -6073,6 +6411,10 @@ paths:
                                 default: manual
                               pinned:
                                 type: boolean
+                              op:
+                                type: string
+                                minLength: 1
+                                maxLength: 600
                             required:
                               - id
                               - methods
@@ -6080,7 +6422,7 @@ paths:
                               - gate
                               - access
                             additionalProperties: false
-                          maxItems: 500
+                          maxItems: 2000
                         catchAll:
                           type: object
                           properties:
@@ -6092,6 +6434,36 @@ paths:
                           required:
                             - gate
                             - access
+                          additionalProperties: false
+                        openapi:
+                          type: object
+                          properties:
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                            title:
+                              type: string
+                              maxLength: 200
+                            version:
+                              type: string
+                              maxLength: 64
+                            source:
+                              type: string
+                              enum:
+                                - upload
+                            importedAt:
+                              type: string
+                              format: date-time
+                            importedBy:
+                              type: string
+                              maxLength: 254
+                          required:
+                            - sha256
+                            - title
+                            - version
+                            - source
+                            - importedAt
+                            - importedBy
                           additionalProperties: false
                       required:
                         - items
@@ -6168,7 +6540,7 @@ paths:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
-                              maxItems: 500
+                              maxItems: 2000
                             clients:
                               type: string
                               enum:
@@ -6573,6 +6945,10 @@ paths:
                                 default: manual
                               pinned:
                                 type: boolean
+                              op:
+                                type: string
+                                minLength: 1
+                                maxLength: 600
                             required:
                               - id
                               - methods
@@ -6580,7 +6956,7 @@ paths:
                               - gate
                               - access
                             additionalProperties: false
-                          maxItems: 500
+                          maxItems: 2000
                         catchAll:
                           type: object
                           properties:
@@ -6592,6 +6968,36 @@ paths:
                           required:
                             - gate
                             - access
+                          additionalProperties: false
+                        openapi:
+                          type: object
+                          properties:
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                            title:
+                              type: string
+                              maxLength: 200
+                            version:
+                              type: string
+                              maxLength: 64
+                            source:
+                              type: string
+                              enum:
+                                - upload
+                            importedAt:
+                              type: string
+                              format: date-time
+                            importedBy:
+                              type: string
+                              maxLength: 254
+                          required:
+                            - sha256
+                            - title
+                            - version
+                            - source
+                            - importedAt
+                            - importedBy
                           additionalProperties: false
                       required:
                         - items
@@ -6668,7 +7074,7 @@ paths:
                               type: array
                               items:
                                 $ref: "#/properties/site/properties/routes/properties/items/items/properties/id"
-                              maxItems: 500
+                              maxItems: 2000
                             clients:
                               type: string
                               enum:
@@ -7021,6 +7427,309 @@ paths:
     delete:
       tags: *a2
       description: Remove the login-page logo
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/import/preview:
+    post:
+      tags:
+        - sites
+      description: "Read an OpenAPI 2.0/3.0/3.1 document (content only; URL import is
+        not available yet) and propose one route per operation: access, gate,
+        org parameter, risk, re-import diff against the draft. Writes nothing
+        but the uploaded bytes, kept 24 h for the commit"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  anyOf:
+                    - type: object
+                      properties:
+                        content:
+                          type: string
+                          minLength: 1
+                          maxLength: 5242880
+                        format:
+                          type: string
+                          enum:
+                            - auto
+                            - json
+                            - yaml
+                          default: auto
+                      required:
+                        - content
+                      additionalProperties: false
+                    - type: object
+                      properties:
+                        url:
+                          type: string
+                          minLength: 1
+                          maxLength: 2048
+                      required:
+                        - url
+                      additionalProperties: false
+                options:
+                  type: object
+                  properties:
+                    basePath:
+                      type: string
+                      maxLength: 256
+                      pattern: ^(\/[A-Za-z0-9._~@-]+)*$
+                    basePathMode:
+                      type: string
+                      enum:
+                        - prepend
+                        - strip
+                        - none
+                      default: prepend
+                    resourceFrom:
+                      type: string
+                      enum:
+                        - tag
+                        - path
+                        - operationId
+                      default: tag
+                    listAsRead:
+                      type: boolean
+                      default: false
+                    scopeMap:
+                      type: object
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                    orgParam:
+                      type: string
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]{0,63}$
+                    defaultGate:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,31}$
+                  additionalProperties: false
+                  default: {}
+                decisions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      op:
+                        type: string
+                        minLength: 1
+                        maxLength: 600
+                      access:
+                        anyOf:
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - public
+                            required:
+                              - kind
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - signed-in
+                            required:
+                              - kind
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - permission
+                              permission:
+                                type: string
+                                pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                            required:
+                              - kind
+                              - permission
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - deny
+                            required:
+                              - kind
+                            additionalProperties: false
+                      gate:
+                        $ref: "#/properties/options/properties/defaultGate"
+                      orgParam:
+                        allOf:
+                          - $ref: "#/properties/options/properties/orgParam"
+                        nullable: true
+                      skip:
+                        type: boolean
+                      remove:
+                        type: boolean
+                      confirm:
+                        type: boolean
+                    required:
+                      - op
+                    additionalProperties: false
+                  maxItems: 2000
+                  default: []
+              required:
+                - source
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/import/commit:
+    post:
+      tags:
+        - sites
+      description: Merge a previewed import into the DRAFT (never a version, never an
+        apply). specSha256 must name a spec previewed for this site (409
+        spec_not_previewed), baseEtag the draft the preview saw (409
+        stale_base); undecided rows answer 422 import_blocked
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                specSha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+                baseEtag:
+                  type: string
+                  pattern: ^[a-f0-9]{16}$
+                options:
+                  type: object
+                  properties:
+                    basePath:
+                      type: string
+                      maxLength: 256
+                      pattern: ^(\/[A-Za-z0-9._~@-]+)*$
+                    basePathMode:
+                      type: string
+                      enum:
+                        - prepend
+                        - strip
+                        - none
+                      default: prepend
+                    resourceFrom:
+                      type: string
+                      enum:
+                        - tag
+                        - path
+                        - operationId
+                      default: tag
+                    listAsRead:
+                      type: boolean
+                      default: false
+                    scopeMap:
+                      type: object
+                      additionalProperties:
+                        type: string
+                        maxLength: 128
+                        pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                    orgParam:
+                      type: string
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]{0,63}$
+                    defaultGate:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{0,31}$
+                  additionalProperties: false
+                  default: {}
+                decisions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      op:
+                        type: string
+                        minLength: 1
+                        maxLength: 600
+                      access:
+                        anyOf:
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - public
+                            required:
+                              - kind
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - signed-in
+                            required:
+                              - kind
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - permission
+                              permission:
+                                type: string
+                                pattern: ^[a-z][a-z0-9_.-]*:[a-z*][a-z0-9_*-]*$
+                            required:
+                              - kind
+                              - permission
+                            additionalProperties: false
+                          - type: object
+                            properties:
+                              kind:
+                                type: string
+                                enum:
+                                  - deny
+                            required:
+                              - kind
+                            additionalProperties: false
+                      gate:
+                        $ref: "#/properties/options/properties/defaultGate"
+                      orgParam:
+                        allOf:
+                          - $ref: "#/properties/options/properties/orgParam"
+                        nullable: true
+                      skip:
+                        type: boolean
+                      remove:
+                        type: boolean
+                      confirm:
+                        type: boolean
+                    required:
+                      - op
+                    additionalProperties: false
+                  maxItems: 2000
+                  default: []
+                acceptDenied:
+                  type: boolean
+                  default: false
+              required:
+                - specSha256
+                - baseEtag
+              additionalProperties: false
       parameters:
         - schema:
             type: string
@@ -7960,6 +8669,29 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/admin/rbac/opal/api_clients:
+    get:
+      tags:
+        - rbac
+      description: "OPAL data source: org API keys (Hydra client_credentials clients)
+        by client_id — organization, registered scopes, expiry
+        (data.api_clients). 503 when Hydra cannot be read, so OPAL keeps the
+        last good data."
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/admin/rbac/opal/second_factor:
     get:
       tags:
@@ -7982,6 +8714,16 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/admin/rbac/opal/roles:
+    get:
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/rbac/opal/route_maps:
+    get:
+      responses:
+        "200":
+          description: Default Response
   /api/admin/rbac/opal/roles/{service}:
     get:
       parameters:
@@ -11410,6 +12152,10 @@ paths:
                                           required:
                                             - grafana
                                           additionalProperties: false
+                                    metrics:
+                                      type: object
+                                      additionalProperties:
+                                        type: number
                                   required:
                                     - id
                                     - state
@@ -11474,6 +12220,7 @@ paths:
                                         - recert_overdue
                                         - recert_inbox
                                         - audit_archive_lag
+                                        - audit_outbox_near_cap
                                         - audit_emit_failures
                                         - notifications_dead_letter
                                         - migration_regressions
@@ -14484,6 +15231,11 @@ paths:
                   items:
                     type: string
                   description: Optional token audience
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  description: Optional expiry in days; absent = never expires
               additionalProperties: false
       parameters:
         - schema:
@@ -14519,6 +15271,10 @@ paths:
                     type: string
                     nullable: true
                   created_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  expires_at:
                     type: string
                     format: date-time
                     nullable: true
@@ -14612,6 +15368,10 @@ paths:
                           type: string
                           format: date-time
                           nullable: true
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
                   total:
                     type: number
         "401":
@@ -14641,6 +15401,237 @@ paths:
                   error:
                     type: string
                     example: Forbidden
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/api-keys/scopes:
+    get:
+      tags:
+        - api-keys
+      description: "The scopes an API key of this organization may be given: the
+        permissions required by routes of the sites this organization runs that
+        the caller holds here (site grants and org grants), under
+        API_KEY_ALLOWED_SCOPES when set. Never a wildcard. Sorted by scope, each
+        with the sites that ask for it."
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope:
+                          type: string
+                          description: A permission (resource:verb)
+                        sites:
+                          type: array
+                          items:
+                            type: string
+                          description: The sites whose routes require it
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/api-key-policy:
+    get:
+      tags:
+        - api-keys
+      description: Whether members may create personal API keys acting in this
+        organization (404 unless delegated tokens are enabled).
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - personal_keys
+                properties:
+                  personal_keys:
+                    type: string
+                    enum:
+                      - allowed
+                      - forbidden
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+    put:
+      tags:
+        - api-keys
+      description: Allow or forbid personal API keys in this organization. Forbidding
+        stops the keys already issued at their next call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - personal_keys
+              properties:
+                personal_keys:
+                  type: string
+                  enum:
+                    - allowed
+                    - forbidden
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - personal_keys
+                properties:
+                  personal_keys:
+                    type: string
+                    enum:
+                      - allowed
+                      - forbidden
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
                   message:
                     type: string
   /api/organizations/{organizationId}/api-keys/{clientId}:
@@ -14685,6 +15676,10 @@ paths:
                     type: string
                     nullable: true
                   created_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  expires_at:
                     type: string
                     format: date-time
                     nullable: true
@@ -14820,6 +15815,169 @@ paths:
                 type: object
                 properties:
                   message:
+                    type: string
+  /api/mcp/token-info:
+    post:
+      tags:
+        - mcp
+      description: "Introspect a delegated (opaque Hydra) token for auth-mcp, with
+        jinbe's rules: active, access token, the delegated audience, bound to
+        one org, an active user; personal keys re-read from their client
+        (expiry, org policy). Caller: an allowed ServiceAccount in
+        X-Actor-Token."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  scope:
+                    type: string
+                  client_id:
+                    type: string
+                  sub:
+                    type: string
+                  exp:
+                    type: integer
+                  aud:
+                    type: array
+                    items:
+                      type: string
+                  token_use:
+                    type: string
+                  ext:
+                    type: object
+                    properties:
+                      org:
+                        type: string
+                      email:
+                        type: string
+                      kind:
+                        type: string
+                        enum:
+                          - oauth
+                          - personal
+                      subject:
+                        type: string
+                      key_id:
+                        type: string
+                      key_expires_at:
+                        type: integer
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+  /api/mcp/personal-keys/exchange:
+    post:
+      tags:
+        - mcp
+      description: "Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a
+        short-lived access token carrying the key's stored scopes that its
+        holder STILL holds in the key's org (plus mcp). Refused (401) when
+        unknown, wrong secret, expired, or the org forbids personal keys.
+        Caller: an allowed ServiceAccount in X-Actor-Token."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  expires_in:
+                    type: integer
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
                     type: string
   /api/opa/bundle:
     get:

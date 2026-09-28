@@ -216,6 +216,24 @@ describe('attention — shared per scope, finished per caller', () => {
     expect(admin.data.items.map((i: { kind: string }) => i.kind)).not.toContain('audit_archive_lag')
   })
 
+  it('no archiver configured: a backlog raises no archive-lag alarm, only an info item near the outbox cap', async () => {
+    world.archiveEnabled = false
+    world.outboxMaxLen = 1_000
+    world.outbox = { length: 710, oldestMs: Date.now() - 2 * 86_400_000 }
+    const quiet = (await get('/api/home/attention', 'root')).json().data.items.map((i: { kind: string }) => i.kind)
+    expect(quiet).not.toContain('audit_archive_lag')
+    expect(quiet).not.toContain('audit_outbox_near_cap')
+
+    invalidateHome(['attention'])
+    world.outbox = { length: 950, oldestMs: Date.now() - 2 * 86_400_000 }
+    const root = (await get('/api/home/attention', 'root')).json()
+    const near = root.data.items.find((i: { kind: string }) => i.kind === 'audit_outbox_near_cap')
+    expect(near).toMatchObject({ severity: 'info', metrics: { count: 950, cap: 1_000 }, target: { page: 'audit' } })
+    expect(root.data.items.map((i: { kind: string }) => i.kind)).not.toContain('audit_archive_lag')
+    const admin = (await get('/api/home/attention', 'admin')).json()
+    expect(admin.data.items.map((i: { kind: string }) => i.kind)).not.toContain('audit_outbox_near_cap')
+  })
+
   it('people findings are one counted item, from the access-review job once it has run', async () => {
     await get('/api/home/attention')
     await settle()
@@ -240,7 +258,7 @@ describe('degradation — a dead source costs its own tile, never the response',
     expect(h.sources.prometheus).toEqual({ state: 'not_configured', connect: { setting: 'PROMETHEUS_URL', docs: 'jinbe/docs/observability.md' } })
     expect(h.data.components.find((c: { id: string }) => c.id === 'certificates')).toMatchObject({ state: 'unknown', summary: 'not connected' })
     // edge first: 1 of the 2 live sites is behind the WAF
-    expect(h.data.components[0]).toMatchObject({ id: 'waf', state: 'degraded', summary: '1/2 sites behind the WAF', link: { page: 'settings', anchor: 'zones' } })
+    expect(h.data.components[0]).toMatchObject({ id: 'waf', state: 'degraded', summary: '1/2 sites behind the WAF', link: { page: 'settings', anchor: 'zones' }, metrics: { unprotected: 1, unprotectedHosts: 1 } })
     expect(h.data.components.map((c: { id: string }) => c.id)).toEqual(['waf', 'gateway', 'gateway_rules', 'opa', 'opal_data', 'kratos', 'jinbe', 'redis', 'audit_store', 'audit_archive', 'certificates'])
   })
 

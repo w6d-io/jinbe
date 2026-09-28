@@ -7,11 +7,18 @@ export const apiKeyClientIdParamSchema = z.object({
 })
 export type ApiKeyClientIdParam = z.infer<typeof apiKeyClientIdParamSchema>
 
+/** The longest an org machine key may be given, when it is given an expiry at all. */
+export const ORG_KEY_MAX_DAYS = 365
+/** The longest a personal key may live (owner decision: 30 days), and its default. */
+export const PERSONAL_KEY_MAX_DAYS = 30
+
 // ── Create body ───────────────────────────────────────────────────────────────
 export const apiKeyCreateBodySchema = z.object({
   label: z.string().min(1, 'label is required').max(200),
   scopes: z.array(z.string().min(1)).min(1, 'at least one scope is required'),
   audience: z.array(z.string()).optional(),
+  /** Optional for an org machine key; absent = no expiry. */
+  expires_in_days: z.number().int().min(1).max(ORG_KEY_MAX_DAYS).optional(),
 })
 export type ApiKeyCreateBody = z.infer<typeof apiKeyCreateBodySchema>
 
@@ -23,7 +30,21 @@ export interface ApiKeyView {
   scopes: string[]
   created_by: string | null
   created_at: string | null
+  /** RFC 3339, or null for a key that never expires. */
+  expires_at: string | null
 }
+
+// ── Personal keys ─────────────────────────────────────────────────────────────
+export const personalKeyCreateBodySchema = z.object({
+  label: z.string().min(1, 'label is required').max(200),
+  organization_id: z.string().uuid('organization_id must be a valid UUID'),
+  scopes: z.array(z.string().min(1)).min(1, 'at least one scope is required'),
+  expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).default(PERSONAL_KEY_MAX_DAYS),
+})
+export type PersonalKeyCreateBody = z.infer<typeof personalKeyCreateBodySchema>
+
+export const apiKeyPolicySchema = z.object({ personal_keys: z.enum(['allowed', 'forbidden']) }).strict()
+export type ApiKeyPolicy = z.infer<typeof apiKeyPolicySchema>
 
 /** Returned ONCE on creation — includes the secret. */
 export interface ApiKeySecretView extends ApiKeyView {
@@ -60,8 +81,44 @@ export const apiKeyCreateBodyJsonSchema = {
       description: 'Requested scopes (validated against the allowed catalog)',
     },
     audience: { type: 'array', items: { type: 'string' }, description: 'Optional token audience' },
+    expires_in_days: { type: 'integer', minimum: 1, maximum: ORG_KEY_MAX_DAYS, description: 'Optional expiry in days; absent = never expires' },
   },
   additionalProperties: false,
+}
+
+export const personalKeyCreateBodyJsonSchema = {
+  type: 'object',
+  required: ['label', 'organization_id', 'scopes'],
+  properties: {
+    label: { type: 'string', minLength: 1, maxLength: 200 },
+    organization_id: { type: 'string', format: 'uuid', description: 'The one organization the key acts in' },
+    scopes: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Permissions you hold in that organization' },
+    expires_in_days: { type: 'integer', minimum: 1, maximum: PERSONAL_KEY_MAX_DAYS, default: PERSONAL_KEY_MAX_DAYS },
+  },
+  additionalProperties: false,
+}
+
+export const apiKeyPolicyJsonSchema = {
+  type: 'object',
+  required: ['personal_keys'],
+  properties: { personal_keys: { type: 'string', enum: ['allowed', 'forbidden'] } },
+  additionalProperties: false,
+}
+
+export const scopeCatalogResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    scopes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          scope: { type: 'string', description: 'A permission (resource:verb)' },
+          sites: { type: 'array', items: { type: 'string' }, description: 'The sites whose routes require it' },
+        },
+      },
+    },
+  },
 }
 
 const apiKeyViewProps = {
@@ -71,6 +128,7 @@ const apiKeyViewProps = {
   scopes: { type: 'array', items: { type: 'string' } },
   created_by: { type: 'string', nullable: true },
   created_at: { type: 'string', format: 'date-time', nullable: true },
+  expires_at: { type: 'string', format: 'date-time', nullable: true },
 }
 
 export const apiKeyViewJsonSchema = {

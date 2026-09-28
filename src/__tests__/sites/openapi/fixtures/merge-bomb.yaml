@@ -1,0 +1,8 @@
+openapi: 3.0.0
+info: { title: merge, version: '1' }
+x0: &x0 { k0: v, k1: v, k2: v, k3: v, k4: v, k5: v, k6: v, k7: v }
+x1: &x1 { <<: [*x0, *x0, *x0, *x0, *x0, *x0, *x0, *x0], a: 1 }
+x2: &x2 { <<: [*x1, *x1, *x1, *x1, *x1, *x1, *x1, *x1], b: 1 }
+x3: &x3 { <<: [*x2, *x2, *x2, *x2, *x2, *x2, *x2, *x2], c: 1 }
+x4: &x4 { <<: [*x3, *x3, *x3, *x3, *x3, *x3, *x3, *x3], d: 1 }
+paths: {}

@@ -44,6 +44,9 @@ import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
 import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
 import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
+import { personalKeyRoutes } from './routes/personal-key.routes.js'
+import { mcpRoutes } from './routes/mcp.routes.js'
+import { delegationGate } from './middleware/delegation-gate.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
@@ -108,6 +111,10 @@ export async function buildServer() {
   // second_factor_required) before any route gate runs — second-factor/gate.ts.
   fastify.addHook('onRequest', requireSecondFactor)
 
+  // A user acting through a client (delegated token) reaches only what its scopes cover, in its one
+  // organization, and never an ineligible route — before any route gate runs (middleware/delegation-gate.ts).
+  fastify.addHook('preHandler', delegationGate)
+
   // Register other plugins
   await fastify.register(rateLimitPlugin)
   await fastify.register(swaggerPlugin)
@@ -156,6 +163,7 @@ export async function buildServer() {
       await api.register(telemetryRoutes)
       await api.register(whoamiRoutes)
       await api.register(meRoutes, { prefix: '/me' })
+      await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless DELEGATED_TOKENS_ENABLED
       await api.register(clusterRoutes, { prefix: '/clusters' })
       await api.register(databaseRoutes, { prefix: '/databases' })
       await api.register(backupRoutes, { prefix: '/backups' })
@@ -182,7 +190,8 @@ export async function buildServer() {
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
-      await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // no-auth, cluster-internal only
+      await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // allowed in-cluster ServiceAccounts only
+      await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason

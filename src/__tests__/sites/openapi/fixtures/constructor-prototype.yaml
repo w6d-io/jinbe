@@ -1,0 +1,9 @@
+openapi: 3.0.0
+info: { title: p, version: '1' }
+paths:
+  /a:
+    get:
+      operationId: a
+      constructor:
+        prototype:
+          polluted: yes

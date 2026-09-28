@@ -18,6 +18,8 @@ export const auditActorV1Schema = z.object({
   ip_hmac: hmac.optional(),
   ua_family: z.string().max(32).optional(),
   auth: z.object({ aal: z.string().optional(), method: z.string().optional() }).optional(),
+  /** A user acting through a client (delegated token): the client and the service it came in by. */
+  act: z.object({ client_id: z.string().min(1).max(200), via: z.string().min(1).max(64), kind: z.enum(['oauth', 'personal']).optional() }).optional(),
 })
 
 export const auditTargetV1Schema = z.object({

@@ -21,6 +21,8 @@ export interface Zone {
   gateway?: string
   /** `zone`: a Zone CR (zones.auth.w6d.io); `config`: SITES_ZONES, used when the cluster is not read. */
   source?: 'zone' | 'config'
+  /** Zone CRs only: where the wildcard certificate comes from (spec.tls.mode). Not `default`: the zone brings its own Gateway listener. */
+  tlsMode?: 'default' | 'issuer' | 'secret'
   /** Whether the zone's wildcard certificate is served (default true); false = a certificate per vanity site. */
   wildcardTls?: boolean
   /** The login cookie domain for this zone when it differs from the platform one. */
@@ -78,6 +80,7 @@ export function zonesView<P>(zones: readonly Zone[], platformCookieDomain: strin
       ...(z.ingressClass ? { ingressClass: z.ingressClass } : {}),
       ...(z.ingress ? { ingress: z.ingress } : {}),
       ...(z.gateway ? { gateway: z.gateway } : {}),
+      ...(z.tlsMode ? { tlsMode: z.tlsMode } : {}),
       ...(z.ready !== undefined ? { ready: z.ready } : {}),
       ...(protection && protection(z) != null ? { protection: protection(z) } : {}),
       source: z.source ?? 'config',

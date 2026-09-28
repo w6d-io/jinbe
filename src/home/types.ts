@@ -50,6 +50,8 @@ export const healthSchema = z.object({
     summary: z.string(),
     since: z.string().optional(),
     link: linkSchema.optional(),
+    /** The counts behind the summary. waf: `{total, waf, unknown, unprotected, unprotectedHosts}`. */
+    metrics: z.record(z.number()).optional(),
   })),
 })
 export type Health = z.infer<typeof healthSchema>
@@ -62,7 +64,7 @@ export const attentionKindSchema = z.enum([
   'site_request_pending', 'site_unapplied', 'site_draft_stale', 'site_condition', 'site_drift',
   'gateway_rollout', 'engines_out_of_sync', 'opal_data_stale', 'rule_compile_errors', 'cert_expiring',
   'privileged_no_mfa', 'privileged_self_granted', 'privileged_dormant',
-  'recert_overdue', 'recert_inbox', 'audit_archive_lag', 'audit_emit_failures', 'notifications_dead_letter',
+  'recert_overdue', 'recert_inbox', 'audit_archive_lag', 'audit_outbox_near_cap', 'audit_emit_failures', 'notifications_dead_letter',
   'migration_regressions', 'login_failure_spike', 'deny_spike', 'unassigned_users',
   // HOME-later (§11): emitted once J12 / the audit/v1 stream exist.
   'site_members_no_mfa', 'apikey_unused',

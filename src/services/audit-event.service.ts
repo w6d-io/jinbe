@@ -173,6 +173,7 @@ function upgradeLegacy(ev: LegacyAuditEvent): AuditEvent {
       ip:        ev.actor?.ip ?? (d.ip as string | undefined) ?? null,
       ua:        ev.actor?.ua ?? null,
       sessionId: ev.actor?.sessionId ?? null,
+      ...(ev.actor?.act ? { act: ev.actor.act } : {}),
     },
     service:     ev.target?.service,
     reason:      d.reason as string | undefined,

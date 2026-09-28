@@ -82,3 +82,57 @@ export function covers(held: string, required: string): boolean {
 export function permits(heldPermissions: readonly string[], required: string): boolean {
   return heldPermissions.some((held) => covers(held, required))
 }
+
+/**
+ * Whether a string can be a scope at all: a plain `resource:verb` permission. `*`, and any
+ * permission with a wildcard in it, never is — a scope names what it allows, one permission at a time.
+ */
+export function isGrantableScope(scope: string): boolean {
+  return /^[a-z][a-z0-9_.-]*:[a-z][a-z0-9_-]*$/.test(scope)
+}
+
+/**
+ * Whether a token's scopes cover a required permission — the twin of `scope_covers` proposed for
+ * `strada.authz`. The same one implication as `covers`, and never through a wildcard: a scope that
+ * is not grantable covers nothing, so a forged `*` in a token opens no route.
+ */
+export function scopeCovers(scopes: readonly string[], required: string): boolean {
+  return scopes.some((scope) => isGrantableScope(scope) && covers(scope, required))
+}
+
+/** What the policy knows about an OAuth2 client (data.api_clients[client_id], published by jinbe). */
+export interface ApiClientRecord {
+  org: string
+  scopes: string[]
+  /** RFC 3339; absent = no expiry. */
+  expires_at?: string
+}
+
+/**
+ * Whether a machine client may use a route — the twin of the proposed `client_granted` clause.
+ *
+ * ALL of: the route carries a permission; a scope the token carries AND the client was registered
+ * with IS that permission; the client is not past its expiry; and the route is the client's
+ * organization's — named by the route's org param when it has one, otherwise a site that
+ * organization runs.
+ *
+ * Exact, not `covers`: no person stands behind a machine client to be asked what they hold, and its
+ * scopes were picked as exact route permissions its creator held (services/api-key-scopes.ts), so an
+ * ancestor scope must not reach a sibling route the creator never held. A delegated caller is
+ * different — the user is asked too — and uses `scopeCovers`.
+ */
+export function clientGranted(
+  client: ApiClientRecord | undefined,
+  tokenScopes: readonly string[],
+  route: { permission?: string; org?: string | null; app: string },
+  sitesOfOrg: (org: string) => readonly string[],
+  now: number = Date.now(),
+): boolean {
+  if (!client || !route.permission) return false
+  if (client.expires_at && !(Date.parse(client.expires_at) > now)) return false
+  const registered = new Set(client.scopes)
+  const required = route.permission
+  if (!tokenScopes.some((s) => isGrantableScope(s) && registered.has(s) && s === required)) return false
+  if (route.org !== undefined && route.org !== null) return route.org === client.org
+  return sitesOfOrg(client.org).includes(route.app)
+}

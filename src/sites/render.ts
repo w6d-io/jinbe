@@ -84,6 +84,8 @@ export interface Rendered {
 }
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
+/** Site CRD `match.url` MaxLength (site-operator api/v1alpha1/site_types.go). */
+export const MATCH_URL_MAX = 4096
 const DENY_GATE = 'deny'
 const CATCH_ALL_ID = 'catch-all'
 // Static paths under /api/admin/sites and the migrated system sites: a site by that name would be shadowed.
@@ -97,6 +99,12 @@ const FORBIDDEN_SERVICE = /^(kratos-admin|opa|opal(-.*)?|redis(-.*)?|postgres(ql
  * sends the session's sign-in strength and whether the caller is an OAuth2 client: the policy needs
  * both on every app, for per-site 2FA (data.site_login) and for the platform's required-second-factor
  * groups (data.second_factor), which apply whether or not the site asks for 2FA itself.
+ *
+ * For an OAuth2 client it also sends WHICH client and the scopes its token carries — Oathkeeper's
+ * oauth2_introspection puts `client_id` and `scope` (space-separated, as Hydra granted it) in .Extra.
+ * The policy grants a client a route only when a scope covers the route's permission AND the client's
+ * organization (data.api_clients) is the route's. Empty for a session: a person is decided on their
+ * groups, never on a scope string.
  */
 export function platformPayload(site: string): string {
   return [
@@ -108,6 +116,8 @@ export function platformPayload(site: string): string {
     '    "action": "{{ .MatchContext.Method }}",',
     '    "aal": "{{ if .Extra }}{{ print .Extra.authenticator_assurance_level }}{{ end }}",',
     '    "client": {{ if .Extra }}{{ if .Extra.client_id }}true{{ else }}false{{ end }}{{ else }}false{{ end }},',
+    '    "client_id": "{{ if .Extra }}{{ if .Extra.client_id }}{{ print .Extra.client_id }}{{ end }}{{ end }}",',
+    '    "scope": "{{ if .Extra }}{{ if .Extra.client_id }}{{ if .Extra.scope }}{{ print .Extra.scope }}{{ end }}{{ end }}{{ end }}",',
     `    "app": "${site}"`,
     '  }',
     '}',
@@ -381,6 +391,14 @@ export function render(site: Site, platform: Platform): Rendered {
   }
 
   // ── Site CR ─────────────────────────────────────────────────
+  // The Site CRD caps a gate's match URL (site-operator site_types.go, MaxLength=4096): past it the API
+  // server refuses the whole CR at apply. Every route on a gate other than the catch-all's is an
+  // alternative in that gate's regex AND in the catch-all's look-ahead, so it is said here, at save.
+  for (const g of crGates) {
+    if (g.match.url.length > MATCH_URL_MAX) {
+      fail('match_url_too_long', `gate '${g.name}' matches through a ${g.match.url.length}-character URL pattern; a Site allows ${MATCH_URL_MAX}. Move routes to the catch-all gate (per-route permissions cost no pattern) or group them under a prefix`, 'routes')
+    }
+  }
   if (crGates.length > 32) fail('too_many_gates', `${crGates.length} gateway rules; a Site holds at most 32 (pre-flight rules count)`, 'gates')
   const placement = placeHost(host, platform.zones ?? [], platform.cookieDomain)
   if (placement.tooDeep) fail('host_too_deep', `${host} must be exactly one label under a zone`, 'address.host')

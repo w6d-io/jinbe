@@ -17,10 +17,17 @@ const mockState = vi.hoisted(() => {
       listClientsByOwner: vi.fn(),
     },
     HydraApiError,
+    catalog: vi.fn(async () => [
+      { scope: 'payroll.runs:read', sites: ['payroll'] },
+      { scope: 'payroll:write', sites: ['payroll'] },
+    ]),
+    changed: vi.fn(),
   }
 })
 
 vi.mock('../../../config/index.js', () => ({ env: mockState.env }))
+vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: mockState.catalog }))
+vi.mock('../../../services/api-clients.js', () => ({ apiClientsChanged: mockState.changed }))
 vi.mock('../../../services/hydra.service.js', () => ({
   hydraService: mockState.hydra,
   HydraApiError: mockState.HydraApiError,
@@ -55,11 +62,33 @@ describe('ApiKeyService', () => {
   })
 
   describe('create', () => {
-    it('rejects scopes outside the allowed catalog (400) and never calls Hydra', async () => {
+    it("rejects scopes outside the org's catalog for the caller (400) and never calls Hydra", async () => {
       await expect(
-        svc.create({ organizationId: ORG, body: { label: 'x', scopes: ['api:read', 'admin:all'] } })
+        svc.create({ organizationId: ORG, callerEmail: 'a@x.io', body: { label: 'x', scopes: ['payroll:write', 'admin:all'] } })
+      ).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['admin:all'], allowed_scopes: ['payroll.runs:read', 'payroll:write'] } })
+      expect(mockState.catalog).toHaveBeenCalledWith(ORG, 'a@x.io')
+      expect(mockState.hydra.createClient).not.toHaveBeenCalled()
+    })
+
+    it('refuses a wildcard even if a catalog were to list it', async () => {
+      mockState.catalog.mockResolvedValueOnce([{ scope: '*', sites: ['x'] }, { scope: 'payroll:*', sites: ['x'] }])
+      await expect(
+        svc.create({ organizationId: ORG, callerEmail: 'a@x.io', body: { label: 'x', scopes: ['*'] } })
+      ).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['*'] } })
+      await expect(
+        svc.create({ organizationId: ORG, callerEmail: 'a@x.io', body: { label: 'x', scopes: ['payroll:*'] } })
       ).rejects.toMatchObject({ statusCode: 400 })
       expect(mockState.hydra.createClient).not.toHaveBeenCalled()
+    })
+
+    it('records an expiry when asked for one, and tells the policy data a key changed', async () => {
+      mockState.hydra.createClient.mockResolvedValue(client({ client_secret: 's', metadata: { organization_id: ORG, expires_at: '2026-10-28T00:00:00.000Z' } }))
+      const out = await svc.create({ organizationId: ORG, callerEmail: 'a@x.io', body: { label: 'svc', scopes: ['payroll:write'], expires_in_days: 30 } })
+      const arg = mockState.hydra.createClient.mock.calls[0][0]
+      expect(Date.parse(arg.expiresAt) - Date.now()).toBeGreaterThan(29 * 86_400_000)
+      expect(Date.parse(arg.expiresAt) - Date.now()).toBeLessThanOrEqual(30 * 86_400_000)
+      expect(out.expires_at).toBe('2026-10-28T00:00:00.000Z')
+      expect(mockState.changed).toHaveBeenCalledWith('api_key.created')
     })
 
     it('passes organizationId + createdBy + deduped scopes to Hydra and returns the secret once', async () => {
@@ -69,12 +98,13 @@ describe('ApiKeyService', () => {
 
       const result = await svc.create({
         organizationId: ORG,
-        body: { label: 'svc', scopes: ['api:read', 'api:read'] },
+        body: { label: 'svc', scopes: ['payroll:write', 'payroll:write'] },
         createdBy: 'kratos-id-1',
+        callerEmail: 'a@x.io',
       })
 
       expect(mockState.hydra.createClient).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: ORG, createdBy: 'kratos-id-1', scopes: ['api:read'] })
+        expect.objectContaining({ organizationId: ORG, createdBy: 'kratos-id-1', scopes: ['payroll:write'] })
       )
       expect(result.client_secret).toBe('super-secret-once')
       expect(result.organization_id).toBe(ORG)
@@ -106,7 +136,19 @@ describe('ApiKeyService', () => {
       const out = await svc.list(ORG)
       expect(out).toHaveLength(1)
       expect(out[0].client_id).toBe('client-abc')
+      expect(out[0].expires_at).toBeNull()
       expect(mockState.hydra.listClientsByOwner).toHaveBeenCalledWith(ORG)
+    })
+  })
+
+  describe('personal keys are never org keys', () => {
+    it('are left out of the org list and 404 on get/revoke through the org', async () => {
+      const personal = client({ client_id: 'mine', metadata: { organization_id: ORG, kind: 'personal', subject: 'u1' } })
+      mockState.hydra.listClientsByOwner.mockResolvedValue([personal])
+      expect(await svc.list(ORG)).toEqual([])
+      mockState.hydra.getClient.mockResolvedValue(personal)
+      await expect(svc.revoke(ORG, 'mine')).rejects.toMatchObject({ statusCode: 404 })
+      expect(mockState.hydra.deleteClient).not.toHaveBeenCalled()
     })
   })
 

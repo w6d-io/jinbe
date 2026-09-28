@@ -3,15 +3,21 @@ import { apiKeyService, ApiKeyError } from '../services/api-key.service.js'
 import { HydraApiError, HydraUnavailableError } from '../services/hydra.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { recordApiKeyUse } from '../audit/record.js'
+import { AuthzUnavailableError } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import {
   ApiKeyCreateBody,
   apiKeyCreateBodySchema,
 } from '../schemas/api-key.schema.js'
 
-function handleError(err: unknown, reply: FastifyReply): FastifyReply {
+export function handleError(err: unknown, reply: FastifyReply): FastifyReply {
+  if (err instanceof AuthzUnavailableError) {
+    // The scope catalog is what the caller holds, asked of OPA: "could not tell" is never a 400.
+    return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
+  }
   if (err instanceof ApiKeyError) {
     return reply.status(err.statusCode).send({
-      error: err.statusCode === 404 ? 'Not Found' : 'Bad Request',
+      error: err.statusCode === 404 ? 'Not Found' : err.statusCode === 403 ? 'Forbidden' : 'Bad Request',
       message: err.message,
       ...(err.details ? { details: err.details } : {}),
     })
@@ -55,6 +61,7 @@ export class ApiKeyController {
         organizationId,
         body,
         createdBy: request.userContext?.id,
+        callerEmail: request.userContext?.email ?? '',
       })
 
       auditEventService
@@ -62,7 +69,7 @@ export class ApiKeyController {
           type: 'api_key.created',
           actor: { email: request.userContext?.email, ip: request.ip },
           target: { type: 'oauth2_client', id: result.client_id },
-          details: { organizationId, label: body.label, scopes: result.scopes },
+          details: { organizationId, label: body.label, scopes: result.scopes, expires_at: result.expires_at },
           source: 'jinbe-api',
         })
         .catch(() => {})

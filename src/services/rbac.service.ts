@@ -1,6 +1,7 @@
 import { allGroupMemberships } from './organisation-store.js'
 import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { kratosService } from './kratos.service.js'
+import { orgGrantsRepository } from './org-grants.repository.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
 import { findRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
@@ -42,7 +43,10 @@ export interface DirectoryStats {
   active: number
   /** Users holding a group that grants a wildcard ('*') permission. */
   fullAccess: number
-  /** Users with only the default membership (can't reach anything). */
+  /**
+   * Active users with only the default membership and no org role — neither an org grant nor a seat
+   * on an org's admin roster — so they can reach nothing.
+   */
   unassigned: number
   perGroup: Record<string, number>
   perOrg: Record<string, number>
@@ -513,12 +517,18 @@ export class RbacService {
       // Kratos metadata — the display copy — so every group the model declares showed `0 members`
       // while the memberships that decide requests sat in `group_members`, uncounted. A screen
       // saying nobody holds a group is the one answer that is certainly wrong.
-      const [bindings, wildGroups, groupDefs, memberships] = await Promise.all([
+      const [bindings, wildGroups, groupDefs, memberships, orgGrants, orgAdmins] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS }),
         this.wildcardGroupNames(),
         redisRbacRepository.getGroups(),
         allGroupMemberships().catch(() => null),
+        orgGrantsRepository.getAll().catch(() => ({})),
+        redisRbacRepository.getOrgAdminMap().catch(() => ({} as Record<string, string[]>)),
       ])
+      // Who holds a role in some org: an org grant or a seat on an org's admin roster.
+      const orgRole = new Set<string>()
+      for (const members of Object.values(orgGrants)) for (const email of Object.keys(members)) orgRole.add(email.toLowerCase())
+      for (const roster of Object.values(orgAdmins)) for (const email of roster) orgRole.add(email.toLowerCase())
       // group → the services it grants roles on (for per-service reach counts)
       const groupServices: Record<string, string[]> = {}
       for (const [g, def] of Object.entries(groupDefs)) groupServices[g] = Object.keys(def)
@@ -529,13 +539,15 @@ export class RbacService {
       const perGroup: Record<string, number> = {}
       const perOrg: Record<string, number> = {}
       const perService: Record<string, number> = {}
-      for (const b of bindings.values()) {
+      for (const [email, b] of bindings) {
         if (b.active) active++
         // Only when the enforced store could not be read — see below.
         if (!memberships) for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
         if (b.primaryOrganization) perOrg[b.primaryOrganization] = (perOrg[b.primaryOrganization] ?? 0) + 1
-        // Only the default 'users' membership → can't reach anything.
-        if (b.groups.every((g) => g === 'users')) unassigned++
+        // Only the default 'users' membership (in the enforced store when it answers) and no org role
+        // → can't reach anything.
+        const held = memberships ? (memberships.get(b.id) ?? []) : b.groups
+        if (b.active && held.every((g) => g === 'users') && !orgRole.has(email.toLowerCase())) unassigned++
         if (b.groups.some((g) => wildGroups.has(g))) fullAccess++
         // Distinct services this user can reach via their groups.
         const svcs = new Set<string>()

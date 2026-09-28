@@ -49,6 +49,11 @@ const PUBLIC_ROUTES = [
   // login-ui's sign-in page settings (bot-check site key, sign-up mode) and the gateway's bot check for
   // recovery/verification — both answer without a session by design (sign-in-protection/routes.ts).
   '/api/public/sign-in-protection',
+  // auth-mcp's token-info and personal-key exchange. The Authorization header there carries the token
+  // or key being ASKED ABOUT; the caller is proven by its ServiceAccount token in X-Actor-Token,
+  // checked by the plugin's own hook (routes/mcp.routes.ts), which refuses everyone else — and answers
+  // 404 on every route unless DELEGATED_TOKENS_ENABLED.
+  '/api/mcp',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed

@@ -9,6 +9,7 @@ import { recertService } from '../services/recert.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { kratosService } from '../services/kratos.service.js'
 import { policyBundle } from '../services/policy-bundle.service.js'
+import { buildOpalDatasourceEntries, opalEntryName } from '../services/opal-datasource.js'
 import { membersOf, organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
 import { sitesConfig } from '../sites/config.js'
 import { listSites, protectionLookup } from '../sites/sites.service.js'
@@ -95,9 +96,15 @@ export async function engines(): Promise<EngineRecord[]> {
   })
 }
 
+/**
+ * Last successful fetch per entry of the CURRENT manifest. Anything else in the hash — an entry a past
+ * manifest listed (a per-service entry, a deleted service), which lingers for the hash's TTL — is not
+ * what OPA refreshes today and must not age the component.
+ */
 export async function opalLastSuccess(): Promise<Record<string, number>> {
-  const raw = await getRedisClient().hgetall(OPAL_KEY)
-  return Object.fromEntries(Object.entries(raw ?? {}).map(([k, v]) => [k, Number(v)]).filter(([, v]) => Number.isFinite(v)))
+  const [raw, entries] = await Promise.all([getRedisClient().hgetall(OPAL_KEY), buildOpalDatasourceEntries()])
+  const current = new Set(entries.map((e) => opalEntryName(e.url)))
+  return Object.fromEntries(Object.entries(raw ?? {}).filter(([k]) => current.has(k)).map(([k, v]) => [k, Number(v)]).filter(([, v]) => Number.isFinite(v)))
 }
 
 export async function rulesServed(): Promise<{ at: number; count: number; compileErrors: number } | null> {
@@ -106,6 +113,24 @@ export async function rulesServed(): Promise<{ at: number; count: number; compil
 }
 
 export const auditSink = () => env.AUDIT_SINK
+/** An archiver drains the outbox (AUD-7). Off: nothing does, and the outbox is capped instead. */
+export const archiveEnabled = () => env.AUDIT_ARCHIVE_ENABLED
+export const outboxMaxLen = () => env.AUDIT_OUTBOX_MAX_LEN
+
+export const opaConfigured = () => !!env.OPA_URL
+/**
+ * OPA's own liveness (`GET /health`, open without a token in system_authz.rego) — for an engine that
+ * never reports to jinbe: the OPAL-managed OPA gets its policy from the OPAL server, not jinbe's bundle.
+ */
+export async function opaHealthy(timeoutMs: number): Promise<boolean> {
+  if (!env.OPA_URL) return false
+  try {
+    const res = await fetch(`${env.OPA_URL.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(timeoutMs) })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 
 /** The audit/v1 outbox: backlog size and the age of its oldest entry (stream ids are ms-based). */
 export async function outbox(): Promise<{ length: number; oldestMs: number | null }> {
@@ -136,10 +161,14 @@ export const lokiNamespace = () => env.LOKI_NAMESPACE
 export const LOKI_HOME_TIMEOUT_MS = 5_000
 export const loki = (): LokiClient => (env.LOKI_URL ? new HttpLokiClient(env.LOKI_URL, LOKI_HOME_TIMEOUT_MS) : lokiClient())
 
+/**
+ * Loki answers through the path every read takes. Not `/ready`: that is a per-component endpoint the
+ * loki-gateway does not proxy (404), while `/loki/api/v1/*` is routed to the query frontend.
+ */
 export async function lokiReady(timeoutMs: number): Promise<boolean> {
   if (!env.LOKI_URL) return false
   try {
-    const res = await fetch(`${env.LOKI_URL.replace(/\/$/, '')}/ready`, { signal: AbortSignal.timeout(timeoutMs) })
+    const res = await fetch(`${env.LOKI_URL.replace(/\/$/, '')}/loki/api/v1/status/buildinfo`, { signal: AbortSignal.timeout(timeoutMs) })
     return res.ok
   } catch {
     return false
@@ -162,11 +191,20 @@ export async function directoryStats(): Promise<{ stats: DirectoryStats; compute
 export const accessReviewSummary = async (): Promise<AccessReviewSummary> => (await accessReviewService.getAccessReview()).summary
 
 export const siteRows = () => listSites()
-/** Live (applied) sites behind the WAF, from the zones and the Gateways discovered (cached 30 s). */
+/**
+ * Live (applied) sites behind the WAF, from the zones and the Gateways discovered (cached 30 s).
+ * `unprotectedHosts` counts the distinct hosts of the sites that are not: several sites can share one.
+ */
 export const wafCoverage = async () => {
   const [records, lookup] = await Promise.all([sitesRepository.list(), protectionLookup()])
-  const states = records.filter((r) => r.applied).map((r) => lookup(r.site.address.host))
-  return { total: states.length, waf: states.filter((p) => p?.state === 'waf').length, unknown: states.filter((p) => !p).length }
+  const live = records.filter((r) => r.applied).map((r) => ({ host: r.site.address.host, p: lookup(r.site.address.host) }))
+  const unprotected = live.filter((s) => s.p && s.p.state !== 'waf')
+  return {
+    total: live.length,
+    waf: live.filter((s) => s.p?.state === 'waf').length,
+    unknown: live.filter((s) => !s.p).length,
+    unprotectedHosts: new Set(unprotected.map((s) => s.host.toLowerCase())).size,
+  }
 }
 export const siteRecords = () => sitesRepository.list()
 export const deletedSites = async () => (await sitesRepository.deleted()).length

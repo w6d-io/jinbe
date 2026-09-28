@@ -114,6 +114,13 @@ export interface RouteQuestion {
   path: string
   aal?: string
   client?: boolean
+  /**
+   * A delegated caller (a user through a client): the scopes its token carries and the organization
+   * it is bound to. Sent only then, so every other question keeps its input — and its cache key.
+   * The policy's `delegated_ok` (proposed) requires a scope covering the route's permission and the
+   * route's org to be this one; jinbe enforces the same before asking (middleware/delegation-gate.ts).
+   */
+  delegation?: { scopes: readonly string[]; org: string; client_id: string }
 }
 
 export interface Decision {
@@ -135,6 +142,12 @@ export function decide(q: RouteQuestion): Promise<Decision> {
   }
   if (q.aal) input.aal = q.aal
   if (q.client !== undefined) input.client = q.client
+  if (q.delegation) {
+    input.delegated = true
+    input.scopes = [...q.delegation.scopes].sort()
+    input.org = q.delegation.org
+    input.client_id = q.delegation.client_id
+  }
   return ask('rbac/decision', input, (r) => {
     const d = r as { allow?: unknown; reason?: unknown } | undefined
     if (!d || typeof d.allow !== 'boolean') return undefined

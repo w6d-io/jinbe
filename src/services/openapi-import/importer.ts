@@ -55,20 +55,48 @@ function detectBasePath(api: any): string {
   return ''
 }
 
+// The spec is untrusted input: refused (previewImport turns it into 422 invalid_spec), never fetched or followed off-document.
+class InvalidSpecError extends Error {}
+
+// Only in-document `$ref`s are followed: the default resolvers would let a spec (or source.url)
+// make jinbe fetch any URL (SSRF: OPA, cloud metadata, cluster services) or read local files
+// (the service-account token) and echo them back in the preview.
+const INTERNAL_REFS_ONLY = { resolve: { external: false, file: false, http: false } } as const
+
 async function loadSpec(source: ImportSource): Promise<any> {
-  if (source.content && source.content.trim()) {
-    const txt = source.content
-    const fmt = source.format ?? 'auto'
-    const obj =
+  if (source.url && source.url.trim()) {
+    throw new InvalidSpecError('fetching a spec by URL is disabled: paste or upload its content')
+  }
+  if (!source.content || !source.content.trim()) throw new InvalidSpecError('provide source.content')
+  const txt = source.content
+  const fmt = source.format ?? 'auto'
+  let obj: unknown
+  try {
+    obj =
       fmt === 'json' || (fmt === 'auto' && txt.trimStart().startsWith('{'))
         ? JSON.parse(txt)
-        : parseYaml(txt)
-    return SwaggerParser.dereference(obj)
+        : parseYaml(txt, { maxAliasCount: 100 })
+  } catch (e) {
+    throw new InvalidSpecError(`unreadable spec: ${(e as Error).message}`)
   }
-  if (source.url && source.url.trim()) {
-    return SwaggerParser.dereference(source.url.trim())
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new InvalidSpecError('the spec must be an object')
+  if (hasExternalRef(obj)) throw new InvalidSpecError('only in-document $ref (#/...) are allowed')
+  try {
+    return await SwaggerParser.dereference(obj as never, INTERNAL_REFS_ONLY as never)
+  } catch (e) {
+    throw new InvalidSpecError(`invalid spec: ${(e as Error).message}`)
   }
-  throw new Error('provide source.url or source.content')
+}
+
+// Belt and braces over the resolver options: refuse any $ref that is not a local JSON pointer.
+function hasExternalRef(node: unknown, depth = 0): boolean {
+  if (depth > 256 || !node || typeof node !== 'object') return false
+  if (Array.isArray(node)) return node.some((n) => hasExternalRef(n, depth + 1))
+  for (const [k, v] of Object.entries(node)) {
+    if (k === '$ref' && (typeof v !== 'string' || !v.startsWith('#'))) return true
+    if (hasExternalRef(v, depth + 1)) return true
+  }
+  return false
 }
 
 export async function previewImport(
