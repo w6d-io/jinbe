@@ -176,7 +176,7 @@ describe('requireAdmin middleware', () => {
 
       expect(reply._statusCode).toBe(503)
       expect(reply._body).toEqual({
-        error: 'Service Unavailable',
+        error: 'policy_unavailable',
         message: 'Unable to verify authorization. Please try again later.',
       })
     })

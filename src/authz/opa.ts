@@ -24,12 +24,6 @@ export const JINBE_APP = 'jinbe'
 
 export class AuthzUnavailableError extends Error {}
 
-/**
- * The `error` of every 503 that means "OPA could not be asked" (sites/mine.ts too), so a client tells
- * a policy outage from any other unavailability without reading the message.
- */
-export const POLICY_UNAVAILABLE = 'policy_unavailable'
-
 const cache = new Map<string, { at: number; value: unknown }>()
 
 async function ask<T>(rule: string, input: Record<string, unknown>, read: (result: unknown) => T | undefined): Promise<T> {

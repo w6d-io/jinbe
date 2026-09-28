@@ -148,6 +148,7 @@ describe('requireManageableOrg middleware', () => {
     await requireManageableOrg()(request, reply)
 
     expect(reply._statusCode).toBe(503)
+    expect(reply._body).toMatchObject({ error: 'policy_unavailable' })
   })
 
   it('respects a custom paramName', async () => {

@@ -19,7 +19,8 @@ import {
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
 import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.js'
-import { holdsInJinbe, POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { holdsInJinbe } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 import { guardAll } from '../policy/declared-routes.js'

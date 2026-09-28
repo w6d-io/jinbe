@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { holds, manageableOrgs, rights, POLICY_UNAVAILABLE } from '../../authz/opa.js'
+import { holds, manageableOrgs, rights } from '../../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../../authz/policy-unavailable.js'
 import { enforcing } from '../../policy/declared-routes.js'
 
 /**

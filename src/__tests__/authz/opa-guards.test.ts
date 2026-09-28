@@ -198,6 +198,8 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
     for (const [method, url] of GUARDED) {
       const res = await call(method, url, 'super')
       expect(res.statusCode, `${method} ${url}`).toBe(503)
+      // One code for "OPA could not be asked", so kuma need not read the message.
+      expect(res.json(), `${method} ${url}`).toMatchObject({ error: 'policy_unavailable', message: expect.any(String) })
     }
   })
 

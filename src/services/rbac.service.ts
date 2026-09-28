@@ -8,7 +8,8 @@ import { auditEventService, type AuditActorInput, type AuditChanges } from './au
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { POLICY_UNAVAILABLE, holdsInJinbe } from '../authz/opa.js'
+import { holdsInJinbe } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import {

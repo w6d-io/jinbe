@@ -193,6 +193,7 @@ describe('PUT /users/:id/grants', () => {
     s.cfg.OPA_TOKEN = undefined
     const res = await put(['fleet-viewers'])
     expect(res.statusCode).toBe(503)
+    expect(res.json()).toMatchObject({ error: 'policy_unavailable', message: expect.stringContaining('OPA') })
     expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(s.setForMember).not.toHaveBeenCalled()
   })
