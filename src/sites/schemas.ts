@@ -195,22 +195,51 @@ const zoneName = z.string().regex(/^[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?$/, 'lower
 const k8sName = z.string().regex(/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'a Kubernetes object name')
 
 export const zoneParamsSchema = z.object({ name: zoneName })
+const zoneTls = z
+  .object({ mode: z.enum(['default', 'issuer', 'secret']), issuer: k8sName.optional(), secretName: k8sName.optional() })
+  .strict()
+  .superRefine((t, ctx) => {
+    if (t.mode === 'secret' && !t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'mode secret needs secretName' })
+    if (t.mode !== 'secret' && t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'secretName is only for mode secret' })
+    if (t.mode !== 'issuer' && t.issuer) ctx.addIssue({ code: 'custom', path: ['issuer'], message: 'issuer is only for mode issuer' })
+  })
+// The Zone CRD's gateway (site-operator ZoneGateway): a Gateway API Gateway, optionally one listener.
+const zoneGateway = z
+  .object({
+    namespace: z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/, 'a namespace'),
+    name: k8sName,
+    sectionName: z.string().regex(/^[a-z0-9]([a-z0-9-]{0,251}[a-z0-9])?$/, 'a listener name').optional(),
+  })
+  .strict()
+const zoneIngress = z.enum(['wildcard', 'per-site', 'none'])
+
 export const createZoneBodySchema = z
   .object({
     domain: zoneDomain,
     name: zoneName.optional(),
-    ingress: z.enum(['wildcard', 'per-site']).optional(),
-    tls: z
-      .object({ mode: z.enum(['default', 'issuer', 'secret']), issuer: k8sName.optional(), secretName: k8sName.optional() })
-      .strict()
-      .default({ mode: 'default' })
-      .superRefine((t, ctx) => {
-        if (t.mode === 'secret' && !t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'mode secret needs secretName' })
-        if (t.mode !== 'secret' && t.secretName) ctx.addIssue({ code: 'custom', path: ['secretName'], message: 'secretName is only for mode secret' })
-        if (t.mode !== 'issuer' && t.issuer) ctx.addIssue({ code: 'custom', path: ['issuer'], message: 'issuer is only for mode issuer' })
-      }),
+    ingress: zoneIngress.optional(),
+    tls: zoneTls.default({ mode: 'default' }),
     ingressClass: k8sName.optional(),
+    gateway: zoneGateway.optional(),
   })
   .strict()
+  .superRefine((b, ctx) => {
+    if (b.ingress === 'none' && !b.gateway) ctx.addIssue({ code: 'custom', path: ['ingress'], message: 'ingress none needs a gateway: a zone needs an entry point' })
+  })
+/**
+ * A zone's exposure, changed in place (the domain never changes): the ingress mode, the gateway
+ * (null detaches it), TLS. `confirm` acknowledges the DNS check of a move to `ingress: none`.
+ */
+export const updateZoneBodySchema = z
+  .object({
+    ingress: zoneIngress.optional(),
+    gateway: zoneGateway.nullable().optional(),
+    tls: zoneTls.optional(),
+    ingressClass: k8sName.nullable().optional(),
+    confirm: z.boolean().optional(),
+  })
+  .strict()
+  .refine((b) => b.ingress !== undefined || b.gateway !== undefined || b.tls !== undefined || b.ingressClass !== undefined, 'nothing to change')
 export const suggestZoneBodySchema = z.object({ host }).strict()
 export type CreateZoneBody = z.infer<typeof createZoneBodySchema>
+export type UpdateZoneBody = z.infer<typeof updateZoneBodySchema>

@@ -15,8 +15,10 @@ export interface Zone {
   /** `dev.example.com` for the wildcard `*.dev.example.com` (Zone `spec.domain`). */
   suffix: string
   ingressClass?: string
-  /** Zone CRs only: one wildcard Ingress, or one exact-host Ingress per Site (a shared domain). */
-  ingress?: 'wildcard' | 'per-site'
+  /** Zone CRs only: one wildcard Ingress, one exact-host Ingress per Site (a shared domain), or none. */
+  ingress?: 'wildcard' | 'per-site' | 'none'
+  /** Zone CRs only: the Gateway API Gateway (namespace/name) every host of the zone is attached to. */
+  gateway?: string
   /** `zone`: a Zone CR (zones.auth.w6d.io); `config`: SITES_ZONES, used when the cluster is not read. */
   source?: 'zone' | 'config'
   /** Whether the zone's wildcard certificate is served (default true); false = a certificate per vanity site. */
@@ -72,6 +74,8 @@ export function zonesView(zones: readonly Zone[], platformCookieDomain: string |
       tls: z.wildcardTls === false ? 'per-site' as const : 'wildcard' as const,
       ...(z.ingressClass ? { ingressClass: z.ingressClass } : {}),
       ...(z.ingress ? { ingress: z.ingress } : {}),
+      ...(z.gateway ? { gateway: z.gateway } : {}),
+      ...(z.ready !== undefined ? { ready: z.ready } : {}),
       source: z.source ?? 'config',
     }
   })

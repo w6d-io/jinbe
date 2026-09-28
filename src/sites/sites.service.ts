@@ -9,10 +9,10 @@ import { loadPlatform, loadZones } from './platform.js'
 import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
 import { diffArtefacts, riskOf } from './diff.js'
 import { gatekit, type RenderSample } from './gatekit.client.js'
-import { placeHost, zonesView } from './host.js'
+import { placeHost, zonesView, type Zone } from './host.js'
 import { auditSite, type Actor } from './audit.js'
 import { suggestFor } from './zones.service.js'
-import { clusterIngresses, collisionChecks } from './host-collisions.js'
+import { clusterGatewayObjects, clusterIngresses, collisionChecks, routeCollisions } from './host-collisions.js'
 import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 
 /**
@@ -159,9 +159,10 @@ export async function preview(site: Site) {
   // The landing page left on the old host: said once, by the address check that carries the fix.
   const own = moved.some((c) => c.code === 'return_url_old_address') ? checks.filter((c) => c.code !== 'return_url_host') : checks
   const ingresses = await clusterIngresses()
+  const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
   return {
-    artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
+    artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...routes, ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
     // Outside every zone: the zone the wizard can offer to create.
     ...(suggested.covered ? {} : { suggestedZone: suggested }),
   }
@@ -213,6 +214,12 @@ export async function version(name: string, v: number) {
 
 // ── editor helpers ────────────────────────────────────────────
 
+/** The Gateway (namespace/name) of the zone a host is placed in, if that zone has one. */
+function gatewayOfHost(host: string, zones: readonly Zone[]): string | undefined {
+  const placed = placeHost(host, zones, undefined).zone
+  return placed ? zones.find((z) => z.suffix === placed)?.gateway : undefined
+}
+
 /** Resolve a host against the admin-defined zones: which zone, SSO coverage, which exposures, who owns it. */
 export async function checkHost(body: { host: string; pathPrefix?: string; site?: string }) {
   const cfg = sitesConfig()
@@ -223,7 +230,10 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
   const { owner, sharedWith, moving } = hostOwner(body.host, body.pathPrefix, body.site, records, await liveAddresses(records))
   // Another Ingress anywhere in the cluster already answering this host (the operator's HostTaken).
   const ingresses = await clusterIngresses()
-  const taken = collisionChecks(body.host, body.site, ingresses).map(({ path: _p, ...c }) => c)
+  const taken = [
+    ...collisionChecks(body.host, body.site, ingresses),
+    ...routeCollisions(body.host, gatewayOfHost(body.host, zones), await clusterGatewayObjects()),
+  ].map(({ path: _p, ...c }) => c)
   const legacy = (await redisRbacRepository.getAccessRules()).some((r) => r.match.url.includes(`://${body.host}/`) || r.match.url.includes(`://${body.host}<`))
   const checks = [
     ...(placement.tooDeep ? [{ level: 'error', code: 'host_too_deep', message: 'A site host must be exactly one label under a zone' }] : []),

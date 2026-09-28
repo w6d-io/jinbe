@@ -3,21 +3,24 @@ import { auditZone } from '../audit/record.js'
 import type { Actor } from './audit.js'
 import { siteError } from './checks.js'
 import { sitesConfig } from './config.js'
-import { probeWildcard, type DnsReport } from './dns-probe.js'
+import { probeHost, probeWildcard, type DnsReport } from './dns-probe.js'
 import { placeHost, ssoOf, type Zone } from './host.js'
-import { kubeSites, KubeRefused, type IngressHosts, type SiteCondition, type ZoneCr, type ZoneCrObject, type ZoneIngressMode } from './kube-sites.js'
+import { kubeSites, KubeRefused, type IngressHosts, type SiteCondition, type ZoneCr, type ZoneCrObject, type ZoneGatewayRef, type ZoneIngressMode } from './kube-sites.js'
 import { clusterIngresses, collisionChecks, wildcardConflicts, type IngressRef } from './host-collisions.js'
+import { coveringListener, gatewayView, type GatewayView, type Protection } from './gateways.service.js'
 import { loadZones } from './platform.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { liveAddresses } from './address.js'
-import type { CreateZoneBody } from './schemas.js'
+import type { CreateZoneBody, UpdateZoneBody } from './schemas.js'
 
 /**
  * Zones from kuma ("Plug a site" → "Create zone"): read one, create, delete, and suggest the zone a
  * host outside every zone would need.
  *
  * jinbe writes the Zone CR's spec only; site-operator reconciles it into the wildcard Ingress (and a
- * Certificate for mode issuer) and mirrors the domain into the admission policy's ConfigMap. What
+ * Certificate for mode issuer), or with a gateway into one HTTPRoute per host on that Gateway (Envoy,
+ * behind its WAF), and mirrors the domain into the admission policy's ConfigMap. A zone moves from
+ * the Ingress to the Gateway in three edits: attach the gateway, move DNS, then `ingress: none`. What
  * jinbe adds is what the cluster cannot know: which parent domains this platform may serve
  * (SITES_ZONE_ALLOWED_PARENTS), which issuers it offers, whether the wildcard DNS is in place, whether
  * the login cookie reaches the zone, and which Sites stand on a zone before it is deleted.
@@ -69,6 +72,12 @@ function cookieFor(domain: string) {
 
 type Check = { level: 'error' | 'warn' | 'info'; code: string; message: string; ingress?: IngressRef }
 
+/** One site host's DNS against the Gateway, as a check (the report of a move to `ingress: none`). */
+const dnsHostCheck = (d: DnsReport) => ({
+  level: d.status === 'ok' ? 'info' as const : d.status === 'unverified' ? 'warn' as const : 'error' as const,
+  code: `dns_${d.status}`, message: d.message, host: d.probe, addresses: d.addresses,
+})
+
 function dnsCheck(dns: DnsReport): Check | null {
   if (dns.status === 'ok') return null
   return { level: dns.status === 'unverified' ? 'info' : 'warn', code: `dns_${dns.status}`, message: dns.message }
@@ -94,6 +103,8 @@ export type ZoneSuggestion =
      * or shadow them. Null `shared` = the cluster's Ingresses were not read.
      */
     ingress: { modes: ZoneIngressMode[]; suggested: ZoneIngressMode; shared: IngressRef[] | null }
+    /** The Gateways the zone may be attached to (SITES_GATEWAYS); the first is suggested. */
+    gateway: { options: string[]; suggested: string | null }
     cookieDomain: string | null
     sso: boolean
     checks: Check[]
@@ -159,7 +170,8 @@ export async function suggestFor(
     allowedParents: cfg.SITES_ZONE_ALLOWED_PARENTS,
     dns,
     tls: { modes: ['default', 'issuer', 'secret'], issuers: cfg.SITES_ZONE_ISSUERS, suggested: cfg.SITES_ZONE_ISSUERS.length > 0 ? 'issuer' : 'default' },
-    ingress: { modes: ['wildcard', 'per-site'], suggested: wild.shared?.length ? 'per-site' : 'wildcard', shared: wild.shared },
+    ingress: { modes: cfg.SITES_GATEWAYS.length ? ['wildcard', 'per-site', 'none'] : ['wildcard', 'per-site'], suggested: wild.shared?.length ? 'per-site' : 'wildcard', shared: wild.shared },
+    gateway: { options: cfg.SITES_GATEWAYS, suggested: cfg.SITES_GATEWAYS[0] ?? null },
     cookieDomain,
     sso,
     checks,
@@ -190,7 +202,24 @@ const conditionOf = (z: ZoneCrObject, type: string) => {
   return c ? { status: c.status, reason: c.reason ?? '', message: c.message ?? '', ...(c.lastTransitionTime ? { since: c.lastTransitionTime } : {}) } : null
 }
 
-function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>) {
+const keyOf = (g: ZoneGatewayRef) => `${g.namespace}/${g.name}`
+
+/**
+ * How the zone is reached: `entry` (the nginx Ingress, the Gateway, or both while it migrates),
+ * `wafBypass` (an Ingress still answers: anyone can reach the hosts without the WAF), `protected`
+ * (the Gateway's WAF and IP reputation are in force and nothing bypasses them; null = not known here).
+ */
+function exposureOf(cr: ZoneCrObject, protection: Protection | null) {
+  const ingress = (cr.spec.ingress ?? 'wildcard') !== 'none'
+  const gateway = !!cr.spec.gateway
+  return {
+    entry: gateway && ingress ? 'both' as const : gateway ? 'gateway' as const : 'ingress' as const,
+    wafBypass: ingress,
+    protected: gateway ? (protection ? protection.protected && !ingress : null) : false,
+  }
+}
+
+function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>, protection: Protection | null = null) {
   const { cookieDomain, sso } = cookieFor(cr.spec.domain)
   const validated = conditionOf(cr, 'Validated')
   const ready = conditionOf(cr, 'Ready')
@@ -201,6 +230,9 @@ function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>) {
     wildcard: `*.${cr.spec.domain}`,
     ingress: cr.spec.ingress ?? 'wildcard',
     ingressClass: cr.spec.ingressClass ?? null,
+    gateway: cr.spec.gateway ?? null,
+    exposure: exposureOf(cr, protection),
+    ...(protection ? { protection } : {}),
     tls: {
       mode: cr.spec.tls?.mode ?? 'default',
       ...(cr.spec.tls?.issuer ? { issuer: cr.spec.tls.issuer } : {}),
@@ -214,6 +246,7 @@ function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>) {
       observed,
       ready: observed && ready?.status === 'True',
       ingress: conditionOf(cr, 'IngressReady'),
+      gateway: conditionOf(cr, 'GatewayReady'),
       certificate: conditionOf(cr, 'CertificateReady'),
       validated,
       domainTaken: validated?.reason === 'DomainTaken',
@@ -228,7 +261,26 @@ export async function getZone(name: string) {
   if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
   const zones = await loadZones()
   const records = await sitesRepository.list()
-  return zoneView(cr, sitesOn(cr.spec.domain, zones, records, await liveAddresses(records)))
+  const gw = cr.spec.gateway ? await allowedGateway(keyOf(cr.spec.gateway)) : null
+  return zoneView(cr, sitesOn(cr.spec.domain, zones, records, await liveAddresses(records)), gw?.protection ?? null)
+}
+
+/** The Gateway's discovery view, or null when it is not (or no longer) allowed here. */
+async function allowedGateway(key: string): Promise<GatewayView | null> {
+  return sitesConfig().SITES_GATEWAYS.includes(key) ? gatewayView(key) : null
+}
+
+/**
+ * A gateway a zone is being attached to: allowed here, existing, and — for TLS `default` — with an
+ * HTTPS listener for exactly `*.<domain>` (else the operator reports ListenerDoesNotCover).
+ */
+async function checkGateway(ref: ZoneGatewayRef, domain: string, tlsMode: string): Promise<GatewayView> {
+  const gw = await gatewayView(keyOf(ref))
+  if (!gw.exists) throw siteError(422, 'gateway_not_found', gw.message)
+  if (tlsMode === 'default' && !coveringListener(gw, domain, ref.sectionName)) {
+    throw siteError(422, 'listener_not_covering', `Gateway ${gw.key} has no HTTPS listener${ref.sectionName ? ` named ${ref.sectionName}` : ''} for *.${domain}; choose TLS issuer or secret to bring the zone's own listener (ListenerSet)`)
+  }
+  return gw
 }
 
 export async function createZone(body: CreateZoneBody, actor: Actor) {
@@ -242,6 +294,7 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
   const crs = await kubeSites().listZones()
   const same = crs.find((z) => z.spec.domain === body.domain)
   if (same) throw siteError(409, 'zone_exists', `*.${body.domain} is already zone ${same.metadata.name}`)
+  const gw = body.gateway ? await checkGateway(body.gateway, body.domain, body.tls.mode) : null
 
   // A wildcard next to another one for the same domain collides; exact hosts it would shadow are a warning.
   const ingress = body.ingress ?? 'wildcard'
@@ -259,7 +312,7 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
     apiVersion: 'auth.w6d.io/v1alpha1',
     kind: 'Zone',
     metadata: { name, labels: MANAGED_BY },
-    spec: { domain: body.domain, ingress, ...(body.ingressClass ? { ingressClass: body.ingressClass } : {}), tls },
+    spec: { domain: body.domain, ingress, ...(body.ingressClass ? { ingressClass: body.ingressClass } : {}), tls, ...(body.gateway ? { gateway: body.gateway } : {}) },
   }
   try {
     await kubeSites().createZone(cr)
@@ -267,9 +320,73 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
     if (err instanceof KubeRefused) throw siteError(err.statusCode, err.code, err.message)
     throw err
   }
-  auditZone('create', name, actor, { domain: body.domain, ingress, tls: tls.mode, issuer: body.tls.issuer, ingressClass: body.ingressClass })
-  const dns = await probeWildcard(body.domain, platformIngress(crs))
-  return { ...zoneView({ ...cr, metadata: { name } }, []), dns, checks: wild.checks }
+  auditZone('create', name, actor, { domain: body.domain, ingress, tls: tls.mode, issuer: body.tls.issuer, ingressClass: body.ingressClass, gateway: gw?.key })
+  const dns = await probeWildcard(body.domain, ingress === 'none' && gw ? gw.addresses : platformIngress(crs))
+  return { ...zoneView({ ...cr, metadata: { name } }, [], gw?.protection ?? null), dns, checks: wild.checks }
+}
+
+/**
+ * Change a zone's exposure in place (Settings → Zones → Edit): the ingress mode, the gateway, TLS.
+ * Dropping the Ingress (`ingress: none`) first asks DNS: a site host still resolving away from the
+ * Gateway would lose its visitors, so it is refused (409 `dns_not_on_gateway`, with the per-host
+ * report) unless `confirm` says the move is known. The domain and the sites do not change: the
+ * operator keeps every Rule and swaps only the entry points, the new one before the old goes.
+ */
+export async function updateZone(name: string, body: UpdateZoneBody, actor: Actor) {
+  const kube = kubeSites()
+  if (!kube.updateZone) throw siteError(503, 'kubernetes_unavailable', 'Zones cannot be changed on this server')
+  const cr = await kube.getZone(name)
+  if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
+  const before = cr.spec
+  const spec: ZoneCrObject['spec'] = { ...before }
+  if (body.ingress !== undefined) spec.ingress = body.ingress
+  if (body.gateway === null) delete spec.gateway
+  else if (body.gateway !== undefined) spec.gateway = body.gateway
+  if (body.tls !== undefined) spec.tls = { mode: body.tls.mode, ...(body.tls.issuer ? { issuer: body.tls.issuer } : {}), ...(body.tls.secretName ? { secretName: body.tls.secretName } : {}) }
+  if (body.ingressClass === null) delete spec.ingressClass
+  else if (body.ingressClass !== undefined) spec.ingressClass = body.ingressClass
+
+  const cfg = sitesConfig()
+  const ingress = spec.ingress ?? 'wildcard'
+  const was = before.ingress ?? 'wildcard'
+  if (ingress === 'none' && !spec.gateway) throw siteError(422, 'no_entry_point', 'ingress none needs a gateway: a zone needs an entry point')
+  if (body.tls?.mode === 'issuer' && body.tls.issuer && !cfg.SITES_ZONE_ISSUERS.includes(body.tls.issuer)) {
+    throw siteError(422, 'issuer_not_allowed', `issuer ${body.tls.issuer} is not offered here (${cfg.SITES_ZONE_ISSUERS.join(', ') || 'operator default only'})`)
+  }
+  const gw = spec.gateway ? await checkGateway(spec.gateway, spec.domain, spec.tls?.mode ?? 'default') : null
+  const checks: Check[] = []
+  if (gw && !gw.protection.protected) checks.push({ level: 'warn', code: 'gateway_not_protected', message: `Gateway ${gw.key}: ${gw.protection.summary}` })
+  if (ingress === 'wildcard' && was !== 'wildcard') {
+    const taken = wildcardChecks(spec.domain, (await clusterIngresses()) ?? []).checks.find((c) => c.code === 'wildcard_taken')
+    if (taken) throw siteError(409, 'wildcard_taken', taken.message)
+  }
+
+  // Dropping the Ingress: every site host must already resolve to the Gateway.
+  let dns: DnsReport[] = []
+  if (ingress === 'none' && was !== 'none' && gw) {
+    const records = await sitesRepository.list()
+    const hosts = [...new Set(sitesOn(spec.domain, await loadZones(), records, await liveAddresses(records)).map((x) => x.host))]
+    dns = await Promise.all(hosts.map((h) => probeHost(h, gw.addresses, `Gateway ${gw.key}`)))
+    const away = dns.filter((d) => d.status === 'elsewhere' || d.status === 'unresolved')
+    if (away.length > 0 && !body.confirm) {
+      throw Object.assign(
+        siteError(409, 'dns_not_on_gateway', `${away.length} site host(s) do not resolve to Gateway ${gw.key} yet (${away.map((d) => d.probe).join(', ')}); move their DNS first, or confirm to drop the Ingress anyway`),
+        { checks: dns.map(dnsHostCheck) },
+      )
+    }
+  }
+
+  try {
+    await kube.updateZone({ ...cr, spec })
+  } catch (err) {
+    if (err instanceof KubeRefused) throw siteError(err.statusCode, err.code, err.message)
+    throw err
+  }
+  auditZone('update', name, actor, {
+    domain: spec.domain, ingress, tls: spec.tls?.mode ?? 'default', issuer: spec.tls?.issuer, ingressClass: spec.ingressClass,
+    gateway: gw?.key, from: `ingress ${was}${before.gateway ? `, gateway ${keyOf(before.gateway)}` : ''}`,
+  })
+  return { ...zoneView({ ...cr, spec }, [], gw?.protection ?? null), checks: [...checks, ...dns.map(dnsHostCheck)] }
 }
 
 export async function deleteZone(name: string, actor: Actor) {

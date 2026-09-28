@@ -94,15 +94,16 @@ const getApply = async (id: string) => (await app.inject({ method: 'GET', url: `
 const stage = (a: { stages: Array<{ id: string; state: string }> }, id: string) => a.stages.find((s) => s.id === id)!
 
 describe('apply timeline', () => {
-  it('records Saved and Permissions published, skips Ingress/Cert for a zone site, then waits on the operator', async () => {
+  it('records Saved and Permissions published, skips Ingress/Route/Cert for a zone site without a gateway, then waits on the operator', async () => {
     const { applyId } = await saveAndApply()
     const a = await getApply(applyId)
-    expect(a.stages.map((s: { id: string }) => s.id)).toEqual(['saved', 'permissions', 'accepted', 'rules-synced', 'rules-loaded', 'ingress', 'certificate', 'verified'])
+    expect(a.stages.map((s: { id: string }) => s.id)).toEqual(['saved', 'permissions', 'accepted', 'rules-synced', 'rules-loaded', 'ingress', 'route', 'certificate', 'verified'])
     expect(stage(a, 'saved').state).toBe('done')
     expect(stage(a, 'permissions').state).toBe('done')
     expect(stage(a, 'permissions').endedAt).toBeTruthy()
     expect(stage(a, 'accepted').state).toBe('running')
     expect(stage(a, 'ingress').state).toBe('skipped')
+    expect(stage(a, 'route').state).toBe('skipped')
     expect(stage(a, 'certificate').state).toBe('skipped')
     expect(a).toMatchObject({ state: 'running', version: 1, site: 'payroll' })
   })

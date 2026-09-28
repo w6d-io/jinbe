@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { getRedisClient } from '../services/redis-client.service.js'
 import { render, type SiteCr } from './render.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
-import { loadPlatform } from './platform.js'
+import { loadPlatform, loadZones } from './platform.js'
+import { placeHost } from './host.js'
 import { kubeSites, type SiteCondition, type SiteCrObject } from './kube-sites.js'
 import { publishPermissions, unpublishPermissions } from './publish.js'
 import { pinnedHostsOf, siteError } from './checks.js'
@@ -15,7 +16,8 @@ import { auditSite, type Actor } from './audit.js'
  * The apply timeline (site-ux §9.2): a live view of the Site CR's conditions after jinbe wrote it.
  *
  *   Saved → Permissions published → Site accepted → Rules synced → Rules loaded
- *         → Address (Ingress) → HTTPS (Certificate) — vanity sites only → Verified (Ready)
+ *         → Address (Ingress) — vanity sites only → Gateway route — zones with a gateway only
+ *         → HTTPS (Certificate) — vanity sites only → Verified (Ready)
  *
  * Each apply is a record in Redis (`rbac:sites:applies:<site>`, the last 20 kept), so any replica
  * can answer GET/SSE; the replica that wrote the CR watches it. When the rules are not loaded
@@ -23,7 +25,7 @@ import { auditSite, type Actor } from './audit.js'
  * (or, on a first apply, the Site CR and its permissions are removed): `rules_not_loaded`.
  */
 
-export type StageId = 'saved' | 'permissions' | 'accepted' | 'rules-synced' | 'rules-loaded' | 'ingress' | 'certificate' | 'verified'
+export type StageId = 'saved' | 'permissions' | 'accepted' | 'rules-synced' | 'rules-loaded' | 'ingress' | 'route' | 'certificate' | 'verified'
 export type StageState = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
 export interface Stage { id: StageId; label: string; state: StageState; startedAt?: string; endedAt?: string; detail?: string }
 export type ApplyState = 'running' | 'succeeded' | 'failed' | 'rolled-back'
@@ -52,6 +54,7 @@ const LABELS: Record<StageId, string> = {
   'rules-synced': 'Rules synced',
   'rules-loaded': 'Rules loaded',
   ingress: 'Address',
+  route: 'Gateway route',
   certificate: 'HTTPS',
   verified: 'Verified',
 }
@@ -60,6 +63,7 @@ const CONDITION: Partial<Record<StageId, string>> = {
   'rules-synced': 'RulesSynced',
   'rules-loaded': 'RulesLoaded',
   ingress: 'IngressReady',
+  route: 'RouteReady',
   certificate: 'CertificateReady',
   verified: 'Ready',
 }
@@ -175,14 +179,26 @@ export function advance(a: ApplyRecord, cr: SiteCrObject | null, now: Date, time
 
 // ── lifecycle ─────────────────────────────────────────────────
 
+/** Whether the site's host is under a zone with a gateway (its HTTPRoute is a stage); unknown = no. */
+async function routed(host: string): Promise<boolean> {
+  try {
+    const zones = await loadZones()
+    const placed = placeHost(host, zones, undefined).zone
+    return !!placed && !!zones.find((z) => z.suffix === placed)?.gateway
+  } catch {
+    return false
+  }
+}
+
 /** A new apply record for a saved version: Saved is done, everything else waits. */
 export async function startApply(record: SiteRecord, by: string, previous: SiteRecord['applied'] | null): Promise<ApplyRecord> {
   const now = new Date().toISOString()
   const vanity = record.site.exposure.mode === 'vanity'
+  const route = await routed(record.site.address.host)
   const stages: Stage[] = (Object.keys(LABELS) as StageId[]).map((id) => ({
     id,
     label: LABELS[id],
-    state: (id === 'ingress' || id === 'certificate') && !vanity ? 'skipped' : 'pending',
+    state: ((id === 'ingress' || id === 'certificate') && !vanity) || (id === 'route' && !route) ? 'skipped' : 'pending',
   }))
   const a: ApplyRecord = { id: randomUUID(), site: record.site.name, version: record.version, by, startedAt: now, state: 'running', previous, stages }
   setStage(a, 'saved', 'done', undefined, now)

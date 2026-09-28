@@ -71,14 +71,18 @@ export function auditSite(
 // ─── Zones ──────────────────────────────────────────────────────────────────
 
 /**
- * `zone.created` / `zone.deleted`: a wildcard domain the platform starts or stops serving. Carries the
- * domain, ingress mode and TLS mode (what became reachable, and how it is certified) — nothing secret.
+ * `zone.created` / `zone.deleted` / `zone.updated`: a wildcard domain the platform starts or stops
+ * serving, or reaches another way (Ingress ↔ Gateway). Carries the domain, ingress mode, gateway and TLS
+ * mode (what became reachable, through what, how it is certified) — nothing secret.
  */
+const ZONE_EVENTS = { create: 'zone.created', delete: 'zone.deleted', update: 'zone.updated' } as const
+const ZONE_VERBS = { create: 'created', delete: 'deleted', update: 'changed the exposure of' } as const
+
 export function auditZone(
-  command: 'create' | 'delete',
+  command: 'create' | 'delete' | 'update',
   name: string,
   actor: AuditActorInput,
-  facts: { domain: string; ingress?: string; tls?: string; issuer?: string; ingressClass?: string },
+  facts: { domain: string; ingress?: string; tls?: string; issuer?: string; ingressClass?: string; gateway?: string; from?: string },
 ): void {
   send({
     category: 'service',
@@ -90,10 +94,10 @@ export function auditZone(
     result: 'applied',
     actor: actorOf(actor),
     requestId: actor.requestId ?? null,
-    changes: { resource: 'zone', id: name, summary: `${command === 'create' ? 'created' : 'deleted'} zone *.${facts.domain}` },
+    changes: { resource: 'zone', id: name, summary: `${ZONE_VERBS[command]} zone *.${facts.domain}` },
     details: Object.fromEntries(Object.entries(facts).filter(([, v]) => v !== undefined)),
     source: 'jinbe-api',
-    v1Event: command === 'create' ? 'zone.created' : 'zone.deleted',
+    v1Event: ZONE_EVENTS[command],
   })
 }
 

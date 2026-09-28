@@ -110,6 +110,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/check-host': exempt('resolves a host against the zones; writes nothing'),
   'POST /api/admin/sites/zones': by('zone.created'),
   'DELETE /api/admin/sites/zones/:name': by('zone.deleted'),
+  'PATCH /api/admin/sites/zones/:name': by('zone.updated'),
   'POST /api/admin/sites/zones/suggest': exempt('proposes the zone a host would need and probes its DNS; writes nothing'),
   'POST /api/admin/sites/match': exempt('asks which rule a request would hit; writes nothing'),
   'POST /api/admin/sites/render': exempt('renders a header template as the gateway would; writes nothing'),

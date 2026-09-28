@@ -4,9 +4,10 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 import { requireRecentMfa, requireSitesApply, requireSuperAdmin } from '../middleware/require-admin.js'
 import {
   applyBodySchema, checkHostBodySchema, createZoneBodySchema, diffBodySchema, draftBodySchema, matchBodySchema, nameParamsSchema,
-  previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema, suggestZoneBodySchema, zoneParamsSchema,
+  previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema, suggestZoneBodySchema, updateZoneBodySchema, zoneParamsSchema,
 } from './schemas.js'
 import * as zones from './zones.service.js'
+import * as gateways from './gateways.service.js'
 import * as sites from './sites.service.js'
 import * as ops from './apply.service.js'
 import { actorOf, handle, nameOf, parse } from './http.js'
@@ -63,6 +64,12 @@ export async function sitesRoutes(fastify: FastifyInstance) {
       const out = await zones.createZone(parse(createZoneBodySchema, request.body), actorOf(request))
       return reply.status(201).send(out)
     }))
+
+  fastify.patch('/zones/:name', { ...gateway, ...doc('Change a zone\'s exposure (never its domain): ingress wildcard | per-site | none, gateway (null detaches), TLS. ingress none is refused (409 dns_not_on_gateway, per-host checks) while a site host does not resolve to the Gateway, unless confirm', updateZoneBodySchema) },
+    handle(async (request) => zones.updateZone(parse(zoneParamsSchema, request.params).name, parse(updateZoneBodySchema, request.body), actorOf(request))))
+
+  fastify.get('/gateways', doc('The Gateway API Gateways a zone may be attached to (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP reputation policies are in force'),
+    handle(async () => gateways.listGateways()))
 
   fastify.delete('/zones/:name', { ...gateway, ...doc('Delete a zone; refused (409, with the sites) while a saved site has a host under it') },
     handle(async (request) => zones.deleteZone(parse(zoneParamsSchema, request.params).name, actorOf(request))))

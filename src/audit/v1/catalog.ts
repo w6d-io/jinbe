@@ -82,6 +82,8 @@ export const AUDIT_EVENTS = {
   // Zones: a wildcard domain the platform serves (one Ingress, maybe a certificate) — what is exposed.
   'zone.created': ['config', 'create', 'warn'],
   'zone.deleted': ['config', 'delete', 'high'],
+  // Ingress ↔ Gateway, TLS: how the zone is reached and whether the WAF can be bypassed.
+  'zone.updated': ['config', 'update', 'high'],
 
   'gateway.rule.created': ['authz', 'create'],
   'gateway.rule.updated': ['authz', 'update'],

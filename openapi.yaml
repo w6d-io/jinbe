@@ -5100,6 +5100,7 @@ paths:
                   enum:
                     - wildcard
                     - per-site
+                    - none
                 tls:
                   type: object
                   properties:
@@ -5121,6 +5122,21 @@ paths:
                     mode: default
                 ingressClass:
                   $ref: "#/properties/tls/properties/issuer"
+                gateway:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                    name:
+                      $ref: "#/properties/tls/properties/issuer"
+                    sectionName:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9-]{0,251}[a-z0-9])?$
+                  required:
+                    - namespace
+                    - name
+                  additionalProperties: false
               required:
                 - domain
               additionalProperties: false
@@ -5141,6 +5157,74 @@ paths:
       responses:
         "200":
           description: Default Response
+    patch:
+      tags: *a1
+      description: "Change a zone's exposure (never its domain): ingress wildcard |
+        per-site | none, gateway (null detaches), TLS. ingress none is refused
+        (409 dns_not_on_gateway, per-host checks) while a site host does not
+        resolve to the Gateway, unless confirm"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ingress:
+                  type: string
+                  enum:
+                    - wildcard
+                    - per-site
+                    - none
+                gateway:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                    name:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$
+                    sectionName:
+                      type: string
+                      pattern: ^[a-z0-9]([a-z0-9-]{0,251}[a-z0-9])?$
+                  required:
+                    - namespace
+                    - name
+                  additionalProperties: false
+                  nullable: true
+                tls:
+                  type: object
+                  properties:
+                    mode:
+                      type: string
+                      enum:
+                        - default
+                        - issuer
+                        - secret
+                    issuer:
+                      $ref: "#/properties/gateway/properties/name"
+                    secretName:
+                      $ref: "#/properties/gateway/properties/name"
+                  required:
+                    - mode
+                  additionalProperties: false
+                ingressClass:
+                  allOf:
+                    - $ref: "#/properties/gateway/properties/name"
+                  nullable: true
+                confirm:
+                  type: boolean
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
     delete:
       tags: *a1
       description: Delete a zone; refused (409, with the sites) while a saved site has
@@ -5151,6 +5235,15 @@ paths:
           in: path
           name: name
           required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/gateways:
+    get:
+      tags: *a1
+      description: "The Gateway API Gateways a zone may be attached to
+        (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP
+        reputation policies are in force"
       responses:
         "200":
           description: Default Response

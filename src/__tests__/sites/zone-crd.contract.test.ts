@@ -31,6 +31,7 @@ function crViolations(cr: ZoneCr): string[] {
   if (cr.kind !== crd.spec.names.kind) out.push(`Zone.kind: ${cr.kind}`)
   if (cr.metadata.name.length > 50) out.push('Zone.metadata.name: longer than 50 (CEL)')
   if (cr.spec.tls?.mode === 'secret' && !cr.spec.tls.secretName) out.push('Zone.spec.tls: mode secret needs secretName (CEL)')
+  if (cr.spec.ingress === 'none' && !cr.spec.gateway) out.push('Zone.spec: ingress none needs a gateway (CEL)')
   if ('status' in cr) out.push('Zone.status: written by the operator only')
   return out
 }
@@ -43,9 +44,16 @@ beforeEach(() => {
   process.env.SITES_KUBE = 'in-cluster'
   process.env.SITES_ZONE_ALLOWED_PARENTS = 'dev.example.com,stairfleet.com'
   process.env.SITES_ZONE_ISSUERS = 'letsencrypt-dns'
+  process.env.SITES_GATEWAYS = 'envoy-gateway-system/eg'
   resetSitesConfig()
   setDnsLookup({ addresses: async () => [] })
-  setKubeSites({ listZones: async () => [], listIngresses: async () => [], createZone: async (cr: ZoneCr) => { sent.push(cr) } } as unknown as KubeSites)
+  // eg as on dev-aws-1: HTTPS listeners for *.dev.example.com and *.stairfleet.com
+  const listeners = ['dev.example.com', 'stairfleet.com'].map((d) => ({ name: d.replace(/\./g, '-'), hostname: `*.${d}`, port: 443, protocol: 'HTTPS', tls: { certificateRefs: [{ name: 'wildcard' }] } }))
+  setKubeSites({
+    listZones: async () => [], listIngresses: async () => [], createZone: async (cr: ZoneCr) => { sent.push(cr) },
+    getGateway: async (namespace: string, name: string) => ({ metadata: { namespace, name }, spec: { gatewayClassName: 'eg', listeners } }),
+    listEdgePolicies: async () => [],
+  } as unknown as KubeSites)
 })
 
 const variants: Array<[string, unknown]> = [
@@ -55,6 +63,9 @@ const variants: Array<[string, unknown]> = [
   ['the operator default issuer', { domain: 'stairfleet.com', tls: { mode: 'issuer' } }],
   ['an existing secret, explicit name', { domain: 'b2b.stairfleet.com', name: 'b2b', tls: { mode: 'secret', secretName: 'wildcard-b2b-tls' } }],
   ['a domain long enough to be hashed down to 50', { domain: 'a-rather-long-team-name.and-a-long-project.dev.example.com' }],
+  ['a zone on the Envoy Gateway only', { domain: 'stairfleet.com', ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } }],
+  ['a per-site zone migrating to a pinned listener', { domain: 'dev.example.com', ingress: 'per-site', gateway: { namespace: 'envoy-gateway-system', name: 'eg', sectionName: 'dev-example-com' } }],
+  ['a nested zone bringing its own listener (issuer)', { domain: 'authdev.dev.example.com', ingress: 'none', tls: { mode: 'issuer' }, gateway: { namespace: 'envoy-gateway-system', name: 'eg' } }],
 ]
 
 describe('Zone CR contract with site-operator (config/crd/bases/auth.w6d.io_zones.yaml)', () => {
@@ -69,6 +80,10 @@ describe('Zone CR contract with site-operator (config/crd/bases/auth.w6d.io_zone
     await createZone(createZoneBodySchema.parse(body), actor)
     expect(sent).toHaveLength(1)
     expect(crViolations(sent[0])).toEqual([])
+  })
+
+  it('ingress none without a gateway is refused before the cluster (the CRD CEL rule)', () => {
+    expect(createZoneBodySchema.safeParse({ domain: 'apps.stairfleet.com', ingress: 'none' }).success).toBe(false)
   })
 
   it('the checker catches a field the schema does not declare', () => {

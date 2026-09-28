@@ -54,6 +54,18 @@ async function expectedAddresses(ingress: string[]): Promise<string[]> {
   return [...new Set(out.flat())]
 }
 
+/**
+ * Does one host resolve to `entry` (a load balancer: IPs or hostnames)? Asked before a zone drops its
+ * Ingress: each site host must already reach the Gateway, or visitors still sent to the old entry lose it.
+ */
+export async function probeHost(host: string, entry: string[], what = 'the gateway'): Promise<DnsReport> {
+  const [addresses, expected] = await Promise.all([lookup.addresses(host), expectedAddresses(entry)])
+  if (addresses.length === 0) return { probe: host, status: 'unresolved', addresses, expected, message: `${host} does not resolve` }
+  if (expected.length === 0) return { probe: host, status: 'unverified', addresses, expected, message: `${host} resolves, but the address of ${what} is not known here to compare it with` }
+  if (addresses.some((a) => expected.includes(a))) return { probe: host, status: 'ok', addresses, expected, message: `${host} resolves to ${what}` }
+  return { probe: host, status: 'elsewhere', addresses, expected, message: `${host} resolves to ${addresses.join(', ')}, not to ${what} (${expected.join(', ')})` }
+}
+
 export async function probeWildcard(domain: string, ingress: string[]): Promise<DnsReport> {
   const probe = `jinbe-probe-${randomBytes(4).toString('hex')}.${domain}`
   const [addresses, expected] = await Promise.all([lookup.addresses(probe), expectedAddresses(ingress)])

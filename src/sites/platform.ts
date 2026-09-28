@@ -25,6 +25,7 @@ export async function loadZones(): Promise<Zone[]> {
     // Every Zone TLS mode (default certificate, secret, issued) serves a wildcard certificate.
     wildcardTls: true,
     ingress: z.spec.ingress ?? 'wildcard',
+    ...(z.spec.gateway ? { gateway: `${z.spec.gateway.namespace}/${z.spec.gateway.name}` } : {}),
     ...(z.spec.ingressClass ? { ingressClass: z.spec.ingressClass } : {}),
     ...(configured.find((c) => c.suffix === z.spec.domain)?.cookieDomain ? { cookieDomain: configured.find((c) => c.suffix === z.spec.domain)!.cookieDomain } : {}),
     source: 'zone' as const,

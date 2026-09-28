@@ -1,5 +1,5 @@
 import { sitesConfig } from './config.js'
-import { kubeSites, type IngressHosts } from './kube-sites.js'
+import { kubeSites, type IngressHosts, type ListenerHosts, type RouteHosts } from './kube-sites.js'
 
 /**
  * Hosts other Ingresses already serve, anywhere in the cluster — asked before a Site or a Zone is
@@ -13,6 +13,11 @@ import { kubeSites, type IngressHosts } from './kube-sites.js'
  * for the host itself (per-site Zones): it belongs to every Site on the host (owner references, none a
  * controller), so it is the Site's own, or its siblings' under other path prefixes — which site holds
  * which prefix is `hostOwner`'s question, not an Ingress collision (the operator's `ours`).
+ *
+ * A host under a zone with a Gateway also meets the Gateway side (the operator's routeCheck): an
+ * HTTPRoute naming it exactly takes it, and so does a listener with that exact hostname on the zone's
+ * Gateway (its own or a ListenerSet's: it wins the match); a wildcard route only shadows it. The
+ * operator's shared `host-<hash8>` route for the host is the site's own.
  */
 
 const MANAGED_BY = 'app.kubernetes.io/managed-by'
@@ -99,4 +104,73 @@ export function wildcardConflicts(domain: string, ingresses: readonly IngressHos
     }
   }
   return { taken, shadowed }
+}
+
+// ── Gateway API (zones with a gateway) ──────────────────────────────────────
+
+export interface GatewayObjects {
+  routes: RouteHosts[]
+  listeners: ListenerHosts[]
+}
+
+const HOST_ROUTE_LABEL = 'auth.w6d.io/host-route'
+const ownRoute = (r: RouteHosts, host: string) =>
+  r.namespace === sitesConfig().namespace && r.labels[MANAGED_BY] === OPERATOR && r.labels[HOST_ROUTE_LABEL] === 'true' &&
+  r.name.startsWith('host-') && r.annotations?.[HOST_ANNOTATION]?.toLowerCase() === host
+
+/** A Gateway API wildcard hostname (`*.x`) covers every host ending in `.x`, one label or more. */
+export function routeServesByWildcard(rule: string, host: string): boolean {
+  return rule.startsWith('*.') && host.endsWith(rule.slice(1)) && host.length > rule.length - 1
+}
+
+/**
+ * Every HTTPRoute and ListenerSet of the cluster, plus the listeners of the allowed Gateways — or null
+ * when no Gateway is configured (SITES_GATEWAYS empty) or the cluster is not read: nothing to compare.
+ */
+export async function clusterGatewayObjects(): Promise<GatewayObjects | null> {
+  const cfg = sitesConfig()
+  const kube = kubeSites()
+  if (cfg.SITES_KUBE === 'off' || cfg.SITES_GATEWAYS.length === 0 || !kube.listHTTPRoutes || !kube.listListenerSets || !kube.getGateway) return null
+  const [routes, sets, gateways] = await Promise.all([
+    kube.listHTTPRoutes(),
+    kube.listListenerSets(),
+    Promise.all(cfg.SITES_GATEWAYS.map(async (key) => {
+      const [ns, name] = key.split('/')
+      const gw = await kube.getGateway!(ns, name)
+      return gw ? [{ kind: 'Gateway' as const, namespace: ns, name, gateway: key, listeners: (gw.spec.listeners ?? []).map((l) => ({ name: l.name, hostname: l.hostname, port: l.port, protocol: l.protocol })) }] : []
+    })),
+  ])
+  return {
+    routes: routes.sort((a, b) => `${a.namespace}/${a.name}`.localeCompare(`${b.namespace}/${b.name}`)),
+    listeners: [...gateways.flat(), ...sets],
+  }
+}
+
+type RouteCheck = { level: 'error' | 'warn'; code: 'host_taken' | 'host_shadows_wildcard'; message: string; path: 'address.host' }
+
+/**
+ * The Gateway side of a host under a zone attached to `gateway` (namespace/name): `host_taken` for a
+ * foreign route or an exact-hostname listener on that Gateway, `host_shadows_wildcard` for a foreign
+ * wildcard route — worded as the operator's RouteReady / HostShadowsWildcard.
+ */
+export function routeCollisions(host: string, gateway: string | undefined, objects: GatewayObjects | null): RouteCheck[] {
+  if (!objects || !gateway) return []
+  const h = host.toLowerCase()
+  const out: RouteCheck[] = []
+  for (const r of objects.routes) {
+    if (ownRoute(r, h)) continue
+    for (const raw of r.hostnames) {
+      const rule = raw.toLowerCase()
+      if (rule === h) out.push({ level: 'error', code: 'host_taken', message: `HTTPRoute ${r.namespace}/${r.name} serves ${h}; no route would be created for this host`, path: 'address.host' })
+      else if (routeServesByWildcard(rule, h)) out.push({ level: 'warn', code: 'host_shadows_wildcard', message: `HTTPRoute ${r.namespace}/${r.name} serves ${raw}; the gateway routes ${h} to this Site`, path: 'address.host' })
+    }
+  }
+  for (const l of objects.listeners) {
+    if (l.gateway !== gateway) continue
+    const hit = l.listeners.find((x) => x.hostname?.toLowerCase() === h)
+    if (!hit) continue
+    const who = l.kind === 'Gateway' ? `listener ${hit.name} of Gateway ${l.gateway}` : `ListenerSet ${l.namespace}/${l.name} (listener ${hit.name})`
+    out.push({ level: 'error', code: 'host_taken', message: `${who} serves ${h} (exact hostname: it wins over the zone's listener)`, path: 'address.host' })
+  }
+  return out
 }
