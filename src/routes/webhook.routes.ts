@@ -40,15 +40,16 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     (request, reply) => webhookController.kratos(request, reply),
   )
 
-  // The interrupting hook (sign-in-protection/guard.ts): bot check and sign-up policy, answered in
-  // Kratos' own message shape. Same secret, same raw-body parser.
+  // The interrupting hook (sign-in-protection/guard.ts): bot check, sign-up policy and protected
+  // traits, answered in Kratos' own message shape. Same secret, same raw-body parser.
   fastify.post(
     '/kratos/guard',
     {
       schema: {
         description:
-          'Interrupting Kratos web_hook (registration after.<method> with response.parse, login after with can_interrupt): ' +
-          '200 lets the flow go on, 400 stops it with a form message. Self-authenticated via shared secret.',
+          'Interrupting Kratos web_hook (registration after.<method> and settings after.profile with response.parse, login after ' +
+          'with can_interrupt): 200 lets the flow go on (with an identity.traits patch when protected traits are dropped or put ' +
+          'back), 400 stops it with a form message. Self-authenticated via shared secret.',
         tags: ['webhooks', 'sign-in-protection'],
         body: { type: 'object', additionalProperties: true },
       },

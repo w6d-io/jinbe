@@ -7,7 +7,8 @@ import { auditActor } from '../utils/audit-actor.js'
 import { verifyKratosWebhookAuth } from '../controllers/webhook.controller.js'
 import { providerStatus } from './captcha.js'
 import { DISPOSABLE_DOMAINS } from './disposable.js'
-import { guardFlow, kratosRefusalBody, type GuardInput } from './guard.js'
+import { guardFlow, guardSettings, kratosAllowBody, kratosRefusalBody, type Decision, type GuardInput } from './guard.js'
+import { protectedTraits } from './protected-traits.js'
 import {
   CAPTCHA_FLOWS,
   defaultSignInProtection,
@@ -96,10 +97,12 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : nul
  * POST /api/webhooks/kratos/guard — the interrupting Kratos web_hook (guard.ts). Registered inside
  * webhookRoutes so it shares the raw-body parser the Ory-Signature check needs. The Jsonnet body
  * (charts: selfservice.flows.{registration,login}.after) sends
- * {flow, flow_type, method, requested_aal, email, captcha_token, ip}.
+ * {flow, flow_type, method, requested_aal, email, traits, captcha_token, ip}; the settings one
+ * (selfservice.flows.settings.after.profile) sends {flow: 'settings', method, traits, stored_traits}.
  *
- * 200 {} lets the flow go on; 400 with Kratos' `messages` shape stops it with a form message;
- * 401 (bad secret) makes Kratos fail the flow — a misconfigured hook refuses rather than waves through.
+ * 200 {} lets the flow go on, 200 {identity: {traits}} goes on with those traits written instead;
+ * 400 with Kratos' `messages` shape stops it with a form message; 401 (bad secret) makes Kratos fail
+ * the flow — a misconfigured hook refuses rather than waves through.
  */
 export async function signInGuardHook(request: FastifyRequest, reply: FastifyReply) {
   if (!verifyKratosWebhookAuth(request)) {
@@ -107,24 +110,28 @@ export async function signInGuardHook(request: FastifyRequest, reply: FastifyRep
     return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid or missing webhook credentials' })
   }
   const b = (request.body ?? {}) as Record<string, unknown>
-  const flow = b.flow as CaptchaFlow
-  if (!CAPTCHA_FLOWS.includes(flow)) {
-    return reply.status(400).send({ error: 'unknown_flow', message: 'flow must be registration, login, recovery or verification' })
+  const flow = b.flow as CaptchaFlow | 'settings'
+  if (flow !== 'settings' && !CAPTCHA_FLOWS.includes(flow)) {
+    return reply.status(400).send({ error: 'unknown_flow', message: 'flow must be registration, login, recovery, verification or settings' })
   }
-  const input: GuardInput = {
+  const input: GuardInput | null = flow === 'settings' ? null : {
     flow,
     flowType: str(b.flow_type),
     method: str(b.method),
     requestedAal: str(b.requested_aal),
     email: str(b.email),
+    traits: b.traits,
     captchaToken: str(b.captcha_token),
     ip: str(b.ip)?.split(',')[0].trim() ?? null,
   }
-  const decision = await guardFlow(input)
-  if (decision.allow) return reply.status(200).send({})
-  const domain = input.email?.split('@')[1] ?? null
+  const decision: Decision = input ? await guardFlow(input) : guardSettings({ traits: b.traits, storedTraits: b.stored_traits })
+  if (decision.allow) {
+    if (decision.traits) request.log.info({ flow }, 'Sign-in guard put back or dropped protected traits')
+    return reply.status(200).send(kratosAllowBody(decision))
+  }
+  const domain = input?.email?.split('@')[1] ?? null
   // Refusals are counted (jinbe_sign_in_guard_decisions_total); the log carries the domain, never the address or token.
-  request.log.info({ flow, flowType: input.flowType, result: decision.result, domain }, 'Sign-in guard refused a Kratos flow')
+  request.log.info({ flow, flowType: input?.flowType, result: decision.result, domain }, 'Sign-in guard refused a Kratos flow')
   return reply.status(400).send(kratosRefusalBody(decision.message))
 }
 
@@ -139,7 +146,8 @@ export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
     schema: {
       description:
         'What login-ui needs to draw the sign-in pages: the bot-check provider, its public site key and the flows that ask for it, ' +
-        'and the sign-up mode (with the allowed domains when sign-up is limited). Never the secret, never the listed addresses.',
+        'the sign-up mode (with the allowed domains when sign-up is limited), and the identity traits only an administrator sets ' +
+        '(never shown as form fields). Never the secret, never the listed addresses.',
       tags: ['sign-in-protection'],
     },
   }, async (_request, reply) => {
@@ -163,6 +171,7 @@ export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
         mode: settings.registration.mode,
         domains: settings.registration.mode === 'allowlist' ? settings.registration.allowDomains.filter((d) => !d.startsWith('*.')) : [],
       },
+      protectedTraits: protectedTraits(),
     }
   })
 

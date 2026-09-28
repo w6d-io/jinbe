@@ -67,6 +67,8 @@ const FAIL_SECRET = '2x0000000000000000000000000000000AA'
 const SITE_KEY = '1x00000000000000000000AA'
 const DUMMY_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX'
 const HOOK_SECRET = 'hook-secret-for-tests'
+/** What the guard hook's Jsonnet sends for a sign-up (protected-traits.test.ts covers the traits check). */
+const TRAITS = { email: 'a@b.io' }
 
 function store(p: Partial<{ captcha: Partial<SignInProtection['captcha']>; registration: Partial<SignInProtection['registration']> }>) {
   const d = defaultSignInProtection()
@@ -210,32 +212,32 @@ describe('provider (Turnstile)', () => {
 describe('guard decisions', () => {
   it('nothing switched on: every flow goes on, registration included', async () => {
     const never = vi.fn() as unknown as typeof fetch
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io' }, never)).toEqual({ allow: true, result: 'allowed' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS }, never)).toEqual({ allow: true, result: 'allowed' })
     expect(await guardFlow({ flow: 'login', method: 'password' }, never)).toEqual({ allow: true, result: 'not_guarded' })
     expect(never).not.toHaveBeenCalled()
   })
 
   it('bot check on registration: no token refused, a good one passes', async () => {
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false } } })
-    const refused = await guardFlow({ flow: 'registration', flowType: 'api', email: 'a@b.io' }, siteverify({ success: true }))
+    const refused = await guardFlow({ flow: 'registration', flowType: 'api', email: 'a@b.io', traits: TRAITS }, siteverify({ success: true }))
     expect(refused).toMatchObject({ allow: false, result: 'captcha_missing', message: { id: GUARD_MESSAGE_IDS.captcha_missing } })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, siteverify({ success: true }))).toEqual({ allow: true, result: 'allowed' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, siteverify({ success: true }))).toEqual({ allow: true, result: 'allowed' })
   })
 
   it('Cloudflare always-fail secret: refused', async () => {
     h.env.CAPTCHA_SECRET_KEY = FAIL_SECRET
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false } } })
     const f = siteverify({ success: false, 'error-codes': ['invalid-input-response'] })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, f)).toMatchObject({ allow: false, result: 'captcha_invalid' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, f)).toMatchObject({ allow: false, result: 'captcha_invalid' })
   })
 
   it('provider down: closed refuses, open lets through', async () => {
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false }, failMode: 'closed' } })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, siteverify('down'))).toMatchObject({ result: 'captcha_unavailable' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, siteverify('down'))).toMatchObject({ result: 'captcha_unavailable' })
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false }, failMode: 'open' } })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, siteverify('down'))).toEqual({ allow: true, result: 'fail_open' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, siteverify('down'))).toEqual({ allow: true, result: 'fail_open' })
     // Fail-open never waives a missing answer, nor the sign-up policy.
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io' }, siteverify('down'))).toMatchObject({ result: 'captcha_missing' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS }, siteverify('down'))).toMatchObject({ result: 'captcha_missing' })
   })
 
   it('login: first factor only — a second-factor step or a passkey is not asked', async () => {
@@ -249,27 +251,27 @@ describe('guard decisions', () => {
   it('closed sign-up is refused before any provider call; policy runs after the bot check', async () => {
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false } }, registration: { mode: 'closed' } })
     const never = vi.fn() as unknown as typeof fetch
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, never)).toMatchObject({ result: 'registration_closed' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, never)).toMatchObject({ result: 'registration_closed' })
     expect(never).not.toHaveBeenCalled()
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false } }, registration: { mode: 'allowlist', allowDomains: ['corp.io'] } })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io' }, never)).toMatchObject({ result: 'captcha_missing' })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', captchaToken: DUMMY_TOKEN }, siteverify({ success: true }))).toMatchObject({ result: 'registration_not_allowed' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS }, never)).toMatchObject({ result: 'captcha_missing' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS, captchaToken: DUMMY_TOKEN }, siteverify({ success: true }))).toMatchObject({ result: 'registration_not_allowed' })
   })
 
   it('settings store down with nothing cached: sign-up waits, sign-in goes on', async () => {
     h.redisDown = true
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io' })).toMatchObject({ allow: false, result: 'settings_unavailable' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS })).toMatchObject({ allow: false, result: 'settings_unavailable' })
     expect(await guardFlow({ flow: 'login', method: 'password' })).toEqual({ allow: true, result: 'fail_open' })
   })
 
   it('settings store down after a good read: the last document keeps being enforced', async () => {
     store({ registration: { mode: 'closed' } })
-    expect(await guardFlow({ flow: 'registration', email: 'a@b.io' })).toMatchObject({ result: 'registration_closed' })
+    expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS })).toMatchObject({ result: 'registration_closed' })
     h.redisDown = true
     vi.useFakeTimers()
     vi.setSystemTime(Date.now() + 60_000)
     try {
-      expect(await guardFlow({ flow: 'registration', email: 'a@b.io' })).toMatchObject({ result: 'registration_closed' })
+      expect(await guardFlow({ flow: 'registration', email: 'a@b.io', traits: TRAITS })).toMatchObject({ result: 'registration_closed' })
     } finally {
       vi.useRealTimers()
     }
@@ -311,9 +313,9 @@ describe('routes', () => {
   })
 
   it('hook: allowed → 200 {}; refused → 400 in the shape Kratos turns into a form message', async () => {
-    expect((await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'a@b.io' })).json()).toEqual({})
+    expect((await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'a@b.io', traits: { email: 'a@b.io' } })).json()).toEqual({})
     store({ registration: { mode: 'allowlist', allowDomains: ['corp.io'] } })
-    const res = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'scanner@mailinator.com' })
+    const res = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'scanner@mailinator.com', traits: { email: 'scanner@mailinator.com' } })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({
       messages: [{ instance_ptr: '#/', messages: [{ id: 4000912, text: 'Sign-ups are limited to @corp.io addresses.', type: 'error' }] }],
@@ -323,11 +325,11 @@ describe('routes', () => {
 
   it('hook: bot check reads captcha_token and asks the provider', async () => {
     store({ captcha: { flows: { registration: true, login: false, recovery: false, verification: false } } })
-    const missing = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'a@b.io', captcha_token: null })
+    const missing = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'a@b.io', traits: { email: 'a@b.io' }, captcha_token: null })
     expect(missing.statusCode).toBe(400)
     expect(missing.json().messages[0]).toMatchObject({ instance_ptr: '#/', messages: [{ id: 4000901, type: 'error' }] })
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
-    const ok = await hook({ flow: 'registration', flow_type: 'browser', method: 'password', email: 'a@b.io', captcha_token: DUMMY_TOKEN, ip: '198.51.100.7, 10.0.0.1' })
+    const ok = await hook({ flow: 'registration', flow_type: 'browser', method: 'password', email: 'a@b.io', traits: { email: 'a@b.io' }, captcha_token: DUMMY_TOKEN, ip: '198.51.100.7, 10.0.0.1' })
     expect(ok.statusCode).toBe(200)
     const body = new URLSearchParams(fetchSpy.mock.calls[0][1]?.body as string)
     expect(body.get('remoteip')).toBe('198.51.100.7')
@@ -340,6 +342,7 @@ describe('routes', () => {
     expect(res.json()).toEqual({
       captcha: { provider: 'turnstile', configured: true, siteKey: SITE_KEY, scriptUrl: expect.stringContaining('challenges.cloudflare.com'), flows: { registration: true, login: true, recovery: false, verification: false } },
       registration: { mode: 'allowlist', domains: ['corp.io'] },
+      protectedTraits: ['person_uuid', 'applicant_uuid'],
     })
     expect(res.body).not.toContain(PASS_SECRET)
     expect(res.body).not.toContain('vip@gmail.com')

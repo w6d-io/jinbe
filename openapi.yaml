@@ -12535,10 +12535,11 @@ paths:
       tags:
         - webhooks
         - sign-in-protection
-      description: "Interrupting Kratos web_hook (registration after.<method> with
-        response.parse, login after with can_interrupt): 200 lets the flow go
-        on, 400 stops it with a form message. Self-authenticated via shared
-        secret."
+      description: "Interrupting Kratos web_hook (registration after.<method> and
+        settings after.profile with response.parse, login after with
+        can_interrupt): 200 lets the flow go on (with an identity.traits patch
+        when protected traits are dropped or put back), 400 stops it with a form
+        message. Self-authenticated via shared secret."
       requestBody:
         required: true
         content:
@@ -14468,9 +14469,10 @@ paths:
       tags:
         - sign-in-protection
       description: "What login-ui needs to draw the sign-in pages: the bot-check
-        provider, its public site key and the flows that ask for it, and the
-        sign-up mode (with the allowed domains when sign-up is limited). Never
-        the secret, never the listed addresses."
+        provider, its public site key and the flows that ask for it, the sign-up
+        mode (with the allowed domains when sign-up is limited), and the
+        identity traits only an administrator sets (never shown as form fields).
+        Never the secret, never the listed addresses."
       responses:
         "200":
           description: Default Response

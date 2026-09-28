@@ -176,6 +176,19 @@ export const envSchema = z.object({
     .transform((v) => v === 'true')
     .default('false'),
 
+  // ─── Protected identity traits (sign-in-protection/protected-traits.ts) ───
+  // Kratos traits only an administrator (or jinbe, through the admin API) may set, comma-separated.
+  // The gateway forwards them as trusted headers (x-person-uuid, x-applicant-uuid), so a sign-up
+  // carrying one is refused and a profile save cannot change one — enforced by the Kratos guard
+  // web_hook, whatever the form shows. login-ui reads the list from the public settings and never
+  // renders these fields. Empty: nothing protected.
+  PROTECTED_TRAITS: z
+    .string()
+    .default('person_uuid,applicant_uuid')
+    .transform((v) => [...new Set(v.split(',').map((s) => s.trim()).filter(Boolean))])
+    .refine((l) => l.every((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)), 'PROTECTED_TRAITS: trait names only (letters, digits, _)')
+    .refine((l) => !l.includes('email'), 'PROTECTED_TRAITS: email is the sign-up identifier and cannot be protected'),
+
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.
   HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
