@@ -15,7 +15,7 @@ const s = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
-// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is OFF, so each test saves it on (every org).
 vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/hydra.service.js', () => ({ hydraService: { introspect: s.introspect, getClient: s.getClient } }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.getIdentity } }))
@@ -35,7 +35,7 @@ const oauth = (over: Record<string, unknown> = {}) => ({
 
 let svc: DelegatedTokenService
 beforeEach(() => {
-  s.mcpConfig = {}
+  s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
   resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.env.DELEGATED_TOKEN_AUDIENCE = 'https://mcp.test'

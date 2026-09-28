@@ -12,7 +12,7 @@ const s = vi.hoisted(() => ({
   exchange: vi.fn(),
 }))
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
-// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is OFF, so each test saves it on (every org).
 vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../middleware/identity-extractor.js', () => ({ verifiedActor: vi.fn(async () => s.actor) }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
@@ -37,7 +37,7 @@ beforeAll(async () => {
 })
 afterAll(() => app.close())
 beforeEach(() => {
-  s.mcpConfig = {}
+  s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
   resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.actor = 'auth-mcp'

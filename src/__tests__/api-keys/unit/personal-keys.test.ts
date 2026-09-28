@@ -20,7 +20,7 @@ const s = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
-// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is OFF, so each test saves it on (every org).
 vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/hydra.service.js', () => {
   class HydraApiError extends Error { constructor(public statusCode: number, m: string) { super(m) } }
@@ -44,7 +44,7 @@ const ME = { id: 'user-1', email: 'ann@acme.io' }
 const ORG = '11111111-1111-1111-1111-111111111111'
 
 beforeEach(() => {
-  s.mcpConfig = {}
+  s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
   resetMcpSettingsCache()
   Object.values(s.hydra).forEach((f) => f.mockReset())
   s.policy.mockReset().mockResolvedValue({ personal_keys: 'allowed' })

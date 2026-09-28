@@ -54,8 +54,8 @@ beforeEach(() => {
 })
 
 describe('settings', () => {
-  it('unset is on (the env flag alone decided before), no URL, 30 days, every org', () => {
-    expect(parseMcpSettings(undefined)).toEqual({ enabled: true, serverUrl: null, personalKeys: { maxDays: 30 }, allowedOrgs: 'all' })
+  it('unset is OFF until an administrator opts in; no URL, 30 days, every org', () => {
+    expect(parseMcpSettings(undefined)).toEqual({ enabled: false, serverUrl: null, personalKeys: { maxDays: 30 }, allowedOrgs: 'all' })
     expect(parseMcpSettings('not json')).toEqual(defaultMcpSettings())
   })
 
@@ -80,6 +80,8 @@ describe('settings', () => {
   })
 
   it('gate: the env ceiling wins, then the switch; an unreadable setting refuses', async () => {
+    expect(await mcpGate()).toMatchObject({ on: false, off: 'administrator' }) // nothing saved: off
+    store({ enabled: true })
     expect(await mcpGate()).toMatchObject({ on: true })
     store({ enabled: false })
     expect(await mcpGate()).toMatchObject({ on: false, off: 'administrator' })
@@ -125,6 +127,9 @@ describe('routes', () => {
 
   it('GET is for admins and shows the ceiling and the effective state', async () => {
     expect((await app.inject({ url: '/api/admin/settings/mcp' })).statusCode).toBe(403)
+    const unset = (await app.inject({ url: '/api/admin/settings/mcp', headers: { 'x-test-admin': '1' } })).json()
+    expect(unset).toMatchObject({ settings: { enabled: false }, ceiling: { enabled: true }, effective: false })
+    store({ enabled: true })
     const res = await app.inject({ url: '/api/admin/settings/mcp', headers: { 'x-test-admin': '1' } })
     expect(res.json()).toMatchObject({ settings: { enabled: true }, ceiling: { enabled: true, note: null }, effective: true })
     h.env.DELEGATED_TOKENS_ENABLED = false
@@ -140,6 +145,7 @@ describe('routes', () => {
   })
 
   it('PUT saves, audits config.mcp.changed, drops cached tokens when the switch flips, and takes effect at once', async () => {
+    store({ enabled: true })
     const res = await put({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedOrgs: 'all' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({ settings: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } }, effective: false })
@@ -166,6 +172,7 @@ describe('routes', () => {
   it('status: signed-in only; on, off by an administrator, off by the deployment', async () => {
     expect(isPublicRoute('/api/mcp/status')).toBe(true) // bypasses the session gate, so it checks the session itself
     expect((await status({ 'x-anon': '1' })).statusCode).toBe(401)
+    expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' }) // nothing saved yet
     store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } })
     expect((await status()).json()).toEqual({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', off: null, personalKeys: { maxDays: 7 } })
     store({ enabled: false, serverUrl: 'https://mcp.example.com/mcp' })

@@ -12,7 +12,8 @@ import { PERSONAL_KEY_MAX_DAYS } from '../schemas/api-key.schema.js'
  *   allowedOrgs          'all', or the organizations whose members may use it
  *
  * DELEGATED_TOKENS_ENABLED is the deployment's hard ceiling: false and nothing here turns MCP on.
- * Unset: on (today's behaviour — the env flag alone decided), no URL, 30 days, every org. Read on
+ * Unset: OFF — MCP stays off until an administrator opts in (owner decision) — no URL, 30 days, every
+ * org. Read on
  * every delegated token and key exchange, so it is cached for a few seconds; a write refreshes the
  * cache at once — turning it off refuses tokens on this replica now and on the others within 5 s.
  */
@@ -30,7 +31,7 @@ export const MAX_ORGS = 500
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export function defaultMcpSettings(): McpSettings {
-  return { enabled: true, serverUrl: null, personalKeys: { maxDays: PERSONAL_KEY_MAX_DAYS }, allowedOrgs: 'all' }
+  return { enabled: false, serverUrl: null, personalKeys: { maxDays: PERSONAL_KEY_MAX_DAYS }, allowedOrgs: 'all' }
 }
 
 export type SettingsProblem = { field: string; message: string }
