@@ -4,7 +4,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // 30 days at most, refused when the org forbids them. And the policy's client dataset leaves them out.
 
 const s = vi.hoisted(() => ({
-  env: { DELEGATED_TOKEN_AUDIENCE: 'https://mcp.test' },
+  mcpConfig: {} as Record<string, string>,
+  env: { DELEGATED_TOKENS_ENABLED: true, DELEGATED_TOKEN_AUDIENCE: 'https://mcp.test' },
   hydra: { createClient: vi.fn(), getClient: vi.fn(), deleteClient: vi.fn(), listClientsByOwner: vi.fn(), listAllClients: vi.fn(), clientCredentialsToken: vi.fn() },
   identity: vi.fn(),
   catalog: vi.fn(async () => [] as { scope: string; sites: string[] }[]),
@@ -19,6 +20,8 @@ const s = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/hydra.service.js', () => {
   class HydraApiError extends Error { constructor(public statusCode: number, m: string) { super(m) } }
   return { hydraService: s.hydra, HydraApiError }
@@ -35,11 +38,14 @@ import { personalKeyService, PersonalKeyRefused } from '../../../services/person
 import { apiKeyService } from '../../../services/api-key.service.js'
 import { apiClientsDataset, apiClientsChanged, resetApiClients } from '../../../services/api-clients.js'
 import { personalKeyCreateBodySchema } from '../../../schemas/api-key.schema.js'
+import { resetMcpSettingsCache } from '../../../mcp/settings.js'
 
 const ME = { id: 'user-1', email: 'ann@acme.io' }
 const ORG = '11111111-1111-1111-1111-111111111111'
 
 beforeEach(() => {
+  s.mcpConfig = {}
+  resetMcpSettingsCache()
   Object.values(s.hydra).forEach((f) => f.mockReset())
   s.policy.mockReset().mockResolvedValue({ personal_keys: 'allowed' })
   s.memberOrgs.mockReset().mockResolvedValue([ORG])
@@ -50,8 +56,8 @@ beforeEach(() => {
 })
 
 describe('personal key body', () => {
-  it('defaults to 30 days and refuses more', () => {
-    expect(personalKeyCreateBodySchema.parse({ label: 'x', organization_id: ORG, scopes: ['a:read'] }).expires_in_days).toBe(30)
+  it('leaves the expiry to the service when absent, and refuses more than 30 days', () => {
+    expect(personalKeyCreateBodySchema.parse({ label: 'x', organization_id: ORG, scopes: ['a:read'] }).expires_in_days).toBeUndefined()
     expect(() => personalKeyCreateBodySchema.parse({ label: 'x', organization_id: ORG, scopes: ['a:read'], expires_in_days: 31 })).toThrow()
   })
 })
@@ -76,6 +82,32 @@ describe('PersonalKeyService', () => {
     s.memberOrgs.mockResolvedValue([ORG])
     s.policy.mockResolvedValue({ personal_keys: 'forbidden' })
     await expect(personalKeyService.create(ME, body)).rejects.toMatchObject({ statusCode: 403, details: { reason: 'personal_keys_forbidden' } })
+    expect(s.hydra.createClient).not.toHaveBeenCalled()
+  })
+
+  it("defaults to the administrator's maximum and refuses longer (mcp settings)", async () => {
+    s.hydra.createClient.mockResolvedValue({ client_id: 'pk', client_secret: 'once', scope: 'payroll:read', metadata: { organization_id: ORG, kind: 'personal', subject: 'user-1' } })
+    await personalKeyService.create(ME, { ...body, expires_in_days: undefined })
+    const days = (Date.parse(s.hydra.createClient.mock.calls[0][0].expiresAt) - Date.now()) / 86_400_000
+    expect(Math.round(days)).toBe(30)
+
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, personalKeys: { maxDays: 5 } }) }
+    resetMcpSettingsCache()
+    s.hydra.createClient.mockClear()
+    await expect(personalKeyService.create(ME, body)).rejects.toMatchObject({ statusCode: 400, details: { reason: 'expiry_too_long', max_days: 5 } })
+    expect(s.hydra.createClient).not.toHaveBeenCalled()
+    await personalKeyService.create(ME, { ...body, expires_in_days: undefined })
+    expect(Math.round((Date.parse(s.hydra.createClient.mock.calls[0][0].expiresAt) - Date.now()) / 86_400_000)).toBe(5)
+  })
+
+  it('refuses while an administrator turned MCP off (404), or for an org outside its scope (403)', async () => {
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    await expect(personalKeyService.create(ME, body)).rejects.toMatchObject({ statusCode: 404, details: { reason: 'mcp_disabled' } })
+    await expect(personalKeyService.scopes(ME, ORG)).rejects.toMatchObject({ statusCode: 404 })
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['22222222-2222-2222-2222-222222222222'] }) }
+    resetMcpSettingsCache()
+    await expect(personalKeyService.create(ME, body)).rejects.toMatchObject({ statusCode: 403, details: { reason: 'mcp_org_not_allowed' } })
     expect(s.hydra.createClient).not.toHaveBeenCalled()
   })
 
@@ -140,6 +172,21 @@ describe('PersonalKeyService.exchange', () => {
     s.hydra.getClient.mockResolvedValue(key(over))
     await expect(personalKeyService.exchange('pk', 'secret', NOW)).rejects.toEqual(new PersonalKeyRefused(reason))
     expect(s.hydra.clientCredentialsToken).not.toHaveBeenCalled()
+  })
+
+  it('refuses while MCP is switched off or the org is out of scope, and works again once back on — the key is kept', async () => {
+    s.hydra.getClient.mockResolvedValue(key())
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    await expect(personalKeyService.exchange('pk', 's', NOW)).rejects.toEqual(new PersonalKeyRefused('mcp_disabled'))
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['22222222-2222-2222-2222-222222222222'] }) }
+    resetMcpSettingsCache()
+    await expect(personalKeyService.exchange('pk', 's', NOW)).rejects.toEqual(new PersonalKeyRefused('mcp_org_not_allowed'))
+    expect(s.hydra.clientCredentialsToken).not.toHaveBeenCalled()
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
+    resetMcpSettingsCache()
+    await expect(personalKeyService.exchange('pk', 's', NOW)).resolves.toMatchObject({ access_token: 'ory_at_x' })
+    expect(s.hydra.deleteClient).not.toHaveBeenCalled()
   })
 
   it('refuses an unknown key, a forbidden org, a disabled holder, and a wrong secret', async () => {

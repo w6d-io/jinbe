@@ -6,6 +6,7 @@ import { getApiKeyPolicy } from './api-key-policy.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { touchApiKeyUse } from './api-key-last-used.js'
+import { mcpGate, orgAllowed } from '../mcp/settings.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -55,6 +56,7 @@ const MAX_ENTRIES = 5_000
 export class DelegatedTokenService {
   private cache = new Map<string, { result: DelegatedResult; until: number }>()
 
+  /** The deployment's ceiling only; the administrator's switch (mcp/settings.ts) is asked in resolve(). */
   get enabled(): boolean {
     return env.DELEGATED_TOKENS_ENABLED
   }
@@ -73,20 +75,31 @@ export class DelegatedTokenService {
   async resolve(token: string, now: number = Date.now()): Promise<DelegatedResult> {
     if (!this.enabled) return { error: 'delegated_tokens_disabled' }
     if (!env.DELEGATED_TOKEN_AUDIENCE) return { error: 'delegated_audience_unset' }
+    // The administrator's switch and org scope, asked on every call — before the cache, so turning MCP
+    // off (or an org out of scope) refuses tokens already cached, and turning it back on restores them.
+    const gate = await mcpGate()
+    if (!gate.on) return { error: gate.off === 'unavailable' ? 'mcp_settings_unavailable' : 'mcp_disabled' }
 
     const key = createHash('sha256').update(token).digest('hex')
     const hit = this.cache.get(key)
-    if (hit && now < hit.until) return this.used(hit.result, now)
+    if (hit && now < hit.until) return this.used(this.inScope(hit.result, gate.settings), now)
     if (hit) this.cache.delete(key)
 
-    const result = this.used(await this.evaluate(token, now), now)
-    const ttl = 'principal' in result
-      ? Math.min(env.DELEGATED_TOKEN_CACHE_MS, result.principal.expiresAt - now)
+    const evaluated = await this.evaluate(token, now)
+    const result = this.used(this.inScope(evaluated, gate.settings), now)
+    // What is cached is the token's own answer; the org scope is re-applied on every hit.
+    const ttl = 'principal' in evaluated
+      ? Math.min(env.DELEGATED_TOKEN_CACHE_MS, evaluated.principal.expiresAt - now)
       : NEGATIVE_TTL_MS
     if (ttl > 0) {
       if (this.cache.size >= MAX_ENTRIES) this.cache.clear()
-      this.cache.set(key, { result, until: now + ttl })
+      this.cache.set(key, { result: evaluated, until: now + ttl })
     }
+    return result
+  }
+
+  private inScope(result: DelegatedResult, settings: Parameters<typeof orgAllowed>[0]): DelegatedResult {
+    if ('principal' in result && !orgAllowed(settings, result.principal.org)) return { error: 'mcp_org_not_allowed' }
     return result
   }
 

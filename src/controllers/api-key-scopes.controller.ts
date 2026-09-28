@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { env } from '../config/index.js'
+import { mcpGate } from '../mcp/settings.js'
 import { scopeCatalog } from '../services/api-key-scopes.js'
 import { getApiKeyPolicy, setApiKeyPolicy } from '../services/api-key-policy.js'
 import { AuthzUnavailableError } from '../authz/opa.js'
@@ -14,7 +14,11 @@ function policyUnavailable(reply: FastifyReply) {
   return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to read what you hold in this organization. Please try again later.' })
 }
 
-function notEnabled(reply: FastifyReply) {
+/** The org's personal-key policy exists only while MCP is on (mcp/settings.ts): 404 otherwise, as /api/me/api-keys. */
+async function notEnabled(reply: FastifyReply): Promise<FastifyReply | null> {
+  const gate = await mcpGate()
+  if (gate.on) return null
+  if (gate.off === 'unavailable') return reply.status(503).send({ error: 'settings_unavailable', message: 'The AI assistant settings cannot be read right now.' })
   return reply.status(404).send({ error: 'Not Found', message: 'Personal API keys are not enabled on this deployment.' })
 }
 
@@ -30,12 +34,14 @@ export class ApiKeyScopesController {
   }
 
   async getPolicy(request: OrgRequest, reply: FastifyReply) {
-    if (!env.DELEGATED_TOKENS_ENABLED) return notEnabled(reply)
+    const off = await notEnabled(reply)
+    if (off) return off
     return reply.send(await getApiKeyPolicy(request.params.organizationId))
   }
 
   async setPolicy(request: OrgRequest, reply: FastifyReply) {
-    if (!env.DELEGATED_TOKENS_ENABLED) return notEnabled(reply)
+    const off = await notEnabled(reply)
+    if (off) return off
     const { organizationId } = request.params
     const next = apiKeyPolicySchema.parse(request.body)
     const before = await getApiKeyPolicy(organizationId)

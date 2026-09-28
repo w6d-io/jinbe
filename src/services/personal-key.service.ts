@@ -9,6 +9,7 @@ import { scopeCatalog, type ScopeCatalogEntry } from './api-key-scopes.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { recordApiKeyUse } from '../audit/record.js'
 import { forgetApiKeyUse, touchApiKeyUse } from './api-key-last-used.js'
+import { mcpGate, orgAllowed, type McpSettings } from '../mcp/settings.js'
 import type { ApiKeySecretView, ApiKeyView, PersonalKeyCreateBody } from '../schemas/api-key.schema.js'
 
 /**
@@ -20,7 +21,9 @@ import type { ApiKeySecretView, ApiKeyView, PersonalKeyCreateBody } from '../sch
  * Its token is introspected by jinbe's delegated path, which re-reads that metadata, so:
  *   - it never holds more than its user: scopes ⊆ what they hold in that org at creation (the same
  *     catalog as org keys), and every call still asks what the user holds now;
- *   - it always expires: 30 days at most (owner decision), refused past `expires_at`;
+ *   - it always expires: 30 days at most (owner decision) — or less, when the administrator set a
+ *     shorter maximum (mcp/settings.ts) — and is refused past `expires_at`;
+ *   - the administrator may turn MCP off or limit it to some orgs: the keys stay stored, unusable;
  *   - the org may forbid personal keys, which stops the keys already issued too.
  * Creating one is a browser action: the delegation gate refuses /api/me/api-keys to delegated callers.
  */
@@ -47,6 +50,17 @@ function subjectOf(client: HydraOAuth2Client): string | undefined {
 
 const view = (client: HydraOAuth2Client): PersonalKeyView => ({ ...toView(client), kind: 'personal' })
 
+/** MCP on (mcp/settings.ts) and `org` in its scope — the settings, or ApiKeyError 404/403 as the key routes answer. */
+async function assertMcpFor(org: string): Promise<McpSettings> {
+  const gate = await mcpGate()
+  if (gate.off === 'unavailable') throw new ApiKeyError(503, 'The AI assistant settings cannot be read right now')
+  if (!gate.on) throw new ApiKeyError(404, 'Personal API keys are turned off by an administrator.', { reason: 'mcp_disabled' })
+  if (!orgAllowed(gate.settings, org)) {
+    throw new ApiKeyError(403, 'AI assistants are not enabled for this organization', { reason: 'mcp_org_not_allowed' })
+  }
+  return gate.settings
+}
+
 async function assertMember(email: string, org: string): Promise<void> {
   const member = (await isSuperAdmin(email)) || (await memberOrgs(email)).includes(org)
   if (!member) throw new ApiKeyError(403, 'You are not a member of that organization')
@@ -59,12 +73,18 @@ export class PersonalKeyService {
    */
   async scopes(caller: { email: string }, org: string): Promise<ScopeCatalogEntry[]> {
     await assertMember(caller.email, org)
+    await assertMcpFor(org)
     return scopeCatalog(org, caller.email)
   }
 
   async create(caller: { id: string; email: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
     const org = body.organization_id
     await assertMember(caller.email, org)
+    const settings = await assertMcpFor(org)
+    const days = body.expires_in_days ?? settings.personalKeys.maxDays
+    if (days > settings.personalKeys.maxDays) {
+      throw new ApiKeyError(400, `A personal key may live at most ${settings.personalKeys.maxDays} days`, { reason: 'expiry_too_long', max_days: settings.personalKeys.maxDays })
+    }
     if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') {
       throw new ApiKeyError(403, 'This organization does not allow personal API keys', { reason: 'personal_keys_forbidden' })
     }
@@ -77,7 +97,7 @@ export class PersonalKeyService {
       scopes: [...scopes, MCP_SCOPE],
       organizationId: org,
       createdBy: caller.id,
-      expiresAt: expiryFrom(body.expires_in_days),
+      expiresAt: expiryFrom(days),
       personal: { subject: caller.id },
       // The delegated path only takes a token for its own audience.
       ...(env.DELEGATED_TOKEN_AUDIENCE ? { audience: [env.DELEGATED_TOKEN_AUDIENCE] } : {}),
@@ -107,6 +127,9 @@ export class PersonalKeyService {
     const expiresAt = typeof meta.expires_at === 'string' ? Date.parse(meta.expires_at) : NaN
     if (!isPersonal(client) || !subject || typeof org !== 'string' || !org) throw new PersonalKeyRefused('not_a_personal_key')
     if (!(expiresAt > now)) throw new PersonalKeyRefused('key_expired')
+    const gate = await mcpGate()
+    if (!gate.on) throw new PersonalKeyRefused(gate.off === 'unavailable' ? 'mcp_settings_unavailable' : 'mcp_disabled')
+    if (!orgAllowed(gate.settings, org)) throw new PersonalKeyRefused('mcp_org_not_allowed')
     if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') throw new PersonalKeyRefused('personal_keys_forbidden')
 
     let email: unknown

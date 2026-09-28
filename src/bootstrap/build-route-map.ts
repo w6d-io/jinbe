@@ -210,10 +210,12 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/me/organizations' },
   // What the caller may do (kuma draws only the allowed actions). Answers about the caller only.
   { method: 'GET',    path: '/api/me/permissions' },
-  // The caller's own personal API keys (404 unless DELEGATED_TOKENS_ENABLED). About the caller only;
+  // The caller's own personal API keys (404 unless MCP is on: DELEGATED_TOKENS_ENABLED + Settings → AI assistants). About the caller only;
   // jinbe refuses machine and delegated callers, and checks the org policy and scopes itself.
   { method: 'GET',    path: '/api/me/api-keys' },
   { method: 'GET',    path: '/api/me/api-keys/scopes' },
   { method: 'POST',   path: '/api/me/api-keys' },
   { method: 'DELETE', path: '/api/me/api-keys/:clientId' },
+  // Is MCP on (env ceiling + the administrator's switch) and where is its server — for kuma Connections.
+  { method: 'GET',    path: '/api/mcp/status' },
 ] as const

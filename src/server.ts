@@ -41,6 +41,7 @@ import { observabilityRoutes } from './routes/observability.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
 import { signInGateRoutes } from './sign-in-protection/gate-routes.js'
+import { mcpSettingsRoutes, mcpStatusRoutes } from './mcp/routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
 import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
@@ -164,7 +165,7 @@ export async function buildServer() {
       await api.register(telemetryRoutes)
       await api.register(whoamiRoutes)
       await api.register(meRoutes, { prefix: '/me' })
-      await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless DELEGATED_TOKENS_ENABLED
+      await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless MCP is on (env ceiling + admin switch)
       await api.register(clusterRoutes, { prefix: '/clusters' })
       await api.register(databaseRoutes, { prefix: '/databases' })
       await api.register(backupRoutes, { prefix: '/backups' })
@@ -178,6 +179,7 @@ export async function buildServer() {
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
       await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
       await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' }) // bot check + sign-up policy
+      await api.register(mcpSettingsRoutes, { prefix: '/admin/settings' }) // AI assistants (MCP) switch, under the env ceiling
       await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
       await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
@@ -192,7 +194,8 @@ export async function buildServer() {
       await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // allowed in-cluster ServiceAccounts only
-      await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED
+      await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
+      await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason

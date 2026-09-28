@@ -5,12 +5,15 @@ import Fastify, { type FastifyInstance } from 'fastify'
 // auth-mcp's JinbeTokenInfoVerifier / JinbeKeyExchanger read.
 
 const s = vi.hoisted(() => ({
+  mcpConfig: {} as Record<string, string>,
   env: { DELEGATED_TOKENS_ENABLED: true },
   actor: 'auth-mcp' as string | null,
   resolve: vi.fn(),
   exchange: vi.fn(),
 }))
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../middleware/identity-extractor.js', () => ({ verifiedActor: vi.fn(async () => s.actor) }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
 vi.mock('../../../services/delegated-token.service.js', () => ({
@@ -24,6 +27,7 @@ vi.mock('../../../services/personal-key.service.js', () => {
 
 import { mcpRoutes } from '../../../routes/mcp.routes.js'
 import { PersonalKeyRefused } from '../../../services/personal-key.service.js'
+import { resetMcpSettingsCache } from '../../../mcp/settings.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -33,6 +37,8 @@ beforeAll(async () => {
 })
 afterAll(() => app.close())
 beforeEach(() => {
+  s.mcpConfig = {}
+  resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.actor = 'auth-mcp'
   s.resolve.mockReset()
@@ -53,6 +59,30 @@ describe('/api/mcp', () => {
     expect((await tokenInfo()).statusCode).toBe(403)
     expect((await exchange('stk_mcp_pk.secret')).statusCode).toBe(403)
     expect(s.resolve).not.toHaveBeenCalled()
+  })
+
+  it('is 403 mcp_disabled (after the actor check) while an administrator turned MCP off', async () => {
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    const res = await tokenInfo()
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: 'mcp_disabled', message: 'MCP access is turned off by an administrator.' })
+    expect((await exchange('stk_mcp_pk.secret')).json()).toMatchObject({ error: 'mcp_disabled' })
+    expect(s.resolve).not.toHaveBeenCalled()
+    expect(s.exchange).not.toHaveBeenCalled()
+    s.actor = null
+    expect((await tokenInfo()).json()).toMatchObject({ error: 'Forbidden' })
+  })
+
+  it("maps an org outside the administrator's scope to 403 mcp_disabled, for tokens and keys", async () => {
+    s.resolve.mockResolvedValue({ error: 'mcp_org_not_allowed' })
+    const res = await tokenInfo()
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: 'mcp_disabled', reason: 'org_not_allowed' })
+    s.exchange.mockRejectedValue(new PersonalKeyRefused('mcp_disabled'))
+    const ex = await exchange('stk_mcp_pk.secret')
+    expect(ex.statusCode).toBe(403)
+    expect(ex.json()).toMatchObject({ error: 'mcp_disabled', reason: 'disabled' })
   })
 
   it('token-info answers the claims auth-mcp reads (OAuth token)', async () => {

@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // its expiry or in an org that forbids them.
 
 const s = vi.hoisted(() => ({
+  mcpConfig: {} as Record<string, string>,
   env: { DELEGATED_TOKENS_ENABLED: true, DELEGATED_TOKEN_AUDIENCE: 'https://mcp.test', DELEGATED_TOKEN_CACHE_MS: 30_000 },
   introspect: vi.fn(),
   getClient: vi.fn(),
@@ -14,12 +15,15 @@ const s = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is on, every org.
+vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/hydra.service.js', () => ({ hydraService: { introspect: s.introspect, getClient: s.getClient } }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.getIdentity } }))
 vi.mock('../../../services/api-key-policy.js', () => ({ getApiKeyPolicy: s.policy }))
 vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
 
 import { DelegatedTokenService } from '../../../services/delegated-token.service.js'
+import { resetMcpSettingsCache } from '../../../mcp/settings.js'
 
 const NOW = Date.parse('2026-09-28T12:00:00Z')
 const exp = NOW / 1000 + 600
@@ -31,6 +35,8 @@ const oauth = (over: Record<string, unknown> = {}) => ({
 
 let svc: DelegatedTokenService
 beforeEach(() => {
+  s.mcpConfig = {}
+  resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.env.DELEGATED_TOKEN_AUDIENCE = 'https://mcp.test'
   s.introspect.mockReset()
@@ -97,6 +103,29 @@ describe('DelegatedTokenService.resolve', () => {
     expect(s.introspect).toHaveBeenCalledTimes(1)
     await svc.resolve('same', NOW + 31_000)
     expect(s.introspect).toHaveBeenCalledTimes(2)
+  })
+
+  it('an administrator switching MCP off refuses tokens already cached; switching it back on restores them', async () => {
+    s.introspect.mockResolvedValue(oauth())
+    expect(await svc.resolve('same', NOW)).toHaveProperty('principal')
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    expect(await svc.resolve('same', NOW + 1000)).toEqual({ error: 'mcp_disabled' })
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
+    resetMcpSettingsCache()
+    expect(await svc.resolve('same', NOW + 2000)).toHaveProperty('principal')
+    expect(s.introspect).toHaveBeenCalledTimes(1)
+  })
+
+  it("refuses a token whose org is outside the administrator's scope, cached or not", async () => {
+    s.introspect.mockResolvedValue(oauth({ ext: { org: '11111111-1111-1111-1111-111111111111' } }))
+    expect(await svc.resolve('same', NOW)).toHaveProperty('principal')
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['22222222-2222-2222-2222-222222222222'] }) }
+    resetMcpSettingsCache()
+    expect(await svc.resolve('same', NOW + 1000)).toEqual({ error: 'mcp_org_not_allowed' })
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['11111111-1111-1111-1111-111111111111'] }) }
+    resetMcpSettingsCache()
+    expect(await svc.resolve('same', NOW + 2000)).toHaveProperty('principal')
   })
 
   describe('personal keys (client_credentials, sub = client)', () => {

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { env } from '../config/index.js'
+import { mcpGate } from '../mcp/settings.js'
 import { personalKeyService } from '../services/personal-key.service.js'
 import { handleError } from '../controllers/api-key.controller.js'
 import { decorateKeyViews } from '../services/api-key-views.js'
@@ -23,7 +23,8 @@ import {
 /**
  * The caller's own API keys — /api/me/api-keys (services/personal-key.service.ts).
  *
- * 404 on every route unless DELEGATED_TOKENS_ENABLED. A person only: a machine caller has no
+ * 404 on every route unless MCP is on: DELEGATED_TOKENS_ENABLED (the deployment's ceiling) and the
+ * administrator's switch (mcp/settings.ts, Settings → AI assistants). A person only: a machine caller has no
  * personal keys, and a delegated caller never reaches here (middleware/delegation-gate.ts).
  *
  * GET    /            - the caller's keys (no secrets)
@@ -32,8 +33,15 @@ import {
  * DELETE /:clientId   - revoke one of the caller's keys
  */
 async function personOnly(request: FastifyRequest, reply: FastifyReply) {
-  if (!env.DELEGATED_TOKENS_ENABLED) {
-    return reply.status(404).send({ error: 'Not Found', message: 'Personal API keys are not enabled on this deployment.' })
+  const gate = await mcpGate()
+  if (gate.off === 'unavailable') {
+    return reply.status(503).send({ error: 'settings_unavailable', message: 'The AI assistant settings cannot be read right now.' })
+  }
+  if (!gate.on) {
+    const message = gate.off === 'deployment'
+      ? 'Personal API keys are not enabled on this deployment.'
+      : 'Personal API keys are turned off by an administrator.'
+    return reply.status(404).send({ error: 'Not Found', message })
   }
   const via = request.userContext?.authVia
   if (via === 'machine' || via === 'delegated') {
@@ -104,10 +112,11 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
     schema: {
       description:
         'Create a personal API key acting as you in ONE organization: scopes among the permissions you hold there, ' +
-        'expiry at most 30 days. Returns client_secret ONCE. 403 when the organization forbids personal keys.',
+        "expiry at most 30 days, or the administrator's shorter maximum (the default). Returns client_secret ONCE. " +
+        '403 when the organization forbids personal keys or is outside the AI assistant scope.',
       tags: ['api-keys'],
       body: personalKeyCreateBodyJsonSchema,
-      response: { 201: personalKeySecretJsonSchema, 400: bodyWithDetails, 401: unauthorizedResponseSchema, 403: bodyWithDetails, 404: notFoundResponseSchema },
+      response: { 201: personalKeySecretJsonSchema, 400: bodyWithDetails, 401: unauthorizedResponseSchema, 403: bodyWithDetails, 404: notFoundResponseSchema, 503: serviceUnavailableResponseSchema },
     },
   }, async (request, reply) => {
     const body = personalKeyCreateBodySchema.parse(request.body)

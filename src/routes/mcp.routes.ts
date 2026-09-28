@@ -6,6 +6,7 @@ import { personalKeyService, PersonalKeyRefused } from '../services/personal-key
 import { AuthzUnavailableError } from '../authz/opa.js'
 import { HydraUnavailableError } from '../services/hydra.service.js'
 import { denyAudit } from '../audit/deny.js'
+import { mcpGate } from '../mcp/settings.js'
 
 /**
  * What auth-mcp asks jinbe, so hydra-admin stays closed to everything but jinbe
@@ -19,14 +20,31 @@ import { denyAudit } from '../audit/deny.js'
  *
  * The CALLER is the actor — an allowed in-cluster ServiceAccount (DELEGATED_ACTOR_SUBJECTS, verified by
  * TokenReview) — and nobody else: not a session, not a user token, not a random pod. The Authorization
- * header carries what is being asked about. 404 on every route unless DELEGATED_TOKENS_ENABLED.
+ * header carries what is being asked about. 404 on every route unless DELEGATED_TOKENS_ENABLED (the
+ * deployment's ceiling). With the ceiling up but MCP turned off by an administrator (mcp/settings.ts),
+ * or the token's/key's org outside its scope: 403 {error: 'mcp_disabled'}, so auth-mcp can say so.
  */
+
+const MCP_OFF_MESSAGE = 'MCP access is turned off by an administrator.'
+const MCP_ORG_MESSAGE = 'MCP access is turned off for this organization by an administrator.'
 
 async function actorOnly(request: FastifyRequest, reply: FastifyReply) {
   if (!env.DELEGATED_TOKENS_ENABLED) return reply.status(404).send({ error: 'Not Found', message: 'Route not found' })
-  if (await verifiedActor(request)) return
-  denyAudit(request, 'mcp_actor_required')
-  return reply.status(403).send({ error: 'Forbidden', message: 'This route takes an allowed in-cluster ServiceAccount token in X-Actor-Token.' })
+  if (!(await verifiedActor(request))) {
+    denyAudit(request, 'mcp_actor_required')
+    return reply.status(403).send({ error: 'Forbidden', message: 'This route takes an allowed in-cluster ServiceAccount token in X-Actor-Token.' })
+  }
+  const gate = await mcpGate()
+  if (gate.off === 'unavailable') return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })
+  if (!gate.on) return reply.status(403).send({ error: 'mcp_disabled', message: MCP_OFF_MESSAGE, reason: 'disabled' })
+}
+
+/** A refusal reason that means "turned off", not "bad credential": 403 mcp_disabled rather than 401. */
+function mcpOff(reply: FastifyReply, reason: string): FastifyReply | null {
+  if (reason === 'mcp_disabled') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_OFF_MESSAGE, reason: 'disabled' })
+  if (reason === 'mcp_org_not_allowed') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_ORG_MESSAGE, reason: 'org_not_allowed' })
+  if (reason === 'mcp_settings_unavailable') return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })
+  return null
 }
 
 function bearerOf(request: FastifyRequest): string | null {
@@ -69,15 +87,16 @@ export async function mcpRoutes(fastify: FastifyInstance) {
       description:
         "Introspect a delegated (opaque Hydra) token for auth-mcp, with jinbe's rules: active, access token, the " +
         'delegated audience, bound to one org, an active user; personal keys re-read from their client (expiry, org ' +
-        'policy). Caller: an allowed ServiceAccount in X-Actor-Token.',
+        'policy). Caller: an allowed ServiceAccount in X-Actor-Token. 403 mcp_disabled when an administrator turned MCP off ' +
+        "or the token's org is outside its scope.",
       tags: ['mcp'],
-      response: { 200: claimsSchema, 401: refusalSchema, 403: refusalSchema, 404: refusalSchema },
+      response: { 200: claimsSchema, 401: refusalSchema, 403: refusalSchema, 404: refusalSchema, 503: refusalSchema },
     },
   }, async (request, reply) => {
     const token = bearerOf(request)
     if (!token || !delegatedTokenService.looksOpaque(token)) return refused(reply, 'invalid_token', 'no_token')
     const result = await delegatedTokenService.resolve(token)
-    if ('error' in result) return refused(reply, 'invalid_token', result.error)
+    if ('error' in result) return mcpOff(reply, result.error) ?? refused(reply, 'invalid_token', result.error)
     const p = result.principal
     const sec = (ms: number) => Math.floor(ms / 1000)
     return reply.send({
@@ -103,7 +122,8 @@ export async function mcpRoutes(fastify: FastifyInstance) {
       description:
         'Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a short-lived access token carrying the ' +
         "key's stored scopes that its holder STILL holds in the key's org (plus mcp). Refused (401) when unknown, wrong " +
-        'secret, expired, or the org forbids personal keys. Caller: an allowed ServiceAccount in X-Actor-Token.',
+        'secret, expired, or the org forbids personal keys; 403 mcp_disabled when an administrator turned MCP off or the ' +
+        "key's org is outside its scope. Caller: an allowed ServiceAccount in X-Actor-Token.",
       tags: ['mcp'],
       response: {
         200: { type: 'object', properties: { access_token: { type: 'string' }, expires_in: { type: 'integer' } } },
@@ -118,7 +138,7 @@ export async function mcpRoutes(fastify: FastifyInstance) {
     try {
       return reply.send(await personalKeyService.exchange(body.slice(0, dot), body.slice(dot + 1)))
     } catch (err) {
-      if (err instanceof PersonalKeyRefused) return refused(reply, 'invalid_key', err.reason)
+      if (err instanceof PersonalKeyRefused) return mcpOff(reply, err.reason) ?? refused(reply, 'invalid_key', err.reason)
       if (err instanceof AuthzUnavailableError || err instanceof HydraUnavailableError) {
         request.log.warn({ err: (err as Error).message }, '[mcp] personal-key exchange could not be decided')
         return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })

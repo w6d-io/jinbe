@@ -52,7 +52,8 @@ const PUBLIC_ROUTES = [
   // auth-mcp's token-info and personal-key exchange. The Authorization header there carries the token
   // or key being ASKED ABOUT; the caller is proven by its ServiceAccount token in X-Actor-Token,
   // checked by the plugin's own hook (routes/mcp.routes.ts), which refuses everyone else — and answers
-  // 404 on every route unless DELEGATED_TOKENS_ENABLED.
+  // 404 on every route unless DELEGATED_TOKENS_ENABLED. /api/mcp/status (kuma) checks the session itself
+  // (mcp/routes.ts).
   '/api/mcp',
   '/docs',
   '/docs/',

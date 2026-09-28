@@ -19,7 +19,7 @@ export function handleError(err: unknown, reply: FastifyReply): FastifyReply {
   }
   if (err instanceof ApiKeyError) {
     return reply.status(err.statusCode).send({
-      error: err.statusCode === 404 ? 'Not Found' : err.statusCode === 403 ? 'Forbidden' : 'Bad Request',
+      error: err.statusCode === 404 ? 'Not Found' : err.statusCode === 403 ? 'Forbidden' : err.statusCode === 503 ? 'Service Unavailable' : 'Bad Request',
       message: err.message,
       ...(err.details ? { details: err.details } : {}),
     })
