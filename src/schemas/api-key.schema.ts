@@ -43,7 +43,8 @@ export const personalKeyCreateBodySchema = z.object({
   label: z.string().min(1, 'label is required').max(200),
   organization_id: z.string().uuid('organization_id must be a valid UUID'),
   scopes: z.array(z.string().min(1)).min(1, 'at least one scope is required'),
-  expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).default(PERSONAL_KEY_MAX_DAYS),
+  /** Absent = the longest allowed now (the administrator's maximum, mcp/settings.ts). */
+  expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).optional(),
 })
 export type PersonalKeyCreateBody = z.infer<typeof personalKeyCreateBodySchema>
 
@@ -99,7 +100,7 @@ export const personalKeyCreateBodyJsonSchema = {
     label: { type: 'string', minLength: 1, maxLength: 200 },
     organization_id: { type: 'string', format: 'uuid', description: 'The one organization the key acts in' },
     scopes: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Permissions you hold in that organization' },
-    expires_in_days: { type: 'integer', minimum: 1, maximum: PERSONAL_KEY_MAX_DAYS, default: PERSONAL_KEY_MAX_DAYS },
+    expires_in_days: { type: 'integer', minimum: 1, maximum: PERSONAL_KEY_MAX_DAYS, description: 'At most the maximum an administrator set (30 days or less); absent = that maximum' },
   },
   additionalProperties: false,
 }

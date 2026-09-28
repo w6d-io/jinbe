@@ -7,12 +7,15 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 const ORG = '11111111-1111-1111-1111-111111111111'
 
 const s = vi.hoisted(() => ({
+  mcpConfig: {} as Record<string, string>,
   env: { DELEGATED_TOKENS_ENABLED: true },
   scopes: vi.fn(),
   list: vi.fn(async () => [] as unknown[]),
   decorate: vi.fn(async (_r: unknown, views: unknown[]) => views.map((v) => ({ ...(v as object), last_used_at: '2026-09-28T12:00:00.000Z' }))),
 }))
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
+// The MCP setting (mcp/settings.ts) read from rbac:config — unset is OFF, so each test saves it on (every org).
+vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
 vi.mock('../../../services/personal-key.service.js', () => ({ personalKeyService: { scopes: s.scopes, list: s.list } }))
 vi.mock('../../../services/api-key-views.js', () => ({ decorateKeyViews: s.decorate }))
@@ -20,6 +23,7 @@ vi.mock('../../../services/api-key-views.js', () => ({ decorateKeyViews: s.decor
 import { personalKeyRoutes } from '../../../routes/personal-key.routes.js'
 import { ApiKeyError } from '../../../services/api-key.service.js'
 import { AuthzUnavailableError } from '../../../authz/opa.js'
+import { resetMcpSettingsCache } from '../../../mcp/settings.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -33,6 +37,8 @@ beforeAll(async () => {
 })
 afterAll(() => app.close())
 beforeEach(() => {
+  s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
+  resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.scopes.mockReset().mockResolvedValue([{ scope: 'payroll:read', sites: ['payroll'] }])
 })
@@ -46,6 +52,23 @@ describe('GET /api/me/api-keys/scopes', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ scopes: [{ scope: 'payroll:read', sites: ['payroll'] }] })
     expect(s.scopes).toHaveBeenCalledWith({ email: 'ann@acme.io' }, ORG)
+  })
+
+  it('is 404 while nothing is saved: MCP is off until an administrator opts in', async () => {
+    s.mcpConfig = {}
+    resetMcpSettingsCache()
+    const res = await scopes()
+    expect(res.statusCode).toBe(404)
+    expect(res.json().message).toMatch(/turned off by an administrator/)
+  })
+
+  it('is 404, saying so, while an administrator turned MCP off', async () => {
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    const res = await scopes()
+    expect(res.statusCode).toBe(404)
+    expect(res.json().message).toMatch(/turned off by an administrator/)
+    expect(s.scopes).not.toHaveBeenCalled()
   })
 
   it('is 404 while delegated tokens are off, 403 to a machine or delegated caller', async () => {

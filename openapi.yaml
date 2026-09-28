@@ -491,9 +491,10 @@ paths:
       tags:
         - api-keys
       description: "Create a personal API key acting as you in ONE organization:
-        scopes among the permissions you hold there, expiry at most 30 days.
-        Returns client_secret ONCE. 403 when the organization forbids personal
-        keys."
+        scopes among the permissions you hold there, expiry at most 30 days, or
+        the administrator's shorter maximum (the default). Returns client_secret
+        ONCE. 403 when the organization forbids personal keys or is outside the
+        AI assistant scope."
       requestBody:
         required: true
         content:
@@ -523,7 +524,8 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 30
-                  default: 30
+                  description: At most the maximum an administrator set (30 days or less); absent
+                    = that maximum
               additionalProperties: false
       responses:
         "201":
@@ -630,6 +632,20 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/me/api-keys/scopes:
@@ -11626,6 +11642,136 @@ paths:
                           type: string
                         message:
                           type: string
+  /api/admin/settings/mcp:
+    get:
+      tags:
+        - mcp
+      description: The AI assistants (MCP) setting, the deployment ceiling
+        (DELEGATED_TOKENS_ENABLED) and whether MCP is effectively on (ceiling
+        AND switch).
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      serverUrl:
+                        type:
+                          - "null"
+                          - string
+                      personalKeys:
+                        type: object
+                        properties:
+                          maxDays:
+                            type: integer
+                      allowedOrgs:
+                        anyOf:
+                          - type: string
+                            enum:
+                              - all
+                          - type: array
+                            items:
+                              type: string
+                  defaults:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      serverUrl:
+                        type:
+                          - "null"
+                          - string
+                      personalKeys:
+                        type: object
+                        properties:
+                          maxDays:
+                            type: integer
+                      allowedOrgs:
+                        anyOf:
+                          - type: string
+                            enum:
+                              - all
+                          - type: array
+                            items:
+                              type: string
+                  ceiling:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      note:
+                        type:
+                          - "null"
+                          - string
+                  effective:
+                    type: boolean
+    put:
+      tags:
+        - mcp
+      description: "Replace the AI assistants (MCP) setting. Turning it off refuses
+        delegated tokens and personal-key exchange at once on this replica and
+        within 5 seconds everywhere (keys stay stored, unusable); turning it on
+        restores them. It can never lift the deployment ceiling: with
+        DELEGATED_TOKENS_ENABLED=false the value is saved but MCP stays off (see
+        `ceiling` and `effective`). Requires super_admin + a second factor
+        proven within 15 minutes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - enabled
+              additionalProperties: false
+              properties:
+                enabled:
+                  type: boolean
+                serverUrl:
+                  type:
+                    - "null"
+                    - string
+                personalKeys:
+                  type: object
+                  properties:
+                    maxDays:
+                      type: integer
+                allowedOrgs:
+                  anyOf:
+                    - type: string
+                      enum:
+                        - all
+                    - type: array
+                      items:
+                        type: string
+      responses:
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  problems:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                        message:
+                          type: string
   /api/admin/audit/events:
     get:
       tags:
@@ -15974,7 +16120,8 @@ paths:
         jinbe's rules: active, access token, the delegated audience, bound to
         one org, an active user; personal keys re-read from their client
         (expiry, org policy). Caller: an allowed ServiceAccount in
-        X-Actor-Token."
+        X-Actor-Token. 403 mcp_disabled when an administrator turned MCP off or
+        the token's org is outside its scope."
       responses:
         "200":
           description: Default Response
@@ -16056,6 +16203,19 @@ paths:
                     type: string
                   reason:
                     type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
   /api/mcp/personal-keys/exchange:
     post:
       tags:
@@ -16063,8 +16223,9 @@ paths:
       description: "Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a
         short-lived access token carrying the key's stored scopes that its
         holder STILL holds in the key's org (plus mcp). Refused (401) when
-        unknown, wrong secret, expired, or the org forbids personal keys.
-        Caller: an allowed ServiceAccount in X-Actor-Token."
+        unknown, wrong secret, expired, or the org forbids personal keys; 403
+        mcp_disabled when an administrator turned MCP off or the key's org is
+        outside its scope. Caller: an allowed ServiceAccount in X-Actor-Token."
       responses:
         "200":
           description: Default Response
@@ -16129,6 +16290,81 @@ paths:
                     type: string
                   reason:
                     type: string
+  /api/mcp/status:
+    get:
+      tags:
+        - mcp
+      description: Whether AI assistants (MCP) are on, the MCP server address, and why
+        not when off. Any signed-in person.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  serverUrl:
+                    type:
+                      - "null"
+                      - string
+                  off:
+                    type:
+                      - "null"
+                      - string
+                    enum:
+                      - deployment
+                      - administrator
+                      - null
+                  personalKeys:
+                    type:
+                      - "null"
+                      - object
+                    properties:
+                      maxDays:
+                        type: integer
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  problems:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                        message:
+                          type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  problems:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                        message:
+                          type: string
   /api/opa/bundle:
     get:
       tags:
