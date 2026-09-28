@@ -4,6 +4,7 @@
  * literal. Loki unquotes those literals the way Go's strconv.Unquote does, so escaping `\`, `"` and
  * control characters is enough for a value to be searched for and never parsed as syntax (AU-12).
  */
+import { env } from '../../config/env.js'
 
 /** A Go/LogQL double-quoted string literal whose content reads back exactly as `value`. */
 export function quote(value: string): string {
@@ -53,7 +54,28 @@ export interface AuditFilter {
   chain?: { id: string; from: number; to: number }
 }
 
-export function auditSelector(namespace?: string): string {
+/**
+ * How the audit stream is found (LOKI_AUDIT_SELECTOR). `label`: a `log_type` stream label, which
+ * the collector has to promote. `json`: no such label — jinbe's container, narrowed on the raw line,
+ * then on the parsed `log_type` field, which is what decides.
+ */
+export interface AuditStream {
+  mode: 'label' | 'json'
+  container: string
+}
+
+export const auditStream = (): AuditStream => ({ mode: env.LOKI_AUDIT_SELECTOR, container: env.LOKI_AUDIT_CONTAINER })
+
+// pino writes compact JSON, so the audit line carries this exact text; the `| json` stage confirms it.
+const AUDIT_LINE = quote('"log_type":"audit"')
+// The exclusion tolerates spacing: an audit line must never slip into the ops logs by formatting.
+const AUDIT_LINE_RE = quote('"log_type"\\s*:\\s*"audit"')
+
+export function auditSelector(namespace?: string, stream = auditStream()): string {
+  if (stream.mode === 'json') {
+    const labels = namespace ? [`namespace=${quote(namespace)}`] : []
+    return `{${[...labels, `container=${quote(stream.container)}`].join(', ')}} |= ${AUDIT_LINE}`
+  }
   return namespace ? `{log_type="audit", namespace=${quote(namespace)}}` : '{log_type="audit"}'
 }
 
@@ -64,12 +86,13 @@ function eventFilter(events: string[]): string {
 }
 
 /** The label-filter stages after `| json`, in a fixed order — the shape never depends on values. */
-export function auditPipeline(f: AuditFilter): string {
+export function auditPipeline(f: AuditFilter, stream = auditStream()): string {
   if (f.orgs && f.orgs.length === 0) throw new Error('an empty org scope would read nothing — refuse it upstream')
   const stages: string[] = []
   // Free text first, as a line filter on the raw line: cheapest, and it cannot reach the labels.
   if (f.q) stages.push(`|= ${quote(f.q)}`)
   stages.push('| json')
+  if (stream.mode === 'json') stages.push('| log_type="audit"')
   if (f.orgs) stages.push(f.orgs.length === 1 ? `| org_id=${quote(f.orgs[0])}` : `| org_id=~${regexAlternation(f.orgs)}`)
   if (f.subject) stages.push(`| actor_id=${quote(f.subject)} or target_id=${quote(f.subject)}`)
   if (f.actor) stages.push(`| actor_id=${quote(f.actor)}`)
@@ -88,8 +111,8 @@ export function auditPipeline(f: AuditFilter): string {
   return stages.join(' ')
 }
 
-export function auditQuery(f: AuditFilter, namespace?: string): string {
-  return `${auditSelector(namespace)} ${auditPipeline(f)}`
+export function auditQuery(f: AuditFilter, namespace?: string, stream = auditStream()): string {
+  return `${auditSelector(namespace, stream)} ${auditPipeline(f, stream)}`
 }
 
 /** `sum by (<field>) (count_over_time(<query> [<seconds>s]))`, optionally top-k. */
@@ -112,10 +135,11 @@ export interface OpsLogsFilter {
  * Operational logs: pinned to one namespace, and never the audit stream — that has its own scoped
  * API. `container` is a closed list checked at the route (`opal-*` arrives as a regex prefix).
  */
-export function opsLogsQuery(f: OpsLogsFilter): string {
-  const labels = [`namespace=${quote(f.namespace)}`, 'log_type!="audit"']
+export function opsLogsQuery(f: OpsLogsFilter, stream = auditStream()): string {
+  // Without the label, `log_type!="audit"` would match every stream: exclude on the raw line instead.
+  const labels = [`namespace=${quote(f.namespace)}`, ...(stream.mode === 'label' ? ['log_type!="audit"'] : [])]
   if (f.container) labels.push(f.container.endsWith('*') ? `container=~${quote(`${escapeRegex(f.container.slice(0, -1))}.*`)}` : `container=${quote(f.container)}`)
-  const stages: string[] = []
+  const stages: string[] = stream.mode === 'json' ? [`!~ ${AUDIT_LINE_RE}`] : []
   // Ids are searched as literals on the raw line: they appear there whatever the line's format.
   if (f.requestId) stages.push(`|= ${quote(f.requestId)}`)
   if (f.traceId) stages.push(`|= ${quote(f.traceId)}`)

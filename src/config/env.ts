@@ -249,6 +249,12 @@ export const envSchema = z.object({
   LOKI_TIMEOUT_MS: z.string().transform(Number).pipe(z.number().int().positive()).default('30000'),
   // The namespace every query is pinned to — Loki is single-tenant, so this is the env boundary.
   LOKI_NAMESPACE: z.string().regex(/^[a-z0-9-]{1,63}$/).optional(),
+  // How the audit reads find the audit/v1 lines. `label` — by a `log_type` stream label, which the
+  // collector must promote (docs/observability.md). `json` — by jinbe's container, then the line's
+  // own `log_type` field: works on any Loki, at the cost of parsing that container's lines.
+  LOKI_AUDIT_SELECTOR: z.enum(['label', 'json']).default('json'),
+  // The container that writes the audit lines, for `json` mode (the chart's container name).
+  LOKI_AUDIT_CONTAINER: z.string().regex(/^[a-z0-9-]{1,63}$/).default('jinbe'),
   TEMPO_URL: z.string().url().optional(),
   // Prometheus / Mimir, read by the Home (certificate expiry today). Unset: those tiles say
   // "not connected" (not_configured), never zero.

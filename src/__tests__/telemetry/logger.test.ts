@@ -85,6 +85,15 @@ describe('logger — shape (OBS-1.1)', () => {
     expect(line.service).toBe('jinbe')
   })
 
+  it('an audit line carries the literal "log_type":"audit" once, the mixin\'s app value overridden', () => {
+    // LOKI_AUDIT_SELECTOR=json finds audit lines by this exact text before parsing them.
+    const out = capture()
+    createLogger({ level: 'info', destination: out.stream }).child({ component: 'audit' }).info({ log_type: 'audit', schema: 'audit/v1' }, 'audit')
+    const [raw] = out.lines
+    expect(raw.split('"log_type":"audit"')).toHaveLength(2)
+    expect(raw).not.toContain('"log_type":"app"')
+  })
+
   it('propagates an incoming x-request-id to the log line and the response', async () => {
     const { fastify, out } = await app()
     const res = await fastify.inject({ method: 'GET', url: '/api/things/1', headers: { 'x-request-id': 'req-9fa6-abc' } })

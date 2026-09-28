@@ -70,7 +70,8 @@ export const ruleCompileErrors = new Gauge({
 })
 
 // ─── Audit v1 ────────────────────────────────────────────────────────────────
-// AU-15 compares this counter's hourly increase with the number of {log_type="audit"} lines in Loki.
+// AU-15 compares this counter's hourly increase with the number of audit lines in Loki (the
+// LOKI_AUDIT_SELECTOR stream: `log_type="audit"` as a label or as the parsed field).
 
 export const auditV1Events = new Counter({
   name: 'jinbe_audit_v1_events_total',

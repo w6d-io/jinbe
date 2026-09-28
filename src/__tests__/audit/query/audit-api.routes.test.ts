@@ -12,7 +12,12 @@ const h = vi.hoisted(() => ({
   members: { 'user-in-a': ['org-a'], 'user-in-b': ['org-b'] } as Record<string, string[]>,
   emit: vi.fn(async () => '1-0'),
   redis: null as unknown,
+  selector: 'json' as 'label' | 'json',
 }))
+vi.mock('../../../config/env.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../config/env.js')>()
+  return { ...real, env: new Proxy(real.env, { get: (t, k) => (k === 'LOKI_AUDIT_SELECTOR' ? h.selector : t[k as keyof typeof t]) }) }
+})
 
 // The scope is OPA's: what the caller holds in jinbe, and the orgs they administer (roster ∧ member).
 const who = (email: string) => email.split('@')[0]
@@ -72,6 +77,7 @@ beforeEach(() => {
     line({ event: 'auth.login.succeeded', actor: { id: 'user-in-a' }, target: { type: 'user', id: 'user-in-a' }, org_id: null }, NOW - 1000),
   ]
   h.emit.mockClear()
+  h.selector = 'json'
 })
 
 const get = (url: string, subject = 'root') => app.inject({ method: 'GET', url, headers: { 'x-test-subject': subject } })
@@ -90,7 +96,16 @@ describe('GET /api/audit/events — shape (§4.4)', () => {
     expect(body.events[0].event).toBe('auth.login.succeeded')
     expect(body.events[0]).not.toHaveProperty('hostname')
     expect(body.events[0]).toHaveProperty('event_id')
-    expect(loki.queries[0].startsWith('{log_type="audit"}')).toBe(true)
+    // Default json mode: no log_type label needed — jinbe's container, then the line's own field.
+    expect(loki.queries[0].startsWith('{container="jinbe"} |= "\\"log_type\\":\\"audit\\"" | json | log_type="audit"')).toBe(true)
+    // The line filter matches the lines as pino writes them.
+    expect(loki.entries[0].line).toContain('"log_type":"audit"')
+  })
+
+  it('LOKI_AUDIT_SELECTOR=label selects by the stream label', async () => {
+    h.selector = 'label'
+    expect((await get(`/api/audit/events?${week}`)).statusCode).toBe(200)
+    expect(loki.queries[0].startsWith('{log_type="audit"} | json')).toBe(true)
   })
 
   it('pages with an opaque cursor and never repeats an event', async () => {
@@ -145,7 +160,9 @@ describe('windows and limits are enforced before Loki is asked', () => {
   })
 })
 
-describe('org scoping (AU-3, AU-4)', () => {
+describe.each(['json', 'label'] as const)('org scoping (AU-3, AU-4) — %s selector', (selector) => {
+  beforeEach(() => { h.selector = selector })
+
   it('AU-3: an org admin asking for another org gets 403', async () => {
     const res = await get(`/api/audit/events?${week}&org=org-b`, 'org-admin-a')
     expect(res.statusCode).toBe(403)
@@ -158,6 +175,7 @@ describe('org scoping (AU-3, AU-4)', () => {
     const body = res.json()
     expect(body.scope).toEqual({ orgs: ['org-a'], platform: false })
     expect(loki.queries[0]).toContain('org_id="org-a"')
+    expect(loki.queries[0].startsWith(selector === 'json' ? '{container="jinbe"}' : '{log_type="audit"}')).toBe(true)
     // Even if the store answered more, nothing foreign reaches the caller.
     expect(body.events.map((e: { org_id: string }) => e.org_id)).toEqual(['org-a'])
   })

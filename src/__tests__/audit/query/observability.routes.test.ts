@@ -8,6 +8,7 @@ import { FakeLoki } from './mocks.js'
 
 const cfg = vi.hoisted(() => ({
   LOKI_NAMESPACE: 'auth' as string | undefined,
+  LOKI_AUDIT_SELECTOR: 'json' as 'label' | 'json',
   TEMPO_URL: 'http://tempo.tempo:3200' as string | undefined,
   GRAFANA_URL: 'https://grafana.example.com' as string | undefined,
   GRAFANA_LOKI_DATASOURCE_UID: 'loki-uid',
@@ -64,12 +65,23 @@ describe('GET /logs', () => {
     const res = await get('/api/admin/observability/logs?request_id=req-1&service=jinbe')
     expect(res.statusCode).toBe(200)
     const body = res.json()
-    expect(loki.queries[0].startsWith('{namespace="auth", log_type!="audit"')).toBe(true)
+    // Default json mode: no log_type label to exclude by, so audit lines are dropped on the raw line.
+    expect(loki.queries[0].startsWith('{namespace="auth", container="jinbe"} !~ "\\"log_type\\"')).toBe(true)
     expect(BigInt(loki.ranges[0].endNs) - BigInt(loki.ranges[0].startNs)).toBe(BigInt(HOUR) * 1_000_000n)
     expect(JSON.stringify(body)).not.toContain('alice@example.com')
     expect(JSON.stringify(body)).not.toContain('ory_st_abcdefghijklmnop')
     expect(body).toMatchObject({ namespace: 'auth', truncated: false, source: 'loki' })
     expect(body.lines).toHaveLength(1)
+  })
+
+  it('LOKI_AUDIT_SELECTOR=label excludes the audit stream by its label', async () => {
+    cfg.LOKI_AUDIT_SELECTOR = 'label'
+    try {
+      expect((await get('/api/admin/observability/logs?service=jinbe')).statusCode).toBe(200)
+      expect(loki.queries[0].startsWith('{namespace="auth", log_type!="audit", container="jinbe"}')).toBe(true)
+    } finally {
+      cfg.LOKI_AUDIT_SELECTOR = 'json'
+    }
   })
 
   it('caps the window at 24 h and the lines at 1000', async () => {

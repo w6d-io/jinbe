@@ -98,6 +98,27 @@ OPA embeds its whole Prometheus registry in it. `status.prometheus=false` does *
 The route accepts it and drops everything but the revision — refusing it would only make the engine
 log an upload failure forever over a field nobody reads.
 
+## Audit and ops-log reads from Loki
+
+`/api/audit/*`, the Home's activity and changes tiles, and `/api/admin/observability/logs` read
+Loki (`LOKI_URL`, pinned to `LOKI_NAMESPACE`). Every audit/v1 event is one JSON line on jinbe's
+stdout with `"log_type":"audit"`; whether the collector turns that field into a Loki **label** is up
+to the cluster, so how the reads find the audit stream is a setting:
+
+| `LOKI_AUDIT_SELECTOR` | audit reads | ops logs exclude audit by |
+|---|---|---|
+| `json` (default) | `{namespace="…", container="jinbe"} \|= "\"log_type\":\"audit\"" \| json \| log_type="audit" …` | a raw-line filter, `!~ "\"log_type\"\\s*:\\s*\"audit\""` |
+| `label` | `{log_type="audit", namespace="…"} \| json …` | the selector, `log_type!="audit"` |
+
+`json` works on any Loki: it reads only jinbe's container (`LOKI_AUDIT_CONTAINER`, default
+`jinbe`), drops other lines on the raw text before parsing, and the parsed `log_type` field decides.
+`label` is cheaper on large volumes but needs the collector to promote `log_type` for jinbe's
+container; with `label` set and no such label, every audit read comes back empty. Switch to `label`
+only once `{log_type="audit", namespace="…"}` returns lines in Grafana.
+
+Beyond the selector, both modes build the same query — the org scope, the field filters, the
+escaping of every caller value into one literal, the limits and the windows.
+
 ## Known rough edge
 
 `module.register()`, which the ESM instrumentation hook needs, is deprecated from Node 26 and prints
