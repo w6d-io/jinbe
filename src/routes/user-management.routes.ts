@@ -38,6 +38,7 @@ import {
   notFoundResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+import { clientIp } from '../utils/client-ip.js'
 
 /**
  * Managing users, one permission per action — so a support desk can fix somebody's address, see and
@@ -87,7 +88,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   // starve the others.
   fastify.get<{ Querystring: { q: string; limit?: number } }>('/users/lookup', {
     preHandler: requirePermission('users:read'),
-    config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? r.ip } },
+    config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) } },
     schema: {
       description:
         'Find a person by Kratos identity id (exact), whole email (exact) or the start of an email; falls back to a ' +
@@ -381,7 +382,7 @@ async function sendLoginLinkHandler(
     actor: {
       id: request.userContext?.id ?? null,
       email: null,
-      ip: request.ip ?? null,
+      ip: clientIp(request) ?? null,
       ua: (request.headers['user-agent'] as string) || null,
       sessionId: request.userContext?.sessionId ?? null,
     },

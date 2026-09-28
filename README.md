@@ -492,6 +492,8 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 |---|---|---|
 | `RATE_LIMIT_MAX` | `100` | Requests per window. |
 | `RATE_LIMIT_TIME_WINDOW` | `60000` | Window in milliseconds. |
+| `TRUSTED_PROXY_HOPS` | `1` | Proxies trusted in front of jinbe, the socket peer first; the client is the X-Forwarded-For entry after them. `1` = Envoy (or nginx) → Oathkeeper → jinbe (Oathkeeper forwards the header untouched). `0` = the socket peer. |
+| `TRUST_ENVOY_EXTERNAL_ADDRESS` | `false` | Prefer Envoy's `x-envoy-external-address`. Only where every external request reaches jinbe through Envoy; elsewhere the client writes it. |
 
 #### Redis
 

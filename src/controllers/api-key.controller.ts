@@ -11,6 +11,7 @@ import {
   ApiKeyCreateBody,
   apiKeyCreateBodySchema,
 } from '../schemas/api-key.schema.js'
+import { clientIp } from '../utils/client-ip.js'
 
 export function handleError(err: unknown, reply: FastifyReply): FastifyReply {
   if (err instanceof AuthzUnavailableError) {
@@ -69,7 +70,7 @@ export class ApiKeyController {
       auditEventService
         .emit({
           type: 'api_key.created',
-          actor: { email: request.userContext?.email, ip: request.ip },
+          actor: { email: request.userContext?.email, ip: clientIp(request) },
           target: { type: 'oauth2_client', id: result.client_id },
           details: { organizationId, label: body.label, scopes: result.scopes, expires_at: result.expires_at },
           source: 'jinbe-api',
@@ -155,7 +156,7 @@ export class ApiKeyController {
       auditEventService
         .emit({
           type: 'api_key.revoked',
-          actor: { email: request.userContext?.email, ip: request.ip },
+          actor: { email: request.userContext?.email, ip: clientIp(request) },
           target: { type: 'oauth2_client', id: clientId },
           details: { organizationId },
           source: 'jinbe-api',

@@ -5,12 +5,13 @@ import { isPublicRoute } from '../../middleware/require-auth.js'
 import { LokiUnavailableError } from './loki.js'
 import { zodMessage } from './params.js'
 import type { AuditScope } from './scope.js'
+import { clientIp } from '../../utils/client-ip.js'
 
 /** Shared plumbing of the /api/audit and /api/admin/observability plugins. */
 
 /** 10 requests per second per user (§4.4), when the rate-limit plugin is registered. */
 export const perUserRate = {
-  rateLimit: { max: 10, timeWindow: 1000, keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? r.ip },
+  rateLimit: { max: 10, timeWindow: 1000, keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) },
 }
 
 /** Records every route of the plugin with its per-route guards, so the table sees them standalone too. */

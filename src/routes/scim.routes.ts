@@ -14,6 +14,7 @@ import {
   type ScimPatchOperation,
 } from '../services/scim.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
+import { clientIp } from '../utils/client-ip.js'
 
 /**
  * SCIM 2.0 endpoints (RFC 7644) — Users only (spec phase 1).
@@ -130,7 +131,7 @@ function listResponse(resources: unknown[], totalResults = resources.length) {
 function scimActor(request: FastifyRequest) {
   return {
     email: `scim:${request.scimToken?.label ?? 'unknown'}`,
-    ip: request.ip,
+    ip: clientIp(request),
     ua: (request.headers['user-agent'] as string) || null,
   }
 }

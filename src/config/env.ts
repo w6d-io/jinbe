@@ -44,6 +44,19 @@ export const envSchema = z.object({
   RATE_LIMIT_MAX: z.string().transform(Number).pipe(z.number().positive()).default('100'),
   RATE_LIMIT_TIME_WINDOW: z.string().transform(Number).pipe(z.number().positive()).default('60000'),
 
+  // Client address (utils/client-ip.ts): Fastify trusts this many hops, the socket peer first, and
+  // request.ip is the X-Forwarded-For entry after them — never the client-written leftmost one. The
+  // default, 1, is Envoy (or nginx) -> Oathkeeper -> jinbe: Oathkeeper forwards the header as it got
+  // it and appends nothing, Envoy appends the client. 0 = the socket peer, the header ignored.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
+  // 'true' only where every external request reaches jinbe through Envoy, which overwrites
+  // x-envoy-external-address: the header is then preferred to the hop count. Anywhere a client can
+  // reach Oathkeeper without Envoy (an nginx ingress) the header is the client's to write.
+  TRUST_ENVOY_EXTERNAL_ADDRESS: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 

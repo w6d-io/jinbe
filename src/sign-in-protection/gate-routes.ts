@@ -3,7 +3,8 @@ import http from 'node:http'
 import https from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
 import { env } from '../config/index.js'
-import { gateRefusalBody, gateSubmit, gatewayClientIp, hashForLog, parseSubmitBody, submitToken, type GateFlow } from './gate.js'
+import { gateRefusalBody, gateSubmit, hashForLog, parseSubmitBody, submitToken, type GateFlow } from './gate.js'
+import { clientIp } from '../utils/client-ip.js'
 
 /**
  * POST /api/public/sign-in-protection/gate/self-service/:flow — the sign-in gate's front door (gate.ts).
@@ -83,7 +84,8 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
       rateLimit: {
         max: 120,
         timeWindow: '1 minute',
-        keyGenerator: (request: FastifyRequest) => gatewayClientIp(request.headers, request.ip) ?? request.ip,
+        // The visitor's address as the edge saw it (utils/client-ip.ts), never the first X-Forwarded-For entry.
+        keyGenerator: (request: FastifyRequest) => clientIp(request),
       },
     },
     schema: {
@@ -98,7 +100,7 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
     if (!FLOWS.has(flow)) return reply.status(404).send({ error: { code: 404, status: 'Not Found', message: 'Not Found' } })
 
     const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)
-    const ip = gatewayClientIp(request.headers, request.ip ?? null)
+    const ip = clientIp(request)
     const tokenHeader = request.headers[GATE_TOKEN_HEADER]
     const fields = parseSubmitBody(request.headers['content-type'], body)
     const decision = await gateSubmit({

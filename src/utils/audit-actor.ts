@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify'
 import type { AuditActor } from '../services/audit-event.service.js'
+import { clientIp } from './client-ip.js'
 
 /**
  * Shared audit-actor resolver (A4/P2-5). Single source of truth for the actor
@@ -24,7 +25,7 @@ export function auditActor(request: FastifyRequest): AuditActor & { requestId: s
     id: uc?.id && uc.id !== 'unknown' ? uc.id : null,
     email,
     name,
-    ip: request.ip ?? null,
+    ip: clientIp(request) ?? null,
     ua: (headers['user-agent'] as string) || null,
     sessionId: uc?.sessionId ?? request.validatedSession?.sessionId ?? null,
     requestId: (headers['x-request-id'] as string) || null,

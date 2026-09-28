@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError, type z, type ZodTypeAny } from 'zod'
 import { nameParamsSchema } from './schemas.js'
 import type { Actor } from './audit.js'
+import { clientIp } from '../utils/client-ip.js'
 
 /** Request plumbing shared by every Sites route file: actor, zod parsing, one error shape. */
 
@@ -9,7 +10,7 @@ export function actorOf(request: FastifyRequest): Actor {
   return {
     id: request.userContext?.id ?? null,
     email: request.userContext?.email ?? null,
-    ip: request.ip,
+    ip: clientIp(request),
     ua: (request.headers['user-agent'] as string | undefined)?.slice(0, 200) ?? null,
     sessionId: request.userContext?.sessionId ?? null,
     requestId: (request.headers['x-request-id'] as string | undefined) ?? null,

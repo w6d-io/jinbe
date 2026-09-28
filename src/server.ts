@@ -67,6 +67,7 @@ import { auditRouteWrite } from './audit/route-events.js'
 import { isBootstrapReady, markBootstrapReady } from './bootstrap/ready-state.js'
 import { homeRoutes } from './home/routes.js'
 import { startHomeBackground } from './home/jobs.js'
+import { trustProxySetting } from './utils/client-ip.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
@@ -83,7 +84,8 @@ export async function buildServer() {
     // JSON lines with redaction, ISO time and `log_type` — see telemetry/logger.ts.
     loggerInstance: rootLogger(),
     ...fastifyLoggingOptions,
-    trustProxy: true,
+    // X-Forwarded-For entries the proxies wrote, never the client's own (utils/client-ip.ts).
+    trustProxy: trustProxySetting(),
   })
 
   // Set error handler
