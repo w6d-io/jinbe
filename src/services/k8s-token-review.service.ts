@@ -1,6 +1,9 @@
 import * as k8s from '@kubernetes/client-node'
 import { createHash } from 'node:crypto'
 import { env } from '../config/index.js'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('k8s-token-review')
 
 /**
  * A machine caller authenticated by the cluster's API server.
@@ -119,16 +122,13 @@ export class K8sTokenReviewService {
       })
       status = response.status
     } catch (error) {
-      console.error(
-        '[k8s-token-review] TokenReview call failed (deny):',
-        error instanceof Error ? error.message : error
-      )
+      log().error({ reason: error instanceof Error ? error.message : String(error) }, 'TokenReview call failed (deny)')
       return null
     }
 
     if (!status?.authenticated) {
       if (status?.error) {
-        console.warn(`[k8s-token-review] token rejected by API server: ${status.error}`)
+        log().warn({ reason: status.error }, 'token rejected by API server')
       }
       return null
     }
@@ -138,9 +138,7 @@ export class K8sTokenReviewService {
     // token, not one minted for jinbe. Accepting it would turn every pod's
     // default token into a jinbe credential, so it is rejected here.
     if (!status.audiences?.includes(audience)) {
-      console.warn(
-        `[k8s-token-review] audience mismatch (want '${audience}', got ${JSON.stringify(status.audiences ?? [])}) — denied`
-      )
+      log().warn({ want: audience, got: status.audiences ?? [] }, 'audience mismatch — denied')
       return null
     }
 
@@ -149,9 +147,7 @@ export class K8sTokenReviewService {
     if (!match) {
       // A human/OIDC user token is authenticated but is NOT a ServiceAccount;
       // it must not be projected into the machine subject namespace.
-      console.warn(
-        `[k8s-token-review] authenticated subject is not a ServiceAccount ('${username}') — denied`
-      )
+      log().warn({ username }, 'authenticated subject is not a ServiceAccount — denied')
       return null
     }
 
@@ -159,9 +155,7 @@ export class K8sTokenReviewService {
     const serviceAccount = match[3]
 
     if (!this.isAllowedSubject(namespace, serviceAccount)) {
-      console.warn(
-        `[k8s-token-review] '${namespace}:${serviceAccount}' not in K8S_SA_ALLOWED_SUBJECTS — denied`
-      )
+      log().warn({ namespace, serviceAccount }, 'ServiceAccount not in K8S_SA_ALLOWED_SUBJECTS — denied')
       return null
     }
 
@@ -231,10 +225,7 @@ export class K8sTokenReviewService {
       }
       this.api = kc.makeApiClient(k8s.AuthenticationV1Api)
     } catch (error) {
-      console.error(
-        '[k8s-token-review] no usable Kubernetes config — ServiceAccount auth disabled:',
-        error instanceof Error ? error.message : error
-      )
+      log().error({ reason: error instanceof Error ? error.message : String(error) }, 'no usable Kubernetes config — ServiceAccount auth disabled')
       this.api = null
     }
     return this.api

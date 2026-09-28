@@ -438,10 +438,13 @@ const parseEnv = () => {
     return envSchema.parse(process.env)
   } catch (error) {
     if (error instanceof z.ZodError) {
-      console.error('❌ Invalid environment variables:')
-      error.errors.forEach((err) => {
-        console.error(`  ${err.path.join('.')}: ${err.message}`)
-      })
+      // One JSON line, written by hand: the logger reads its level and base fields from this very
+      // object, so it cannot exist yet. Names and messages only — never the values.
+      const issues = error.errors.map((err) => ({ variable: err.path.join('.'), message: err.message }))
+      process.stderr.write(`${JSON.stringify({
+        level: 'fatal', time: new Date().toISOString(), service: 'jinbe', log_type: 'app', component: 'config',
+        msg: 'Invalid environment variables', issues,
+      })}\n`)
       process.exit(1)
     }
     throw error

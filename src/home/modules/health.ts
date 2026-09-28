@@ -20,6 +20,7 @@ export interface PlatformFacts {
   rules: { at: number; count: number; compileErrors: number } | null
   outbox: { length: number; oldestMs: number | null } | null
   auditFailures: number
+  notificationsDead: number
   certs: { state: 'ok'; certs: Certificate[] } | { state: 'not_configured' | 'warming' | 'down' }
   sources: Record<string, SourceDetail>
 }
@@ -28,7 +29,7 @@ export interface PlatformFacts {
 export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
   const sourcesOut: Record<string, SourceDetail> = {}
   const kubeOff = sources.kubeMode() === 'off'
-  const [rollout, serving, engineList, opal, rules, outbox, failures, certJob] = await Promise.all([
+  const [rollout, serving, engineList, opal, rules, outbox, failures, certJob, dead] = await Promise.all([
     kubeOff ? Promise.resolve(null) : probe(() => sources.gatewayRollout(), PROBE_MS),
     probe(() => sources.servingRevision(), PROBE_MS),
     probe(() => sources.engines(), PROBE_MS),
@@ -37,6 +38,7 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
     sources.auditSink() === 'legacy' ? Promise.resolve(null) : probe(() => sources.outbox(), PROBE_MS),
     probe(() => sources.auditFailures(now), PROBE_MS),
     sources.prom() ? probe(() => readJob('certificates', now), PROBE_MS) : Promise.resolve(null),
+    probe(() => sources.notificationsDeadLettered(), PROBE_MS),
   ])
 
   let gateway: PlatformFacts['gateway']
@@ -84,6 +86,7 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
     rules: rules.ok ? rules.value : null,
     outbox: outbox?.ok ? outbox.value : null,
     auditFailures: failures.ok ? failures.value : 0,
+    notificationsDead: dead.ok ? dead.value : 0,
     certs,
     sources: sourcesOut,
   }

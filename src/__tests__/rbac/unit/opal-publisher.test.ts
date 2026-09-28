@@ -20,6 +20,9 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
 import { opalPublisher, OPAL_PUSH_WINDOW_MS, OPAL_PUSH_BACKOFF_MS } from '../../../services/opal-publisher.js'
 import { rbacOpalRoutes } from '../../../routes/rbac-opal.routes.js'
 import { opalPushes } from '../../../telemetry/metrics.js'
+import { componentLogger } from '../../../telemetry/logger.js'
+
+const pushLog = componentLogger('opal-push')
 
 const OPAL = 'http://auth-opal-server:7002'
 const fetchMock = vi.fn()
@@ -67,8 +70,8 @@ describe('opalPublisher', () => {
       OPAL_DATA_REFRESH_SECONDS: 60,
       JINBE_INTERNAL_URL: 'http://auth-jinbe:8080',
     })
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(pushLog, 'info').mockImplementation(() => {})
+    vi.spyOn(pushLog, 'error').mockImplementation(() => {})
   })
 
   afterEach(() => {
@@ -135,8 +138,8 @@ describe('opalPublisher', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
     expect(mocks.getServices).not.toHaveBeenCalled()
-    expect(console.log).not.toHaveBeenCalled()
-    expect(console.error).not.toHaveBeenCalled()
+    expect(pushLog.info).not.toHaveBeenCalled()
+    expect(pushLog.error).not.toHaveBeenCalled()
   })
 
   it('refreshes at startup straight away, without waiting for the window', async () => {
@@ -161,7 +164,7 @@ describe('opalPublisher', () => {
     await done
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(console.error).not.toHaveBeenCalled()
+    expect(pushLog.error).not.toHaveBeenCalled()
     expect(await counter('ok')).toBe(ok + 1)
   })
 
@@ -172,8 +175,8 @@ describe('opalPublisher', () => {
     await vi.advanceTimersByTimeAsync(OPAL_PUSH_WINDOW_MS + OPAL_PUSH_BACKOFF_MS.reduce((a, b) => a + b, 0))
 
     expect(fetchMock).toHaveBeenCalledTimes(OPAL_PUSH_BACKOFF_MS.length + 1)
-    expect(console.error).toHaveBeenCalledTimes(1)
-    expect(String(vi.mocked(console.error).mock.calls[0][0])).toContain('mutation-0,mutation-1')
+    expect(pushLog.error).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(pushLog.error).mock.calls[0][0]).toMatchObject({ reason: expect.stringContaining('mutation-0,mutation-1') })
     expect(await counter('failed')).toBe(failed + 1)
   })
 })

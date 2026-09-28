@@ -1,4 +1,5 @@
 import pino, { type DestinationStream, type Logger, type LoggerOptions } from 'pino'
+import { LogController } from 'fastify'
 import { randomUUID } from 'crypto'
 import type { IncomingMessage } from 'http'
 import { env } from '../config/index.js'
@@ -81,10 +82,11 @@ export function genReqId(req: IncomingMessage): string {
 /** Fastify options that go with the logger: the id, its log key, and our own request line. */
 export const fastifyLoggingOptions = {
   genReqId,
-  requestIdLogLabel: 'request_id',
-  // Fastify's two lines per request ("incoming request" / "request completed") are replaced by one
-  // line from middleware/request-logger.ts, which knows the route pattern and the subject.
-  disableRequestLogging: true,
+  // Through the log controller: the top-level options are deprecated (FSTDEP023/024) and each one
+  // printed a plain-text warning at boot. Fastify's two lines per request ("incoming request" /
+  // "request completed") are replaced by one line from middleware/request-logger.ts, which knows
+  // the route pattern and the subject.
+  logController: new LogController({ requestIdLogLabel: 'request_id', disableRequestLogging: true }),
 }
 
 let root: Logger | undefined
@@ -93,4 +95,29 @@ let root: Logger | undefined
 export function rootLogger(): Logger {
   root ??= createLogger()
   return root
+}
+
+const children = new Map<string, Logger>()
+
+/** One part of the process (`component` on every line), a child of the process logger made on first use. */
+export function componentLogger(component: string): Logger {
+  let child = children.get(component)
+  if (!child) {
+    child = rootLogger().child({ component })
+    children.set(component, child)
+  }
+  return child
+}
+
+/**
+ * Node's process warnings (deprecations, max-listeners, experimental features) as log lines. The
+ * default handler prints them to stderr in plain text — two lines each — which is removed here, so
+ * every warning is one JSON line at `warn` with its code.
+ */
+export function captureProcessWarnings(log: Logger = componentLogger('process')): void {
+  process.removeAllListeners('warning')
+  process.on('warning', (warning) => {
+    const code = (warning as Error & { code?: string }).code
+    log.warn({ warning: { name: warning.name, ...(code ? { code } : {}) } }, warning.message)
+  })
 }

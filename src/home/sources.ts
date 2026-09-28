@@ -21,6 +21,7 @@ import { rollout } from '../gateway/service.js'
 import { HttpLokiClient, lokiClient, type LokiClient } from '../audit/query/loki.js'
 import { promClient, type PromClient } from '../telemetry/prom-query.js'
 import { ENGINES_KEY, OPAL_KEY, RULES_KEY, SERVING_KEY, auditFailuresKey } from './runtime.js'
+import { DEAD_LETTER_KEY } from '../services/notifications/notifier.js'
 
 /**
  * Every source the Home reads, behind one seam: the modules compute from these, the tests replace
@@ -115,6 +116,11 @@ export async function outbox(): Promise<{ length: number; oldestMs: number | nul
   ])
   const id = first?.[0]?.[0]
   return { length, oldestMs: id ? Number(id.split('-')[0]) : null }
+}
+
+/** Entity notifications no notifier could deliver, waiting in the dead-letter stream. */
+export async function notificationsDeadLettered(): Promise<number> {
+  return getRedisClient().xlen(DEAD_LETTER_KEY)
 }
 
 /** audit/v1 sink failures in the current and previous hour (J7). */

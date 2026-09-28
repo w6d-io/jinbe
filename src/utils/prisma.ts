@@ -1,4 +1,7 @@
 import { PrismaClient } from '@prisma/client'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('mongodb')
 
 /**
  * Prisma Client singleton
@@ -19,7 +22,6 @@ const prismaClientSingleton = () => {
  */
 export async function testDatabaseConnection(): Promise<void> {
   const startTime = Date.now()
-  console.log('🔌 Testing MongoDB connection...')
 
   try {
     // Attempt to connect and run a simple command
@@ -28,25 +30,17 @@ export async function testDatabaseConnection(): Promise<void> {
     await prisma.$runCommandRaw({ ping: 1 })
 
     const duration = Date.now() - startTime
-    console.log(`✅ MongoDB connection successful (${duration}ms)`)
+    log().info({ durationMs: duration }, 'MongoDB connection successful')
   } catch (error) {
     const duration = Date.now() - startTime
-    console.error(`❌ MongoDB connection failed after ${duration}ms`)
-
-    if (error instanceof Error) {
-      console.error(`   Error: ${error.message}`)
-
-      // Provide helpful debugging hints based on common errors
-      if (error.message.includes('ECONNREFUSED')) {
-        console.error('   Hint: MongoDB server may not be running')
-      } else if (error.message.includes('authentication failed')) {
-        console.error('   Hint: Check your MongoDB credentials in DATABASE_URL')
-      } else if (error.message.includes('ENOTFOUND')) {
-        console.error('   Hint: MongoDB host not found - check your connection string')
-      } else if (error.message.includes('timed out')) {
-        console.error('   Hint: Connection timed out - check network/firewall settings')
-      }
-    }
+    const message = error instanceof Error ? error.message : String(error)
+    // Provide helpful debugging hints based on common errors
+    const hint = message.includes('ECONNREFUSED') ? 'MongoDB server may not be running'
+      : message.includes('authentication failed') ? 'Check your MongoDB credentials in DATABASE_URL'
+      : message.includes('ENOTFOUND') ? 'MongoDB host not found - check your connection string'
+      : message.includes('timed out') ? 'Connection timed out - check network/firewall settings'
+      : undefined
+    log().error({ durationMs: duration, reason: message, ...(hint ? { hint } : {}) }, 'MongoDB connection failed')
 
     throw error
   }
@@ -70,7 +64,6 @@ const collectionsToDisableValidation = [
  * This prevents conflicts between MongoDB validators and Prisma
  */
 export async function applyMongoValidation(): Promise<void> {
-  console.log('🔧 Disabling MongoDB schema validation (Prisma handles integrity)...')
 
   for (const collection of collectionsToDisableValidation) {
     try {
@@ -87,14 +80,14 @@ export async function applyMongoValidation(): Promise<void> {
         message.includes('ns does not exist') ||
         message.includes('ns not found')
       if (isNamespaceNotFound) {
-        console.log(`   ⏭️  ${collection}: collection doesn't exist yet, skipping`)
+        log().debug({ collection }, "collection doesn't exist yet, schema validation not changed")
       } else {
-        console.warn(`   ⚠️  ${collection}: ${message}`)
+        log().warn({ collection, reason: message }, 'could not disable schema validation')
       }
     }
   }
 
-  console.log('✅ MongoDB schema validation disabled')
+  log().info('MongoDB schema validation disabled (Prisma handles integrity)')
 }
 
 declare global {

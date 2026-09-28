@@ -1,5 +1,5 @@
 import { Counter } from 'prom-client'
-import pino from 'pino'
+import { componentLogger } from '../telemetry/logger.js'
 import { getRedisClient } from './redis-client.service.js'
 import { env } from '../config/env.js'
 import { foldCategory, type AuditCategory, type AuditChanges, type AuditEvent, type AuditKind, type AuditResult, type AuditSeverity, type LegacyAuditEvent } from './audit-types.js'
@@ -47,9 +47,9 @@ export const auditEmitFailuresCounter = new Counter({
 // HTTP RED series live with the other process metrics; re-exported for existing importers.
 export { httpRequestsCounter, httpDurationHistogram } from '../telemetry/metrics.js'
 
-// Structured logger for fail-loud audit lines (no request context here).
-// Fall back to 'info' when LOG_LEVEL is absent (e.g. a partially-mocked env).
-const auditLog = pino({ name: 'audit', level: env.LOG_LEVEL || 'info' })
+// Fail-loud lines about the audit trail itself (no request context here). Application lines, through
+// the process logger: its shape and redaction, not a second pino with its own.
+const auditLog = () => componentLogger('audit-event')
 
 // ─── Redaction (P0-3) ─────────────────────────────────────────────────────────
 
@@ -295,7 +295,7 @@ class AuditEventService {
     } catch (err) {
       // [P1-1] Fail-loud — never a silent catch for a security event.
       auditEmitFailuresCounter.labels(rich.category, rich.verb).inc()
-      auditLog.error(
+      auditLog().error(
         { err: (err as Error).message, category: rich.category, verb: rich.verb, result: rich.result, targetType: rich.targetType, actorId: rich.actor?.id ?? null },
         'audit emit failed (primary stream)',
       )
@@ -307,7 +307,7 @@ class AuditEventService {
     try {
       if (shouldFanOut(rich)) await this.fanOut(rich)
     } catch (err) {
-      auditLog.warn({ err: (err as Error).message, targetType: rich.targetType }, 'audit fan-out failed (primary stream intact)')
+      auditLog().warn({ err: (err as Error).message, targetType: rich.targetType }, 'audit fan-out failed (primary stream intact)')
     }
     return id
   }

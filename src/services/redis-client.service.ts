@@ -1,5 +1,6 @@
 import Redis from 'ioredis'
 import { env } from '../config/env.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * Redis Client Service
@@ -29,12 +30,12 @@ class RedisClientService {
 
       this.client.on('connect', () => {
         this.connected = true
-        console.log('[redis] Connected')
+        componentLogger('redis').info('Connected')
       })
 
       this.client.on('error', (err) => {
         this.connected = false
-        console.error('[redis] Error:', err.message)
+        componentLogger('redis').error({ reason: err.message }, 'Redis error')
       })
 
       this.client.on('close', () => {
@@ -66,7 +67,7 @@ class RedisClientService {
       await this.client.quit()
       this.client = null
       this.connected = false
-      console.log('[redis] Disconnected')
+      componentLogger('redis').info('Disconnected')
     }
   }
 

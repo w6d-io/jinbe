@@ -16,6 +16,7 @@ import {
 import { membershipRowsKept, membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
 import { declaredGroups } from '../services/group-catalogue.js'
 import { rightsForDisplay } from '../authz/opa.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -173,7 +174,7 @@ export class AdminController {
     } catch (err) {
       // Empty is not the same as unknown, and a screen must be able to tell them apart: this row
       // says its groups could not be read rather than showing none.
-      console.error(`[admin] Could not resolve what ${email} holds:`, err)
+      componentLogger('admin').error({ err, subjectId: identity.id }, 'could not resolve what the identity holds')
       return { ...identity, groups: [], roles: [], permissions: [], rbacUnavailable: true }
     }
   }

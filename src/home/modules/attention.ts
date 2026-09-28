@@ -101,6 +101,15 @@ function platformBroken(f: PlatformFacts): Staged[] {
       since: iso(f.now - HOUR), target: { page: 'audit', params: {} }, metrics: { count: f.auditFailures }, _audience: 'super_admin',
     }))
   }
+  if (f.notificationsDead > 0) {
+    out.push(item({
+      id: 'notifications_dead_letter:http', kind: 'notifications_dead_letter', severity: 'warning',
+      title: `${f.notificationsDead} notification${f.notificationsDead === 1 ? '' : 's'} could not be delivered`,
+      detail: 'kept in the Redis stream notifications:dead with the reason; see the jinbe logs "notification dead-lettered"',
+      subject: { type: 'component', id: 'notifications', label: 'Notifications' },
+      since: iso(f.now), target: { page: 'dashboard', params: {} }, metrics: { count: f.notificationsDead }, _audience: 'super_admin',
+    }))
+  }
   return out
 }
 

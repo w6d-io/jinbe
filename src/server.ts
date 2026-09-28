@@ -54,7 +54,7 @@ import { realtimeService } from './services/realtime.service.js'
 import { opalPublisher } from './services/opal-publisher.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
-import { rootLogger, fastifyLoggingOptions } from './telemetry/logger.js'
+import { rootLogger, componentLogger, captureProcessWarnings, fastifyLoggingOptions } from './telemetry/logger.js'
 import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
 import { isPublicRoute } from './middleware/require-auth.js'
@@ -208,7 +208,7 @@ async function start() {
       await testDatabaseConnection()
       await applyMongoValidation()
     } else {
-      console.log('[startup] DATABASE_URL not set — MongoDB features disabled (clusters, backups)')
+      componentLogger('startup').info('DATABASE_URL not set — MongoDB features disabled (clusters, backups)')
     }
 
     const fastify = await buildServer()
@@ -284,7 +284,7 @@ async function start() {
       throw err
     }
   } catch (err) {
-    console.error('Failed to start server:', err)
+    componentLogger('startup').fatal({ err }, 'Failed to start server')
     process.exit(1)
   }
 }
@@ -293,7 +293,7 @@ async function start() {
 const signals = ['SIGINT', 'SIGTERM']
 signals.forEach((signal) => {
   process.on(signal, async () => {
-    console.log(`Received ${signal}, shutting down gracefully...`)
+    componentLogger('shutdown').info({ signal }, 'Shutting down gracefully')
     try {
       notificationService.stop()
       realtimeService.stop()
@@ -306,5 +306,7 @@ signals.forEach((signal) => {
 
 // Start server if this is the main module
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // Before Fastify is built: it reports deprecations while constructing.
+  captureProcessWarnings()
   start()
 }

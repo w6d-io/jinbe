@@ -7,6 +7,7 @@ import { oathkeeperRuleSchema } from '../schemas/rbac/access-rules.schema.js'
 import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oathkeeper-handlers.js'
 import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
 import { assertOrgParams } from '../policy/route-org-param.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 export interface AuthBundle {
   version: '1'
@@ -195,9 +196,9 @@ class RbacBundleService {
     } catch (err) {
       try {
         await this.applyBundle(snapshot)
-        console.error('[rbac-bundle] import failed mid-way — pre-import snapshot restored:', err)
+        componentLogger('rbac-bundle').error({ err }, 'import failed mid-way — pre-import snapshot restored')
       } catch (restoreErr) {
-        console.error('[rbac-bundle] import failed mid-way AND compensating restore failed — state may be inconsistent. Import error:', err, 'Restore error:', restoreErr)
+        componentLogger('rbac-bundle').fatal({ err, restoreError: restoreErr instanceof Error ? restoreErr.message : String(restoreErr) }, 'import failed mid-way AND compensating restore failed — state may be inconsistent')
       }
       throw err
     }

@@ -2,6 +2,7 @@ import { createGzip } from 'node:zlib'
 import { pack } from 'tar-stream'
 import { redisRbacRepository } from './redis-rbac.repository.js'
 import { kratosService } from './kratos.service.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * OPA Bundle Service
@@ -101,7 +102,7 @@ class OpaBundleService {
       }
       return { group_membership, group_membership_by_id, emails: {} }
     } catch (err) {
-      console.error('[opa-bundle] Failed to fetch Kratos bindings:', err)
+      componentLogger('opa-bundle').error({ err }, 'could not fetch Kratos bindings')
       return { group_membership: {}, group_membership_by_id: {}, emails: {} }
     }
   }

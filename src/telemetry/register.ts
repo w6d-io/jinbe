@@ -15,8 +15,15 @@
 import { register } from 'node:module'
 import { serviceIdentity, tracingRequested } from './identity.js'
 
-const say = (message: string) =>
-  process.stdout.write(JSON.stringify({ level: 'info', logger: 'telemetry', message }) + '\n')
+// The application logger is not loaded yet (it reads config/env, which this preload must not), so
+// the line is written by hand in the same shape: one JSON object, `msg`, ISO time, `log_type`.
+const say = (msg: string) => {
+  const { service, env, version } = serviceIdentity()
+  const base = { service: service ?? 'jinbe', ...(env ? { env } : {}), ...(version ? { version } : {}) }
+  process.stdout.write(
+    JSON.stringify({ level: 'info', time: new Date().toISOString(), ...base, log_type: 'app', component: 'telemetry', msg }) + '\n',
+  )
+}
 
 if (!tracingRequested()) {
   say('OTEL_EXPORTER_OTLP_ENDPOINT is not set; tracing is off.')

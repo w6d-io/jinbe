@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
 import { env } from '../config/index.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * A caller proven by a signed token rather than by a session this service can look up.
@@ -85,9 +86,7 @@ class OidcBearerService {
     } catch (error) {
       // Expiry, a wrong issuer, a wrong audience and a bad signature all land here, and all mean
       // the same thing to a caller: not authenticated.
-      console.warn(
-        `[oidc] bearer rejected: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      componentLogger('oidc').warn({ reason: error instanceof Error ? error.message : String(error) }, 'bearer rejected')
       return null
     }
   }

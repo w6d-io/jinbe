@@ -25,6 +25,7 @@ import {
   DEFAULT_GROUP_SERVICE_ROLES,
   getUserGroups,
 } from '../schemas/rbac/index.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 // =============================================================================
 // Helpers (kept for backward compatibility with controllers/tests)
@@ -680,10 +681,10 @@ export class RbacService {
     try {
       const usersUpdated = await kratosService.removeGroupFromAllUsers(name)
       if (usersUpdated > 0) {
-        console.log(`[rbac] Removed group '${name}' from ${usersUpdated} Kratos users`)
+        componentLogger('rbac').info({ group: name, usersUpdated }, 'group removed from Kratos users')
       }
     } catch (error) {
-      console.error(`[rbac] Failed to remove group '${name}' from Kratos users:`, error)
+      componentLogger('rbac').error({ err: error, group: name }, 'could not remove group from Kratos users')
     }
 
     const changes = diffGroupDefinition(name, before, {})

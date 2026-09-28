@@ -6,6 +6,9 @@ import { getKubeConfig, getSource, K8sApiError } from './config.js'
 import { createOrReplaceConfigMap } from './configmap.js'
 import { jobTemplate, sourceTemplate } from './template.js'
 import type { DatabaseSelected, JobInfo } from '../schemas/job.schema.js'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('k8s-job')
 
 export async function createJob(
     database_type: string,
@@ -122,7 +125,7 @@ export async function createJob(
         return true
     } catch (e: unknown) {
         const err = e as Error
-        console.error('createJob error:', e)
+        log().error({ err: e }, 'createJob failed')
         return err?.message || 'Unknown error'
     }
 }
@@ -144,7 +147,7 @@ async function getPods(
         })
         return response.items
     } catch (error) {
-        console.error('Error fetching job pods:', error)
+        log().error({ err: error, namespace, cluster }, 'could not list job pods')
         throw error
     }
 }
@@ -166,7 +169,7 @@ async function getJobs(
         })
         return response.items
     } catch (error) {
-        console.error('Error fetching jobs:', error)
+        log().error({ err: error, namespace, cluster }, 'could not list jobs')
         throw error
     }
 }
@@ -256,7 +259,7 @@ export async function getJobsInfo(
                 )
             })
     } catch (error) {
-        console.error('Error in getJobsInfo:', error)
+        log().error({ err: error }, 'getJobsInfo failed')
         throw error
     }
 }

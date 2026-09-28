@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto'
 import { env } from '../config/index.js'
 import { broadcastInvalidation, cacheEnabled, ensureBus, onInvalidate } from '../cache/swr.js'
 import { cacheRequests } from '../telemetry/metrics.js'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * Kratos Session Identity (from toSession response)
@@ -256,7 +257,7 @@ export class KratosSessionService {
         },
       }
     } catch (error) {
-      console.error('Kratos session validation error:', error)
+      componentLogger('kratos-session').error({ err: error }, 'Kratos session validation error')
       return { session: null, error: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}` }
     }
   }

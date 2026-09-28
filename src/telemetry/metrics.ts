@@ -122,3 +122,19 @@ export const cacheInvalidations = new Counter({
   help: 'Cache invalidations, by namespace and scope (all, key)',
   labelNames: ['namespace', 'scope'] as const,
 })
+
+// ─── Entity notifications (services/notifications) ───────────────────────────
+// A failed attempt is retried with backoff; after the last one the event goes to the dead-letter
+// stream (`notifications:dead`), which the Home attention queue counts.
+
+export const notificationAttemptFailures = new Counter({
+  name: 'jinbe_notifications_attempt_failures_total',
+  help: 'Notification delivery attempts that failed, by notifier',
+  labelNames: ['notifier'] as const,
+})
+
+export const notificationsDeadLettered = new Counter({
+  name: 'jinbe_notifications_dead_lettered_total',
+  help: 'Notifications moved to the dead-letter stream, by why (attempts_exhausted, rejected, expired, unreadable)',
+  labelNames: ['reason'] as const,
+})

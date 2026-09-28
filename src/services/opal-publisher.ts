@@ -1,6 +1,9 @@
 import { env } from '../config/env.js'
 import { buildOpalDatasourceEntries } from './opal-datasource.js'
 import { opalPushes, opalPushLastSuccess } from '../telemetry/metrics.js'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('opal-push')
 
 /**
  * Tells opal-server that RBAC data changed, so every OPAL client refetches it into OPA.
@@ -81,16 +84,16 @@ class OpalPublisher {
         const count = await this.push(reason)
         opalPushes.labels('ok').inc()
         opalPushLastSuccess.set(Date.now() / 1000)
-        console.log(`[opal-push] ${count} entries pushed (${reason})`)
+        log().info({ entries: count, reason }, 'datasource entries pushed')
         return
       } catch (err) {
         lastErr = err
       }
     }
     opalPushes.labels('failed').inc()
-    console.error(
-      `[opal-push] Failed after ${OPAL_PUSH_BACKOFF_MS.length + 1} attempts (${reason}); OPA catches up at the next periodic refresh:`,
-      lastErr instanceof Error ? lastErr.message : lastErr,
+    log().error(
+      { attempts: OPAL_PUSH_BACKOFF_MS.length + 1, reason, error: lastErr instanceof Error ? lastErr.message : String(lastErr) },
+      'datasource push failed after every attempt; OPA catches up at the next periodic refresh',
     )
   }
 

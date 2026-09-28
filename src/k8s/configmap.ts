@@ -1,5 +1,8 @@
 import * as k8s from '@kubernetes/client-node'
 import { getKubeConfig, K8sApiError } from './config.js'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('k8s-configmap')
 
 export async function createOrReplaceConfigMap(
     cluster: string,
@@ -24,7 +27,7 @@ export async function createOrReplaceConfigMap(
             namespace,
             body: manifest,
         })
-        console.log(`ConfigMap ${manifest.metadata.name} replaced`)
+        log().info({ configMap: manifest.metadata.name, namespace, cluster }, 'ConfigMap replaced')
     } catch (e) {
         const error = e as K8sApiError
         if (error.response && error.response.statusCode === 404) {
@@ -32,10 +35,10 @@ export async function createOrReplaceConfigMap(
                 namespace,
                 body: manifest,
             })
-            console.log(`ConfigMap ${manifest.metadata.name} created`)
+            log().info({ configMap: manifest.metadata.name, namespace, cluster }, 'ConfigMap created')
         } else {
             // Some other error occurred
-            console.error(`Error: ${error.message}`)
+            log().error({ configMap: manifest.metadata.name, namespace, cluster, reason: error.message }, 'could not write ConfigMap')
             return false
         }
     }

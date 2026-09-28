@@ -1,4 +1,5 @@
 import * as k8s from '@kubernetes/client-node'
+import { componentLogger } from '../telemetry/logger.js'
 
 /**
  * Result of kubeconfig verification
@@ -219,9 +220,9 @@ export class KubeconfigVerificationService {
     } catch (error) {
       // SelfSubjectReview might not be available on older clusters (< 1.28)
       // Fall back to null but don't fail the whole verification
-      console.warn(
-        'SelfSubjectReview not available:',
-        error instanceof Error ? error.message : error
+      componentLogger('kubeconfig-verification').warn(
+        { reason: error instanceof Error ? error.message : String(error) },
+        'SelfSubjectReview not available',
       )
       return null
     }
@@ -295,9 +296,9 @@ export class KubeconfigVerificationService {
       const response = await authApi.createSelfSubjectAccessReview({ body: review })
       return response.status?.allowed === true
     } catch (error) {
-      console.warn(
-        `Failed to check access for ${verb} ${resource}:`,
-        error instanceof Error ? error.message : error
+      componentLogger('kubeconfig-verification').warn(
+        { verb, resource, reason: error instanceof Error ? error.message : String(error) },
+        'could not check access',
       )
       return false
     }

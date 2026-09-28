@@ -1,5 +1,8 @@
 import type Redis from 'ioredis'
 import type { FastifyReply } from 'fastify'
+import { componentLogger } from '../telemetry/logger.js'
+
+const log = () => componentLogger('realtime')
 
 /**
  * Real-time change fan-out to browser clients over Server-Sent Events.
@@ -38,12 +41,12 @@ class RealtimeService {
     this.sub = redis.duplicate()
     this.sub.on('message', (_channel, message) => this.broadcast(message))
     this.sub.subscribe(CHANNEL).catch((err) => {
-      console.error('[realtime] subscribe failed:', err)
+      log().error({ err }, 'subscribe failed')
     })
     this.heartbeat = setInterval(() => this.ping(), HEARTBEAT_MS)
     // Don't keep the event loop alive just for the heartbeat.
     this.heartbeat.unref?.()
-    console.log('[realtime] SSE fan-out ready')
+    log().info('SSE fan-out ready')
   }
 
   stop(): void {
