@@ -176,7 +176,10 @@ describe('per-site 2FA on the gateway', () => {
     const web = render(payrollSite(), { ...platform, accessUrl: 'https://auth.dev.example.com/access' }).siteCr.spec.gates.find((g) => g.name === 'web')!
     expect(web.errors?.map((h) => h.handler)).toEqual(['redirect', 'json'])
     expect(web.errors?.[0].config).toEqual({ when: [{ error: ['unauthorized', 'forbidden'], request: { header: { accept: ['text/html'] } } }] })
-    expect(String((web.authorizer.config as { payload: string }).payload)).not.toContain('"aal"')
+    // The payload still carries aal + client: the platform's required-second-factor groups apply on
+    // every app, 2FA site or not.
+    expect(String((web.authorizer.config as { payload: string }).payload)).toContain('"aal"')
+    expect(String((web.authorizer.config as { payload: string }).payload)).toContain('"client"')
   })
 
   it('2FA on with no access page configured is an error', () => {

@@ -93,11 +93,12 @@ const RESERVED_NAMES = ['migration', 'requests', 'preview', 'zones', 'check-host
 const FORBIDDEN_SERVICE = /^(kratos-admin|opa|opal(-.*)?|redis(-.*)?|postgres(ql)?(-.*)?)$/
 
 /**
- * The platform authorizer payload (charts auth values, remote_json) plus the pinned site. A site
- * that asks for 2FA also sends the session's sign-in strength, which the policy compares with
- * data.site_login[site].min_aal (only then: adding it renames every rule of the site).
+ * The platform authorizer payload (charts auth values, remote_json) plus the pinned site. Every site
+ * sends the session's sign-in strength and whether the caller is an OAuth2 client: the policy needs
+ * both on every app, for per-site 2FA (data.site_login) and for the platform's required-second-factor
+ * groups (data.second_factor), which apply whether or not the site asks for 2FA itself.
  */
-export function platformPayload(site: string, withAal = false): string {
+export function platformPayload(site: string): string {
   return [
     '{',
     '  "input": {',
@@ -105,7 +106,8 @@ export function platformPayload(site: string, withAal = false): string {
     '    "email": "{{ if .Extra.identity }}{{ index .Extra.identity.traits "email" }}{{ end }}",',
     '    "object": "{{ .MatchContext.URL.Path }}",',
     '    "action": "{{ .MatchContext.Method }}",',
-    ...(withAal ? ['    "aal": "{{ if .Extra }}{{ print .Extra.authenticator_assurance_level }}{{ end }}",'] : []),
+    '    "aal": "{{ if .Extra }}{{ print .Extra.authenticator_assurance_level }}{{ end }}",',
+    '    "client": {{ if .Extra }}{{ if .Extra.client_id }}true{{ else }}false{{ end }}{{ else }}false{{ end }},',
     `    "app": "${site}"`,
     '  }',
     '}',
@@ -301,7 +303,7 @@ export function render(site: Site, platform: Platform): Rendered {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
     const authorizer: Handler = gate.authorizer === 'policy'
-      ? { handler: 'remote_json', config: { payload: platformPayload(name, with2fa) } }
+      ? { handler: 'remote_json', config: { payload: platformPayload(name) } }
       : gate.authorizer
     handlerOk('authorizers', authorizer, at)
     const mutators = guard(gate, authorizer)
