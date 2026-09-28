@@ -316,6 +316,8 @@ describe('Kratos: which second factors are enrolled', () => {
     expect(k.mfaMethods({ webauthn: { config: { user_handle: 'x', credentials: [] } } })).toEqual([])
     expect(k.mfaMethods({ totp: { config: { totp_url: 'otpauth://…' } }, lookup_secret: { config: { recovery_codes: [{}] } } })).toEqual(['totp', 'lookup_secret'])
     expect(k.mfaMethods({ webauthn: { config: { credentials: [{ id: 'k' }] } } })).toEqual(['webauthn'])
+    // A passkey (passwordless key) is a first factor.
+    expect(k.mfaMethods({ webauthn: { config: { credentials: [{ id: 'p', is_passwordless: true }] } } })).toEqual([])
     expect(k.mfaFromCredentials({})).toBe(false)
   })
 })

@@ -22,6 +22,8 @@ export const USER_PERMISSIONS = {
   'sessions:revoke': 'admin:write',
   'users:recovery': 'admin:write',
   'users:send_login_link': 'admin:write',
+  // Not the support role's: paired with a sign-in link it hands an account to whoever reads the mail.
+  'users:reset_second_factor': 'admin:write',
 } as const
 
 export type UserPermission = keyof typeof USER_PERMISSIONS

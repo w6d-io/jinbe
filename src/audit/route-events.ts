@@ -86,6 +86,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/recert/items/:campaignId/:itemId/decision': by('recert.item.decided'),
 
   'POST /api/admin/users/:id/login-link': by('user.login_link_sent'),
+  'POST /api/admin/users/:id/second-factors/reset': by('user.second_factor_reset'),
 
   // Sites (src/sites calls auditSite — audit/record.ts)
   'PUT /api/admin/sites/:name': by('site.saved'),

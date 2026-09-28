@@ -230,12 +230,23 @@ export class KratosService {
 
   /** The second factors this identity has enrolled (see mfaMethods). */
   async mfaMethodsOf(id: string): Promise<MfaMethod[]> {
+    return this.mfaMethods((await this.getIdentityWithSecondFactors(id)).credentials)
+  }
+
+  /** The identity with its second-factor credentials' configs, which Kratos hides unless asked. */
+  async getIdentityWithSecondFactors(id: string): Promise<KratosIdentity> {
     const params = new URLSearchParams()
-    params.append('include_credential', 'totp')
-    params.append('include_credential', 'webauthn')
-    params.append('include_credential', 'lookup_secret')
-    const identity = await this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
-    return this.mfaMethods(identity.credentials)
+    for (const m of MFA_METHODS) params.append('include_credential', m)
+    return this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
+  }
+
+  /**
+   * Removes one second factor: `DELETE /admin/identities/{id}/credentials/{type}`. For `webauthn`
+   * Kratos drops the security keys and KEEPS the passwordless ones (passkeys); it refuses passkey
+   * and first-factor deletions of its own. 404 when the identity has no credential of that type.
+   */
+  async deleteSecondFactor(id: string, type: MfaMethod): Promise<void> {
+    await this.request<void>(`/admin/identities/${id}/credentials/${type}`, { method: 'DELETE' })
   }
 
   /**
@@ -249,7 +260,9 @@ export class KratosService {
    * for users who never enrolled, defeating the privilege-escalation MFA gate.
    * Inspect each credential's config for the real enrolment artefact instead:
    *   totp:          config.totp_url            (set on enrol)
-   *   webauthn:      config.credentials[]       (registered keys; a lone user_handle doesn't count)
+   *   webauthn:      config.credentials[]       (registered security keys; a lone user_handle
+   *                                              doesn't count, nor does a passwordless key — a
+   *                                              passkey is a first factor)
    *   lookup_secret: config.recovery_codes[]    (generated codes)
    *
    * Requires the identity to have been fetched with include_credential for
@@ -266,8 +279,9 @@ export class KratosService {
       { config?: Record<string, unknown> } | undefined
     >
     const totpReg = !!creds.totp?.config?.totp_url
-    const webauthnReg = Array.isArray((creds.webauthn?.config as any)?.credentials) &&
-      ((creds.webauthn?.config as any).credentials.length > 0)
+    const webauthnKeys = (creds.webauthn?.config as any)?.credentials
+    const webauthnReg = Array.isArray(webauthnKeys) &&
+      webauthnKeys.some((k: { is_passwordless?: boolean }) => !k?.is_passwordless)
     const lookupReg = Array.isArray((creds.lookup_secret?.config as any)?.recovery_codes) &&
       ((creds.lookup_secret?.config as any).recovery_codes.length > 0)
     return MFA_METHODS.filter((m) => ({ totp: totpReg, webauthn: webauthnReg, lookup_secret: lookupReg })[m])

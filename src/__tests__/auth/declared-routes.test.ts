@@ -129,6 +129,8 @@ describe('what the running service ends up declaring', () => {
       expect(row('GET', '/api/admin/users/:id/sessions')?.permission).toBe('sessions:read')
       expect(row('DELETE', '/api/admin/sessions/:sessionId')?.permission).toBe('sessions:revoke')
       expect(row('POST', '/api/admin/users/:id/login-link')?.permission).toBe('users:send_login_link')
+      expect(row('GET', '/api/admin/users/:id/second-factors')?.permission).toBe('users:read')
+      expect(row('POST', '/api/admin/users/:id/second-factors/reset')?.permission).toBe('users:reset_second_factor')
       expect(row('GET', '/api/me/permissions')?.class).toBe('authenticated')
       // The session gate is a hook, not a route guard, so these must not be called authorized.
       expect(rows.find((r) => r.path === '/api/health')?.class).toBe('public')

@@ -41,6 +41,7 @@ vi.mock('../../../services/kratos.service.js', () => {
   }
   return {
     KratosApiError,
+    MFA_METHODS: ['totp', 'webauthn', 'lookup_secret'],
     kratosService: {
       getIdentity: vi.fn(find),
       updateIdentity: vi.fn(async (id: string, body: Record<string, unknown>) => {
@@ -314,7 +315,8 @@ describe('GET /api/me/permissions', () => {
     expect(res.json().apps).toEqual({ jinbe: { roles: [], permissions: SUPPORT }, kuma: { roles: [], permissions: [] } })
     expect(actions).toMatchObject({
       'users:read': true, 'users:update_email': true, 'sessions:revoke': true, 'users:send_login_link': true,
-      'users:delete': false, 'users:create': false, 'users:assign_group': false, 'admin:read': false, 'admin:write': false,
+      'users:delete': false, 'users:create': false, 'users:assign_group': false, 'users:reset_second_factor': false,
+      'admin:read': false, 'admin:write': false,
     })
   })
 

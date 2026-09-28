@@ -3627,6 +3627,168 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/admin/users/{id}/second-factors:
+    get:
+      tags:
+        - admin
+      description: The second factors the user has enrolled (passkeys are first
+        factors and not listed), and whether their role requires two-step
+        sign-in (null when the policy cannot say). Needs users:read.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  methods:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - totp
+                        - webauthn
+                        - lookup_secret
+                  required:
+                    type: boolean
+                    nullable: true
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/second-factors/reset:
+    post:
+      tags:
+        - admin
+      description: Remove the user's second factors (authenticator app, security keys,
+        backup codes; passkeys stay) for somebody who lost them, and by default
+        end their sessions. Never your own. Needs users:reset_second_factor and
+        a second factor of your own proven within 15 minutes; refused when the
+        user holds rights you do not.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                revokeSessions:
+                  type: boolean
+                  default: true
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - totp
+                        - webauthn
+                        - lookup_secret
+                  sessionsRevoked:
+                    type: boolean
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   /api/admin/users/{id}/sessions:
     get:
       tags:

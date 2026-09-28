@@ -32,6 +32,7 @@ export const AUDIT_EVENTS = {
   'user.state_changed': ['directory', 'update'],
   'user.recovery_sent': ['directory', 'recover'],
   'user.login_link_sent': ['directory', 'recover', 'warn'],
+  'user.second_factor_reset': ['auth', 'update', 'high'],
 
   'org.created': ['directory', 'create'],
   'org.updated': ['directory', 'update'],

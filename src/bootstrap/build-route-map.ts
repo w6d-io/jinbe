@@ -92,6 +92,8 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/admin/users/:id/access',          permission: 'admin:read' },
   { method: 'GET',    path: '/api/admin/users/search',              permission: 'admin:read' },
   { method: 'POST',   path: '/api/admin/users/:id/login-link',      permission: 'admin:update' },
+  { method: 'GET',    path: '/api/admin/users/:id/second-factors',  permission: 'admin:read' },
+  { method: 'POST',   path: '/api/admin/users/:id/second-factors/reset', permission: 'admin:update' },
 
   // User management, one permission per action (support role). ADDED beside the admin:* rows above,
   // never replacing them: OPA allows on ANY matching rule, so administrators keep every route and a
@@ -110,6 +112,8 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'DELETE', path: '/api/admin/sessions/:sessionId',       permission: 'sessions:revoke' },
   { method: 'POST',   path: '/api/admin/users/:id/recovery-email',  permission: 'users:recovery' },
   { method: 'POST',   path: '/api/admin/users/:id/login-link',      permission: 'users:send_login_link' },
+  { method: 'GET',    path: '/api/admin/users/:id/second-factors',  permission: 'users:read' },
+  { method: 'POST',   path: '/api/admin/users/:id/second-factors/reset', permission: 'users:reset_second_factor' },
 
   // RBAC management
   { method: 'GET',    path: '/api/admin/rbac/users',                permission: 'admin:read' },

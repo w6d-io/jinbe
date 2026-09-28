@@ -33,6 +33,8 @@ describe('bootstrap/build-route-map', () => {
       ['DELETE', '/api/admin/sessions/:sessionId', 'sessions:revoke'],
       ['POST', '/api/admin/users/:id/recovery-email', 'users:recovery'],
       ['POST', '/api/admin/users/:id/login-link', 'users:send_login_link'],
+      ['GET', '/api/admin/users/:id/second-factors', 'users:read'],
+      ['POST', '/api/admin/users/:id/second-factors/reset', 'users:reset_second_factor'],
     ]
     for (const [method, path, permission] of fine) {
       expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method, path, permission })

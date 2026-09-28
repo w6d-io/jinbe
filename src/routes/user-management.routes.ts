@@ -1,10 +1,13 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { adminController } from '../controllers/admin.controller.js'
+import { rights, secondFactorRequired } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { requireRecentMfa } from '../middleware/require-admin.js'
 import { callerRights, demandPermissions, requirePermission } from '../middleware/require-permission.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { KratosApiError, kratosService } from '../services/kratos.service.js'
+import { KratosApiError, kratosService, MFA_METHODS, type MfaMethod } from '../services/kratos.service.js'
 import {
   acceptableReturnTo,
   LoginLinkNoAddressError,
@@ -13,7 +16,14 @@ import {
   LoginLinkUnavailableError,
   sendLoginLink,
 } from '../services/login-link.service.js'
+import {
+  NoSecondFactorError,
+  resetSecondFactors,
+  SecondFactorResetError,
+  secondFactorsOf,
+} from '../services/second-factor-reset.service.js'
 import { allows, requiredForEdit, type CheckedPermission, type EditableIdentity } from '../services/user-permissions.js'
+import { auditActor } from '../utils/audit-actor.js'
 import {
   userIdParamSchema,
   usersQuerySchema,
@@ -164,6 +174,60 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
     },
   }, sendLoginLinkHandler as never)
 
+  fastify.get('/users/:id/second-factors', {
+    preHandler: requirePermission('users:read'),
+    schema: {
+      description:
+        'The second factors the user has enrolled (passkeys are first factors and not listed), and whether their role ' +
+        'requires two-step sign-in (null when the policy cannot say). Needs users:read.',
+      tags: ['admin'],
+      params: idParams,
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            methods: { type: 'array', items: { type: 'string', enum: [...MFA_METHODS] } },
+            required: { type: 'boolean', nullable: true },
+          },
+          additionalProperties: false,
+        },
+        ...errors,
+      },
+    },
+  }, secondFactorsHandler as never)
+
+  fastify.post('/users/:id/second-factors/reset', {
+    preHandler: [requirePermission('users:reset_second_factor'), requireRecentMfa],
+    schema: {
+      description:
+        'Remove the user\'s second factors (authenticator app, security keys, backup codes; passkeys stay) for somebody ' +
+        'who lost them, and by default end their sessions. Never your own. Needs users:reset_second_factor and a second ' +
+        'factor of your own proven within 15 minutes; refused when the user holds rights you do not.',
+      tags: ['admin'],
+      params: idParams,
+      body: {
+        type: 'object',
+        required: ['reason'],
+        properties: {
+          reason: { type: 'string', minLength: 1, maxLength: 500 },
+          revokeSessions: { type: 'boolean', default: true },
+        },
+        additionalProperties: false,
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            removed: { type: 'array', items: { type: 'string', enum: [...MFA_METHODS] } },
+            sessionsRevoked: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
+        ...errors,
+      },
+    },
+  }, resetSecondFactorsHandler as never)
+
   // Proxied from Kratos admin — never exposed directly to the browser.
   fastify.get('/users/:id/sessions', {
     preHandler: requirePermission('sessions:read'),
@@ -280,4 +344,109 @@ async function sendLoginLinkHandler(
   }).catch(() => {})
 
   return reply.send({ sent: true, expiresAt })
+}
+
+async function secondFactorsHandler(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+  let found: Awaited<ReturnType<typeof secondFactorsOf>>
+  try {
+    found = await secondFactorsOf(request.params.id)
+  } catch (err) {
+    if (err instanceof KratosApiError && err.statusCode === 404) {
+      return reply.status(404).send({ error: 'Not Found', message: 'User not found' })
+    }
+    throw err
+  }
+  // Only to phrase the console's warning; the gate that enforces it is elsewhere.
+  const required = found.email ? await secondFactorRequired(found.email).catch(() => null) : false
+  return reply.send({ methods: found.methods, required })
+}
+
+/**
+ * The guard the route table cannot express: this is about WHO the target is.
+ *   - never yourself: removing your own factor is the settings page's job, where Kratos asks for
+ *     the factor first — this path would let a stolen session strip the account's last defence;
+ *   - never somebody holding an administrative right you do not: with the address editable and a
+ *     sign-in link one click away, removing a stronger account's factor is taking the account over.
+ *     Administrative = the wildcard, the admin tree, user and session management, applying sites.
+ *     Everyday site permissions are left out: an administrator can hand those out anyway.
+ */
+const ADMINISTRATIVE = /^(\*$|admin[.:]|users:|sessions:|sites:)/
+
+async function resetSecondFactorsHandler(
+  request: FastifyRequest<{ Params: { id: string }; Body: { reason: string; revokeSessions?: boolean } }>,
+  reply: FastifyReply,
+) {
+  const { id } = request.params
+  const reason = request.body.reason.trim()
+  if (!reason) return reply.status(400).send({ error: 'Bad Request', message: 'Say why the factors are being removed.' })
+  if (id === request.userContext?.id) {
+    return reply.status(403).send({
+      error: 'own_second_factor',
+      message: 'You cannot remove your own two-step sign-in here. Use your account settings.',
+    })
+  }
+
+  let found: Awaited<ReturnType<typeof secondFactorsOf>>
+  try {
+    found = await secondFactorsOf(id)
+  } catch (err) {
+    if (err instanceof KratosApiError && err.statusCode === 404) {
+      return reply.status(404).send({ error: 'Not Found', message: 'User not found' })
+    }
+    throw err
+  }
+
+  if (found.email) {
+    let theirs: string[]
+    try {
+      theirs = (await rights(found.email)).permissions
+    } catch {
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify the user\'s rights. Please try again later.' })
+    }
+    const mine = request.rbacInfo?.permissions ?? []
+    const beyond = theirs.filter((p) => ADMINISTRATIVE.test(p) && !allows(mine, p as CheckedPermission))
+    if (beyond.length) {
+      return reply.status(403).send({
+        error: 'outranked',
+        message: 'This user holds administrative rights you do not. Only somebody holding them can remove their two-step sign-in.',
+      })
+    }
+  }
+
+  const a = auditActor(request)
+  const trail = (result: 'applied' | 'failed', factors: MfaMethod[], sessionsRevoked: boolean) =>
+    auditEventService.emit({
+      category: 'auth',
+      kind: 'security',
+      verb: 'mfa_reset',
+      target: `user:${id}`,
+      targetType: 'user',
+      targetId: id,
+      result,
+      severity: 'high',
+      reason,
+      actor: { id: a.id, email: a.email, name: a.name, ip: a.ip, ua: a.ua, sessionId: a.sessionId },
+      requestId: a.requestId,
+      source: 'jinbe-api',
+      v1Event: 'user.second_factor_reset',
+      details: { reason, factors, sessionsRevoked },
+    }).catch(() => {})
+
+  let outcome: { removed: MfaMethod[]; sessionsRevoked: boolean }
+  try {
+    outcome = await resetSecondFactors(id, found.methods, { revokeSessions: request.body.revokeSessions ?? true })
+  } catch (err) {
+    if (err instanceof NoSecondFactorError) {
+      return reply.status(409).send({ error: 'no_second_factor', message: 'This user has no two-step sign-in to remove.' })
+    }
+    if (err instanceof SecondFactorResetError) {
+      trail('failed', err.removed, false)
+      request.log.error({ err: (err.cause as Error)?.message, removed: err.removed }, '[second-factor-reset] stopped part-way')
+      return reply.status(502).send({ error: 'reset_incomplete', message: err.message, removed: err.removed })
+    }
+    throw err
+  }
+
+  trail('applied', outcome.removed, outcome.sessionsRevoked)
+  return reply.send(outcome)
 }
