@@ -166,6 +166,9 @@ function rowsFor(route: Pick<Route, 'id' | 'methods' | 'path' | 'orgParam'>, acc
     method,
     path: route.path,
     ...(access.kind === 'permission' ? { permission: access.permission } : {}),
+    // Tells the policy this row is open to anyone, so per-site 2FA leaves it alone; a row with neither
+    // marker is a signed-in route and IS gated on a 2FA site (scope all / writes).
+    ...(access.kind === 'public' ? { public: true } : {}),
     ...(route.orgParam ? { org_param: route.orgParam } : {}),
   }))
 }

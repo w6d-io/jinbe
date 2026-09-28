@@ -21,7 +21,7 @@ describe('render — route map', () => {
 
   it('emits one row per method, specific routes first, catch-all last', () => {
     expect(routeMap.slice(0, 3)).toEqual([
-      { id: 'health', method: 'GET', path: '/health' },
+      { id: 'health', method: 'GET', path: '/health', public: true },
       { id: 'payslips', method: 'GET', path: '/api/orgs/:orgId/payslips', permission: 'payslips:read', org_param: 'orgId' },
       { id: 'create', method: 'POST', path: '/api/orgs/:orgId/payslips', permission: 'payslips:create', org_param: 'orgId' },
     ])
@@ -39,6 +39,18 @@ describe('render — route map', () => {
     const site = payrollSite()
     site.routes.catchAll = { gate: 'web', access: { kind: 'permission', permission: 'payroll:read' } }
     expect(render(site, platform).routeMap.at(-1)).toEqual({ id: 'catch-all', method: 'DELETE', path: '/:any*', permission: 'payroll:read' })
+  })
+
+  it('marks public rows so per-site 2FA leaves them alone, and only them', () => {
+    const site = payrollSite()
+    site.routes.items = [
+      { id: 'h', methods: ['GET'], path: '/payroll/health', gate: 'public', access: { kind: 'public' }, source: 'manual' },
+      { id: 'me', methods: ['GET'], path: '/payroll/me', gate: 'web', access: { kind: 'signed-in' }, source: 'manual' },
+    ]
+    const rows = render(site, platform).routeMap
+    expect(rows.find((r) => r.id === 'h')).toMatchObject({ public: true })
+    expect(rows.find((r) => r.id === 'me')).not.toHaveProperty('public')
+    expect(rows.filter((r) => r.permission).every((r) => !('public' in r))).toBe(true)
   })
 
   it('refuses an org_param the policy cannot read', () => {
