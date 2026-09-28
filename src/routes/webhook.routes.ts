@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { webhookController } from '../controllers/webhook.controller.js'
+import { signInGuardHook } from '../sign-in-protection/routes.js'
 
 /**
  * Kratos after-hook webhook (A5). Public at the gateway (Kratos has no jinbe
@@ -37,5 +38,21 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       },
     },
     (request, reply) => webhookController.kratos(request, reply),
+  )
+
+  // The interrupting hook (sign-in-protection/guard.ts): bot check and sign-up policy, answered in
+  // Kratos' own message shape. Same secret, same raw-body parser.
+  fastify.post(
+    '/kratos/guard',
+    {
+      schema: {
+        description:
+          'Interrupting Kratos web_hook (registration after.<method> with response.parse, login after with can_interrupt): ' +
+          '200 lets the flow go on, 400 stops it with a form message. Self-authenticated via shared secret.',
+        tags: ['webhooks', 'sign-in-protection'],
+        body: { type: 'object', additionalProperties: true },
+      },
+    },
+    (request, reply) => signInGuardHook(request, reply),
   )
 }

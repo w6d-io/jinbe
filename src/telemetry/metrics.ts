@@ -84,3 +84,13 @@ export const auditV1Failures = new Counter({
   help: 'audit/v1 events that a sink failed to take (log, outbox) or that failed validation (schema)',
   labelNames: ['sink'] as const,
 })
+
+// ─── Sign-in protection ──────────────────────────────────────────────────────
+// One count per guarded Kratos submit (sign-in-protection/guard.ts). A flood shows up as refusals
+// here before it shows up anywhere else; `fail_open` counts attempts let through unchecked.
+
+export const signInGuardDecisions = new Counter({
+  name: 'jinbe_sign_in_guard_decisions_total',
+  help: 'Kratos flow submits judged by the sign-in guard, by flow and result',
+  labelNames: ['flow', 'result'] as const,
+})

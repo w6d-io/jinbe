@@ -86,6 +86,7 @@ function eventOf(rich: AuditEvent, legacyType?: string): AuditEventType {
   if (rich.target.startsWith('site:') && SITE[rich.verb]) return SITE[rich.verb]
   if (rich.target === 'auth-methods') return 'config.auth_methods.changed'
   if (rich.target === 'second-factor-groups') return 'config.second_factor.changed'
+  if (rich.target === 'sign-in-protection') return 'config.sign_in_protection.changed'
   return BY_VERB[`${rich.category}.${rich.verb}`] ?? 'system.unmapped'
 }
 

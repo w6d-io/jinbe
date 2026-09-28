@@ -152,6 +152,30 @@ export const envSchema = z.object({
   // Vault-injected in production; when unset the webhook rejects every call.
   KRATOS_WEBHOOK_SECRET: z.string().optional(),
 
+  // ─── Sign-in protection: the bot check (sign-in-protection/captcha.ts) ───
+  // Which flows ask for it is a platform setting edited in the console; WHO checks the answer is
+  // configured here. The secret is Vault-injected and never leaves this process: no API returns it,
+  // the console only learns whether it is set. Provider or site key or secret missing → "not
+  // configured", and a flow that asks for the check follows CAPTCHA fail mode (closed by default).
+  CAPTCHA_PROVIDER: z.enum(['turnstile', 'hcaptcha', 'recaptcha']).default('turnstile'),
+  CAPTCHA_SITE_KEY: z.string().min(1).optional(),
+  CAPTCHA_SECRET_KEY: z.string().min(1).optional(),
+  // One siteverify call; beyond it the provider counts as unavailable.
+  CAPTCHA_VERIFY_TIMEOUT_MS: z.coerce.number().int().positive().max(10000).default(3000),
+  // Hostnames the widget may have been solved on (login-ui's), comma-separated. Empty: not checked.
+  CAPTCHA_EXPECTED_HOSTNAMES: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)),
+  // reCAPTCHA v3 only: the lowest score that passes.
+  CAPTCHA_RECAPTCHA_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+  // The providers' published test keys pass (or fail) every visitor. Refused in production unless
+  // this says a sandbox wants them.
+  CAPTCHA_ALLOW_TEST_KEYS: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.
   HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
