@@ -62,6 +62,8 @@ export async function assertApplyAllowed(): Promise<void> {
   const doc = await load()
   if (doc.state === 'cut-over') return
   if (doc.state === 'rolled-back') throw siteError(409, 'migration_rolled_back', 'The migration was rolled back; the gateway reads the legacy rules again, so sites cannot be applied')
+  // The gateway loads both rule files: sites coexist with the legacy rules (preview still refuses any overlap).
+  if (sitesConfig().SITES_MIXED_GATEWAY) return
   if ((await redisRbacRepository.getAccessRules()).length > 0) {
     throw siteError(409, 'migration_pending', 'The gateway still reads the legacy rules; sites can be applied once the migration is cut over')
   }

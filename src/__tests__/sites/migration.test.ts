@@ -39,7 +39,7 @@ vi.mock('../../middleware/require-admin.js', () => ({
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeSites } from '../../sites/kube-sites.js'
-import { resetSitesConfig } from '../../sites/config.js'
+import { resetSitesConfig, sitesConfig } from '../../sites/config.js'
 import { compareProbe } from '../../sites/migration/parity.js'
 import { dualrunTick, stepCutover } from '../../sites/migration/migration.service.js'
 import * as redisClient from '../../services/redis-client.service.js'
@@ -230,6 +230,32 @@ describe('cut-over and rollback', () => {
     expect(res.statusCode).toBe(409)
     expect(res.json().error).toBe('migration_pending')
     expect(cluster.crs.size).toBe(0)
+  })
+
+  it('a mixed gateway (both rule files loaded) applies sites before the cut-over', async () => {
+    process.env.SITES_MIXED_GATEWAY = 'true'
+    resetSitesConfig()
+    try {
+      const res = await applyNewSite()
+      expect(res.json().error).not.toBe('migration_pending')
+      expect(res.statusCode).toBeLessThan(300)
+    } finally {
+      delete process.env.SITES_MIXED_GATEWAY
+      resetSitesConfig()
+    }
+  })
+
+  it('refuses a mixed gateway on a production environment', () => {
+    process.env.SITES_MIXED_GATEWAY = 'true'
+    process.env.SITES_PRODUCTION = 'true'
+    resetSitesConfig()
+    try {
+      expect(() => sitesConfig()).toThrow(/production/)
+    } finally {
+      delete process.env.SITES_MIXED_GATEWAY
+      delete process.env.SITES_PRODUCTION
+      resetSitesConfig()
+    }
   })
 
   it('needs MFA and an eligible dual run', async () => {

@@ -24,6 +24,9 @@ import type { Zone } from './host.js'
  *   SITES_PUBLIC_RATE_LIMIT  requests per minute per IP on the public site endpoints (60).
  *   SITES_MIGRATION_DUALRUN_MIN_SEC   dual-run length before cut-over is allowed (3600).
  *   SITES_MIGRATION_ROLLBACK_DAYS     how long after cut-over a rollback is offered (7).
+ *   SITES_MIXED_GATEWAY    true when the gateway loads the legacy rules AND the site rules (maester) side by side:
+ *                          sites may then be applied before the cut-over (overlap with legacy rules is still refused).
+ *                          Refused together with SITES_PRODUCTION=true (default false).
  *   SITES_ENV              environment name shown in kuma (default: NODE_ENV).
  *   SITES_PRODUCTION       true on a production environment (stricter guards in kuma; default false).
  *   SITES_RULES_LOAD_EXPECTED_SEC  typical save→enforced time shown on the timeline (10; ~90 with maester in controller mode).
@@ -85,6 +88,7 @@ const schema = z.object({
   SITES_PUBLIC_RATE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(60),
   SITES_MIGRATION_DUALRUN_MIN_SEC: z.coerce.number().int().min(0).max(30 * 86_400).default(3600),
   SITES_MIGRATION_ROLLBACK_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+  SITES_MIXED_GATEWAY: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   SITES_ENV: z.string().max(64).optional(),
   SITES_PRODUCTION: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   SITES_RULES_LOAD_EXPECTED_SEC: z.coerce.number().int().min(1).max(3600).default(10),
@@ -109,6 +113,7 @@ function podNamespace(): string | undefined {
 export function sitesConfig(): SitesConfig {
   if (!cached) {
     const parsed = schema.parse(process.env)
+    if (parsed.SITES_MIXED_GATEWAY && parsed.SITES_PRODUCTION) throw new Error('SITES_MIXED_GATEWAY cannot be enabled on a production environment')
     cached = { ...parsed, namespace: parsed.SITES_NAMESPACE ?? podNamespace() ?? 'auth' }
   }
   return cached
