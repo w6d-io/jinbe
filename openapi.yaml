@@ -10342,6 +10342,1368 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/home:
+    get:
+      tags: &a5
+        - home
+      description: "The Home briefing: every module the caller may see, each with its
+        own status, freshness and sources"
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - 24h
+              - 7d
+            default: 24h
+          in: query
+          name: window
+          required: false
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[A-Za-z0-9_-]+$
+          in: query
+          name: org
+          required: false
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scope:
+                    type: object
+                    properties:
+                      platform:
+                        type: boolean
+                      orgs:
+                        type: array
+                        items:
+                          type: string
+                      roles:
+                        type: array
+                        items:
+                          type: string
+                      org:
+                        type: string
+                        nullable: true
+                    required:
+                      - platform
+                      - orgs
+                      - roles
+                      - org
+                    additionalProperties: false
+                  generatedAt:
+                    type: string
+                  window:
+                    type: string
+                    enum:
+                      - 24h
+                      - 7d
+                  modules:
+                    type: object
+                    properties:
+                      health:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum:
+                              - ok
+                              - unavailable
+                              - forbidden
+                          reason:
+                            type: string
+                            enum:
+                              - warming
+                              - timeout
+                              - source_down
+                              - not_configured
+                              - not_deployed
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              type: object
+                              properties:
+                                state:
+                                  type: string
+                                  enum:
+                                    - ok
+                                    - down
+                                    - timeout
+                                    - warming
+                                    - not_configured
+                                    - not_deployed
+                                connect:
+                                  type: object
+                                  properties:
+                                    setting:
+                                      type: string
+                                    docs:
+                                      type: string
+                                  required:
+                                    - setting
+                                    - docs
+                                  additionalProperties: false
+                              required:
+                                - state
+                              additionalProperties: false
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              environment:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  production:
+                                    type: boolean
+                                required:
+                                  - name
+                                  - production
+                                additionalProperties: false
+                              components:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    id:
+                                      type: string
+                                      enum:
+                                        - gateway
+                                        - gateway_rules
+                                        - opa
+                                        - opal_data
+                                        - kratos
+                                        - jinbe
+                                        - redis
+                                        - audit_store
+                                        - audit_archive
+                                        - certificates
+                                    state:
+                                      type: string
+                                      enum:
+                                        - ok
+                                        - degraded
+                                        - down
+                                        - unknown
+                                        - not_deployed
+                                    summary:
+                                      type: string
+                                    since:
+                                      type: string
+                                    link:
+                                      anyOf:
+                                        - type: object
+                                          properties:
+                                            page:
+                                              type: string
+                                            params:
+                                              type: object
+                                              additionalProperties:
+                                                type: string
+                                            anchor:
+                                              type: string
+                                          required:
+                                            - page
+                                          additionalProperties: false
+                                        - type: object
+                                          properties:
+                                            grafana:
+                                              type: string
+                                          required:
+                                            - grafana
+                                          additionalProperties: false
+                                  required:
+                                    - id
+                                    - state
+                                    - summary
+                                  additionalProperties: false
+                            required:
+                              - environment
+                              - components
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      attention:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    id:
+                                      type: string
+                                    kind:
+                                      type: string
+                                      enum:
+                                        - site_request_pending
+                                        - site_unapplied
+                                        - site_draft_stale
+                                        - site_condition
+                                        - site_drift
+                                        - gateway_rollout
+                                        - engines_out_of_sync
+                                        - opal_data_stale
+                                        - rule_compile_errors
+                                        - cert_expiring
+                                        - privileged_no_mfa
+                                        - privileged_self_granted
+                                        - privileged_dormant
+                                        - recert_overdue
+                                        - recert_inbox
+                                        - audit_archive_lag
+                                        - audit_emit_failures
+                                        - migration_regressions
+                                        - login_failure_spike
+                                        - deny_spike
+                                        - unassigned_users
+                                        - site_members_no_mfa
+                                        - apikey_unused
+                                    severity:
+                                      type: string
+                                      enum:
+                                        - critical
+                                        - warning
+                                        - info
+                                    title:
+                                      type: string
+                                    detail:
+                                      type: string
+                                    subject:
+                                      type: object
+                                      properties:
+                                        type:
+                                          type: string
+                                          enum:
+                                            - site
+                                            - user
+                                            - campaign
+                                            - request
+                                            - org
+                                            - component
+                                        id:
+                                          type: string
+                                        label:
+                                          type: string
+                                      required:
+                                        - type
+                                        - id
+                                        - label
+                                      additionalProperties: false
+                                    since:
+                                      type: string
+                                    actionable:
+                                      type: boolean
+                                    target:
+                                      type: object
+                                      properties:
+                                        page:
+                                          type: string
+                                        params:
+                                          type: object
+                                          additionalProperties:
+                                            type: string
+                                        anchor:
+                                          type: string
+                                      required:
+                                        - page
+                                        - params
+                                      additionalProperties: false
+                                    metrics:
+                                      type: object
+                                      additionalProperties:
+                                        type: number
+                                  required:
+                                    - id
+                                    - kind
+                                    - severity
+                                    - title
+                                    - since
+                                    - actionable
+                                    - target
+                                  additionalProperties: false
+                              counts:
+                                type: object
+                                properties:
+                                  critical:
+                                    type: number
+                                  warning:
+                                    type: number
+                                  info:
+                                    type: number
+                                required:
+                                  - critical
+                                  - warning
+                                  - info
+                                additionalProperties: false
+                              truncated:
+                                type: boolean
+                            required:
+                              - items
+                              - counts
+                              - truncated
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      people:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              identities:
+                                type: number
+                              active:
+                                type: number
+                              inactive:
+                                type: number
+                              fullAccess:
+                                type: number
+                              unassigned:
+                                type: number
+                              mfa:
+                                type: object
+                                properties:
+                                  enrolled:
+                                    type: number
+                                  of:
+                                    type: number
+                                  asOf:
+                                    type: string
+                                required:
+                                  - enrolled
+                                  - of
+                                  - asOf
+                                additionalProperties: false
+                              sessionsActive:
+                                type: object
+                                properties:
+                                  count:
+                                    type: number
+                                  asOf:
+                                    type: string
+                                required:
+                                  - count
+                                  - asOf
+                                additionalProperties: false
+                              byGroup:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    group:
+                                      type: string
+                                    members:
+                                      type: number
+                                  required:
+                                    - group
+                                    - members
+                                  additionalProperties: false
+                              byOrg:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    orgId:
+                                      type: string
+                                    name:
+                                      type: string
+                                    members:
+                                      type: number
+                                  required:
+                                    - orgId
+                                    - name
+                                    - members
+                                  additionalProperties: false
+                              orgsTotal:
+                                type: number
+                            required:
+                              - identities
+                              - active
+                              - inactive
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      activity:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              window:
+                                $ref: "#/properties/window"
+                              signIns:
+                                type: object
+                                properties:
+                                  succeeded:
+                                    type: number
+                                  failed:
+                                    type: number
+                                  prevSucceeded:
+                                    type: number
+                                  prevFailed:
+                                    type: number
+                                  distinctUsers:
+                                    type: number
+                                  failedFactor:
+                                    type: number
+                                    nullable: true
+                                  failedSpike:
+                                    type: object
+                                    properties:
+                                      factor:
+                                        type: number
+                                      current:
+                                        type: number
+                                      baseline:
+                                        type: number
+                                    required:
+                                      - factor
+                                      - current
+                                      - baseline
+                                    additionalProperties: false
+                                    nullable: true
+                                required:
+                                  - succeeded
+                                  - failed
+                                  - prevSucceeded
+                                  - prevFailed
+                                  - distinctUsers
+                                  - failedFactor
+                                  - failedSpike
+                                additionalProperties: false
+                              series:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    t:
+                                      type: string
+                                    succeeded:
+                                      type: number
+                                    failed:
+                                      type: number
+                                    changes:
+                                      type: number
+                                  required:
+                                    - t
+                                    - succeeded
+                                    - failed
+                                    - changes
+                                  additionalProperties: false
+                              byCategory:
+                                type: object
+                                additionalProperties:
+                                  type: number
+                              denied:
+                                type: object
+                                properties:
+                                  total:
+                                    type: number
+                                  prev:
+                                    type: number
+                                required:
+                                  - total
+                                  - prev
+                                additionalProperties: false
+                              topDeniedRoutes:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    route:
+                                      type: string
+                                    count:
+                                      type: number
+                                  required:
+                                    - route
+                                    - count
+                                  additionalProperties: false
+                              topActors:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    actorId:
+                                      type: string
+                                    label:
+                                      type: string
+                                    count:
+                                      type: number
+                                  required:
+                                    - actorId
+                                    - label
+                                    - count
+                                  additionalProperties: false
+                              source:
+                                type: string
+                                enum:
+                                  - loki
+                                  - redis-legacy
+                              truncated:
+                                type: boolean
+                            required:
+                              - window
+                              - signIns
+                              - series
+                              - byCategory
+                              - denied
+                              - topDeniedRoutes
+                              - source
+                              - truncated
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      access:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              window:
+                                $ref: "#/properties/window"
+                              totals:
+                                type: object
+                                properties:
+                                  allow:
+                                    type: number
+                                  deny:
+                                    type: number
+                                  notFound:
+                                    type: number
+                                required:
+                                  - allow
+                                  - deny
+                                  - notFound
+                                additionalProperties: false
+                              bySite:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    site:
+                                      type: string
+                                    allow:
+                                      type: number
+                                    deny:
+                                      type: number
+                                    denyRate:
+                                      type: number
+                                  required:
+                                    - site
+                                    - allow
+                                    - deny
+                                    - denyRate
+                                  additionalProperties: false
+                              topDeniedRoutes:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    site:
+                                      type: string
+                                    route:
+                                      type: string
+                                    method:
+                                      type: string
+                                    count:
+                                      type: number
+                                  required:
+                                    - site
+                                    - route
+                                    - method
+                                    - count
+                                  additionalProperties: false
+                              series:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    t:
+                                      type: string
+                                    allow:
+                                      type: number
+                                    deny:
+                                      type: number
+                                  required:
+                                    - t
+                                    - allow
+                                    - deny
+                                  additionalProperties: false
+                              source:
+                                type: string
+                                enum:
+                                  - decision-log
+                                  - oathkeeper-log
+                            required:
+                              - window
+                              - totals
+                              - bySite
+                              - topDeniedRoutes
+                              - series
+                              - source
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      sites:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              counts:
+                                type: object
+                                properties:
+                                  live:
+                                    type: number
+                                  attention:
+                                    type: number
+                                  draft:
+                                    type: number
+                                  paused:
+                                    type: number
+                                  deleted:
+                                    type: number
+                                required:
+                                  - live
+                                  - attention
+                                  - draft
+                                  - paused
+                                  - deleted
+                                additionalProperties: false
+                              pendingRequests:
+                                type: number
+                              unhealthy:
+                                type: number
+                                nullable: true
+                              list:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    displayName:
+                                      type: string
+                                    host:
+                                      type: string
+                                      nullable: true
+                                    status:
+                                      type: string
+                                      enum:
+                                        - live
+                                        - attention
+                                        - draft
+                                        - paused
+                                    ready:
+                                      type: boolean
+                                      nullable: true
+                                    version:
+                                      type: number
+                                    appliedVersion:
+                                      type: number
+                                      nullable: true
+                                    appliedAt:
+                                      type: string
+                                      nullable: true
+                                    appliedBy:
+                                      type: object
+                                      properties:
+                                        id:
+                                          type: string
+                                          nullable: true
+                                        label:
+                                          type: string
+                                      required:
+                                        - id
+                                        - label
+                                      additionalProperties: false
+                                      nullable: true
+                                    draftAt:
+                                      type: string
+                                      nullable: true
+                                    orgs:
+                                      type: number
+                                  required:
+                                    - name
+                                    - displayName
+                                    - host
+                                    - status
+                                    - ready
+                                    - version
+                                    - appliedVersion
+                                    - appliedAt
+                                    - appliedBy
+                                    - draftAt
+                                    - orgs
+                                  additionalProperties: false
+                              migration:
+                                type: object
+                                properties:
+                                  phase:
+                                    type: string
+                                  regressions:
+                                    type: number
+                                  rollbackUntil:
+                                    type: string
+                                    nullable: true
+                                required:
+                                  - phase
+                                  - regressions
+                                  - rollbackUntil
+                                additionalProperties: false
+                            required:
+                              - counts
+                              - pendingRequests
+                              - unhealthy
+                              - list
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      changes:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    eventId:
+                                      type: string
+                                    ts:
+                                      type: string
+                                    event:
+                                      type: string
+                                    category:
+                                      type: string
+                                    result:
+                                      type: string
+                                    actor:
+                                      type: object
+                                      properties:
+                                        id:
+                                          $ref: "#/properties/modules/properties/sites/properties/data/properties/list/it\
+                                            ems/properties/appliedBy/properties\
+                                            /id"
+                                        label:
+                                          $ref: "#/properties/modules/properties/sites/properties/data/properties/list/it\
+                                            ems/properties/appliedBy/properties\
+                                            /label"
+                                        type:
+                                          type: string
+                                          enum:
+                                            - user
+                                            - service
+                                            - system
+                                            - anonymous
+                                      required:
+                                        - id
+                                        - label
+                                        - type
+                                      additionalProperties: false
+                                    target:
+                                      type: object
+                                      properties:
+                                        type:
+                                          type: string
+                                        id:
+                                          type: string
+                                          nullable: true
+                                        label:
+                                          type: string
+                                      required:
+                                        - type
+                                        - id
+                                        - label
+                                      additionalProperties: false
+                                    site:
+                                      type: string
+                                    orgId:
+                                      type: string
+                                    link:
+                                      type: object
+                                      properties:
+                                        page:
+                                          type: string
+                                          enum:
+                                            - audit
+                                        params:
+                                          type: object
+                                          properties:
+                                            eventId:
+                                              type: string
+                                            ts:
+                                              type: string
+                                          required:
+                                            - eventId
+                                            - ts
+                                          additionalProperties: false
+                                      required:
+                                        - page
+                                        - params
+                                      additionalProperties: false
+                                  required:
+                                    - eventId
+                                    - ts
+                                    - event
+                                    - category
+                                    - result
+                                    - actor
+                                    - link
+                                  additionalProperties: false
+                              source:
+                                type: string
+                                enum:
+                                  - loki
+                                  - redis-legacy
+                            required:
+                              - items
+                              - source
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      actions:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    id:
+                                      type: string
+                                      enum:
+                                        - find_user
+                                        - invite_user
+                                        - revoke_sessions
+                                        - send_recovery
+                                        - new_site
+                                        - review_requests
+                                        - open_gateway
+                                        - grant_access
+                                        - org_api_key
+                                        - start_recert
+                                        - open_audit
+                                        - check_access
+                                    enabled:
+                                      type: boolean
+                                    reason:
+                                      type: string
+                                      enum:
+                                        - no_permission
+                                        - mfa_required
+                                        - not_deployed
+                                        - nothing_to_do
+                                    count:
+                                      type: number
+                                  required:
+                                    - id
+                                    - enabled
+                                  additionalProperties: false
+                            required:
+                              - items
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                      me:
+                        type: object
+                        properties:
+                          status:
+                            $ref: "#/properties/modules/properties/health/properties/status"
+                          reason:
+                            $ref: "#/properties/modules/properties/health/properties/reason"
+                          asOf:
+                            type: string
+                            nullable: true
+                          stale:
+                            type: boolean
+                          sources:
+                            type: object
+                            additionalProperties:
+                              $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                                erties"
+                          connect:
+                            $ref: "#/properties/modules/properties/health/properties/sources/additionalProp\
+                              erties/properties/connect"
+                          data:
+                            type: object
+                            properties:
+                              subject:
+                                type: string
+                              name:
+                                type: string
+                                nullable: true
+                              roles:
+                                type: array
+                                items:
+                                  type: string
+                              orgs:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    id:
+                                      type: string
+                                    name:
+                                      type: string
+                                  required:
+                                    - id
+                                    - name
+                                  additionalProperties: false
+                              recertPending:
+                                type: number
+                              aal:
+                                type: string
+                                enum:
+                                  - aal1
+                                  - aal2
+                            required:
+                              - subject
+                              - name
+                              - roles
+                              - orgs
+                              - recertPending
+                              - aal
+                            additionalProperties: false
+                        required:
+                          - status
+                          - asOf
+                          - stale
+                          - sources
+                        additionalProperties: false
+                    additionalProperties: false
+                required:
+                  - scope
+                  - generatedAt
+                  - window
+                  - modules
+                additionalProperties: false
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/home/{module}:
+    get:
+      tags: *a5
+      description: One Home module (retry after unavailable, or refresh a single
+        tile). 403 with status "forbidden" for a module the caller may not see.
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - 24h
+              - 7d
+            default: 24h
+          in: query
+          name: window
+          required: false
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[A-Za-z0-9_-]+$
+          in: query
+          name: org
+          required: false
+        - schema:
+            type: string
+            enum:
+              - health
+              - attention
+              - people
+              - activity
+              - access
+              - sites
+              - changes
+              - actions
+              - me
+          in: path
+          name: module
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                      - unavailable
+                      - forbidden
+                  reason:
+                    type: string
+                    enum:
+                      - warming
+                      - timeout
+                      - source_down
+                      - not_configured
+                      - not_deployed
+                  asOf:
+                    type: string
+                    nullable: true
+                  stale:
+                    type: boolean
+                  sources:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        state:
+                          type: string
+                          enum:
+                            - ok
+                            - down
+                            - timeout
+                            - warming
+                            - not_configured
+                            - not_deployed
+                        connect:
+                          type: object
+                          properties:
+                            setting:
+                              type: string
+                            docs:
+                              type: string
+                          required:
+                            - setting
+                            - docs
+                          additionalProperties: false
+                      required:
+                        - state
+                      additionalProperties: false
+                  connect:
+                    $ref: "#/properties/sources/additionalProperties/properties/connect"
+                  data: {}
+                required:
+                  - status
+                  - asOf
+                  - stale
+                  - sources
+                additionalProperties: false
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                      - unavailable
+                      - forbidden
+                  reason:
+                    type: string
+                    enum:
+                      - warming
+                      - timeout
+                      - source_down
+                      - not_configured
+                      - not_deployed
+                  asOf:
+                    type: string
+                    nullable: true
+                  stale:
+                    type: boolean
+                  sources:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        state:
+                          type: string
+                          enum:
+                            - ok
+                            - down
+                            - timeout
+                            - warming
+                            - not_configured
+                            - not_deployed
+                        connect:
+                          type: object
+                          properties:
+                            setting:
+                              type: string
+                            docs:
+                              type: string
+                          required:
+                            - setting
+                            - docs
+                          additionalProperties: false
+                      required:
+                        - state
+                      additionalProperties: false
+                  connect:
+                    $ref: "#/properties/sources/additionalProperties/properties/connect"
+                  data: {}
+                required:
+                  - status
+                  - asOf
+                  - stale
+                  - sources
+                additionalProperties: false
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/admin/recert/campaigns:
     post:
       tags:

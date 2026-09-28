@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { rulesGenerated, ruleCompileErrors } from '../telemetry/metrics.js'
+import { mirrorRulesServed } from '../home/runtime.js'
 
 /**
  * Oathkeeper Rules endpoint — polled by Oathkeeper
@@ -51,6 +52,7 @@ function recordRuleSet(rules: Array<{ id?: string; match?: { url?: string } }>, 
   const bad = uncompilableRules(rules)
   rulesGenerated.set(rules.length)
   ruleCompileErrors.set(bad.length)
+  mirrorRulesServed(rules.length, bad.length)
   // Polled every few seconds: say it when the set of broken rules changes, not on every poll.
   const key = bad.join(',')
   if (key !== lastBad) {

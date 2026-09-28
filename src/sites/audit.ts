@@ -1,9 +1,12 @@
 import { auditEventService, type AuditActorInput } from '../services/audit-event.service.js'
+import { invalidateHome } from '../home/cache.js'
 
 export type Actor = AuditActorInput
 
 /** One audit event per Site command, through the existing emitter only. Best-effort, like its other callers. */
 export function auditSite(verb: string, name: string, actor: Actor, summary: string, details?: Record<string, unknown>, result: 'ok' | 'applied' = 'ok'): void {
+  // Every Site command passes here: what the Home shows about sites and requests just changed.
+  invalidateHome(['attention', 'sites'])
   Promise.resolve()
     .then(() => auditEventService.emit({
       category: 'service',

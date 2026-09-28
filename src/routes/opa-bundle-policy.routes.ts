@@ -3,6 +3,7 @@ import { scimTokenService } from '../services/scim-token.service.js'
 import { policyBundle, PolicyBundleUnavailableError } from '../services/policy-bundle.service.js'
 import { organisationStoreConfigured } from '../services/organisation-store.js'
 import { recordEngineStatus, propagation } from '../services/engine-status.service.js'
+import { mirrorEngineReport } from '../home/runtime.js'
 
 /**
  * The bundle the authorization engine pulls: everything it decides against.
@@ -101,6 +102,13 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const named = recordEngineStatus(request.body as never, BUNDLE_NAME)
       if (!named) return reply.status(400).send({ error: 'The report names no engine.' })
+      const report = request.body as { labels?: { id?: string }; bundles?: Record<string, { active_revision?: unknown; last_successful_activation?: unknown } | undefined> }
+      const bundle = report.bundles?.[BUNDLE_NAME]
+      mirrorEngineReport(
+        String(report.labels?.id),
+        typeof bundle?.active_revision === 'string' ? bundle.active_revision : null,
+        typeof bundle?.last_successful_activation === 'string' ? bundle.last_successful_activation : null,
+      )
       return reply.status(204).send()
     },
   )

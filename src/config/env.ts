@@ -242,6 +242,9 @@ export const envSchema = z.object({
   // The namespace every query is pinned to — Loki is single-tenant, so this is the env boundary.
   LOKI_NAMESPACE: z.string().regex(/^[a-z0-9-]{1,63}$/).optional(),
   TEMPO_URL: z.string().url().optional(),
+  // Prometheus / Mimir, read by the Home (certificate expiry today). Unset: those tiles say
+  // "not connected" (not_configured), never zero.
+  PROMETHEUS_URL: z.string().url().optional(),
   GRAFANA_URL: z.string().url().optional(),
   GRAFANA_LOKI_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('loki'),
   GRAFANA_TEMPO_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('tempo'),

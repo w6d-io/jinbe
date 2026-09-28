@@ -7,6 +7,7 @@ import { env } from '../config/env.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
 import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSuccess } from '../telemetry/metrics.js'
+import { mirrorOpalFetch } from '../home/runtime.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -177,5 +178,8 @@ async function recordDatasourceFetch(request: FastifyRequest, reply: FastifyRepl
   const statusClass = status >= 500 ? '5xx' : status >= 400 ? '4xx' : status >= 300 ? '3xx' : '2xx'
   opalDatasourceRequests.labels(entry, statusClass).inc()
   opalDatasourceDuration.labels(entry).observe(reply.elapsedTime / 1000)
-  if (status < 300) opalDatasourceLastSuccess.labels(entry).set(Date.now() / 1000)
+  if (status < 300) {
+    opalDatasourceLastSuccess.labels(entry).set(Date.now() / 1000)
+    mirrorOpalFetch(entry)
+  }
 }

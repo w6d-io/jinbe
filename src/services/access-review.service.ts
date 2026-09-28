@@ -98,6 +98,11 @@ export interface AccessReviewSummary {
   noMfa: number
   /** Alias of `noMfa`. */
   withoutMfa: number
+  /**
+   * Second-factor enrolment across the WHOLE directory, from the credential pass this review already
+   * makes (home-data J3) — no second walk. Absent when that pass failed: unknown is not zero.
+   */
+  mfa?: { enrolled: number; identities: number }
   computedAt: string
 }
 
@@ -376,6 +381,7 @@ class AccessReviewService {
       dormant,
       noMfa: noMfaCount,
       withoutMfa: noMfaCount,
+      ...(mfaOk ? { mfa: { enrolled: [...mfaByEmail.values()].filter(Boolean).length, identities: mfaByEmail.size } } : {}),
       computedAt: new Date().toISOString(),
     }
 
