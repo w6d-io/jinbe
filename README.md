@@ -492,6 +492,8 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 |---|---|---|
 | `RATE_LIMIT_MAX` | `100` | Requests per window. |
 | `RATE_LIMIT_TIME_WINDOW` | `60000` | Window in milliseconds. |
+| `TRUSTED_PROXY_HOPS` | `1` | Proxies trusted in front of jinbe, the socket peer first; the client is the X-Forwarded-For entry after them. `1` = Envoy (or nginx) → Oathkeeper → jinbe (Oathkeeper forwards the header untouched). `0` = the socket peer. |
+| `TRUST_ENVOY_EXTERNAL_ADDRESS` | `false` | Prefer Envoy's `x-envoy-external-address`. Only where every external request reaches jinbe through Envoy; elsewhere the client writes it. |
 
 #### Redis
 
@@ -534,6 +536,7 @@ See [machine-to-machine auth](#machine-to-machine-auth) for the full setup — i
 | `K8S_SA_ALLOWED_SUBJECTS` | unset | Optional allow-list of `namespace:serviceaccount` (`namespace:*` for a whole namespace). Empty ⇒ no subject filter; Kratos identity + OPA permissions still gate. |
 | `K8S_SA_CACHE_TTL_MS` | `60000` | `TokenReview` cache TTL, always capped by the token's own `exp`. |
 | `HYDRA_ADMIN_URL` | `http://auth-hydra-admin:4445` | Private Hydra Admin API backing per-org `client_credentials` API keys. Never expose publicly. |
+| `HYDRA_ADMIN_TOKEN` / `KRATOS_ADMIN_TOKEN` | unset | Sent as `Authorization: Bearer` on every Hydra / Kratos admin call, for admin APIs behind the chart's token sidecar (`hydra.adminAuth`, `kratos.adminAuth`). Unset ⇒ no header. |
 | `API_KEY_ALLOWED_SCOPES` | `api:read,api:write` | Scope catalog validated server-side when an API key is created. |
 
 #### Dev / debugging (never enable in production)

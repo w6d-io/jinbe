@@ -42,7 +42,8 @@ vi.mock('../../services/redis-client.service.js', () => {
 })
 
 import { signInGateRoutes } from '../../sign-in-protection/gate-routes.js'
-import { classifySubmit, gateSubmit, gatewayClientIp, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
+import { classifySubmit, gateSubmit, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
+import { clientIp } from '../../utils/client-ip.js'
 import { guardFlow } from '../../sign-in-protection/guard.js'
 import { SIGN_IN_PROTECTION_KEY, defaultSignInProtection, resetSignInProtectionCache, type CaptchaFlow } from '../../sign-in-protection/settings.js'
 import { buildBuiltInRules } from '../../bootstrap/build-rules.js'
@@ -109,10 +110,11 @@ describe('what a submit is', () => {
     expect(parseSubmitBody('application/x-www-form-urlencoded', Buffer.from('method=code&traits.email=a%40b.io&method=password'))).toEqual({ method: 'code', 'traits.email': 'a@b.io' })
   })
 
-  it('the client IP is the edge one, never the first X-Forwarded-For entry the client wrote', () => {
-    expect(gatewayClientIp({ 'x-envoy-external-address': '176.1.2.3', 'x-forwarded-for': '1.2.3.4,176.1.2.3' }, '10.0.0.1')).toBe('176.1.2.3')
-    expect(gatewayClientIp({ 'x-forwarded-for': '1.2.3.4, 176.1.2.3' }, '10.0.0.1')).toBe('176.1.2.3')
-    expect(gatewayClientIp({}, '10.0.0.1')).toBe('10.0.0.1')
+  it('the client IP is the edge one where Envoy is trusted, else request.ip under the hop count', () => {
+    const edge = { 'x-envoy-external-address': '176.1.2.3', 'x-forwarded-for': '1.2.3.4,176.1.2.3' }
+    expect(clientIp({ headers: edge, ip: '176.1.2.3' }, true)).toBe('176.1.2.3')
+    expect(clientIp({ headers: { 'x-envoy-external-address': '9.9.9.9' }, ip: '176.1.2.3' }, false)).toBe('176.1.2.3')
+    expect(clientIp({ headers: {}, ip: '10.0.0.1' }, true)).toBe('10.0.0.1')
   })
 })
 
@@ -283,7 +285,8 @@ describe('gate route (proxy to Kratos)', () => {
     await app.ready()
   })
   afterAll(async () => { await app.close(); await new Promise((r) => kratos.close(r)) })
-  beforeEach(() => { seen.length = 0; provider = siteverify({ success: true }) })
+  // Behind Envoy only: the edge header names the visitor (utils/client-ip.ts).
+  beforeEach(() => { seen.length = 0; provider = siteverify({ success: true }); h.env.TRUST_ENVOY_EXTERNAL_ADDRESS = true })
 
   const post = (flow: string, body: unknown, headers: Record<string, string> = {}) => app.inject({
     method: 'POST',

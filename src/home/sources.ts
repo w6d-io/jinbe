@@ -23,6 +23,7 @@ import { HttpLokiClient, lokiClient, type LokiClient } from '../audit/query/loki
 import { promClient, type PromClient } from '../telemetry/prom-query.js'
 import { ENGINES_KEY, OPAL_KEY, RULES_KEY, SERVING_KEY, auditFailuresKey } from './runtime.js'
 import { DEAD_LETTER_KEY } from '../services/notifications/notifier.js'
+import { adminAuthHeaders } from '../services/admin-auth.js'
 
 /**
  * Every source the Home reads, behind one seam: the modules compute from these, the tests replace
@@ -39,7 +40,10 @@ export const redisHealthy = () => redisClientService.isHealthy().catch(() => fal
 /** Kratos admin readiness: `ok` under the budget, `slow` past it, `down` on an error answer. */
 export async function kratosReady(timeoutMs: number): Promise<'ok' | 'slow' | 'down'> {
   try {
-    const res = await fetch(`${env.KRATOS_ADMIN_URL.replace(/\/$/, '')}/admin/health/ready`, { signal: AbortSignal.timeout(timeoutMs) })
+    const res = await fetch(`${env.KRATOS_ADMIN_URL.replace(/\/$/, '')}/admin/health/ready`, {
+      headers: adminAuthHeaders(env.KRATOS_ADMIN_TOKEN),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
     return res.ok ? 'ok' : 'down'
   } catch (err) {
     return (err as Error)?.name === 'TimeoutError' ? 'slow' : 'down'

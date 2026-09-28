@@ -121,19 +121,6 @@ export function parseSubmitBody(contentType: string | undefined, body: Buffer): 
   return {}
 }
 
-/**
- * The visitor's address as the edge saw it. Envoy overwrites x-envoy-external-address on every
- * external request and appends the peer to X-Forwarded-For, so the last X-Forwarded-For entry is
- * next best; the first entry is whatever the client wrote and is never used.
- */
-export function gatewayClientIp(headers: Record<string, string | string[] | undefined>, fallback: string | null): string | null {
-  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[v.length - 1] : v)
-  const edge = one(headers['x-envoy-external-address'])?.trim()
-  if (edge) return edge
-  const xff = one(headers['x-forwarded-for'])?.split(',').map((s) => s.trim()).filter(Boolean)
-  return xff?.length ? xff[xff.length - 1] : fallback
-}
-
 export const hashForLog = (v: string) => createHash('sha256').update(v).digest('hex').slice(0, 16)
 
 async function bounded<T>(p: Promise<T>, ms: number): Promise<T> {

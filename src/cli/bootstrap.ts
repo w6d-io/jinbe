@@ -63,7 +63,7 @@ async function main(): Promise<number> {
   // Wait for dependencies before any work.
   try {
     await waitForRedis({ logger })
-    await waitForKratos({ url: env.KRATOS_ADMIN_URL, logger })
+    await waitForKratos({ url: env.KRATOS_ADMIN_URL, token: env.KRATOS_ADMIN_TOKEN, logger })
   } catch (err) {
     if (err instanceof DependencyTimeoutError) {
       logger.error({ dependency: err.dependency, attempts: err.attempts }, 'Dependency timeout')

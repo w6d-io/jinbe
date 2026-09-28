@@ -6,6 +6,7 @@ import { actorOf, handle, nameOf, parse } from '../http.js'
 import { importCommitBodySchema, importPreviewBodySchema } from './schemas.js'
 import { commitImport, previewImport } from './import.service.js'
 import { LIMITS } from './limits.js'
+import { clientIp } from '../../utils/client-ip.js'
 
 /**
  * /api/admin/sites/:name/import — OpenAPI → site routes (openapi-import.md §3). Same gate as a draft
@@ -13,7 +14,7 @@ import { LIMITS } from './limits.js'
  * gates. Spec reads are costly, so each actor gets 10 a minute.
  */
 
-const rateLimit = { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? r.ip } }
+const rateLimit = { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) } }
 const doc = (description: string, body: ZodSchema) => ({ schema: { description, tags: ['sites'], body: zodToJsonSchema(body, { target: 'openApi3' }) } })
 
 export async function siteImportRoutes(fastify: FastifyInstance) {

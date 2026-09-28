@@ -1,5 +1,6 @@
 import { getRedisClient } from '../services/redis-client.service.js'
 import type { BootstrapLogger } from './types.js'
+import { adminAuthHeaders, redactUrl } from '../services/admin-auth.js'
 
 export class DependencyTimeoutError extends Error {
   constructor(public readonly dependency: string, public readonly attempts: number) {
@@ -37,15 +38,17 @@ export async function waitForRedis(opts: {
 }
 
 /**
- * Wait until Kratos public/admin API responds with a 2xx on /health/ready.
+ * Wait until Kratos public/admin API responds with a 2xx on /health/ready. `token` is the admin
+ * API's bearer token (KRATOS_ADMIN_TOKEN), sent when set.
  */
 export async function waitForKratos(opts: {
   url: string
+  token?: string
   logger: BootstrapLogger
   timeoutMs?: number
   intervalMs?: number
 }): Promise<void> {
-  const { url, logger, timeoutMs = 60_000, intervalMs = 2_000 } = opts
+  const { url, token, logger, timeoutMs = 60_000, intervalMs = 2_000 } = opts
   const deadline = Date.now() + timeoutMs
   let attempt = 0
   const probeUrl = url.replace(/\/$/, '') + '/health/ready'
@@ -53,9 +56,9 @@ export async function waitForKratos(opts: {
   while (Date.now() < deadline) {
     attempt++
     try {
-      const res = await fetch(probeUrl, { method: 'GET', signal: AbortSignal.timeout(3000) })
+      const res = await fetch(probeUrl, { method: 'GET', headers: adminAuthHeaders(token), signal: AbortSignal.timeout(3000) })
       if (res.ok) {
-        logger.info({ attempt, url: probeUrl }, 'Kratos ready')
+        logger.info({ attempt, url: redactUrl(probeUrl) }, 'Kratos ready')
         return
       }
       logger.debug({ status: res.status, attempt }, 'Kratos not ready, retrying')

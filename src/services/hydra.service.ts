@@ -1,13 +1,16 @@
 import { env } from '../config/index.js'
+import { adminAuthHeaders, redactUrl } from './admin-auth.js'
 
 /**
  * Custom error class for Hydra Admin API errors
  */
 /** Hydra could not be reached at all (DNS, connection refused, timeout): an outage, not a refusal. */
 export class HydraUnavailableError extends Error {
-  constructor(public readonly url: string, cause: unknown) {
-    super(`OAuth2 server (Hydra) unreachable at ${url}: ${cause instanceof Error ? ((cause as { cause?: { code?: string } }).cause?.code ?? cause.message) : String(cause)}`)
+  public readonly url: string
+  constructor(url: string, cause: unknown) {
+    super(`OAuth2 server (Hydra) unreachable at ${redactUrl(url)}: ${cause instanceof Error ? ((cause as { cause?: { code?: string } }).cause?.code ?? cause.message) : String(cause)}`)
     this.name = 'HydraUnavailableError'
+    this.url = redactUrl(url)
   }
 }
 
@@ -77,9 +80,11 @@ export interface HydraIntrospection {
  */
 export class HydraService {
   private adminUrl: string
+  private adminToken: string | undefined
 
   constructor() {
     this.adminUrl = env.HYDRA_ADMIN_URL
+    this.adminToken = env.HYDRA_ADMIN_TOKEN
   }
 
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -92,6 +97,7 @@ export class HydraService {
         headers: {
           'Content-Type': 'application/json',
           ...options.headers,
+          ...adminAuthHeaders(this.adminToken),
         },
       })
     } catch (err) {
@@ -185,7 +191,7 @@ export class HydraService {
       const url = `${this.adminUrl}/admin/clients?${params.toString()}`
       let response: Response
       try {
-        response = await fetch(url, { headers: { 'Content-Type': 'application/json' } })
+        response = await fetch(url, { headers: { 'Content-Type': 'application/json', ...adminAuthHeaders(this.adminToken) } })
       } catch (err) {
         throw new HydraUnavailableError(this.adminUrl, err)
       }
