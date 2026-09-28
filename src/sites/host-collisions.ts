@@ -8,8 +8,11 @@ import { kubeSites, type IngressHosts } from './kube-sites.js'
  * The rules are the operator's own (site-operator internal/controller/hosts.go): an Ingress naming the
  * exact host takes it (blocking, `HostTaken`); a wildcard one label above it is only shadowed — nginx
  * routes the exact host to the Site and that Ingress's paths stop being served there (a warning,
- * `HostShadowsWildcard`). Skipped: the Site's own Ingresses, and the operator's Zone wildcard Ingresses (a Site
- * under a wildcard Zone is meant to be served by them).
+ * `HostShadowsWildcard`). Skipped: the Site's own Ingresses, the operator's Zone wildcard Ingresses (a Site
+ * under a wildcard Zone is meant to be served by them), and the operator's shared `host-<hash8>` Ingress
+ * for the host itself (per-site Zones): it belongs to every Site on the host (owner references, none a
+ * controller), so it is the Site's own, or its siblings' under other path prefixes — which site holds
+ * which prefix is `hostOwner`'s question, not an Ingress collision (the operator's `ours`).
  */
 
 const MANAGED_BY = 'app.kubernetes.io/managed-by'
@@ -36,6 +39,10 @@ export function serves(rule: string, host: string): boolean {
 const byOperator = (ing: IngressHosts) => ing.namespace === sitesConfig().namespace && ing.labels[MANAGED_BY] === OPERATOR
 const zoneWildcard = (ing: IngressHosts) => byOperator(ing) && !!ing.labels[ZONE_LABEL] && ing.name.startsWith('zone-')
 const ownedBy = (ing: IngressHosts, site: string | undefined) => !!site && byOperator(ing) && ing.labels[SITE_LABEL] === site
+const HOST_INGRESS_LABEL = 'auth.w6d.io/host-ingress'
+const HOST_ANNOTATION = 'auth.w6d.io/host'
+const sharedFor = (ing: IngressHosts, host: string) =>
+  byOperator(ing) && ing.labels[HOST_INGRESS_LABEL] === 'true' && ing.name.startsWith('host-') && ing.annotations?.[HOST_ANNOTATION]?.toLowerCase() === host
 
 /**
  * Every Ingress of the cluster, or null when the cluster is not read (SITES_KUBE=off: nothing to
@@ -51,7 +58,7 @@ export async function clusterIngresses(): Promise<IngressHosts[] | null> {
 export function hostCollisions(host: string, site: string | undefined, ingresses: readonly IngressHosts[]): IngressRef[] {
   const h = host.toLowerCase()
   return ingresses
-    .filter((ing) => !zoneWildcard(ing) && !ownedBy(ing, site))
+    .filter((ing) => !zoneWildcard(ing) && !ownedBy(ing, site) && !sharedFor(ing, h))
     .flatMap((ing) => ing.hosts.filter((rule) => serves(rule.toLowerCase(), h)).map((rule) => ({ namespace: ing.namespace, name: ing.name, rule, paths: ing.paths?.[rule] ?? [] })))
 }
 

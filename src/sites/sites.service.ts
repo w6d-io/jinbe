@@ -13,6 +13,7 @@ import { placeHost, zonesView } from './host.js'
 import { auditSite, type Actor } from './audit.js'
 import { suggestFor } from './zones.service.js'
 import { clusterIngresses, collisionChecks } from './host-collisions.js'
+import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -145,13 +146,20 @@ export async function preview(site: Site) {
   // gatekit first: when it cannot answer there is no preview at all (no JS approximation).
   const gk = await gatekitChecks(site, rendered, records)
   const ctx = await contextChecks(site, rendered, records)
-  const before = await appliedRender(records.find((r) => r.site.name === site.name) ?? null)
+  const record = records.find((r) => r.site.name === site.name) ?? null
+  const before = await appliedRender(record)
   const risk = riskOf(before?.site ?? null, site)
+  // A move of a live site: what the move costs (old URL, landing page, zone, certificate) and the
+  // moment the operator rewrites the Rules one by one, asked of gatekit on both addresses.
+  const moved = addressChecks(before?.site ?? null, site, platform.zones ?? [], { allowedParents: sitesConfig().SITES_ZONE_ALLOWED_PARENTS })
+  const swap = before && record?.applied ? await swapChecks({ site: before.site, rules: record.applied.rules }, site, rendered, await liveRules(site.name, records)) : []
   const { checks, ...artefacts } = rendered
+  // The landing page left on the old host: said once, by the address check that carries the fix.
+  const own = moved.some((c) => c.code === 'return_url_old_address') ? checks.filter((c) => c.code !== 'return_url_host') : checks
   const ingresses = await clusterIngresses()
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
   return {
-    artefacts, checks: [...checks, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...gk], risk, words: risk.flags.map((f) => f.message),
+    artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
     // Outside every zone: the zone the wizard can offer to create.
     ...(suggested.covered ? {} : { suggestedZone: suggested }),
   }
@@ -185,7 +193,8 @@ export async function save(name: string, site: Site, opts: { note?: string; ifMa
   }
   const record = await sitesRepository.save(site, { by: opts.actor.email ?? 'unknown', note: opts.note, ifMatch: opts.ifMatch, kind: opts.kind })
   await sitesRepository.deleteDraft(name)
-  auditSite('update', name, opts.actor, `saved version ${record.version}`, { version: record.version, kind: opts.kind ?? 'save' })
+  const moved = current && !sameAddress(current.site.address, site.address) ? { address: { from: current.site.address, to: site.address } } : {}
+  auditSite('update', name, opts.actor, `saved version ${record.version}${moved.address ? ` (address ${addressUrl(moved.address.from)} → ${addressUrl(moved.address.to)})` : ''}`, { version: record.version, kind: opts.kind ?? 'save', ...moved })
   return record
 }
 
@@ -209,7 +218,7 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
   const placement = placeHost(body.host, zones, cfg.SITES_COOKIE_DOMAIN)
   const reserved = cfg.SITES_RESERVED_HOSTS.includes(body.host)
   const records = await sitesRepository.list()
-  const { owner, sharedWith } = hostOwner(body.host, body.pathPrefix, body.site, records)
+  const { owner, sharedWith, moving } = hostOwner(body.host, body.pathPrefix, body.site, records, await liveAddresses(records))
   // Another Ingress anywhere in the cluster already answering this host (the operator's HostTaken).
   const ingresses = await clusterIngresses()
   const taken = collisionChecks(body.host, body.site, ingresses).map(({ path: _p, ...c }) => c)
@@ -218,7 +227,7 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
     ...(placement.tooDeep ? [{ level: 'error', code: 'host_too_deep', message: 'A site host must be exactly one label under a zone' }] : []),
     ...(placement.zone || placement.tooDeep ? [] : [{ level: 'error', code: 'host_outside_zones', message: 'No zone covers this host; sites are mapped under the configured wildcard zones only' }]),
     ...(reserved ? [{ level: 'error', code: 'host_reserved', message: 'This is a platform host' }] : []),
-    ...(owner ? [{ level: 'error', code: 'host_taken', message: `Already served by site '${owner}'` }] : []),
+    ...(owner ? [{ level: 'error', code: 'host_taken', message: moving ? `Still served by site '${owner}' until its address change is applied` : `Already served by site '${owner}'` }] : []),
     ...taken,
     ...(legacy ? [{ level: 'warn', code: 'legacy_rules', message: 'Legacy gateway rules already serve this host; overlaps are checked at preview' }] : []),
     ...(placement.zone && !placement.sso ? [{ level: 'warn', code: 'no_sso', message: 'The login cookie does not reach this zone; browser sign-in will not work there' }] : []),

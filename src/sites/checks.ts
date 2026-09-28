@@ -6,6 +6,7 @@ import { sitesRepository, type SiteRecord } from './repository.js'
 import { gatekit, type Probe } from './gatekit.client.js'
 import { examplePath } from './patterns.js'
 import { sitesConfig } from './config.js'
+import { liveAddresses } from './address.js'
 
 /**
  * The checks render cannot make alone because they need the rest of the platform: other services'
@@ -32,20 +33,34 @@ export async function liveRules(except?: string, records?: SiteRecord[]): Promis
   return [...legacy, ...sites.flatMap((r) => r.applied!.rules)]
 }
 
-/** Hosts of every app-pinned service: applied sites, plus the candidate. */
-export function pinnedHostsOf(records: SiteRecord[], candidate: Site): PinnedHosts {
-  const hosts: PinnedHosts = Object.fromEntries(records.filter((r) => r.applied).map((r) => [r.site.name, [r.site.address.host]]))
+/**
+ * Hosts of every app-pinned service: applied sites, plus the candidate. An applied site is pinned to
+ * the host it serves now (`live`, its applied version's), which a later saved move may not share yet.
+ */
+export function pinnedHostsOf(records: SiteRecord[], candidate: Site, live?: Map<string, Site['address']>): PinnedHosts {
+  const hosts: PinnedHosts = Object.fromEntries(records.filter((r) => r.applied).map((r) => [r.site.name, [(live?.get(r.site.name) ?? r.site.address).host]]))
   hosts[candidate.name] = [candidate.address.host]
   return hosts
 }
 
 const prefixesOverlap = (a?: string, b?: string) => !a || !b || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
 
-/** The other site already serving this host (and path prefix), if any. */
-export function hostOwner(host: string, prefix: string | undefined, except: string | undefined, records: SiteRecord[]): { owner?: string; sharedWith: string[] } {
-  const same = records.filter((r) => r.site.name !== except && r.site.address.host === host.toLowerCase())
-  const owner = same.find((r) => prefixesOverlap(prefix, r.site.address.pathPrefix))
-  return { owner: owner?.site.name, sharedWith: same.filter((r) => r !== owner).map((r) => r.site.name) }
+/**
+ * The other site already serving this host (and path prefix), if any. A site holds both its saved
+ * address and, until a move is applied, the one it still serves (`live`): neither may be taken.
+ */
+export function hostOwner(host: string, prefix: string | undefined, except: string | undefined, records: SiteRecord[], live?: Map<string, Site['address']>): { owner?: string; sharedWith: string[]; moving?: boolean } {
+  const h = host.toLowerCase()
+  const claims = records.filter((r) => r.site.name !== except).flatMap((r) => {
+    const held = live?.get(r.site.name)
+    return [
+      ...(r.site.address.host === h ? [{ name: r.site.name, prefix: r.site.address.pathPrefix, moving: false }] : []),
+      ...(held && (held.host !== r.site.address.host || held.pathPrefix !== r.site.address.pathPrefix) && held.host === h ? [{ name: r.site.name, prefix: held.pathPrefix, moving: true }] : []),
+    ]
+  })
+  const owner = claims.find((c) => prefixesOverlap(prefix, c.prefix))
+  const sharedWith = [...new Set(claims.filter((c) => c.name !== owner?.name).map((c) => c.name))]
+  return { owner: owner?.name, sharedWith, ...(owner?.moving ? { moving: true } : {}) }
 }
 
 export async function contextChecks(site: Site, rendered: Rendered, records?: SiteRecord[]): Promise<Check[]> {
@@ -56,7 +71,8 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
     checks.push({ level: 'error', code: 'service_exists', message: `'${site.name}' is already a service not managed as a site; adopt it through the migration instead`, path: 'name' })
   }
 
-  const ties = findRouteTies(site.name, rendered.routeMap, await loadPublishedRouteRules(), pinnedHostsOf(all, site))
+  const live = await liveAddresses(all)
+  const ties = findRouteTies(site.name, rendered.routeMap, await loadPublishedRouteRules(), pinnedHostsOf(all, site, live))
   for (const tie of ties) checks.push({ level: 'error', code: 'route_tie', message: describeRouteTie(tie), path: 'routes' })
 
   const groups = await redisRbacRepository.getGroups()
@@ -71,8 +87,8 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
   const cfg = sitesConfig()
   const host = site.address.host
   if (cfg.SITES_RESERVED_HOSTS.includes(host)) checks.push({ level: 'error', code: 'host_reserved', message: `${host} is a platform host`, path: 'address.host' })
-  const { owner } = hostOwner(host, site.address.pathPrefix, site.name, all)
-  if (owner) checks.push({ level: 'error', code: 'host_taken', message: `${host} is already served by site '${owner}'`, path: 'address.host' })
+  const { owner, moving } = hostOwner(host, site.address.pathPrefix, site.name, all, live)
+  if (owner) checks.push({ level: 'error', code: 'host_taken', message: moving ? `${host} is still served by site '${owner}' until its address change is applied` : `${host} is already served by site '${owner}'`, path: 'address.host' })
   // Zone, depth and SSO are render's checks (the zones are part of the platform it is given).
   return checks
 }

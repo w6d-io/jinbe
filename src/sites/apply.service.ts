@@ -3,7 +3,8 @@ import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { render } from './render.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
-import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, pinnedHostsOf, siteError } from './checks.js'
+import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, liveRules, pinnedHostsOf, siteError } from './checks.js'
+import { addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 import { kubeSites } from './kube-sites.js'
 import { publishPermissions, unpublishPermissions } from './publish.js'
 import { getRecord, save } from './sites.service.js'
@@ -47,8 +48,12 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
 
   const gk = await gatekitChecks(site, rendered, records)
   const ctx = await contextChecks(site, rendered, records)
-  const blocking = errorsOf([...ctx, ...gk])
-  if (blocking.length > 0) throw siteError(409, 'checks_failed', blocking.map((c) => c.message).join('; '), [...ctx, ...gk])
+  // A move: the version live now, and the moment the operator rewrites its Rules one by one.
+  const before = record.applied ? (await sitesRepository.version(site.name, record.applied.version))?.site ?? null : null
+  const swap = before ? await swapChecks({ site: before, rules: record.applied!.rules }, site, rendered, await liveRules(site.name, records)) : []
+  const blocking = errorsOf([...ctx, ...gk, ...swap])
+  if (blocking.length > 0) throw siteError(409, 'checks_failed', blocking.map((c) => c.message).join('; '), [...ctx, ...gk, ...swap])
+  const live = await liveAddresses(records)
 
   const kube = kubeSites()
   await kube.ping()
@@ -62,7 +67,7 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
 
   setStage(timeline, 'permissions', 'running')
   try {
-    await publishPermissions(site.name, rendered, { description: site.description ?? site.displayName, pinnedHosts: pinnedHostsOf(records, site), actor })
+    await publishPermissions(site.name, rendered, { description: site.description ?? site.displayName, pinnedHosts: pinnedHostsOf(records, site, live), actor })
     await siteLoginStore.set(site.name, siteLoginOf(site))
   } catch (err) {
     await failed('permissions', err)
@@ -83,6 +88,11 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
   await saveApply(timeline)
   await sitesRepository.markApplied(site.name, { version, by: actor.email ?? 'unknown', rules: rendered.rules })
   auditSite('apply', site.name, actor, `${verb} version ${version}`, { version, rules: rendered.rules.map((r) => r.id), applyId: timeline.id }, 'applied')
+  if (before && !sameAddress(before.address, site.address)) {
+    auditSite('address_change', site.name, actor, `address ${addressUrl(before.address)} → ${addressUrl(site.address)} (version ${version})`, {
+      version, fromVersion: record.applied!.version, applyId: timeline.id, address: { from: before.address, to: site.address },
+    }, 'applied')
+  }
   watchApply(site.name, timeline.id)
   return { applyId: timeline.id, version, rules: rendered.rules.map((r) => r.id), site: rendered.siteCr.metadata.name }
 }
