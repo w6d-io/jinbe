@@ -40,6 +40,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   // the after-hook above.
   'POST /api/webhooks/kratos/guard': exempt('judges a Kratos submit (bot check, sign-up policy, protected traits); jinbe stores nothing'),
   'POST /api/public/sign-in-protection/check': exempt('the gateway asking whether a bot-check token is good; changes nothing'),
+  'POST /api/public/sign-in-protection/gate/self-service/:flow': exempt('a Kratos self-service submit passing through the sign-in gate; Kratos audits the flow, refusals are logged and counted'),
   'POST /api/admin/organizations': by('org.created'),
   'PATCH /api/admin/organizations/:id': by('org.updated'),
   'DELETE /api/admin/organizations/:id': by('org.deleted'),

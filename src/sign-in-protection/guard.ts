@@ -3,6 +3,7 @@ import { verifyCaptcha, type VerifyResult } from './captcha.js'
 import { domainAndParents, isDisposable } from './disposable.js'
 import { registrationTraitsVerdict, settingsTraitsVerdict, type Traits, type TraitsVerdict } from './protected-traits.js'
 import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './settings.js'
+import { takeVerified } from './verified-tokens.js'
 
 /**
  * The server-side half of sign-in protection: what the interrupting Kratos web_hook asks
@@ -16,10 +17,10 @@ import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './
  *     once the password was accepted (see the login note below).
  *   - settings `after.profile` with `response.parse: true` runs before the new traits are written:
  *     the protected-traits check (protected-traits.ts), flow `settings`.
- *   - recovery and verification have NO hook at the moment a code or link is sent: `before` runs at
- *     flow creation (no answer yet), `after` once the code was used. Their bot check is enforced at
- *     the gateway instead (POST /api/public/sign-in-protection/check, from an Oathkeeper remote_json
- *     authorizer).
+ *   - NO flow has a hook at the moment a code or link is sent (a code sign-in or sign-up emails the
+ *     code on the address submit; recovery and verification `before` runs at flow creation, `after`
+ *     once the code was used). That step is judged by the sign-in gate in front of Kratos (gate.ts),
+ *     which spends the token and leaves it verified for this hook.
  *
  * The hook fires for API flows too (/self-service/registration/api), which is the point: a script
  * that never loads login-ui still meets this check.
@@ -131,7 +132,7 @@ export function registrationVerdict(email: string | null | undefined, policy: Si
   return null
 }
 
-function captchaVerdict(result: VerifyResult, failMode: SignInProtection['captcha']['failMode']): Decision | null {
+export function captchaVerdict(result: VerifyResult, failMode: SignInProtection['captcha']['failMode']): Decision | null {
   if (result.ok) return null
   switch (result.reason) {
     case 'missing':
@@ -189,7 +190,11 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
   if (input.flow === 'registration' && input.method === 'oidc') guarded = false
   let failOpen = false
   if (guarded) {
-    const verdict = captchaVerdict(await verifyCaptcha(input.captchaToken, { action: input.flow, remoteIp: input.ip }, fetchImpl), settings.captcha.failMode)
+    // The gate spent this token on the submit that sent the code (gate.ts): its word stands.
+    const checked: VerifyResult = (await takeVerified(input.captchaToken, input.flow))
+      ? { ok: true }
+      : await verifyCaptcha(input.captchaToken, { action: input.flow, remoteIp: input.ip }, fetchImpl)
+    const verdict = captchaVerdict(checked, settings.captcha.failMode)
     if (verdict && !verdict.allow) return verdict
     failOpen = verdict?.result === 'fail_open'
   }

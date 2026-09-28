@@ -34,6 +34,8 @@ export interface BootstrapAdmin {
 export interface BootstrapConfig {
   domains: BootstrapDomains
   urls: BootstrapUrls
+  /** Self-service submits go through jinbe's sign-in gate (SIGN_IN_GATE_ENABLED). */
+  signInGate?: boolean
   admin: BootstrapAdmin | null
 }
 

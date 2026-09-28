@@ -40,6 +40,7 @@ import { auditApiRoutes } from './routes/audit-api.routes.js'
 import { observabilityRoutes } from './routes/observability.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
+import { signInGateRoutes } from './sign-in-protection/gate-routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
 import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
@@ -197,6 +198,7 @@ export async function buildServer() {
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
       await api.register(signInProtectionPublicRoutes, { prefix: '/public/sign-in-protection' }) // login-ui: widget + sign-up mode; gateway bot check
+      await api.register(signInGateRoutes, { prefix: '/public/sign-in-protection/gate' }) // the gateway: self-service submits judged before Kratos
       await api.register(jobRoutes)
     },
     { prefix: '/api' }

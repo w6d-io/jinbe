@@ -97,7 +97,7 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
     }
 
     const existing = await readMarker()
-    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls })
+    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate })
     const currentBuiltInsHash = {
       rules: canonicalHash(builtInRules),
       routeMap: canonicalHash(JINBE_BUILT_IN_ROUTES),
@@ -191,7 +191,7 @@ async function runFullBootstrap(config: BootstrapConfig, logger: BootstrapLogger
 }
 
 async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): Promise<void> {
-  const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls })
+  const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate })
   await upsertBuiltInRules(rules, logger)
   await mergeJinbeRouteMap(JINBE_BUILT_IN_ROUTES, logger)
   // Always run the metadata migration: idempotent, ensures system-protection
