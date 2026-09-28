@@ -23,3 +23,12 @@ describe('error handler: OPA could not be asked', () => {
     expect(res.json()).toMatchObject({ error: 'Only admin.membership:write may do y' })
   })
 })
+
+describe('error handler: no organisation directory', () => {
+  it('answers 503 organisation_directory_unavailable, never a 500', async () => {
+    const { OrganisationStoreUnavailableError } = await import('../../../services/organisation-store.js')
+    const res = await answer(new OrganisationStoreUnavailableError('No organisation database is configured.'))
+    expect(res.statusCode).toBe(503)
+    expect(res.json()).toEqual({ error: 'organisation_directory_unavailable', message: 'No organisation database is configured.' })
+  })
+})

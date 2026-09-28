@@ -10,6 +10,7 @@ import {
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { OrganisationStoreUnavailableError } from '../services/organisation-store.js'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -236,6 +237,12 @@ export function errorHandler(
   }
 
   // OPA could not be asked: the same code the guards send, the message kept.
+  // No organisation directory (unset, or its database down): an outage of one store, not a crash. A
+  // named code lets the console say which part is missing instead of a bare 500.
+  if (error instanceof OrganisationStoreUnavailableError) {
+    return reply.status(503).send({ error: 'organisation_directory_unavailable', message: error.message })
+  }
+
   if (error.code === POLICY_UNAVAILABLE) {
     return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: error.message })
   }
