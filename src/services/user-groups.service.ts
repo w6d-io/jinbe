@@ -141,7 +141,8 @@ class UserGroupsService {
     // OUTSIDE jinbe could still race; within jinbe the per-user lock above
     // serializes every writer, so the pre-image is authoritative here.
     //
-    // READ FROM THE STORE THAT DECIDES, not from the copy. It used to come from Kratos metadata, and
+    // READ FROM THE STORE THAT DECIDES, not from the copy (in the kratos store that is the identity
+    // itself, read fresh — there is no copy and no database for this to fail on). It used to come from Kratos metadata, and
     // that made a membership held ONLY in the enforced store invisible to the diff: never in
     // `oldGroups`, therefore never in `removed`, therefore never revoked. The screen offered to take
     // a group away, reported success, and left it deciding — the exact failure the write order below
@@ -301,6 +302,9 @@ class UserGroupsService {
       }
     }
 
+    // In the kratos organisation store the groups ARE metadata_admin.groups: applyGroupChange does
+    // nothing, and the one write below is the change. What follows is about the postgres store.
+    //
     // Two stores, and the ORDER between them is a safety property rather than a detail.
     //
     // `group_members` in this database is what the engine decides against — the artefact carries it.

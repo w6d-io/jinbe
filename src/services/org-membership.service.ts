@@ -3,28 +3,33 @@ import type { KratosIdentity } from '../schemas/admin.schema.js'
 import { kratosService } from './kratos.service.js'
 import {
   addMember,
+  membershipRowsKept,
   membersOf,
   organisationStoreConfigured,
+  organisationStoreMode,
   organisationsForSubject,
   removeMember,
 } from './organisation-store.js'
+import { join, leave, MEMBER } from './organisation-store/membership.js'
 
 /**
  * Membership of ONE organisation, added or taken away without touching any other.
  *
  * Somebody can belong to several organisations. The identity carries a primary one
- * (`organization_id`) and a list (`metadata_admin.organizations`); where this service owns
- * membership, the directory rows are the record every service asks about. Both are kept in step on
- * each change — the console reconciles the rows from the identity on its next edit, so changing the
- * rows alone would quietly be undone.
+ * (`organization_id`) and a list (`metadata_admin.organizations`).
+ *
+ *   kratos store   — that IS the record. Joining and leaving are one locked write to the identity.
+ *   postgres store — the rows are the record every service asks about, and the identity is kept in
+ *                    step on each change, because the console reconciles the rows from it on its
+ *                    next edit.
  *
  * Nothing here deletes an identity. Leaving an organisation is not leaving the platform: site access
  * comes from groups, and a person removed from one company keeps it, and keeps their other ones.
  */
 
-/** Whether membership rows are kept here, and can be read and written. */
+/** Whether membership rows are kept beside the identity (the postgres store). */
 function ownsMembership(): boolean {
-  return env.ORGANISATION_SOURCE === 'directory' && organisationStoreConfigured()
+  return membershipRowsKept()
 }
 
 function listedOn(identity: KratosIdentity): string[] {
@@ -61,31 +66,20 @@ export async function organisationsOf(identity: KratosIdentity): Promise<string[
   return [...new Set([...named, ...(await organisationsForSubject(identity.id))])]
 }
 
-async function writeListed(identity: KratosIdentity, organisations: string[]): Promise<void> {
-  const metadata = (identity.metadata_admin as Record<string, unknown> | null | undefined) ?? {}
-  await kratosService.updateIdentity(identity.id, {
-    metadata_admin: { ...metadata, organizations: organisations },
-  })
-}
-
 /** Add the identity to one organisation. Idempotent; every other membership is left as it was. */
 export async function joinOrganisation(identity: KratosIdentity, organisationId: string): Promise<void> {
-  if (ownsMembership()) await addMember(organisationId, identity.id, 'member')
-
-  const primary = primaryOf(identity)
-  if (!primary) {
-    await kratosService.patchIdentity(identity.id, [
-      { op: 'replace', path: '/organization_id', value: organisationId },
-    ])
-  } else if (primary !== organisationId && !listedOn(identity).includes(organisationId)) {
-    await writeListed(identity, [...listedOn(identity), organisationId])
+  if (organisationStoreMode() === 'kratos') {
+    await addMember(organisationId, identity.id, MEMBER)
+    return
   }
+  if (ownsMembership()) await addMember(organisationId, identity.id, MEMBER)
+  await kratosService.updateAdminState(identity.id, (state) => join(state, organisationId))
 }
 
 /**
  * Take the identity out of one organisation, and only that one.
  *
- * The directory row goes first: it is the record that authorises, so a failure after it leaves the
+ * With rows, the row goes first: it is the record that authorises, so a failure after it leaves the
  * identity still naming the organisation — visible, and retried by the same call — rather than a
  * membership that still works while the screens say it was removed.
  *
@@ -93,20 +87,12 @@ export async function joinOrganisation(identity: KratosIdentity, organisationId:
  * none left the primary is cleared, and the person stays.
  */
 export async function leaveOrganisation(identity: KratosIdentity, organisationId: string): Promise<void> {
-  if (ownsMembership()) await removeMember(organisationId, identity.id)
-
-  const listed = listedOn(identity)
-  const remaining = listed.filter((id) => id !== organisationId)
-
-  if (primaryOf(identity) === organisationId) {
-    const next = remaining[0] ?? null
-    await kratosService.patchIdentity(identity.id, [
-      { op: 'replace', path: '/organization_id', value: next },
-    ])
-    if (listed.length > 0) await writeListed(identity, remaining.filter((id) => id !== next))
-  } else if (remaining.length !== listed.length) {
-    await writeListed(identity, remaining)
+  if (organisationStoreMode() === 'kratos') {
+    await removeMember(organisationId, identity.id)
+    return
   }
+  if (ownsMembership()) await removeMember(organisationId, identity.id)
+  await kratosService.updateAdminState(identity.id, (state) => leave(state, organisationId))
 }
 
 /**
@@ -118,7 +104,9 @@ export async function identitiesInOrganisation(
   opts: { pageSize?: number; credentialsIdentifier?: string } = {},
 ): Promise<KratosIdentity[]> {
   const identities = await kratosService.listIdentitiesByOrganizationCached(organisationId, opts)
-  if (!ownsMembership()) return identities
+  // Kratos filters on the PRIMARY organisation only. The others are in the list (kratos store) or
+  // the rows (postgres store); membersOf reads whichever holds them.
+  if (env.ORGANISATION_SOURCE !== 'directory' || !organisationStoreConfigured()) return identities
 
   const seen = new Set(identities.map((identity) => identity.id))
   const others = [...new Set((await membersOf(organisationId)).map((m) => m.subjectId))].filter(

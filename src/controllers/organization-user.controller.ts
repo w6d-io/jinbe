@@ -18,8 +18,7 @@ import {
   organizationUserUpdateBodySchema,
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
-import { env } from '../config/index.js'
-import { addMember, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
+import { addMember, membershipRowsKept, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
 import { declaredGroups } from '../services/group-catalogue.js'
 import {
   identitiesInOrganisation,
@@ -48,10 +47,11 @@ function storeUnavailable(reply: FastifyReply, err: unknown) {
 }
 
 /**
- * Record an assignment where this service owns membership.
+ * Record an assignment where memberships are kept as rows (the postgres store).
  *
- * Does nothing in the other modes: there the set is inferred from groups or asserted by a token,
- * and writing a record would create a second answer that nothing reconciles.
+ * Does nothing otherwise: in the kratos store the identity just created already names the
+ * organisation, and with a token the set is asserted by its issuer — a record here would be a second
+ * answer that nothing reconciles.
  *
  * A failure is reported and never swallowed, but it does not undo the identity: the person exists
  * and can be assigned again, whereas rolling back would delete an account somebody may already have
@@ -62,7 +62,7 @@ async function recordMembership(
   subjectId: string,
   request: FastifyRequest
 ): Promise<void> {
-  if (env.ORGANISATION_SOURCE !== 'directory') return
+  if (!membershipRowsKept()) return
   try {
     await addMember(organisationId, subjectId, 'member')
   } catch (err) {

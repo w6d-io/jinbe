@@ -116,8 +116,15 @@ export const envSchema = z.object({
   // scoped every caller to nothing unless a deployment overrode it.
   ORGANISATION_SOURCE: z.enum(['directory', 'claim']).default('directory'),
 
-  // Where organisations live when this service owns them. Absent, the `directory` source has
-  // nowhere to read from and start-up refuses rather than answering that nobody belongs anywhere.
+  // Which store holds the `directory` records.
+  // kratos   — memberships on the Kratos identity (organization_id + metadata_admin), the registry
+  //            (name, tenant, settings, entitlements) in Redis. One source of truth, nothing extra
+  //            to run. The default when no database URL is set.
+  // postgres — the relational store in ORGANISATION_DATABASE_URL (the default when it is set).
+  ORGANISATION_STORE: z.enum(['kratos', 'postgres']).optional(),
+
+  // Where organisations live in the `postgres` store. Absent with ORGANISATION_STORE=postgres, the
+  // organisation routes answer 503 not_configured rather than that nobody belongs anywhere.
   ORGANISATION_DATABASE_URL: z.string().optional(),
   // The authority that signed the database's certificate, as PEM. A certificate authority is
   // public by nature, so it belongs in configuration rather than in a secret store. Without it a

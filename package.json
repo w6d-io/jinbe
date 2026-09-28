@@ -12,6 +12,7 @@
     "bootstrap": "node dist/cli/bootstrap.js",
     "bootstrap:dev": "tsx src/cli/bootstrap.ts",
     "import:organisations": "node dist/cli/import-organisations.js",
+    "export:organisations": "node dist/cli/export-organisations.js",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",

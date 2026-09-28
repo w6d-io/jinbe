@@ -2,6 +2,7 @@ import { env } from '../config/index.js'
 import { withRedisLock } from './redis-lock.js'
 import { SwrCache, type ReadOptions } from '../cache/swr.js'
 import { forgetSession, forgetSessionsOf } from './kratos-session.service.js'
+import { rolesByOrganisation } from './organisation-store/membership.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -49,6 +50,8 @@ export interface IdentityBinding {
   /** id + display name, captured for admin substring search (no new PII store). */
   id: string
   name: string | null
+  /** metadata_admin.organization_roles: roles held in an organisation beyond plain membership. */
+  organizationRoles: Record<string, string[]>
 }
 
 /**
@@ -543,8 +546,9 @@ export class KratosService {
         // only 'active' as active — inactive/undefined are not-active.
         const active = identity.state === 'active'
         const name = (identity.traits?.name as string | undefined) ?? null
+        const organizationRoles = rolesByOrganisation((metadataAdmin as Record<string, unknown> | null | undefined)?.organization_roles)
 
-        result.set(email, { groups, organizations, primaryOrganization, active, id: identity.id, name })
+        result.set(email, { groups, organizations, primaryOrganization, active, id: identity.id, name, organizationRoles })
       }
 
       const next = response.nextPageToken
@@ -738,24 +742,13 @@ export class KratosService {
 
     const identity = response.identities[0]
 
-    // Update metadata_admin.groups while preserving other metadata
-    const currentMetadataAdmin = (identity.metadata_admin || {}) as Record<
-      string,
-      unknown
-    >
-    const updatedMetadataAdmin = {
-      ...currentMetadataAdmin,
-      groups,
-    }
-
-    const result = await this.updateIdentity(identity.id, {
-      metadata_admin: updatedMetadataAdmin,
-    })
-
-    // Invalidate cache so OPAL gets fresh data
-    this.invalidateGroupsCache()
-
-    return result
+    // Only metadata_admin.groups is written, under the identity's lock and from a fresh read: a PUT
+    // of the whole metadata from this (older) copy used to put back whatever organisations it held,
+    // undoing a membership change made in between. Invalidates the cache so OPAL gets fresh data.
+    return this.updateAdminState(identity.id, (state) => ({
+      ...state,
+      metadataAdmin: { ...state.metadataAdmin, groups },
+    }))
   }
 
   /**
@@ -850,6 +843,52 @@ export class KratosService {
 
     return updatedCount
   }
+
+  /**
+   * Change what an administrator holds on an identity (its primary organisation and metadata_admin)
+   * without losing somebody else's change.
+   *
+   * Kratos has no etag and its JSON Patch refuses `test`, so there is no compare-and-set to lean on.
+   * Every writer in this service takes the identity's lock, reads it fresh inside the lock, and
+   * sends ONE patch naming only what changed — one Kratos update, so the primary organisation and
+   * the list move together, and a key nobody touched is never written from a stale copy.
+   */
+  async updateAdminState(id: string, change: (state: AdminState) => AdminState): Promise<KratosIdentity> {
+    return withRedisLock(`identity:${id}`, async () => {
+      const identity = await this.getIdentity(id)
+      const raw = identity.metadata_admin
+      const metadataAdmin = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
+      const organizationId = ((identity as Record<string, unknown>).organization_id as string | null | undefined) ?? null
+      const before: AdminState = { organizationId, metadataAdmin: structuredClone(metadataAdmin ?? {}) }
+      const after = change(structuredClone(before))
+
+      const patches: Array<{ op: string; path: string; value?: unknown }> = []
+      if (after.organizationId !== before.organizationId) {
+        patches.push({ op: 'replace', path: '/organization_id', value: after.organizationId })
+      }
+      if (!metadataAdmin) {
+        if (Object.keys(after.metadataAdmin).length > 0) patches.push({ op: 'add', path: '/metadata_admin', value: after.metadataAdmin })
+      } else {
+        for (const key of new Set([...Object.keys(before.metadataAdmin), ...Object.keys(after.metadataAdmin)])) {
+          const path = `/metadata_admin/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
+          if (!(key in after.metadataAdmin)) patches.push({ op: 'remove', path })
+          else if (JSON.stringify(before.metadataAdmin[key]) !== JSON.stringify(after.metadataAdmin[key])) {
+            patches.push({ op: 'add', path, value: after.metadataAdmin[key] })
+          }
+        }
+      }
+      if (patches.length === 0) return identity
+
+      // patchIdentity drops kratos.identity for this id, kratos.directory and kratos.org, on every replica.
+      return this.patchIdentity(id, patches as Array<{ op: string; path: string; value: unknown }>)
+    })
+  }
+}
+
+/** What updateAdminState reads and writes: the primary organisation and metadata_admin. */
+export interface AdminState {
+  organizationId: string | null
+  metadataAdmin: Record<string, unknown>
 }
 
 export const kratosService = new KratosService()

@@ -11,6 +11,8 @@ import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import {
+  OrganisationInUseError,
+  OrganisationNotFoundError,
   OrganisationStoreNotConfiguredError,
   OrganisationStoreUnavailableError,
   organisationStoreNotConfigured,
@@ -243,6 +245,12 @@ export function errorHandler(
   // OPA could not be asked: the same code the guards send, the message kept.
   // No organisation directory (unset, or its database down): an outage of one store, not a crash. A
   // named code lets the console say which part is missing instead of a bare 500.
+  if (error instanceof OrganisationNotFoundError) {
+    return reply.status(404).send({ error: 'organisation_not_found', message: error.message })
+  }
+  if (error instanceof OrganisationInUseError) {
+    return reply.status(409).send({ error: 'organisation_in_use', message: error.message, members: error.members })
+  }
   if (error instanceof OrganisationStoreNotConfiguredError) {
     return reply.status(503).send(organisationStoreNotConfigured())
   }

@@ -18,7 +18,12 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../../../config/index.js', () => ({ env: state.env }))
 
+// The postgres store: rows beside the identity. The kratos store runs the same stories in
+// organisation-store.kratos.test.ts.
 vi.mock('../../../services/organisation-store.js', () => ({
+  OrganisationStoreUnavailableError: class OrganisationStoreUnavailableError extends Error {},
+  organisationStoreMode: () => 'postgres',
+  membershipRowsKept: () => state.env.ORGANISATION_SOURCE === 'directory',
   organisationStoreConfigured: vi.fn(() => true),
   organisationsForSubject: vi.fn(async (subject: string) => state.memberships.get(subject) ?? []),
   membersOf: vi.fn(async (org: string) =>
@@ -65,6 +70,14 @@ vi.mock('../../../services/kratos.service.js', () => ({
       for (const p of patches) next[p.path.replace(/^\//, '')] = p.value
       state.identities.set(id, next)
       return next
+    }),
+    updateAdminState: vi.fn(async (id: string, change: (s: { organizationId: string | null; metadataAdmin: Record<string, unknown> }) => { organizationId: string | null; metadataAdmin: Record<string, unknown> }) => {
+      const current = state.identities.get(id)
+      if (!current) throw Object.assign(new Error('not found'), { statusCode: 404 })
+      const next = change({ organizationId: (current.organization_id as string | null) ?? null, metadataAdmin: { ...((current.metadata_admin as Record<string, unknown>) ?? {}) } })
+      const written = { ...current, organization_id: next.organizationId, metadata_admin: next.metadataAdmin }
+      state.identities.set(id, written)
+      return written
     }),
     invalidateGroupsCache: vi.fn(),
   },

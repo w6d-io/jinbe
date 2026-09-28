@@ -4,7 +4,6 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
 import { auditActor } from '../utils/audit-actor.js'
-import { env } from '../config/env.js'
 import { notificationService } from '../server.js'
 import {
   KratosIdentity,
@@ -14,7 +13,7 @@ import {
   usersQuerySchema,
   updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
-import { membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
+import { membershipRowsKept, membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
 import { declaredGroups } from '../services/group-catalogue.js'
 import { rightsForDisplay } from '../authz/opa.js'
 
@@ -89,7 +88,7 @@ function sameGroups(requested: unknown, current: string[] | undefined): boolean 
  * disagreeing AND report success.
  */
 async function mirrorMemberships(identity: KratosIdentity, request: FastifyRequest): Promise<void> {
-  if (env.ORGANISATION_SOURCE !== 'directory') return
+  if (!membershipRowsKept()) return
 
   const metadata = identity.metadata_admin as Record<string, unknown> | undefined
   const listed = Array.isArray(metadata?.organizations) ? (metadata.organizations as string[]) : []
@@ -125,7 +124,7 @@ async function withMemberships(
   identities: readonly IdentityWithRbac[],
   request: FastifyRequest
 ): Promise<IdentityWithRbac[]> {
-  if (env.ORGANISATION_SOURCE !== 'directory') return [...identities]
+  if (!membershipRowsKept()) return [...identities]
 
   try {
     const held = await membershipsForSubjects(identities.map((identity) => identity.id))
@@ -389,14 +388,20 @@ export class AdminController {
       adminToMerge = rest
     }
 
-    const identity = await kratosService.updateIdentity(id, {
-      metadata_public: metadata_public !== undefined
-        ? { ...(current.metadata_public as Record<string, unknown> ?? {}), ...metadata_public }
-        : current.metadata_public,
-      metadata_admin: adminToMerge !== undefined
-        ? { ...(current.metadata_admin as Record<string, unknown> ?? {}), ...adminToMerge }
-        : current.metadata_admin,
-    } as KratosIdentityUpdate)
+    // metadata_admin is merged under the identity's lock from a fresh read, like every other writer
+    // of it: merged here from `current`, a membership changed in between would be put back.
+    let identity = current
+    if (metadata_public !== undefined) {
+      identity = await kratosService.updateIdentity(id, {
+        metadata_public: { ...(current.metadata_public as Record<string, unknown> ?? {}), ...metadata_public },
+      } as KratosIdentityUpdate)
+    }
+    if (adminToMerge !== undefined) {
+      identity = await kratosService.updateAdminState(id, (state) => ({
+        ...state,
+        metadataAdmin: { ...state.metadataAdmin, ...adminToMerge },
+      }))
+    }
     if (metadata_admin !== undefined) {
       kratosService.invalidateGroupsCache()
       rbacService.notifyBindingsChanged('metadata_updated', auditActor(request)).catch(() => {})
@@ -634,9 +639,14 @@ export class AdminController {
     const { id } = request.params
     const { organization_id } = request.body
 
-    const identity = await kratosService.patchIdentity(id, [
-      { op: 'replace', path: '/organization_id', value: organization_id },
-    ])
+    // Under the identity's lock, and the new primary leaves the list so it is not held twice.
+    const identity = await kratosService.updateAdminState(id, (state) => {
+      const listed = Array.isArray(state.metadataAdmin.organizations) ? (state.metadataAdmin.organizations as string[]) : []
+      const rest = listed.filter((o) => o !== organization_id)
+      const metadataAdmin = { ...state.metadataAdmin }
+      if (rest.length !== listed.length) metadataAdmin.organizations = rest
+      return { organizationId: organization_id, metadataAdmin }
+    })
 
     kratosService.invalidateGroupsCache()
     rbacService.notifyBindingsChanged('organization_changed', auditActor(request)).catch(() => {})

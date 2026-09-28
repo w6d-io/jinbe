@@ -76,6 +76,9 @@ async function mount() {
   const routes: { path: string; opts: { preHandler: unknown; schema: Record<string, unknown> }; handler: Handler }[] = []
   await organisationAdminRoutes({
     post: (path: string, opts: never, handler: Handler) => routes.push({ path, opts, handler }),
+    // Change and delete are tested in organisation-admin.routes.test.ts.
+    patch: () => {},
+    delete: () => {},
   } as never)
   return routes
 }

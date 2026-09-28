@@ -39,7 +39,18 @@ describe('error handler: no organisation directory', () => {
     expect(res.json()).toEqual({
       error: 'organisation_directory_unavailable',
       reason: 'not_configured',
-      message: 'No organisation database is configured: set ORGANISATION_DATABASE_URL.',
+      message:
+        'No organisation database is configured: set ORGANISATION_DATABASE_URL, or ORGANISATION_STORE=kratos to keep organisations in Kratos and Redis.',
     })
+  })
+
+  it('answers an organisation that is not held as 404, and one with members left as 409', async () => {
+    const { OrganisationInUseError, OrganisationNotFoundError } = await import('../../../services/organisation-store.js')
+    const missing = await answer(new OrganisationNotFoundError('org-x'))
+    expect(missing.statusCode).toBe(404)
+    expect(missing.json()).toMatchObject({ error: 'organisation_not_found' })
+    const busy = await answer(new OrganisationInUseError('org-x', 3))
+    expect(busy.statusCode).toBe(409)
+    expect(busy.json()).toMatchObject({ error: 'organisation_in_use', members: 3 })
   })
 })

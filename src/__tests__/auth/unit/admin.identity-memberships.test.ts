@@ -42,6 +42,8 @@ vi.mock('../../../services/organisation-store.js', () => ({
     return mockState.held
   }),
   setMemberships: vi.fn(async () => {}),
+  // The postgres store: memberships are rows, and the single identity carries them.
+  membershipRowsKept: () => true,
   groupsForSubjects: vi.fn(async () => new Map()),
 }))
 

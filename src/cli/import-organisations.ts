@@ -12,6 +12,9 @@
  * Nothing is ever deleted. An organisation missing from the input is left alone: an input can be
  * incomplete for reasons that have nothing to do with intent, and absence must not read as revoke.
  *
+ * Into whichever store the deployment runs (ORGANISATION_STORE). With export-organisations it is also
+ * the migration between stores — see docs/organisations-store.md.
+ *
  * Usage:
  *   node dist/cli/import-organisations.js <file.json> [--apply]
  *
@@ -29,9 +32,12 @@ import {
   allOrganisations,
   applyOrganisations,
   closeOrganisationStore,
+  groupsForSubjects,
   organisationStoreConfigured,
+  organisationStoreMode,
   organisationsById,
   OrganisationStoreUnavailableError,
+  setGroupsOf,
   type OrganisationRecord,
 } from '../services/organisation-store.js'
 
@@ -56,7 +62,13 @@ const Record_ = z
   })
   .strict()
 
-const Document_ = z.object({ organisations: z.array(Record_).min(1) }).strict()
+/** Who is in which groups, keyed on the subject — what export-organisations writes beside them. */
+const Groups_ = z.object({ subjectId: z.string().min(1), groups: z.array(z.string().min(1)) }).strict()
+
+const Document_ = z
+  .object({ organisations: z.array(Record_), groups: z.array(Groups_).optional() })
+  .strict()
+  .refine((d) => d.organisations.length > 0 || (d.groups?.length ?? 0) > 0, 'nothing to import')
 
 /**
  * What the input would do to something already held, refused before anything is written.
@@ -131,6 +143,26 @@ async function reportUnmentioned(records: readonly OrganisationRecord[]): Promis
   console.log('    Left untouched. Absence is not an instruction to delete.')
 }
 
+/** What the group sets would change, per subject, before anything is written. */
+async function reportGroups(entries: readonly z.infer<typeof Groups_>[]): Promise<void> {
+  let current: Map<string, string[]>
+  try {
+    current = await groupsForSubjects(entries.map((e) => e.subjectId))
+  } catch {
+    console.log('\n  Could not read the current groups; the group sets are applied as given.')
+    return
+  }
+  let changing = 0
+  for (const entry of entries) {
+    const before = current.get(entry.subjectId) ?? []
+    const after = [...new Set(entry.groups)].sort()
+    if (before.join(',') === after.join(',')) continue
+    changing += 1
+    console.log(`  ${entry.subjectId}  groups ${before.join(',') || '(none)'} → ${after.join(',') || '(none)'}`)
+  }
+  console.log(`\n  ${entries.length} group set(s); ${changing} would change.`)
+}
+
 async function main(): Promise<number> {
   const [path, ...flags] = process.argv.slice(2)
   const apply = flags.includes('--apply')
@@ -141,9 +173,10 @@ async function main(): Promise<number> {
   }
 
   if (!organisationStoreConfigured()) {
-    console.error('ORGANISATION_DATABASE_URL is not set: there is nowhere to import into.')
+    console.error('ORGANISATION_STORE=postgres but ORGANISATION_DATABASE_URL is not set: there is nowhere to import into.')
     return EXIT.UNREADABLE
   }
+  console.log(`  Into the ${organisationStoreMode()} store.\n`)
 
   let document: z.infer<typeof Document_>
   try {
@@ -187,23 +220,30 @@ async function main(): Promise<number> {
 
   await reportUnmentioned(records)
 
+  const groups = document.groups ?? []
+  if (groups.length > 0) await reportGroups(groups)
+
   if (!apply) {
     console.log('\n  Nothing written. Pass --apply to write it.')
     return EXIT.SUCCESS
   }
 
   try {
-    const outcome = await applyOrganisations(records)
+    const outcome = records.length > 0 ? await applyOrganisations(records) : { organisations: 0, deployments: 0, members: 0 }
+    for (const entry of groups) await setGroupsOf(entry.subjectId, entry.groups)
     console.log(
       `\n  Applied: ${outcome.organisations} organisation(s), ` +
-        `${outcome.deployments} deployment(s), ${outcome.members} membership(s).`,
+        `${outcome.deployments} deployment(s), ${outcome.members} membership(s), ${groups.length} group set(s).`,
     )
     return EXIT.SUCCESS
   } catch (failure) {
+    const why = failure instanceof OrganisationStoreUnavailableError ? failure.message : String(failure)
+    // Postgres applies the organisations in one transaction. The kratos store writes each record and
+    // each identity in turn, keyed on its id: what a failure leaves is a prefix, and a rerun finishes it.
     console.error(
-      failure instanceof OrganisationStoreUnavailableError
-        ? `\n  Nothing was written: ${failure.message}`
-        : `\n  Nothing was written: ${String(failure)}`,
+      organisationStoreMode() === 'postgres'
+        ? `\n  Nothing was written: ${why}`
+        : `\n  Stopped part-way: ${why}\n  Every write is keyed on its id; run the same command again to finish.`,
     )
     return EXIT.STORE
   }
