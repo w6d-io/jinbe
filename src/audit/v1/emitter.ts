@@ -165,4 +165,7 @@ export class AuditV1Emitter {
 function reportFailure(sink: string, err: unknown, event: string): void {
   const message = err instanceof Error ? err.message.split('\n')[0] : String(err)
   process.stderr.write(`${JSON.stringify({ level: 'error', log_type: 'app', msg: 'audit v1 sink failed', sink, event, err: message })}\n`)
+  // The counter above is per process and unscraped; the Home reads this one (J7). Loaded lazily: the
+  // emitter sits under everything, and must not pull the Redis client in at import time.
+  void import('../../home/runtime.js').then((m) => m.mirrorAuditFailure()).catch(() => {})
 }

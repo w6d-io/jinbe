@@ -56,14 +56,16 @@ import { telemetryRoutes } from './routes/telemetry.routes.js'
 import { isPublicRoute } from './middleware/require-auth.js'
 import { recordRoute } from './policy/declared-routes.js'
 import { auditRouteWrite } from './audit/route-events.js'
+import { isBootstrapReady, markBootstrapReady } from './bootstrap/ready-state.js'
+import { homeRoutes } from './home/routes.js'
+import { startHomeBackground } from './home/jobs.js'
 
 // Singleton notification service — exported for controllers.
 export const notificationService = new NotificationService()
 
 
-// Set true after waitForBootstrap resolves. Health endpoint returns 503
+// Set after waitForBootstrap resolves (bootstrap/ready-state.ts). Health endpoint returns 503
 // until then so the Deployment startupProbe absorbs the wait window.
-let bootstrapReady = false
 
 /**
  * Build Fastify server instance
@@ -122,6 +124,7 @@ export async function buildServer() {
     handler: async (_request, reply) => {
       const { redisClientService } = await import('./services/redis-client.service.js')
       const redisHealthy = await redisClientService.isHealthy().catch(() => false)
+      const bootstrapReady = isBootstrapReady()
       const status = bootstrapReady && redisHealthy ? 'ok' : bootstrapReady ? 'degraded' : 'starting'
       const code = bootstrapReady ? 200 : 503
       return reply.status(code).send({
@@ -159,6 +162,7 @@ export async function buildServer() {
       await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
       await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
+      await api.register(homeRoutes, { prefix: '/home' }) // briefing, own scope guard — NOT under /admin (requireAdmin would lock out support and org admins)
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
       // Answers about a named subject rather than about its caller, so it takes a machine
@@ -214,7 +218,7 @@ async function start() {
     // periodSeconds: 5).
     try {
       const marker = await waitForBootstrap({ logger: fastify.log })
-      bootstrapReady = true
+      markBootstrapReady()
       fastify.log.info(
         { schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
         'Bootstrap ready — serving traffic',
@@ -250,6 +254,9 @@ async function start() {
 
       // Sites: re-create missing/drifted Site CRs from the intent, tick the migration dual run.
       startSitesBackground(fastify.log)
+
+      // Home: keeps the platform-scope briefing warm (leader only, Redis lock).
+      startHomeBackground(fastify.log)
     } catch (err) {
       if (err instanceof BootstrapTimeoutError) {
         fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')

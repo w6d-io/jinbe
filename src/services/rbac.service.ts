@@ -6,6 +6,7 @@ import { findRouteTies, loadPublishedRouteRules, routeTieConflict } from '../pol
 import { assertOrgParams } from '../policy/route-org-param.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
+import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
 import { POLICY_UNAVAILABLE, holdsInJinbe } from '../authz/opa.js'
@@ -586,6 +587,7 @@ export class RbacService {
     await redisRbacRepository.invalidateStats().catch(() => {})
     // Directory membership drives access-review tiers/reach — bust it too ([P1-5]).
     accessReviewService.invalidate()
+    invalidateHome(['people', 'attention'])
     realtimeService.publish('directory')
   }
 

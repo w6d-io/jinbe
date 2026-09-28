@@ -76,6 +76,11 @@ export interface KubeSites {
   /** Proves the API server answers and the Site CRD is reachable with our RBAC. */
   ping(): Promise<void>
   get(name: string): Promise<SiteCrObject | null>
+  /**
+   * Every Site CR of the namespace in ONE list (the RBAC already grants `list`), for the Home's
+   * conditions view. Optional so a partial fake still satisfies the interface; absent reads as unknown.
+   */
+  list?(): Promise<SiteCrObject[]>
   /** Create or replace. */
   apply(cr: SiteCr): Promise<void>
   /** Idempotent: an absent Site is not an error. */
@@ -192,6 +197,11 @@ class ClientNodeKubeSites implements KubeSites {
     }
   }
 
+  async list(): Promise<SiteCrObject[]> {
+    const out = await this.call('list sites', () => this.api.listNamespacedCustomObject(this.base()))
+    return ((out as { items?: SiteCrObject[] }).items ?? []).filter((s) => typeof s?.metadata?.name === 'string')
+  }
+
   async apply(cr: SiteCr): Promise<void> {
     const existing = await this.get(cr.metadata.name)
     if (!existing) {
@@ -223,6 +233,7 @@ class OffKubeSites implements KubeSites {
   async createZone(): Promise<void> { this.refuse() }
   async deleteZone(): Promise<void> { this.refuse() }
   async get(): Promise<SiteCrObject | null> { this.refuse() }
+  async list(): Promise<SiteCrObject[]> { this.refuse() }
   async apply(): Promise<void> { this.refuse() }
   async delete(): Promise<void> { this.refuse() }
 }

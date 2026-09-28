@@ -51,6 +51,13 @@ describe('denyAudit()', () => {
     expect(event.actor).toMatchObject({ id: SUBJECT, ip: '10.1.2.3', ua: 'Firefox', sessionId: 'sess-1' })
   })
 
+  it('keys the target on the matched route pattern, never on a raw path carrying an address', () => {
+    denyAudit(request({ url: '/api/admin/users/a%40b.com/groups', routeOptions: { url: '/api/admin/users/:email/groups' } }), 'not_admin')
+    const [event] = h.emit.mock.calls[0] as unknown as [Record<string, any>]
+    expect(event.target).toBe('PUT /api/admin/users/:email/groups')
+    expect(event.path).toBe('/api/admin/users/a%40b.com/groups')
+  })
+
   it('records an anonymous caller without inventing an id', () => {
     denyAudit(request({ userContext: undefined }), 'unauthenticated')
     const [event] = h.emit.mock.calls[0] as unknown as [Record<string, any>]

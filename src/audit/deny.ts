@@ -19,13 +19,17 @@ export function denyAudit(
   opts: { source?: string; statusCode?: number; severity?: AuditSeverity } = {},
 ): void {
   const path = (request.url || '').split('?')[0]
+  // The target is what refusals are counted by (top denied routes): the matched route PATTERN, not the
+  // raw path — some admin routes carry an address in the path (home-data J8). The raw path stays in
+  // `path`, on the one event, for whoever may read that event.
+  const route = request.routeOptions?.url || path
   const actor = auditActor(request)
   try {
     auditEventService.emit({
       category: 'access',
       kind: 'access',
       verb: 'deny',
-      target: `${request.method} ${path}`,
+      target: `${request.method} ${route}`,
       result: 'denied',
       actor: { id: actor.id, email: actor.email, ip: actor.ip, ua: actor.ua, sessionId: actor.sessionId },
       requestId: actor.requestId,
