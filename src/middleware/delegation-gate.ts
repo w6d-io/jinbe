@@ -50,7 +50,7 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
 ]
 
 /** Permissions a delegated caller can never exercise, whatever its scopes say. */
-const INELIGIBLE_PERMISSIONS = new Set(['sites:apply'])
+export const INELIGIBLE_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply'])
 
 // Writes about ONE person: refused when that person is the caller (their own groups, grants,
 // membership, metadata or state — any of which could hand them more than they hold).
@@ -59,7 +59,8 @@ const PERSON_WRITES = [
   /^\/api\/organizations\/:organizationId\/users\/:id(\/|$)/,
 ]
 
-function ineligibleWhy(method: string, pattern: string): string | null {
+/** Why no delegated caller may reach this route pattern (rule 1), or null. */
+export function ineligibleWhy(method: string, pattern: string): string | null {
   for (const rule of DELEGATION_INELIGIBLE) {
     if (rule.pattern.test(pattern) && (!rule.methods || rule.methods.includes(method))) return rule.why
   }

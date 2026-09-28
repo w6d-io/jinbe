@@ -684,7 +684,15 @@ paths:
                           type: array
                           items:
                             type: string
-                          description: The sites whose routes require it
+                          description: The sites whose routes require it; 'platform' for jinbe's own API
+                            (personal keys only)
+                        kind:
+                          type: string
+                          enum:
+                            - site
+                            - platform
+                          description: "Personal keys only: 'platform' when only jinbe's own API requires
+                            it"
         "400":
           description: Default Response
           content:
@@ -15727,7 +15735,15 @@ paths:
                           type: array
                           items:
                             type: string
-                          description: The sites whose routes require it
+                          description: The sites whose routes require it; 'platform' for jinbe's own API
+                            (personal keys only)
+                        kind:
+                          type: string
+                          enum:
+                            - site
+                            - platform
+                          description: "Personal keys only: 'platform' when only jinbe's own API requires
+                            it"
         "401":
           description: Default Response
           content:

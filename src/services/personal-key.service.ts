@@ -5,7 +5,7 @@ import { apiKeyService, ApiKeyError, expiryFrom, isPersonal, toView } from './ap
 import { getApiKeyPolicy } from './api-key-policy.js'
 import { isSuperAdmin, memberOrgs } from '../authz/opa.js'
 import { kratosService } from './kratos.service.js'
-import { scopeCatalog, type ScopeCatalogEntry } from './api-key-scopes.js'
+import { personalScopeCatalog, type PersonalScopeEntry } from './platform-scopes.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { recordApiKeyUse } from '../audit/record.js'
 import { forgetApiKeyUse, touchApiKeyUse } from './api-key-last-used.js'
@@ -19,8 +19,9 @@ import type { ApiKeySecretView, ApiKeyView, PersonalKeyCreateBody } from '../sch
  * A Hydra client_credentials client with `owner = user:<id>` and metadata
  * `{kind: personal, subject, organization_id, expires_at}`; never listed with the org's machine keys.
  * Its token is introspected by jinbe's delegated path, which re-reads that metadata, so:
- *   - it never holds more than its user: scopes ⊆ what they hold in that org at creation (the same
- *     catalog as org keys), and every call still asks what the user holds now;
+ *   - it never holds more than its user: scopes ⊆ what they hold in that org at creation — the org
+ *     keys' site catalog plus jinbe's own permissions, for the MCP tools (platform-scopes.ts) — and
+ *     every call still asks what the user holds now;
  *   - it always expires: 30 days at most (owner decision) — or less, when the administrator set a
  *     shorter maximum (mcp/settings.ts) — and is refused past `expires_at`;
  *   - the administrator may turn MCP off or limit it to some orgs: the keys stay stored, unusable;
@@ -68,13 +69,14 @@ async function assertMember(email: string, org: string): Promise<void> {
 
 export class PersonalKeyService {
   /**
-   * The scopes the caller may give a personal key in `org`: the same catalog as that org's machine
-   * keys, computed from what THEY hold there. A member only (or super_admin): 403 otherwise.
+   * The scopes the caller may give a personal key in `org`: that org's machine-key catalog plus the
+   * jinbe permissions the MCP tools use, computed from what THEY hold. A member only (or
+   * super_admin): 403 otherwise.
    */
-  async scopes(caller: { email: string }, org: string): Promise<ScopeCatalogEntry[]> {
+  async scopes(caller: { email: string }, org: string): Promise<PersonalScopeEntry[]> {
     await assertMember(caller.email, org)
     await assertMcpFor(org)
-    return scopeCatalog(org, caller.email)
+    return personalScopeCatalog(org, caller.email)
   }
 
   async create(caller: { id: string; email: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
@@ -89,7 +91,7 @@ export class PersonalKeyService {
       throw new ApiKeyError(403, 'This organization does not allow personal API keys', { reason: 'personal_keys_forbidden' })
     }
     const scopes = [...new Set(body.scopes)]
-    await apiKeyService.validateScopes(org, caller.email, scopes)
+    await apiKeyService.validateScopes(org, caller.email, scopes, personalScopeCatalog)
 
     const client = await hydraService.createClient({
       label: body.label,
@@ -108,8 +110,9 @@ export class PersonalKeyService {
 
   /**
    * A personal key's secret → a short-lived token (auth-mcp's JinbeKeyExchanger). The token carries the
-   * key's stored scopes that its holder STILL holds in the key's org — re-read now, so a demotion
-   * narrows the next token — plus `mcp`. Refused when the key is unknown, not personal, expired, its
+   * key's stored scopes that its holder STILL holds in the key's org (site and jinbe permissions,
+   * the same catalog as at creation) — re-read now, so a demotion narrows the next token — plus
+   * `mcp`. Refused when the key is unknown, not personal, expired, its
    * org forbids personal keys, its holder is gone or disabled, or Hydra refuses the secret.
    */
   async exchange(clientId: string, secret: string, now: number = Date.now()): Promise<{ access_token: string; expires_in: number }> {
@@ -143,7 +146,7 @@ export class PersonalKeyService {
     }
     if (typeof email !== 'string' || !email) throw new PersonalKeyRefused('subject_unknown')
 
-    const held = new Set((await scopeCatalog(org, email)).map((e) => e.scope))
+    const held = new Set((await personalScopeCatalog(org, email)).map((e) => e.scope))
     const stored = (client.scope ?? '').split(' ').filter(Boolean)
     const scopes = [...stored.filter((s) => isGrantableScope(s) && held.has(s)), ...(stored.includes(MCP_SCOPE) ? [MCP_SCOPE] : [])]
 
