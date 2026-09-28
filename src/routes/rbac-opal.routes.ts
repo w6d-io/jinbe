@@ -3,6 +3,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { siteLoginStore } from '../sites/login-store.js'
+import { getSecondFactorGroups } from '../second-factor/settings.js'
 import { buildOpalDatasourceEntries } from '../services/opal-datasource.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
@@ -108,6 +109,28 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
       return reply.status(503).send({
         error: 'Service Unavailable',
         message: 'Site login settings could not be read. Keep the last good data and retry.',
+      })
+    }
+  })
+
+  // Platform 2FA: { groups: [...] } (feeds data.second_factor; default ["super_admins"]). 503 on a store
+  // error — an empty 200 would silently let every privileged account sign in without a second factor.
+  fastify.get('/opal/second_factor', {
+    schema: {
+      description:
+        'OPAL data source: groups whose members must hold a second factor (data.second_factor). 503 when the store ' +
+        'cannot be read, so OPAL keeps the requirement OPA already holds.',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send({ groups: await getSecondFactorGroups() })
+    } catch (err) {
+      request.log.error({ err }, 'second_factor: store unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'The second-factor requirement could not be read. Keep the last good data and retry.',
       })
     }
   })

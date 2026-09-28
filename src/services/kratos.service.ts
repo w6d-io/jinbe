@@ -9,6 +9,10 @@ import {
 /**
  * Custom error class for Kratos API errors
  */
+/** Second factors that lift a session to aal2. A passkey is a first factor and is not one of them. */
+export const MFA_METHODS = ['totp', 'webauthn', 'lookup_secret'] as const
+export type MfaMethod = (typeof MFA_METHODS)[number]
+
 export class KratosApiError extends Error {
   constructor(
     public statusCode: number,
@@ -221,12 +225,17 @@ export class KratosService {
    * see "no MFA". The endpoint accepts repeated query params per type.
    */
   async hasMFA(id: string): Promise<boolean> {
+    return (await this.mfaMethodsOf(id)).length > 0
+  }
+
+  /** The second factors this identity has enrolled (see mfaMethods). */
+  async mfaMethodsOf(id: string): Promise<MfaMethod[]> {
     const params = new URLSearchParams()
     params.append('include_credential', 'totp')
     params.append('include_credential', 'webauthn')
     params.append('include_credential', 'lookup_secret')
     const identity = await this.request<KratosIdentity>(`/admin/identities/${id}?${params.toString()}`)
-    return this.mfaFromCredentials(identity.credentials)
+    return this.mfaMethods(identity.credentials)
   }
 
   /**
@@ -247,6 +256,11 @@ export class KratosService {
    * these types; otherwise credentials is hidden and this returns false.
    */
   mfaFromCredentials(credentials: unknown): boolean {
+    return this.mfaMethods(credentials).length > 0
+  }
+
+  /** Which second factors are really enrolled, by the artefacts described above. */
+  mfaMethods(credentials: unknown): MfaMethod[] {
     const creds = (credentials || {}) as Record<
       string,
       { config?: Record<string, unknown> } | undefined
@@ -256,7 +270,7 @@ export class KratosService {
       ((creds.webauthn?.config as any).credentials.length > 0)
     const lookupReg = Array.isArray((creds.lookup_secret?.config as any)?.recovery_codes) &&
       ((creds.lookup_secret?.config as any).recovery_codes.length > 0)
-    return totpReg || webauthnReg || lookupReg
+    return MFA_METHODS.filter((m) => ({ totp: totpReg, webauthn: webauthnReg, lookup_secret: lookupReg })[m])
   }
 
   /**
