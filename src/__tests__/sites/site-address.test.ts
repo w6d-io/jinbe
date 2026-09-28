@@ -304,3 +304,43 @@ describe('movedUrl', () => {
     expect(movedUrl('https://elsewhere.test/', { host: 'a.dev.example.com' }, { host: 'b.dev.example.com' })).toBeNull()
   })
 })
+
+describe('the operator\'s shared host-<hash8> Ingress (per-site zones)', () => {
+  const OP = { 'app.kubernetes.io/managed-by': 'site-operator', 'auth.w6d.io/host-ingress': 'true' }
+  const shared = (host: string, name = 'host-b8b565fc', namespace = 'auth', annotated = host): IngressHosts =>
+    ({ ...ing(namespace, name, [host]), labels: OP, annotations: { 'auth.w6d.io/host': annotated } })
+  const hostTaken = (checks: Array<{ code: string; level: string; message: string }>) => checks.filter((c) => c.code === 'host_taken').map((c) => c.message)
+  const prefixed = (name: string, pathPrefix: string) => echo({ name, address: { host: 'echo-sandbox.dev.example.com', pathPrefix }, routes: { items: [], catchAll: { gate: 'web', access: { kind: 'signed-in' } } } })
+
+  it('is the site\'s own: no host_taken for a site on its host', async () => {
+    await live()
+    cluster.ingresses = [shared('echo-sandbox.dev.example.com')]
+    expect(hostTaken((await preview(echo({ displayName: 'Echo 2' }))).json().checks)).toEqual([])
+  })
+
+  it('shared with a sibling under another prefix: no host_taken for either', async () => {
+    await live(prefixed('echo', '/api'))
+    await saveSite(prefixed('wallets', '/wallets'))
+    cluster.ingresses = [shared('echo-sandbox.dev.example.com')]
+    expect(hostTaken((await preview(prefixed('echo', '/api'))).json().checks)).toEqual([])
+    expect(hostTaken((await preview(prefixed('wallets', '/wallets'))).json().checks)).toEqual([])
+    const check = (await app.inject({ method: 'POST', url: '/sites/check-host', headers: W, payload: { host: 'echo-sandbox.dev.example.com', pathPrefix: '/reports', site: 'reports' } })).json()
+    expect(check.available).toBe(true)
+  })
+
+  it('a foreign Ingress on the host, or a look-alike outside the operator\'s shape, is still host_taken', async () => {
+    await live()
+    cluster.ingresses = [shared('echo-sandbox.dev.example.com'), ing('tools', 'web', ['echo-sandbox.dev.example.com'])]
+    expect(hostTaken((await preview(echo())).json().checks)).toEqual(['tools/web serves echo-sandbox.dev.example.com; nothing would be created for this host'])
+    cluster.ingresses = [shared('echo-sandbox.dev.example.com', 'host-00000000', 'tools'), shared('echo-sandbox.dev.example.com', 'host-11111111', 'auth', 'other.dev.example.com')]
+    expect(hostTaken((await preview(echo())).json().checks)).toHaveLength(2)
+  })
+
+  it('an address change: the old host\'s shared Ingress does not block the new host, nor a sibling\'s on the new one', async () => {
+    await live()
+    cluster.ingresses = [shared('echo-sandbox.dev.example.com'), shared('something-else.dev.example.com', 'host-5e1f0a22')]
+    const body = (await preview(moved('something-else.dev.example.com', { address: { host: 'something-else.dev.example.com', pathPrefix: '/echo' }, routes: { items: [], catchAll: { gate: 'web', access: { kind: 'signed-in' } } } }))).json()
+    expect(hostTaken(body.checks)).toEqual([])
+    expect(codes(body.checks, 'error')).toEqual([])
+  })
+})

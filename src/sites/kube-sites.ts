@@ -61,6 +61,8 @@ export interface IngressHosts {
   /** The paths each rule host routes (`/collect`), for saying what a shadowed wildcard stops serving. */
   paths: Record<string, string[]>
   labels: Record<string, string>
+  /** `auth.w6d.io/host` names the one host of an operator's shared `host-<hash8>` Ingress. */
+  annotations?: Record<string, string>
 }
 
 export interface KubeSites {
@@ -130,6 +132,7 @@ class ClientNodeKubeSites implements KubeSites {
       hosts: (i.spec?.rules ?? []).map((r) => r.host).filter((h): h is string => !!h),
       paths: Object.fromEntries((i.spec?.rules ?? []).filter((r) => r.host).map((r) => [r.host!, (r.http?.paths ?? []).map((p) => p.path ?? '/')])),
       labels: i.metadata?.labels ?? {},
+      annotations: i.metadata?.annotations ?? {},
     }))
   }
 
