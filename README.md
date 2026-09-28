@@ -534,6 +534,7 @@ See [machine-to-machine auth](#machine-to-machine-auth) for the full setup — i
 | `K8S_SA_ALLOWED_SUBJECTS` | unset | Optional allow-list of `namespace:serviceaccount` (`namespace:*` for a whole namespace). Empty ⇒ no subject filter; Kratos identity + OPA permissions still gate. |
 | `K8S_SA_CACHE_TTL_MS` | `60000` | `TokenReview` cache TTL, always capped by the token's own `exp`. |
 | `HYDRA_ADMIN_URL` | `http://auth-hydra-admin:4445` | Private Hydra Admin API backing per-org `client_credentials` API keys. Never expose publicly. |
+| `HYDRA_ADMIN_TOKEN` / `KRATOS_ADMIN_TOKEN` | unset | Sent as `Authorization: Bearer` on every Hydra / Kratos admin call, for admin APIs behind the chart's token sidecar (`hydra.adminAuth`, `kratos.adminAuth`). Unset ⇒ no header. |
 | `API_KEY_ALLOWED_SCOPES` | `api:read,api:write` | Scope catalog validated server-side when an API key is created. |
 
 #### Dev / debugging (never enable in production)

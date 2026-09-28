@@ -139,6 +139,9 @@ export const envSchema = z.object({
 
   KRATOS_PUBLIC_URL: z.string().url().default('http://kratos-public:80'),
   KRATOS_ADMIN_URL: z.string().url().default('http://kratos-admin:80'),
+  // Sent as `Authorization: Bearer <token>` on every Kratos admin call, for an admin API behind the
+  // chart's token-checking sidecar (kratos.adminAuth). Empty = no header. Never logged.
+  KRATOS_ADMIN_TOKEN: z.string().optional(),
   // Per-request timeout (ms) for Kratos Admin directory calls. Bounds the
   // OPAL /bindings directory walk so a HUNG Kratos aborts and the route can
   // fail closed instead of hanging the datasource fetch.
@@ -216,6 +219,8 @@ export const envSchema = z.object({
   // Hydra Admin API (private — never expose publicly). Used to manage
   // OAuth2 clients that back per-organization M2M API keys.
   HYDRA_ADMIN_URL: z.string().url().default('http://auth-hydra-admin:4445'),
+  // As KRATOS_ADMIN_TOKEN, for the Hydra admin API (hydra.adminAuth). Empty = no header.
+  HYDRA_ADMIN_TOKEN: z.string().optional(),
   // Hydra's public port: jinbe mints a personal key's short-lived token there (client_credentials),
   // for POST /api/mcp/personal-keys/exchange.
   HYDRA_PUBLIC_URL: z.string().url().default('http://auth-hydra-public:4444'),

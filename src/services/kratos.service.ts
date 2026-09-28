@@ -3,6 +3,7 @@ import { withRedisLock } from './redis-lock.js'
 import { SwrCache, type ReadOptions } from '../cache/swr.js'
 import { forgetSession, forgetSessionsOf } from './kratos-session.service.js'
 import { rolesByOrganisation } from './organisation-store/membership.js'
+import { adminAuthHeaders } from './admin-auth.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -84,9 +85,11 @@ const IDS_PER_REQUEST = 100
  */
 export class KratosService {
   private adminUrl: string
+  private adminToken: string | undefined
 
   constructor() {
     this.adminUrl = env.KRATOS_ADMIN_URL
+    this.adminToken = env.KRATOS_ADMIN_TOKEN
   }
 
   /**
@@ -103,7 +106,11 @@ export class KratosService {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), env.KRATOS_REQUEST_TIMEOUT_MS)
     try {
-      return await fetch(url, { ...options, signal: controller.signal })
+      return await fetch(url, {
+        ...options,
+        headers: { ...(options.headers as Record<string, string> | undefined), ...adminAuthHeaders(this.adminToken) },
+        signal: controller.signal,
+      })
     } finally {
       clearTimeout(timer)
     }
@@ -123,6 +130,7 @@ export class KratosService {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
+        ...adminAuthHeaders(this.adminToken),
       },
     })
 
