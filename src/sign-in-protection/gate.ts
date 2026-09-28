@@ -24,7 +24,7 @@ import { rememberVerified } from './verified-tokens.js'
  *     after the sign-up details) and at most one email. A new address, or a second email, needs a
  *     new solve — so no lookup and no email happens without a solved check.
  * The token is also left verified for the guard hook (verified-tokens.ts), which accepts it once.
- * Settings: only a profile save that changes the email (Kratos checks it is free and emails a
+ * Passkey submits are not judged (no lookup, no email; webauthn is). Settings: only a profile save that changes the email (Kratos checks it is free and emails a
  * verification) is judged, under the verification toggle. A login with a live session (second factor,
  * re-authentication, to the person's own address) needs no token.
  *
@@ -246,6 +246,11 @@ async function decide(input: GateInput, fetchImpl?: typeof fetch): Promise<GateD
   let guarded = !!settings?.captcha.flows[toggle]
   // Settings: only the email change is judged; any other save is the person's own business.
   if (input.flow === 'settings' && step !== 'send') guarded = false
+  // A passkey submit (Kratos' webauthn.js posts a native form, no header) looks no address up — the
+  // authenticator names the account — and sends no email. `webauthn` stays judged: Kratos v26 looks its
+  // identifier up first and answers an unknown one differently (strategy/webauthn/login.go), so it
+  // carries the token in transient_payload.captcha_token.
+  if (field(input.fields, 'method') === 'passkey') guarded = false
 
   let result: 'passed' | 'allowed' | 'flow_pass' | 'fail_open' | 'not_guarded' | 'session' = step === 'send' ? 'not_guarded' : 'passed'
   if (guarded && settings) {

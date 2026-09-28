@@ -184,6 +184,14 @@ describe('gate decisions', () => {
     expect(results.filter(Boolean)).toHaveLength(8)
   })
 
+  it('passkey submits need no token (no lookup, no email); webauthn, which looks the identifier up, does', async () => {
+    const f = ok()
+    expect(await gateSubmit(send({ token: null, fields: { method: 'passkey', passkey_login: '{}' } }), f)).toMatchObject({ allow: true, step: 'other', result: 'passed' })
+    expect(await gateSubmit(send({ flow: 'registration', token: null, fields: { method: 'passkey', traits: { email: 'a@corp.io' }, passkey_register: '{}' } }), f)).toMatchObject({ allow: true })
+    expect(f).not.toHaveBeenCalled()
+    expect(await gateSubmit(send({ token: null, fields: { method: 'webauthn', identifier: 'ann@corp.io', webauthn_login: '{}' } }), f)).toMatchObject({ allow: false, result: 'captcha_missing' })
+  })
+
   it('a signed-in person signing in again (second factor, refresh) needs no token; other flows still do', async () => {
     const session = async () => ({ email: 'ann@corp.io' })
     expect(await gateSubmit(send({ token: null, session }))).toMatchObject({ allow: true, result: 'session' })
@@ -319,14 +327,14 @@ describe('gate route (proxy to Kratos)', () => {
     expect(seen).toHaveLength(1)
   })
 
-  it('a native form post (passkey) carries the token in transient_payload.captcha_token', async () => {
+  it('a native form post (webauthn) carries the token in transient_payload.captcha_token', async () => {
     guard({ login: true })
     const form = (payload: string) => app.inject({
       method: 'POST', url: '/api/public/sign-in-protection/gate/self-service/login?flow=f-passkey-1',
       headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload,
     })
-    expect((await form('method=passkey&passkey_login=x')).statusCode).toBe(403)
-    expect((await form(`method=passkey&passkey_login=x&transient_payload.captcha_token=${TOKEN}`)).statusCode).toBe(400)
+    expect((await form('method=webauthn&identifier=a%40b.io&webauthn_login=x')).statusCode).toBe(403)
+    expect((await form(`method=webauthn&identifier=a%40b.io&webauthn_login=x&transient_payload.captcha_token=${TOKEN}`)).statusCode).toBe(400)
     expect(seen).toHaveLength(1)
   })
 
