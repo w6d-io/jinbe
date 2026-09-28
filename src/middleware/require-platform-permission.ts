@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { holdsInJinbe } from '../authz/opa.js'
+import { holdsInJinbe, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { denyAudit } from '../audit/deny.js'
 
@@ -30,7 +30,7 @@ export function requirePlatformPermission(required: string) {
       // missing right rather than as an engine nobody could ask.
       request.log.warn({ email, required, err: (err as Error).message }, '[platform] OPA could not be asked')
       return reply.status(503).send({
-        error: 'Service Unavailable',
+        error: POLICY_UNAVAILABLE,
         message: 'Unable to verify authorization. Please try again later.',
       })
     }

@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { decide, isSuperAdmin } from '../authz/opa.js'
+import { decide, isSuperAdmin, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { administersOrganisation } from '../services/org-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { denyAudit } from '../audit/deny.js'
@@ -20,7 +20,7 @@ import { isClient, requestPath } from './require-service-admin.js'
 function unavailable(request: FastifyRequest, reply: FastifyReply, organizationId: string, err?: unknown) {
   request.log.warn({ organizationId, err: (err as Error | undefined)?.message }, '[org-gate] OPA could not be asked — 503')
   return reply.status(503).send({
-    error: 'Service Unavailable',
+    error: POLICY_UNAVAILABLE,
     message: 'Unable to verify authorization. Please try again later.',
   })
 }

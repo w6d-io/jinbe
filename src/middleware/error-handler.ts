@@ -9,6 +9,7 @@ import {
 } from '@prisma/client/runtime/library.js'
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
+import { POLICY_UNAVAILABLE } from '../authz/opa.js'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -232,6 +233,11 @@ export function errorHandler(
       error: 'Too Many Requests',
       message: 'Rate limit exceeded, please try again later',
     })
+  }
+
+  // OPA could not be asked: the same code the guards send, the message kept.
+  if (error.code === POLICY_UNAVAILABLE) {
+    return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: error.message })
   }
 
   // Handle custom HTTP errors with statusCode property

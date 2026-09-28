@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
 import { denyAudit } from '../audit/deny.js'
-import { rights } from '../authz/opa.js'
+import { rights, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { allows, type CheckedPermission } from '../services/user-permissions.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
@@ -36,7 +36,7 @@ export async function callerRights(request: FastifyRequest, reply: FastifyReply)
     return request.rbacInfo
   } catch (err) {
     request.log.warn({ subject, err: (err as Error).message }, '[permission] OPA could not say what the caller holds')
-    reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+    reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
     return null
   }
 }

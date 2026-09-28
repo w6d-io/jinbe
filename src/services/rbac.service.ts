@@ -8,7 +8,7 @@ import { auditEventService, type AuditActorInput, type AuditChanges } from './au
 import { accessReviewService } from './access-review.service.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { holdsInJinbe } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE, holdsInJinbe } from '../authz/opa.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
@@ -289,7 +289,7 @@ export class RbacService {
     } catch (err) {
       throw Object.assign(
         new Error(`OPA could not be asked, so nobody may ${reason}: ${(err as Error).message}`),
-        { statusCode: 503 },
+        { statusCode: 503, code: POLICY_UNAVAILABLE },
       )
     }
     if (!powerful) {

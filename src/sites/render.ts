@@ -5,6 +5,8 @@ import { defaultServiceRoles } from '../services/rbac-defaults.js'
 import { HTTP_METHODS, SYSTEM_SITES, type Access, type Gate, type Handler, type Route, type Site } from './schemas.js'
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
 import { placeHost, type Zone } from './host.js'
+import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
+import { PLATFORM_IDENTITY_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
 
 /**
  * render(site, platform): every artefact a Site stands for, from its intent alone.
@@ -28,6 +30,10 @@ export interface Platform {
   upstreamAllow?: string[]
   /** login-ui's /access page: where a 2FA site's browser gates send `forbidden` (SITES_ACCESS_URL). */
   accessUrl?: string
+  /** Headers upstreams trust from the gateway (default PLATFORM_IDENTITY_HEADERS); see identity-headers. */
+  identityHeaders?: string[]
+  /** Headers each remote authorizer forwards from its decision, per handler (gateway config). */
+  authorizerHeaders?: Record<string, string[]>
 }
 
 export interface Check {
@@ -112,25 +118,6 @@ export function twoFactorOn(site: Pick<Site, 'login'>): boolean {
   return !!tf && (tf.scope !== 'none' || (tf.routes?.length ?? 0) > 0)
 }
 
-/**
- * Browser-gate error handlers of a 2FA site: a refused HTML request goes to login-ui /access
- * (step-up, enrol, or a branded no-access page — it asks jinbe which), before the platform's
- * redirect-to-login and JSON handlers. Oathkeeper's remote_json cannot pass the policy's reason
- * through, so the redirect is per rule, on `forbidden` only.
- */
-function accessRedirect(site: string, accessUrl: string): Handler {
-  const to = new URL(accessUrl)
-  to.searchParams.set('site', site)
-  return {
-    handler: 'redirect',
-    config: {
-      to: to.toString(),
-      return_to_query_param: 'return_to',
-      when: [{ error: ['forbidden'], request: { header: { accept: ['text/html'] } } }],
-    },
-  }
-}
-
 /** The URL the operator renders for an upstream — jinbe builds the same one only for gatekit. */
 export function upstreamUrl(u: Site['upstream']): string {
   return `${u.scheme ?? 'http'}://${u.service}.${u.namespace}.svc.cluster.local:${u.port}`
@@ -171,13 +158,6 @@ export function orgGrantableProblem(site: string, group: string, roles: readonly
 
 const methodOrder = (methods: Iterable<string>) => HTTP_METHODS.filter((m) => new Set(methods).has(m))
 const allowsAnonymous = (gate: Gate) => gate.authenticators.some((a) => a.handler === 'anonymous' || a.handler === 'noop')
-
-function errorHandlers(errors: Gate['errors']): Handler[] | undefined {
-  if (errors === 'platform') return undefined
-  if (errors === 'website') return [{ handler: 'redirect' }, { handler: 'json' }]
-  if (errors === 'api') return [{ handler: 'json' }]
-  return errors
-}
 
 // Every row carries its route's id: data.site_login[site].routes names rows by it (S-4a).
 function rowsFor(route: Pick<Route, 'id' | 'methods' | 'path' | 'orgParam'>, access: Access): RouteRule[] {
@@ -302,6 +282,8 @@ export function render(site: Site, platform: Platform): Rendered {
     ...(site.upstream.preserveHost ? { preserve_host: true } : {}),
     ...(site.upstream.stripPath ? { strip_path: site.upstream.stripPath } : {}),
   }
+  const identity = identityHeaderNames(site, platform.identityHeaders ?? PLATFORM_IDENTITY_HEADERS)
+  const guard = (gate: Pick<Gate, 'mutators'>, authorizer: Handler) => guardedMutators(gate, authorizer, identity, platform.authorizerHeaders ?? {})
   const enumerated = [...byGate.entries()].filter(([id]) => id !== catchAllGate?.id)
   const rules: OathkeeperRule[] = []
   const crGates: SiteCrGate[] = []
@@ -315,32 +297,35 @@ export function render(site: Site, platform: Platform): Rendered {
   const gateRule = (gate: Gate, url: string, methods: string[]) => {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
-    gate.mutators.forEach((h) => handlerOk('mutators', h, at))
     const authorizer: Handler = gate.authorizer === 'policy'
       ? { handler: 'remote_json', config: { payload: platformPayload(name, with2fa) } }
       : gate.authorizer
     handlerOk('authorizers', authorizer, at)
-    const preset = errorHandlers(gate.errors)
-    const errors = with2fa && gate.errors === 'website' && platform.accessUrl && preset ? [accessRedirect(name, platform.accessUrl), ...preset] : preset
+    const mutators = guard(gate, authorizer)
+    mutators.forEach((h) => handlerOk('mutators', h, at))
+    const errors = errorHandlers(gate.errors, name, with2fa ? platform.accessUrl : undefined)
     errors?.forEach((h) => handlerOk('errors', h, at))
+    // gatekit does not model error handlers: two answering one refusal is a 500 only this catches.
+    for (const problem of errorHandlerProblems(errors ?? [])) fail('error_handlers_ambiguous', `gate '${gate.id}': ${problem}`, `${at}.errors`)
     const matchUrl = gate.expert?.matchUrl ?? url
     if (gate.expert?.matchUrl) warn('expert_match_url', `gate '${gate.id}' uses a raw match URL; only gatekit checks it`, at)
     emit(gate.id, {
       match: { methods: methods.filter((m) => !gate.preflight || m !== 'OPTIONS'), url: matchUrl },
       authenticators: gate.authenticators,
       authorizer,
-      mutators: gate.mutators,
+      mutators,
       ...(errors ? { errors } : {}),
     })
     if (gate.preflight) {
+      const preflightMutators = guard({ mutators: [{ handler: 'noop' }] }, { handler: 'allow' })
       handlerOk('authenticators', { handler: 'noop' }, at)
       handlerOk('authorizers', { handler: 'allow' }, at)
-      handlerOk('mutators', { handler: 'noop' }, at)
+      preflightMutators.forEach((h) => handlerOk('mutators', h, at))
       emit(`${gate.id}-preflight`, {
         match: { methods: ['OPTIONS'], url: matchUrl },
         authenticators: [{ handler: 'noop' }],
         authorizer: { handler: 'allow' },
-        mutators: [{ handler: 'noop' }],
+        mutators: preflightMutators,
       })
     }
   }

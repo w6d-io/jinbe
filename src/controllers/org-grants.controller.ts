@@ -10,6 +10,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import type { KratosIdentity } from '../schemas/admin.schema.js'
+import { POLICY_UNAVAILABLE } from '../authz/opa.js'
 
 /**
  * Org grants: the groups an org admin hands out IN THEIR ORG (data.org_grants). They count only on
@@ -31,7 +32,7 @@ const REFUSED_REASON = 'not delegable: outside this org, a wildcard or global ro
 /** OPA unset → 503, OPA silent → 502: a grant nobody could check is never written. */
 function opaFailure(reply: FastifyReply, err: unknown) {
   if (err instanceof OpaUnavailableError) {
-    return reply.status(503).send({ error: 'Service Unavailable', message: err.message })
+    return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: err.message })
   }
   if (err instanceof OpaQueryError) {
     return reply.status(502).send({ error: 'Bad Gateway', message: err.message })

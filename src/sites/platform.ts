@@ -3,6 +3,8 @@ import type { Platform } from './render.js'
 import type { Zone } from './host.js'
 import { sitesConfig } from './config.js'
 import { kubeSites } from './kube-sites.js'
+import { currentSpec } from '../gateway/service.js'
+import { PLATFORM_IDENTITY_HEADERS, gatewayIdentity } from './identity-headers.js'
 
 /**
  * What render needs to know about the platform: enabled handlers, namespace, zones.
@@ -29,6 +31,20 @@ export async function loadZones(): Promise<Zone[]> {
   }))
 }
 
+/**
+ * Identity headers: the platform's, plus what the gateway config sets from the session or forwards
+ * from a decision. Read with the zones, and like them a cluster failure is the caller's 503 rather
+ * than a silently shorter list (a different list renames the rules).
+ */
+async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'authorizerHeaders'>> {
+  if (sitesConfig().SITES_KUBE === 'off') return { identityHeaders: PLATFORM_IDENTITY_HEADERS, authorizerHeaders: {} }
+  const gw = gatewayIdentity(await currentSpec())
+  return {
+    identityHeaders: [...new Set([...PLATFORM_IDENTITY_HEADERS, ...gw.headers, ...Object.values(gw.forwarded).flat()])],
+    authorizerHeaders: gw.forwarded,
+  }
+}
+
 export async function loadPlatform(): Promise<Platform> {
   const cfg = sitesConfig()
   return {
@@ -44,5 +60,6 @@ export async function loadPlatform(): Promise<Platform> {
     platformNamespaces: cfg.SITES_PLATFORM_NAMESPACES,
     upstreamAllow: cfg.SITES_UPSTREAM_ALLOW,
     ...(cfg.SITES_ACCESS_URL ? { accessUrl: cfg.SITES_ACCESS_URL } : {}),
+    ...(await loadIdentity()),
   }
 }

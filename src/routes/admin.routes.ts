@@ -19,7 +19,7 @@ import {
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
 import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.js'
-import { holdsInJinbe } from '../authz/opa.js'
+import { holdsInJinbe, POLICY_UNAVAILABLE } from '../authz/opa.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
 import { guardAll } from '../policy/declared-routes.js'
@@ -250,7 +250,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
         // not tell" is not, and must not look like one.
         request.log.error({ err }, 'Could not tell which groups the caller may assign')
         return reply.status(503).send({
-          error: 'Service Unavailable',
+          error: POLICY_UNAVAILABLE,
           message: 'Unable to verify authorization. Please try again later.',
         })
       }

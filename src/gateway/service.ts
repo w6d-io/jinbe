@@ -81,6 +81,11 @@ async function current(): Promise<Current> {
     : { managed: false, source: 'env', spec: specFromEnv(), etag: UNMANAGED_ETAG, cr: null }
 }
 
+/** The gateway's handler config as it stands: the Gateway CR, else the live Oathkeeper config, else env. */
+export async function currentSpec(): Promise<GatewaySpec> {
+  return (await current()).spec
+}
+
 /**
  * Which sites and platform rules reference each handler: the Site CRs, plus the operator's
  * `status.inUse` (which also sees the platform's own rules, as `rule/<name>`). Before the operator

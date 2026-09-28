@@ -29,6 +29,7 @@ vi.mock('../../middleware/require-admin.js', async () => {
 })
 
 import { sitesRoutes } from '../../sites/routes.js'
+import { setKubeGateway, type KubeGateway } from '../../gateway/kube-gateway.js'
 import { setKubeSites, KubeRefused, KubeUnavailable, type IngressHosts, type KubeSites, type ZoneCr, type ZoneCrObject } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
 import { setDnsLookup } from '../../sites/dns-probe.js'
@@ -136,6 +137,8 @@ beforeEach(() => {
   process.env.SITES_RESERVED_HOSTS = ''
   resetSitesConfig()
   setKubeSites(kube)
+  // No Gateway CR and no live Oathkeeper config: loadPlatform reads the identity headers from env.
+  setKubeGateway({ get: async () => null, liveOathkeeperConfig: async () => null } as unknown as KubeGateway)
   // Any name under a domain with a wildcard entry answers like the wildcard.
   setDnsLookup({
     addresses: async (name) => h.dns[name] ?? Object.entries(h.dns).find(([k]) => k.startsWith('*.') && name.endsWith(k.slice(1)))?.[1] ?? [],
