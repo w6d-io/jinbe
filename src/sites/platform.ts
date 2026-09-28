@@ -24,6 +24,7 @@ export async function loadZones(): Promise<Zone[]> {
     suffix: z.spec.domain,
     // Every Zone TLS mode (default certificate, secret, issued) serves a wildcard certificate.
     wildcardTls: true,
+    tlsMode: z.spec.tls?.mode ?? 'default',
     ingress: z.spec.ingress ?? 'wildcard',
     ...(z.spec.gateway ? { gateway: `${z.spec.gateway.namespace}/${z.spec.gateway.name}` } : {}),
     ...(z.spec.ingressClass ? { ingressClass: z.spec.ingressClass } : {}),

@@ -159,6 +159,24 @@ describe('list: draft-only sites', () => {
     await saveAs(ADMIN)
     expect(redis.sets.get('rbac:sites:drafts')?.has('payroll') ?? false).toBe(false)
   })
+
+  it('a draft that holds exactly the saved version is no draft: not listed, not served, not kept', async () => {
+    await saveAs(ADMIN)
+    const saved = (await app.inject({ method: 'GET', url: '/sites/payroll' })).json().site
+    // An autosave arriving just after the save wrote the saved content back (key order may differ).
+    const reordered = Object.fromEntries(Object.entries(saved).reverse())
+    await redis.set('rbac:sites:draft:payroll', JSON.stringify({ site: reordered, baseVersion: 1, updatedBy: 'sam@x.test' }))
+    await redis.sadd('rbac:sites:drafts', 'payroll')
+    const row = (await app.inject({ method: 'GET', url: '/sites' })).json().find((r: { name: string }) => r.name === 'payroll')
+    expect(row.draft).toBeUndefined()
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).statusCode).toBe(404)
+    // Autosaving the saved content drops the draft instead of keeping it.
+    expect((await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: ADMIN, payload: { site: saved } })).statusCode).toBe(200)
+    expect(await redis.get('rbac:sites:draft:payroll')).toBeNull()
+    // A real change is still a draft.
+    await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: ADMIN, payload: { site: { ...saved, displayName: 'Payroll 2' } } })
+    expect((await app.inject({ method: 'GET', url: '/sites' })).json().find((r: { name: string }) => r.name === 'payroll').draft).toBeDefined()
+  })
 })
 
 describe('static reads', () => {

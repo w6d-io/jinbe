@@ -1,6 +1,8 @@
 # Dependencies
 
-*mcp*
+# Local MCP client config/tooling at the repo root only — unanchored, `*mcp*` also hid source files
+# such as src/routes/mcp.routes.ts.
+/*mcp*
 node_modules/
 .pnp
 .pnp.js

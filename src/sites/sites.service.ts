@@ -53,7 +53,8 @@ export async function listSites() {
   const [records, drafts, protectionOf] = await Promise.all([sitesRepository.list(), sitesRepository.drafts(), protectionLookup()])
   const draftOf = new Map(drafts.map((d) => [d.name, d.draft]))
   const saved = records.map((r) => {
-    const draft = draftOf.get(r.site.name)
+    const kept = draftOf.get(r.site.name)
+    const draft = kept && !draftChangesNothing(kept, r) ? kept : undefined
     return {
       name: r.site.name,
       displayName: r.site.displayName,
@@ -130,9 +131,30 @@ export async function getSite(name: string) {
 
 // ── drafts ────────────────────────────────────────────────────
 
+/** The same JSON, key order aside. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).filter((k) => (v as Record<string, unknown>)[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`
+  }
+  return JSON.stringify(v) ?? 'null'
+}
+
+/**
+ * A draft holding exactly the saved version changes nothing, so it is no draft at all. An autosave
+ * landing just after a save (which deletes the draft) wrote the saved content back as a "draft", and
+ * the list said "Draft · unapplied changes" on a site that had just been published.
+ */
+export function draftChangesNothing(draft: SiteDraft, record: SiteRecord | null): boolean {
+  return !!record && canonical(draft.site) === canonical(record.site)
+}
+
+/** A draft's size cap: 256 KiB, more when SITES_MAX_ROUTES lets a site hold more routes (an import). */
+export const draftMaxBytes = () => Math.max(256 * 1024, sitesConfig().SITES_MAX_ROUTES * 512)
+
 export async function getDraft(name: string): Promise<SiteDraft> {
-  const draft = await sitesRepository.getDraft(name)
-  if (!draft) throw siteError(404, 'not_found', `No draft for ${name}`)
+  const [draft, record] = await Promise.all([sitesRepository.getDraft(name), sitesRepository.get(name)])
+  if (!draft || draftChangesNothing(draft, record)) throw siteError(404, 'not_found', `No draft for ${name}`)
   return draft
 }
 
@@ -142,9 +164,15 @@ export async function putDraft(name: string, body: { site?: unknown; baseVersion
   const site = body.site as { name?: unknown } | null
   if (!site || typeof site !== 'object' || Array.isArray(site)) throw siteError(400, 'invalid_draft', 'draft.site must be an object')
   if (site.name !== undefined && site.name !== name) throw siteError(400, 'name_mismatch', `draft names '${String(site.name)}', not '${name}'`)
-  if (JSON.stringify(site).length > 256 * 1024) throw siteError(413, 'draft_too_large', 'draft exceeds 256 KiB')
+  if (JSON.stringify(site).length > draftMaxBytes()) throw siteError(413, 'draft_too_large', `draft exceeds ${Math.round(draftMaxBytes() / 1024)} KiB`)
   const current = await sitesRepository.get(name)
-  return sitesRepository.putDraft(name, { site, baseVersion: body.baseVersion ?? current?.version ?? 0, updatedBy: actor.email ?? 'unknown' })
+  const draft: SiteDraft = { site, baseVersion: body.baseVersion ?? current?.version ?? 0, updatedBy: actor.email ?? 'unknown' }
+  // Edited back to what is saved: nothing left to review, so no draft is kept.
+  if (draftChangesNothing(draft, current)) {
+    await sitesRepository.deleteDraft(name)
+    return { ...draft, updatedAt: new Date().toISOString() }
+  }
+  return sitesRepository.putDraft(name, draft)
 }
 
 export async function deleteDraft(name: string): Promise<void> {

@@ -24,7 +24,7 @@ export type GroupUpdateActor = {
   aal?: string
   authenticatedAt?: Date | string
   secondFactorAt?: Date | string | null
-  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
 }
 
 /**
@@ -414,7 +414,7 @@ class UserGroupsService {
     actor: {
       aal?: string
       secondFactorAt?: Date | string | null
-      authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+      authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
       sessionId?: string | null
     },
     targetEmail: string,

@@ -31,6 +31,8 @@ export interface AuditV1Input {
     sessionId?: string | null
     aal?: string | null
     method?: string | null
+    /** Delegated calls: the client acting for the user (audit/v1 `actor.act`). */
+    act?: { client_id: string; via: string; kind?: 'oauth' | 'personal' } | null
   }
   target?: { type: string; id?: string | null; email?: string | null } | null
   org_id?: string | null
@@ -66,7 +68,9 @@ export function actorTypeOf(a: AuditV1Input['actor']): AuditEventV1Body['actor']
 function actorOf(a: AuditV1Input['actor']): AuditEventV1Body['actor'] {
   const email = a.email && a.email !== 'anonymous' && a.email !== 'unknown' ? a.email : null
   const type = actorTypeOf(a)
-  const auth = a.aal || a.method ? { aal: a.aal ?? undefined, method: a.method ?? undefined } : undefined
+  // A delegated call is authenticated by a token for a client, whatever else is said about it.
+  const method = a.act ? 'delegated' : a.method
+  const auth = a.aal || method ? { aal: a.aal ?? undefined, method: method ?? undefined } : undefined
   return {
     type,
     id: a.id ?? null,
@@ -78,6 +82,7 @@ function actorOf(a: AuditV1Input['actor']): AuditEventV1Body['actor'] {
     ip_hmac: hmac(a.ip),
     ua_family: uaFamily(a.ua),
     auth,
+    act: a.act ? { client_id: scrubEmails(a.act.client_id), via: a.act.via, ...(a.act.kind ? { kind: a.act.kind } : {}) } : undefined,
   }
 }
 

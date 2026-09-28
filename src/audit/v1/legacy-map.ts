@@ -28,6 +28,7 @@ const BY_TYPE: Record<string, AuditEventType> = {
   'organization.deleted': 'org.deleted',
   'api_key.created': 'apikey.created',
   'api_key.revoked': 'apikey.revoked',
+  'api_key.policy_changed': 'apikey.policy_changed',
   'rbac.group_created': 'rbac.group.created',
   'rbac.group_updated': 'rbac.group.updated',
   'rbac.group_deleted': 'rbac.group.deleted',
@@ -75,6 +76,7 @@ const RECERT: Record<string, AuditEventType> = {
 /** The sites module's emits (`category: service`, target `site:<name>`), by verb. */
 const SITE: Record<string, AuditEventType> = {
   update: 'site.saved',
+  import: 'site.imported',
   apply: 'site.applied',
   rollback: 'site.rolled_back',
   pause: 'site.paused',
@@ -150,6 +152,7 @@ export function legacyToV1(rich: AuditEvent, legacyType?: string): AuditV1Input 
     flags: rich.changes?.flags ?? [],
     actor: {
       type: rich.actor?.type, id: rich.actor?.id, email: rich.actor?.email, ip: rich.actor?.ip, ua: rich.actor?.ua, sessionId: rich.actor?.sessionId,
+      act: rich.actor?.act ?? null,
       // How a Kratos flow was authenticated; the webhook's allow-listed details carry it.
       ...(rich.source === 'kratos-webhook' ? { aal: details.aal as string | undefined, method: details.method as string | undefined } : {}),
     },

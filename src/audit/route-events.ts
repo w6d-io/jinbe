@@ -68,6 +68,11 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'PUT /api/organizations/:organizationId/users/:id/grants': by(['org.grants.changed', 'org.grants.refused']),
   'POST /api/organizations/:organizationId/api-keys': by('apikey.created'),
   'DELETE /api/organizations/:organizationId/api-keys/:clientId': by('apikey.revoked'),
+  'PUT /api/organizations/:organizationId/api-key-policy': by('apikey.policy_changed'),
+  'POST /api/me/api-keys': by('apikey.created'),
+  'DELETE /api/me/api-keys/:clientId': by('apikey.revoked'),
+  'POST /api/mcp/token-info': exempt('introspects a token for auth-mcp; changes nothing (the calls made with it are audited with actor.act)'),
+  'POST /api/mcp/personal-keys/exchange': by('apikey.used'),
 
   // RBAC and bundle
   'POST /api/admin/rbac/groups': by('rbac.group.created'),
@@ -106,6 +111,8 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/:name/pause': by('site.paused'),
   'POST /api/admin/sites/:name/resume': by('site.resumed'),
   'POST /api/admin/sites/:name/diff': exempt('compares a draft with the applied version; writes nothing'),
+  'POST /api/admin/sites/:name/import/preview': exempt('proposes routes from an OpenAPI document; keeps only the uploaded bytes 24 h for the commit'),
+  'POST /api/admin/sites/:name/import/commit': by('site.imported'),
   'POST /api/admin/sites/preview': exempt('renders an intent and runs the checks; writes nothing'),
   'POST /api/admin/sites/check-host': exempt('resolves a host against the zones; writes nothing'),
   'POST /api/admin/sites/zones': by('zone.created'),

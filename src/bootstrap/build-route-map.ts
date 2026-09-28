@@ -199,6 +199,9 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // org:manage_api_keys there (site ∪ org_grants of that org). jinbe re-enforces the same.
   { method: 'GET',    path: '/api/organizations/:organizationId/api-keys',           permission: 'org:manage_api_keys', org_param: 'organizationId' },
   { method: 'POST',   path: '/api/organizations/:organizationId/api-keys',           permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/api-keys/scopes',    permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'GET',    path: '/api/organizations/:organizationId/api-key-policy',     permission: 'org:manage_api_keys', org_param: 'organizationId' },
+  { method: 'PUT',    path: '/api/organizations/:organizationId/api-key-policy',     permission: 'org:manage_api_keys', org_param: 'organizationId' },
   { method: 'GET',    path: '/api/organizations/:organizationId/api-keys/:clientId', permission: 'org:manage_api_keys', org_param: 'organizationId' },
   { method: 'DELETE', path: '/api/organizations/:organizationId/api-keys/:clientId', permission: 'org:manage_api_keys', org_param: 'organizationId' },
 
@@ -207,4 +210,9 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/me/organizations' },
   // What the caller may do (kuma draws only the allowed actions). Answers about the caller only.
   { method: 'GET',    path: '/api/me/permissions' },
+  // The caller's own personal API keys (404 unless DELEGATED_TOKENS_ENABLED). About the caller only;
+  // jinbe refuses machine and delegated callers, and checks the org policy and scopes itself.
+  { method: 'GET',    path: '/api/me/api-keys' },
+  { method: 'POST',   path: '/api/me/api-keys' },
+  { method: 'DELETE', path: '/api/me/api-keys/:clientId' },
 ] as const

@@ -100,7 +100,7 @@ describe('opalPublisher', () => {
 
     const pushed = pushBody().entries
     expect(pushed).toEqual(manifest.map(({ periodic_update_interval: _, ...entry }) => entry))
-    expect(pushed.map((e) => e.dst_path)).toEqual(expect.arrayContaining(['/bindings', '/site_login', '/roles/kuma', '/route_map/kuma']))
+    expect(pushed.map((e) => e.dst_path)).toEqual(expect.arrayContaining(['/bindings', '/site_login', '/roles', '/route_map', '/api_clients']))
     for (const entry of pushed) expect(entry).toMatchObject({ config: { headers: { Authorization: `Bearer ${'t'.repeat(64)}` } } })
   })
 

@@ -28,5 +28,9 @@ export function auditActor(request: FastifyRequest): AuditActor & { requestId: s
     ua: (headers['user-agent'] as string) || null,
     sessionId: uc?.sessionId ?? request.validatedSession?.sessionId ?? null,
     requestId: (headers['x-request-id'] as string) || null,
+    // A user acting through a client: the trail names both — the user as the actor, the client in act.
+    ...(uc?.authVia === 'delegated' && uc.delegation
+      ? { act: { client_id: uc.delegation.clientId, via: uc.delegation.via, kind: uc.delegation.kind } }
+      : {}),
   }
 }

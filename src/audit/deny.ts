@@ -31,7 +31,7 @@ export function denyAudit(
       verb: 'deny',
       target: `${request.method} ${route}`,
       result: 'denied',
-      actor: { id: actor.id, email: actor.email, ip: actor.ip, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId,
       method: request.method,
       path,
