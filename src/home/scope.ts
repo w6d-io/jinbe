@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/env.js'
 import { holds, isSuperAdmin, manageableOrgs, rights } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { secondFactorIsFresh } from '../services/step-up.js'
 import type { HomeModuleName } from './types.js'
 
@@ -110,7 +111,7 @@ export function requireHomeScope() {
       scope = await resolveHomeScope(request)
     } catch {
       request.log.warn({ subject: request.userContext?.id }, '[home] could not resolve what the caller may see — 503')
-      return reply.status(503).send({ error: 'Service Unavailable', message: 'Unable to verify authorization. Please try again later.' })
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
     }
     if (!scope) return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
     request.homeScope = scope

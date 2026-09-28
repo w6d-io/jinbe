@@ -86,6 +86,7 @@ describe('GET /api/home — envelope and scope', () => {
     opaWorld.down = true
     const res = await get('/api/home')
     expect(res.statusCode).toBe(503)
+    expect(res.json().error).toBe('policy_unavailable')
     expect(res.json().modules).toBeUndefined()
   })
 
