@@ -3,6 +3,14 @@ import { env } from '../config/index.js'
 /**
  * Custom error class for Hydra Admin API errors
  */
+/** Hydra could not be reached at all (DNS, connection refused, timeout): an outage, not a refusal. */
+export class HydraUnavailableError extends Error {
+  constructor(public readonly url: string, cause: unknown) {
+    super(`OAuth2 server (Hydra) unreachable at ${url}: ${cause instanceof Error ? ((cause as { cause?: { code?: string } }).cause?.code ?? cause.message) : String(cause)}`)
+    this.name = 'HydraUnavailableError'
+  }
+}
+
 export class HydraApiError extends Error {
   constructor(
     public statusCode: number,
@@ -58,13 +66,18 @@ export class HydraService {
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.adminUrl}${path}`
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    })
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      })
+    } catch (err) {
+      throw new HydraUnavailableError(this.adminUrl, err)
+    }
 
     if (!response.ok) {
       let errorDetails: unknown

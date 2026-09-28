@@ -1,6 +1,6 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { apiKeyService, ApiKeyError } from '../services/api-key.service.js'
-import { HydraApiError } from '../services/hydra.service.js'
+import { HydraApiError, HydraUnavailableError } from '../services/hydra.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { recordApiKeyUse } from '../audit/record.js'
 import {
@@ -14,6 +14,14 @@ function handleError(err: unknown, reply: FastifyReply): FastifyReply {
       error: err.statusCode === 404 ? 'Not Found' : 'Bad Request',
       message: err.message,
       ...(err.details ? { details: err.details } : {}),
+    })
+  }
+  if (err instanceof HydraUnavailableError) {
+    // Not deployed or down: say so, instead of a bare 500 the console can only call "Internal Server Error".
+    reply.log.warn({ err: err.message }, '[api-keys] OAuth2 server unreachable')
+    return reply.status(503).send({
+      error: 'oauth2_server_unavailable',
+      message: 'API keys are unavailable: the OAuth2 server (Hydra) cannot be reached on this deployment.',
     })
   }
   if (err instanceof HydraApiError) {
