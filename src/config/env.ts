@@ -264,6 +264,13 @@ export const envSchema = z.object({
     .string()
     .default('auth:auth-mcp')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  // The public address of this deployment's MCP server (auth-mcp's /mcp, e.g.
+  // https://mcp.<env>.example.com/mcp). The address people are shown when the administrator has not
+  // saved one (rbac:config mcp serverUrl). Empty: none.
+  MCP_PUBLIC_URL: z.string().default(''),
+  // auth-mcp inside the cluster (e.g. http://auth-mcp:3100). With MCP_PUBLIC_URL, bootstrap routes the
+  // MCP host through Oathkeeper to it (rule `mcp`, tokens checked by auth-mcp itself).
+  MCP_UPSTREAM_URL: z.string().default(''),
   // How long an introspection answer is reused (ms), capped by the token's own exp. Bounds how long a
   // revoked token still works here.
   DELEGATED_TOKEN_CACHE_MS: z

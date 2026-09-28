@@ -48,6 +48,7 @@ beforeEach(() => {
   h.config = {}
   h.redisDown = false
   h.env.DELEGATED_TOKENS_ENABLED = true
+  delete h.env.MCP_PUBLIC_URL
   h.emit.mockClear()
   h.clearCache.mockClear()
   resetMcpSettingsCache()
@@ -179,5 +180,27 @@ describe('routes', () => {
     expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' })
     h.env.DELEGATED_TOKENS_ENABLED = false
     expect((await status()).json()).toEqual({ enabled: false, serverUrl: null, off: 'deployment', personalKeys: null })
+  })
+
+  it('the deployment address (MCP_PUBLIC_URL) is shown until an administrator saves another; saving it unchanged stores none', async () => {
+    h.env.MCP_PUBLIC_URL = 'https://mcp.authdev.example.com/mcp'
+    store({ enabled: true })
+    expect((await status()).json()).toMatchObject({ enabled: true, serverUrl: 'https://mcp.authdev.example.com/mcp' })
+    const view = (await app.inject({ url: '/api/admin/settings/mcp', headers: { 'x-test-admin': '1' } })).json()
+    expect(view).toMatchObject({ settings: { serverUrl: 'https://mcp.authdev.example.com/mcp' }, defaults: { serverUrl: 'https://mcp.authdev.example.com/mcp' } })
+
+    await put({ enabled: true, serverUrl: 'https://mcp.authdev.example.com/mcp' })
+    expect(JSON.parse(h.config[MCP_SETTINGS_KEY]).serverUrl).toBeNull() // keeps following the deployment
+    h.env.MCP_PUBLIC_URL = 'https://mcp.moved.example.com/mcp'
+    expect((await status()).json()).toMatchObject({ serverUrl: 'https://mcp.moved.example.com/mcp' })
+
+    await put({ enabled: true, serverUrl: 'https://mcp.custom.example.com/mcp' })
+    expect((await status()).json()).toMatchObject({ serverUrl: 'https://mcp.custom.example.com/mcp' })
+
+    h.env.MCP_PUBLIC_URL = 'http://auth-mcp:3100/mcp' // not https: no address rather than a bad one
+    store({ enabled: true })
+    expect((await status()).json()).toMatchObject({ serverUrl: null })
+    h.env.DELEGATED_TOKENS_ENABLED = false
+    expect((await status()).json()).toMatchObject({ serverUrl: null, off: 'deployment' })
   })
 })

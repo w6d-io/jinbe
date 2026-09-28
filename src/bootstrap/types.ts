@@ -25,6 +25,12 @@ export interface BootstrapUrls {
   jinbeInternal: string
 }
 
+/** The MCP server (auth-mcp): its public endpoint (MCP_PUBLIC_URL) and in-cluster address (MCP_UPSTREAM_URL). */
+export interface BootstrapMcp {
+  publicUrl: string
+  upstream: string
+}
+
 export interface BootstrapAdmin {
   email: string
   password: string
@@ -36,6 +42,8 @@ export interface BootstrapConfig {
   urls: BootstrapUrls
   /** Self-service submits go through jinbe's sign-in gate (SIGN_IN_GATE_ENABLED). */
   signInGate?: boolean
+  /** Route auth-mcp's host through Oathkeeper (rule `mcp`). */
+  mcp?: BootstrapMcp | null
   admin: BootstrapAdmin | null
 }
 

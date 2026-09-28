@@ -1,4 +1,4 @@
-import type { OathkeeperRule, BootstrapDomains, BootstrapUrls } from './types.js'
+import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } from './types.js'
 
 /**
  * Build the full set of built-in Oathkeeper access rules from environment-derived inputs.
@@ -24,12 +24,17 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapUrls } from './types.js
  *                               through jinbe's gate (sign-in-protection/gate.ts), which passes it on to Kratos
  *   - selfservice-kratos-post — the other POSTs Kratos serves (social callbacks, FedCM, sessions):
  *                               straight to Kratos. Any other POST matches no rule (404).
+ *
+ * With the MCP server deployed (`mcp`: MCP_PUBLIC_URL + MCP_UPSTREAM_URL), one more rule on its host:
+ *   - mcp — the MCP endpoint and its protected-resource metadata, passed through untouched. auth-mcp
+ *           checks every token itself (with jinbe) and answers 401 with resource_metadata, which an
+ *           Oathkeeper authenticator in front would replace with a login redirect.
  */
 
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
-export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post']
+export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp']
 
-export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean }): OathkeeperRule[] {
+export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null }): OathkeeperRule[] {
   const { domains, urls } = input
   const rules: OathkeeperRule[] = []
 
@@ -64,7 +69,44 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
     rules.push(buildJinbeApiRule(domains.api, urls.jinbeInternal))
   }
 
+  const mcp = input.mcp ? buildMcpRule(input.mcp) : null
+  // A host another rule already serves would make Oathkeeper refuse both ("found multiple").
+  if (mcp && ![domains.auth, domains.app, domains.api].includes(new URL(input.mcp!.publicUrl).host)) rules.push(mcp)
+
   return rules
+}
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * auth-mcp's host: the MCP endpoint (the path of MCP_PUBLIC_URL) and the RFC 9728 metadata, at the
+ * root and suffixed with that path. No authenticator, no mutator: the Authorization header reaches
+ * auth-mcp as sent, and its 401 (WWW-Authenticate: Bearer resource_metadata=…) reaches the client.
+ * Null when either URL is unusable.
+ */
+export function buildMcpRule(mcp: BootstrapMcp): OathkeeperRule | null {
+  let pub: URL
+  try {
+    pub = new URL(mcp.publicUrl)
+    new URL(mcp.upstream)
+  } catch {
+    return null
+  }
+  if (pub.protocol !== 'https:' || pub.search || pub.hash) return null
+  const path = pub.pathname.replace(/^\/+|\/+$/g, '')
+  if (!path) return null
+  const p = escapeRegex(path)
+  return {
+    id: 'mcp',
+    upstream: { url: mcp.upstream.replace(/\/+$/, ''), preserve_host: true },
+    match: {
+      url: `http<(s?)>://${pub.host}/<(${p}|\\.well-known/oauth-protected-resource(/${p})?)>`,
+      methods: ['GET', 'POST', 'DELETE'],
+    },
+    authenticators: [{ handler: 'noop' }],
+    authorizer: { handler: 'allow' },
+    mutators: [{ handler: 'noop' }],
+  }
 }
 
 export function buildSelfserviceUiRule(authDomain: string, loginUiUrl: string): OathkeeperRule {

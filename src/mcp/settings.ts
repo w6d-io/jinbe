@@ -7,7 +7,7 @@ import { PERSONAL_KEY_MAX_DAYS } from '../schemas/api-key.schema.js'
  * console (Settings → AI assistants).
  *
  *   enabled              the administrator's switch for delegated tokens, personal keys and /api/mcp/*
- *   serverUrl            the MCP server address shown to people (kuma Connections); null = kuma's own env
+ *   serverUrl            the MCP server address shown to people (kuma Connections); null = MCP_PUBLIC_URL
  *   personalKeys.maxDays the longest a new personal key may live (≤ 30, the owner's ceiling)
  *   allowedOrgs          'all', or the organizations whose members may use it
  *
@@ -46,6 +46,18 @@ function checkUrl(raw: string): string | null {
     return null
   }
 }
+
+/**
+ * The deployment's MCP server address (MCP_PUBLIC_URL), shown when the administrator has saved none.
+ * Held to the same rule as a saved one; anything else is no address.
+ */
+export function deploymentServerUrl(): string | null {
+  const raw = String(env.MCP_PUBLIC_URL ?? '').trim()
+  return raw ? checkUrl(raw) : null
+}
+
+/** A saved address, or the deployment's when none is saved. */
+export const effectiveServerUrl = (settings: McpSettings): string | null => settings.serverUrl ?? deploymentServerUrl()
 
 /** A candidate document as a clean one, or the problems that stop it. Org lists are lowercased, de-duplicated and sorted. */
 export function validateMcpSettings(input: unknown, opts: { forSave?: boolean } = { forSave: true }): { ok: true; value: McpSettings } | { ok: false; problems: SettingsProblem[] } {

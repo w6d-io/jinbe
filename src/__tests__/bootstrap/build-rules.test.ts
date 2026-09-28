@@ -10,6 +10,8 @@ import {
   buildJinbePreflightRule,
   buildJinbePublicRule,
   buildJinbeApiRule,
+  buildMcpRule,
+  OPTIONAL_BUILT_IN_RULE_IDS,
 } from '../../bootstrap/build-rules.js'
 
 const URLS = {
@@ -193,6 +195,40 @@ describe('bootstrap/build-rules', () => {
       const a = buildBuiltInRules(inp)
       const b = buildBuiltInRules(inp)
       expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+    })
+  })
+
+  describe('mcp (auth-mcp behind Oathkeeper)', () => {
+    const toRegex = (u: string) =>
+      new RegExp(`^${u.split(/(<[^>]*>)/).map((part) => (part.startsWith('<') ? part.slice(1, -1) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
+    const MCP = { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100/' }
+    const DOMAINS = { auth: 'auth.example.com', app: 'kuma.example.com', api: 'api.example.com' }
+
+    it('passes the endpoint and the protected-resource metadata through untouched, nothing else', () => {
+      const r = buildMcpRule(MCP)!
+      expect(r).toMatchObject({ id: 'mcp', upstream: { url: 'http://auth-mcp:3100' }, authenticators: [{ handler: 'noop' }], authorizer: { handler: 'allow' }, mutators: [{ handler: 'noop' }] })
+      expect(r.match.methods).toEqual(['GET', 'POST', 'DELETE'])
+      const re = toRegex(r.match.url)
+      for (const path of ['/mcp', '/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp']) {
+        expect(re.test(`https://mcp.example.com${path}`), path).toBe(true)
+      }
+      for (const path of ['/', '/healthz', '/mcpx', '/mcp/x', '/.well-known/oauth-protected-resourcex', '/.well-known/openid-configuration']) {
+        expect(re.test(`https://mcp.example.com${path}`), path).toBe(false)
+      }
+      expect(re.test('https://mcpxexample.com/mcp')).toBe(false)
+    })
+
+    it('is emitted only with a usable address on a host of its own, and is optional (pruned when dropped)', () => {
+      expect(OPTIONAL_BUILT_IN_RULE_IDS).toContain('mcp')
+      const ids = (mcp: typeof MCP | null) => buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcp }).map((r) => r.id)
+      expect(ids(MCP)).toContain('mcp')
+      expect(ids(null)).not.toContain('mcp')
+      expect(ids({ ...MCP, publicUrl: 'https://kuma.example.com/mcp' })).not.toContain('mcp')
+      expect(buildMcpRule({ ...MCP, publicUrl: 'http://mcp.example.com/mcp' })).toBeNull()
+      expect(buildMcpRule({ ...MCP, publicUrl: 'https://mcp.example.com/' })).toBeNull()
+      expect(buildMcpRule({ ...MCP, upstream: 'auth-mcp' })).toBeNull()
+      // Without MCP the built-ins (and their hash) are what they were.
+      expect(buildBuiltInRules({ domains: DOMAINS, urls: URLS })).toEqual(buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcp: null }))
     })
   })
 })
