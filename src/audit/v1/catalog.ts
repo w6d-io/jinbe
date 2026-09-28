@@ -84,6 +84,7 @@ export const AUDIT_EVENTS = {
   'gateway.rolled_back': ['config', 'restore', 'high'],
 
   'config.auth_methods.changed': ['config', 'update', 'high'],
+  'config.second_factor.changed': ['config', 'update', 'high'],
   'config.bundle.exported': ['config', 'export'],
   'config.bundle.imported': ['config', 'import', 'warn'],
   'config.bundle.backed_up': ['config', 'backup'],

@@ -28,6 +28,8 @@ import { orgGrantsRoutes } from './routes/org-grants.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
 import { startSitesBackground } from './sites/sync.js'
+import { secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-factor/routes.js'
+import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
@@ -100,6 +102,10 @@ export async function buildServer() {
   // Require authentication for all routes except public ones (health, whoami)
   fastify.addHook('onRequest', requireAuth)
 
+  // Mandatory 2FA, server side: a session the policy says needs_2fa for this route is refused (422
+  // second_factor_required) before any route gate runs — second-factor/gate.ts.
+  fastify.addHook('onRequest', requireSecondFactor)
+
   // Register other plugins
   await fastify.register(rateLimitPlugin)
   await fastify.register(swaggerPlugin)
@@ -159,6 +165,7 @@ export async function buildServer() {
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
+      await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
       await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
       await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
@@ -176,6 +183,7 @@ export async function buildServer() {
       await api.register(opaBundleRoutes, { prefix: '/opa' })
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
+      await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
       await api.register(jobRoutes)
     },
     { prefix: '/api' }

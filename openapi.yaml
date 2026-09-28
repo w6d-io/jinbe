@@ -7366,6 +7366,26 @@ paths:
                     example: Service Unavailable
                   message:
                     type: string
+  /api/admin/rbac/opal/second_factor:
+    get:
+      tags:
+        - rbac
+      description: "OPAL data source: groups whose members must hold a second factor
+        (data.second_factor). 503 when the store cannot be read, so OPAL keeps
+        the requirement OPA already holds."
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  message:
+                    type: string
   /api/admin/rbac/opal/roles/{service}:
     get:
       parameters:
@@ -9870,6 +9890,79 @@ paths:
                     properties:
                       enabled:
                         type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+  /api/admin/settings/second-factor:
+    get:
+      tags:
+        - second-factor
+      description: Groups whose members must set up a second factor at sign-in and
+        hold aal2 on every permission-carrying route.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                  defaultGroups:
+                    type: array
+                    items:
+                      type: string
+    put:
+      tags:
+        - second-factor
+      description: Replace the groups whose members must use two-step sign-in. Every
+        name must be an existing group; an empty list requires nobody. Published
+        to OPA as data.second_factor. Requires super_admin + a second factor
+        proven within 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - groups
+              additionalProperties: false
+              properties:
+                groups:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: string
+                    maxLength: 100
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      type: string
+                  defaultGroups:
+                    type: array
+                    items:
+                      type: string
         "400":
           description: Default Response
           content:
@@ -13987,6 +14080,17 @@ paths:
           in: path
           name: name
           required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/public/second-factor/:
+    get:
+      tags:
+        - second-factor
+      description: The signed-in visitor (own Kratos session cookie) must set up or
+        prove a second factor before continuing? {secondFactorRequired,
+        hasSecondFactor, methods, aal}; 401 without a session; 503
+        policy_unavailable | identity_unavailable.
       responses:
         "200":
           description: Default Response

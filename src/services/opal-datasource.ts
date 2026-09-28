@@ -42,6 +42,8 @@ export async function buildOpalDatasourceEntries(): Promise<OpalDataSourceEntry[
     { url: `${jinbeUrl}/api/admin/rbac/opal/org_grants`, topics: ['policy_data'], dst_path: '/org_grants' },
     // Per-site 2FA (data.site_login): the bar each Site sets, published with its permissions.
     { url: `${jinbeUrl}/api/admin/rbac/opal/site_login`, topics: ['policy_data'], dst_path: '/site_login' },
+    // Platform 2FA (data.second_factor): groups whose members need aal2 on every permission route.
+    { url: `${jinbeUrl}/api/admin/rbac/opal/second_factor`, topics: ['policy_data'], dst_path: '/second_factor' },
   ]
 
   for (const svc of services) {

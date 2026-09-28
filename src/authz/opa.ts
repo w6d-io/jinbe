@@ -118,6 +118,15 @@ export function isSuperAdmin(email: string): Promise<boolean> {
 }
 
 /**
+ * Whether this address must hold a second factor (`rbac.second_factor_required`, rbac.rego § 8c:
+ * a member of a group in data.second_factor). A policy that predates the rule answers nothing, which
+ * is `AuthzUnavailableError` like any other unanswerable question.
+ */
+export function secondFactorRequired(email: string): Promise<boolean> {
+  return ask('rbac/second_factor_required', { email }, (r) => (typeof r === 'boolean' ? r : undefined))
+}
+
+/**
  * Whether permissions OPA resolved allow the required one: `*`, the permission itself, or an
  * ancestor of it (`admin:read` covers `admin.organisation:read`).
  */

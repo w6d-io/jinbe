@@ -44,6 +44,8 @@ const PUBLIC_ROUTES = [
   // Site login branding for login-ui before sign-in (exact host / name, rate limited), the logo,
   // and access-reason, which checks the visitor's own Kratos cookie itself (src/sites/public.routes.ts).
   '/api/public/sites',
+  // The visitor's own 2FA status for login-ui; reads their Kratos cookie itself (second-factor/routes.ts).
+  '/api/public/second-factor',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed

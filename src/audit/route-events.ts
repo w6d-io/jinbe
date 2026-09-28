@@ -33,6 +33,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   ...GATEWAY_ROUTE_AUDIT,
   // Authentication, directory, sessions
   'PUT /api/admin/auth/methods': by('config.auth_methods.changed'),
+  'PUT /api/admin/settings/second-factor': by('config.second_factor.changed'),
   'POST /api/admin/organizations': by('org.created'),
   'POST /api/admin/users': by('user.created'),
   'PUT /api/admin/users/:id': by('user.updated'),
