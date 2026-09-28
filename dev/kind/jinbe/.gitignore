@@ -1,0 +1,2 @@
+# written by ../up.sh: the jinbe ServiceAccount token kubeconfig, mounted into the compose jinbe
+kubeconfig

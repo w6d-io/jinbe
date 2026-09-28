@@ -1,0 +1,76 @@
+# helm values for the charts/auth render up.sh applies to kind (release `auth`, namespace `auth`).
+# Only the Sites/Gateway half of the chart runs in kind: Oathkeeper (maester sidecar, v25.4.0),
+# site-operator, gatekit, the jinbe ServiceAccount + RBAC. jinbe, Kratos, OPA and kuma stay in
+# the compose stack; kind reaches them through the bridge Services (manifests/bridge.yaml) that
+# carry the chart's own names (auth-kratos-public, auth-opa-authz-proxy), so the Oathkeeper
+# config below is the chart's with only the host-facing URLs changed.
+global:
+  domain: localtest.me
+  # the chart's platform-ready Rule matches <authDomain>/.oathkeeper/ready (Oathkeeper is NotReady with 0 rules)
+  authDomain: auth.sites.localtest.me
+
+kratos: {enabled: false}
+hydra: {enabled: false}
+opal: {enabled: false}
+redis: {enabled: false}
+redisNetworkPolicy: {enabled: false}
+# replaced by manifests/opa-authz-proxy.yaml (the chart image is amd64-only; the local OPA wants its token)
+opaAuthzProxy: {enabled: false}
+kratosLoginUi: {enabled: false}
+postgresqlSimple: {enabled: false}
+errorPage: {enabled: false}
+adminUi: {enabled: false}
+
+# Rendered for its ServiceAccount, sites RBAC and Sites env only; up.sh drops the workload.
+jinbe:
+  enabled: true
+  serviceAccount: {create: true}
+
+oathkeeper:
+  enabled: true
+  rules:
+    # maester only: the legacy (jinbe-served) rules stay on the compose oathkeeper at :4455
+    source: maester
+  maesterSidecar:
+    image: oathkeeper-maester:local
+  image:
+    tag: v25.4.0
+  configmap:
+    hashSumEnabled: false   # the site-operator rolls Oathkeeper itself (Gateway)
+  replicaCount: 1
+  ingress:
+    proxy: {enabled: false, hosts: []}
+  oathkeeper:
+    config:
+      authenticators:
+        bearer_token:
+          config:
+            # as the sandbox's live config: v25.4.0 only sends the token to Kratos when forwarded
+            forward_http_headers: [x-session-token]
+      errors:
+        handlers:
+          redirect:
+            config:
+              to: http://localhost:3001/login
+
+sites:
+  enabled: true
+  gatekitUrl: http://auth-gatekit:8080
+  reservedHosts: [auth.sites.localtest.me, kuma.sites.localtest.me]
+  platformNamespaces: [auth, kube-system, kube-public, kube-node-lease, ingress-nginx, local-path-storage]
+  accessUrl: http://localhost:3001/access
+
+gatekit:
+  enabled: true
+  replicaCount: 1
+  image: {repository: gatekit, tag: kind, pullPolicy: Never}
+
+siteOperator:
+  enabled: true
+  replicaCount: 1
+  image: {repository: site-operator, tag: local, pullPolicy: Never}
+  gateway:
+    enabled: true
+  ingressClasses: [nginx]
+  enableCertificates: false   # no cert-manager in kind: Zones use tls.mode default (plain http here)
+  issuers: [local-selfsigned]   # required non-empty by the operator; unused without cert-manager

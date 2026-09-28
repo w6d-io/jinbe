@@ -36,6 +36,23 @@ services:
       # Mirrors the authenticators enabled in the local oathkeeper container
       # (oathkeeper/oathkeeper.yml) so fail-closed rule validation matches it.
       OATHKEEPER_ENABLED_AUTHENTICATORS: cookie_session,noop,bearer_token,oauth2_introspection
+      OATHKEEPER_ENABLED_AUTHORIZERS: allow,deny,remote_json
+      # Sites + Gateway against the local kind cluster (dev/kind/README.md, `dev/kind/up.sh`): the
+      # chart's jinbe ServiceAccount token, not cluster-admin. Without the cluster, Sites apply and the
+      # Gateway page answer 503 kubernetes_unavailable; SITES_KUBE=off docker compose up … opts out.
+      SITES_KUBE: '${SITES_KUBE:-kubeconfig}'
+      KUBECONFIG: /kind/kubeconfig
+      SITES_NAMESPACE: auth
+      SITES_ENV: local
+      SITES_RESERVED_HOSTS: auth.sites.localtest.me,kuma.sites.localtest.me
+      SITES_PLATFORM_NAMESPACES: auth,kube-system,kube-public,kube-node-lease,ingress-nginx,local-path-storage
+      SITES_ACCESS_URL: http://localhost:3001/access
+      SITES_ZONE_ALLOWED_PARENTS: localtest.me
+      SITES_INGRESS_ADDRESSES: 127.0.0.1
+      GATEWAY_OATHKEEPER_CONFIGMAP: auth-oathkeeper-config-base
+      # Legacy rules stay on the compose oathkeeper (:4455), Site rules on kind's: they coexist
+      # without a migration cut-over (as the sandbox, SITES_MIXED_GATEWAY; preview refuses overlaps).
+      SITES_MIXED_GATEWAY: 'true'
       # OPAL data routes require it. Local dev value only.
       OPAL_CLIENT_TOKEN: local-dev-opal-client-token-0123456789abcdef
       # Where the datasource manifest tells OPAL to fetch each entry (default jinbe:8080 is the chart's).
@@ -44,6 +61,8 @@ services:
       OPAL_SERVER_URL: http://opal-server:7002
     volumes:
       - ../kratos-login-ui/examples/kratos:/etc/kratos-config
+      # the jinbe ServiceAccount kubeconfig written by dev/kind/up.sh (nothing else of dev/kind)
+      - ./dev/kind/jinbe:/kind:ro
     # Match the host user so jinbe can write the bind-mounted kratos.yml.
     user: '${DEV_UID:-1000}:${DEV_GID:-1000}'
     env_file:

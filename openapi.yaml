@@ -8297,6 +8297,9 @@ paths:
                         type: string
                       permission:
                         type: string
+                      public:
+                        type: boolean
+                        description: Open to anyone; per-site 2FA never gates it.
                       org_param:
                         type: string
                         description: Name of the :param in `path` carrying the org id; the route is then

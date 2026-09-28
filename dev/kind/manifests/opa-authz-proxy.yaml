@@ -1,0 +1,76 @@
+# Stand-in for the chart's opa-authz-proxy (ghcr.io/w6d-io/infra/opa-authz-proxy is amd64-only), same
+# Service name and contract as Oathkeeper's remote_json sees it: POST the payload to OPA's
+# rbac/decision, answer 200 (+ X-User-Groups / X-User-Organizations) on allow, 404 not_found,
+# 403 otherwise. Adds the local OPA's bearer token (jinbe/docker-compose.yml OPA_TOKEN).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-opa-authz-proxy-local
+  namespace: auth
+data:
+  server.mjs: |
+    import http from 'node:http'
+    const OPA = process.env.OPA_URL
+    const TOKEN = process.env.OPA_TOKEN
+    http.createServer(async (req, res) => {
+      if (req.url === '/healthz') return res.end('ok')
+      let body = ''
+      for await (const chunk of req) body += chunk
+      try {
+        const r = await fetch(OPA + req.url, { method: 'POST', body, headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` } })
+        const d = (await r.json()).result
+        if (!r.ok || !d) throw new Error(`opa ${r.status}`)
+        if (d.allow === true) {
+          res.writeHead(200, { 'x-user-groups': JSON.stringify(d.groups ?? []), 'x-user-organizations': JSON.stringify(d.organizations ?? []) })
+          return res.end('{"allow":true}')
+        }
+        res.writeHead(d.reason === 'not_found' ? 404 : 403).end(JSON.stringify({ allow: false, reason: d.reason }))
+      } catch (err) {
+        console.error(err.message)
+        res.writeHead(503).end()
+      }
+    }).listen(8080)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-opa-authz-proxy
+  namespace: auth
+  labels: {app.kubernetes.io/name: auth-opa-authz-proxy}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: auth-opa-authz-proxy}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: auth-opa-authz-proxy}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: proxy
+        image: node:22-alpine
+        command: [node, /app/server.mjs]
+        env:
+        - {name: OPA_URL, value: http://auth-local-opa:8181}
+        - {name: OPA_TOKEN, value: local-dev-opa-token-0123456789abcdef}
+        ports:
+        - {name: http, containerPort: 8080}
+        readinessProbe:
+          httpGet: {path: /healthz, port: http}
+        volumeMounts:
+        - {name: app, mountPath: /app}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+      - name: app
+        configMap: {name: auth-opa-authz-proxy-local}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-opa-authz-proxy
+  namespace: auth
+spec:
+  selector: {app.kubernetes.io/name: auth-opa-authz-proxy}
+  ports:
+  - {name: http, port: 8080, targetPort: http}

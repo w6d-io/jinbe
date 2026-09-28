@@ -1,0 +1,57 @@
+# A site upstream to plug from kuma: echo.demo.svc.cluster.local:80 (outside the platform
+# namespaces, so no upstream exception is needed), plus the local Zone its hosts live under.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: demo
+  labels: {app: echo}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: echo}
+  template:
+    metadata:
+      labels: {app: echo}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: echo
+        image: mendhak/http-https-echo:42
+        env:
+        - {name: HTTP_PORT, value: '8080'}
+        - {name: HTTPS_PORT, value: '8443'}
+        - {name: DISABLE_REQUEST_LOGS, value: 'true'}
+        ports:
+        - {name: http, containerPort: 8080}
+        readinessProbe:
+          httpGet: {path: /healthz, port: http}
+          periodSeconds: 5
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: demo
+spec:
+  selector: {app: echo}
+  ports:
+  - {name: http, port: 80, targetPort: http}
+---
+# *.sites.localtest.me resolves to 127.0.0.1 in public DNS: http://<site>.sites.localtest.me
+apiVersion: auth.w6d.io/v1alpha1
+kind: Zone
+metadata:
+  name: local
+spec:
+  domain: sites.localtest.me
+  ingress: wildcard
+  ingressClass: nginx
+  tls: {mode: default}

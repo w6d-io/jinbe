@@ -1,0 +1,49 @@
+# kind → compose stack. Selector-less Services whose EndpointSlices point at the host (podman's
+# host.containers.internal, ${HOST_IP}), where the compose stack publishes its ports. They carry
+# the names the chart's Oathkeeper config dials, so that config stays the chart's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-kratos-public
+  namespace: auth
+spec:
+  ports:
+  - {name: http, port: 80, targetPort: 4433, protocol: TCP}
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: auth-kratos-public-host
+  namespace: auth
+  labels:
+    kubernetes.io/service-name: auth-kratos-public
+    endpointslice.kubernetes.io/managed-by: local-dev
+addressType: IPv4
+ports:
+- {name: http, port: 4433, protocol: TCP}
+endpoints:
+- addresses: ["${HOST_IP}"]
+---
+# The compose OPA (opal-client :8181). Only auth-opa-authz-proxy calls it, with the local token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-local-opa
+  namespace: auth
+spec:
+  ports:
+  - {name: http, port: 8181, targetPort: 8181, protocol: TCP}
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: auth-local-opa-host
+  namespace: auth
+  labels:
+    kubernetes.io/service-name: auth-local-opa
+    endpointslice.kubernetes.io/managed-by: local-dev
+addressType: IPv4
+ports:
+- {name: http, port: 8181, protocol: TCP}
+endpoints:
+- addresses: ["${HOST_IP}"]

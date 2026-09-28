@@ -1,0 +1,3 @@
+# kubeconfigs (admin + jinbe SA token), rendered chart, cloned sources
+.state/
+.cache/
