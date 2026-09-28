@@ -57,6 +57,11 @@ function extractBearerToken(header?: string): string | null {
   return match ? match[1].trim() : null
 }
 
+/** A request that cannot change anything: the only kind a cached session validation may serve. */
+function isRead(request: FastifyRequest): boolean {
+  return request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS'
+}
+
 /**
  * Identity extraction middleware.
  *
@@ -108,7 +113,7 @@ export async function extractIdentity(
 async function secondFactorFromSession(request: FastifyRequest, subject: string) {
   const cookie = KratosSessionService.extractSessionCookie(request.headers.cookie)
   if (!cookie) return null
-  const { session } = await kratosSessionService.validateSession(cookie)
+  const { session } = await kratosSessionService.validateSession(cookie, { allowCached: isRead(request) })
   if (!session || session.identityId !== subject) return null
   return {
     sessionId: session.sessionId,
@@ -219,8 +224,10 @@ async function secondFactorFromSession(request: FastifyRequest, subject: string)
     return
   }
 
+  // Reads may reuse a validation made in the last few seconds; writes always ask Kratos (see the
+  // session cache in kratos-session.service).
   const { session: validatedSession, error } =
-    await kratosSessionService.validateSession(sessionCookie)
+    await kratosSessionService.validateSession(sessionCookie, { allowCached: isRead(request) })
 
   if (validatedSession) {
     request.validatedSession = validatedSession

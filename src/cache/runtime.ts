@@ -75,6 +75,17 @@ export function onInvalidate(namespace: string, fn: (key?: string) => void): voi
   set.add(fn)
 }
 
+/**
+ * Announces an invalidation of `key` in `namespace` to every replica (and runs this one's listeners)
+ * for state that is not an SwrCache — an index the listener knows how to search.
+ */
+export function broadcastInvalidation(namespace: string, key?: string): void {
+  applyLocally(namespace, key)
+  if (!cacheEnabled(namespace)) return
+  ensureBus()
+  void getStore().publish(CHANNEL, JSON.stringify({ ns: namespace, key, origin: ORIGIN })).catch(() => {})
+}
+
 /** Called by each namespace once, so invalidations reach it. */
 export function registerCache(namespace: string, cache: Invalidatable): void {
   registry.set(namespace, cache)
