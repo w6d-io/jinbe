@@ -33,6 +33,18 @@ describe('bootstrap/build-rules', () => {
       expect(r.match.methods).toContain('OPTIONS')
     })
 
+    it('selfservice-ui covers every page and API route the login UI serves', () => {
+      // Oathkeeper's regexp strategy: text outside <…> is literal, inside is a regex.
+      const toRegex = (u: string) =>
+        new RegExp(`^${u.split(/(<[^>]*>)/).map((part) => (part.startsWith('<') ? part.slice(1, -1) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
+      const re = toRegex(buildSelfserviceUiRule('auth.example.com', URLS.loginUi).match.url)
+      // kratos-login-ui src/app: every page and route handler (a missing one is a gateway 404).
+      for (const path of ['/login', '/register', '/settings', '/logout', '/recovery', '/verification', '/error', '/access', '/two-step', '/welcome',
+        '/api/access-reason', '/api/branding', '/api/branding/logo', '/api/config', '/api/health', '/api/landing', '/api/ready', '/api/second-factor', '/api/sites/mine']) {
+        expect(re.test(`https://auth.example.com${path}`), path).toBe(true)
+      }
+    })
+
     it('kratos-public targets kratos public service', () => {
       const r = buildKratosPublicRule('auth.example.com', URLS.kratosPublic)
       expect(r.id).toBe('kratos-public')
