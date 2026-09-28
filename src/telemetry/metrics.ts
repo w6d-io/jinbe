@@ -95,6 +95,14 @@ export const signInGuardDecisions = new Counter({
   labelNames: ['flow', 'result'] as const,
 })
 
+// One count per self-service submit the gate saw (sign-in-protection/gate.ts): `step` is `send` for
+// a submit that makes Kratos email a code or link, `other` for the rest (passed through unjudged).
+export const signInGateDecisions = new Counter({
+  name: 'jinbe_sign_in_gate_decisions_total',
+  help: 'Kratos self-service submits judged by the sign-in gate before Kratos, by flow, step and result',
+  labelNames: ['flow', 'step', 'result'] as const,
+})
+
 // ─── Shared read cache (src/cache) ───────────────────────────────────────────
 // Label values are the cache namespaces, a fixed set declared in code.
 
