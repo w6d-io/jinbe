@@ -210,6 +210,26 @@ export class KratosService {
   }
 
   /**
+   * Identities whose login identifier (email) STARTS WITH `prefix`, answered by Kratos's own index
+   * (`preview_credentials_identifier_similar`, a `LIKE 'prefix%'` in v26.2) — one bounded query, never
+   * a directory walk. Second-factor credentials are included so a caller can show 2FA without a call
+   * per hit. Kratos marks the parameter experimental: a 400 from a build without it is returned as
+   * `null`, so the caller can fall back rather than fail.
+   */
+  async listIdentitiesByIdentifierPrefix(prefix: string, limit: number): Promise<KratosIdentity[] | null> {
+    const params = new URLSearchParams({ page_size: String(limit), preview_credentials_identifier_similar: prefix })
+    for (const m of MFA_METHODS) params.append('include_credential', m)
+    const response = await this.fetchWithTimeout(`${this.adminUrl}/admin/identities?${params.toString()}`, {
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (response.status === 400) return null
+    if (!response.ok) {
+      throw new KratosApiError(response.status, `Kratos API error: ${response.statusText}`)
+    }
+    return ((await response.json()) as KratosIdentity[]).slice(0, limit)
+  }
+
+  /**
    * Get identity by ID
    */
   async getIdentity(id: string): Promise<KratosIdentity> {

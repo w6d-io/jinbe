@@ -21,6 +21,25 @@ import { env } from '../config/index.js'
  */
 export class OrganisationStoreUnavailableError extends Error {}
 
+/**
+ * Not an outage: this deployment was never given a database. Kept apart so the console can say what
+ * to set instead of "try again", which would never help.
+ */
+export class OrganisationStoreNotConfiguredError extends OrganisationStoreUnavailableError {
+  constructor() {
+    super('No organisation database is configured: set ORGANISATION_DATABASE_URL.')
+  }
+}
+
+/** The 503 every organisation route answers when there is no database at all. */
+export function organisationStoreNotConfigured() {
+  return {
+    error: 'organisation_directory_unavailable',
+    reason: 'not_configured',
+    message: new OrganisationStoreNotConfiguredError().message,
+  } as const
+}
+
 export interface Organisation {
   readonly id: string
   readonly name: string
@@ -99,9 +118,7 @@ export function organisationStoreConfigured(): boolean {
 }
 
 function connection(): Pool {
-  if (!env.ORGANISATION_DATABASE_URL) {
-    throw new OrganisationStoreUnavailableError('No organisation database is configured.')
-  }
+  if (!env.ORGANISATION_DATABASE_URL) throw new OrganisationStoreNotConfiguredError()
   pool ??= new Pool({
     connectionString: env.ORGANISATION_DATABASE_URL,
     max: env.ORGANISATION_DATABASE_POOL_MAX,

@@ -59,6 +59,8 @@ export const serviceUnavailableResponseSchema = {
     type: 'object',
     properties: {
         error: { type: 'string', example: 'Service Unavailable' },
+        // Why, when the code alone does not say: `not_configured` is set-up, not an outage.
+        reason: { type: 'string' },
         message: { type: 'string' },
     },
 }

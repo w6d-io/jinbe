@@ -16,13 +16,14 @@ import {
   badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
+  serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
 import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.js'
 import { holdsInJinbe } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
-import { allEntitlements, allOrganisations, organisationStoreConfigured } from '../services/organisation-store.js'
+import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
@@ -161,19 +162,13 @@ export async function adminRoutes(fastify: FastifyInstance) {
           },
           401: unauthorizedResponseSchema,
           403: forbiddenResponseSchema,
-          503: {
-            type: 'object',
-            properties: { error: { type: 'string' }, message: { type: 'string' } },
-          },
+          503: serviceUnavailableResponseSchema,
         },
       },
     },
     async (request, reply) => {
       if (!organisationStoreConfigured()) {
-        return reply.status(503).send({
-          error: 'Service Unavailable',
-          message: 'No organisation directory is configured.',
-        })
+        return reply.status(503).send(organisationStoreNotConfigured())
       }
       try {
         // Which applications each one has, alongside who it is. The screen showing this read a map

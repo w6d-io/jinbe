@@ -22,6 +22,7 @@ import {
   SecondFactorResetError,
   secondFactorsOf,
 } from '../services/second-factor-reset.service.js'
+import { lookupUsers, LOOKUP_MAX } from '../services/user-lookup.service.js'
 import { allows, requiredForEdit, type CheckedPermission, type EditableIdentity } from '../services/user-permissions.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
@@ -80,6 +81,52 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
       },
     },
   }, adminController.searchUsers.bind(adminController) as never)
+
+  // Quick find: as-you-type from the checker and the people screen. Each keystroke is at most one
+  // bounded Kratos query (see lookupUsers), and the limit is per caller so one open tab cannot
+  // starve the others.
+  fastify.get<{ Querystring: { q: string; limit?: number } }>('/users/lookup', {
+    preHandler: requirePermission('users:read'),
+    config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? r.ip } },
+    schema: {
+      description:
+        'Find a person by Kratos identity id (exact), whole email (exact) or the start of an email; falls back to a ' +
+        'substring match over email and name when no address starts with it. At most 10 hits, each with groups, ' +
+        'organisations and 2FA (null = could not be read). Needs users:read.',
+      tags: ['admin'],
+      querystring: {
+        type: 'object',
+        required: ['q'],
+        properties: { q: { type: 'string', minLength: 1, maxLength: 320 }, limit: { type: 'integer', minimum: 1, maximum: LOOKUP_MAX } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            match: { type: 'string', enum: ['id', 'email', 'prefix', 'contains', 'none'] },
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  email: { type: 'string' },
+                  name: { type: ['string', 'null'] },
+                  active: { type: 'boolean' },
+                  groups: { type: ['array', 'null'], items: { type: 'string' } },
+                  organizations: { type: ['array', 'null'], items: { type: 'string' } },
+                  mfa: { type: ['boolean', 'null'] },
+                },
+              },
+            },
+          },
+        },
+        ...errors,
+      },
+    },
+  }, async (request, reply) => {
+    return reply.send(await lookupUsers(request.query.q, request.query.limit))
+  })
 
   fastify.get('/users/:id', {
     preHandler: requirePermission('users:read'),

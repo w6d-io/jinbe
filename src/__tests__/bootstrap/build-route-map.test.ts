@@ -22,6 +22,7 @@ describe('bootstrap/build-route-map', () => {
     const fine: Array<[string, string, string]> = [
       ['GET', '/api/admin/users', 'users:read'],
       ['GET', '/api/admin/users/search', 'users:read'],
+      ['GET', '/api/admin/users/lookup', 'users:read'],
       ['GET', '/api/admin/users/:id', 'users:read'],
       ['POST', '/api/admin/users', 'users:create'],
       ['PUT', '/api/admin/users/:id', 'users:update'],

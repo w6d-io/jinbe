@@ -27,8 +27,19 @@ describe('error handler: OPA could not be asked', () => {
 describe('error handler: no organisation directory', () => {
   it('answers 503 organisation_directory_unavailable, never a 500', async () => {
     const { OrganisationStoreUnavailableError } = await import('../../../services/organisation-store.js')
-    const res = await answer(new OrganisationStoreUnavailableError('No organisation database is configured.'))
+    const res = await answer(new OrganisationStoreUnavailableError('The organisation store did not answer: ECONNREFUSED'))
     expect(res.statusCode).toBe(503)
-    expect(res.json()).toEqual({ error: 'organisation_directory_unavailable', message: 'No organisation database is configured.' })
+    expect(res.json()).toEqual({ error: 'organisation_directory_unavailable', message: 'The organisation store did not answer: ECONNREFUSED' })
+  })
+
+  it('says when there is no database at all, and what to set: set-up, not an outage', async () => {
+    const { OrganisationStoreNotConfiguredError } = await import('../../../services/organisation-store.js')
+    const res = await answer(new OrganisationStoreNotConfiguredError())
+    expect(res.statusCode).toBe(503)
+    expect(res.json()).toEqual({
+      error: 'organisation_directory_unavailable',
+      reason: 'not_configured',
+      message: 'No organisation database is configured: set ORGANISATION_DATABASE_URL.',
+    })
   })
 })

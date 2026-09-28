@@ -15,6 +15,11 @@ const { poolState, envState, store } = vi.hoisted(() => ({
   },
   store: {
     organisationStoreConfigured: vi.fn(() => true),
+    organisationStoreNotConfigured: () => ({
+      error: 'organisation_directory_unavailable',
+      reason: 'not_configured',
+      message: 'No organisation database is configured: set ORGANISATION_DATABASE_URL.',
+    }),
     createOrganisation: vi.fn(async (input: { name: string; tenant: string }) => ({
       id: '33333333-3333-3333-3333-333333333333',
       attributes: {},
@@ -140,6 +145,7 @@ describe('POST /api/admin/organizations', () => {
     const answer = await call({ name: 'Acme' })
 
     expect(answer.code).toBe(503)
+    expect(answer.body).toMatchObject({ error: 'organisation_directory_unavailable', reason: 'not_configured' })
   })
 
   it('answers 503 when the directory cannot be written', async () => {

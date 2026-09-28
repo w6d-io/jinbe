@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { createOrganisation, organisationStoreConfigured } from '../services/organisation-store.js'
+import { createOrganisation, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
   badRequestResponseSchema,
@@ -92,10 +92,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       }
 
       if (!organisationStoreConfigured()) {
-        return reply.status(503).send({
-          error: 'Service Unavailable',
-          message: 'No organisation directory is configured.',
-        })
+        return reply.status(503).send(organisationStoreNotConfigured())
       }
 
       let created

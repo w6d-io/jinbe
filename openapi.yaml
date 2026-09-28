@@ -3133,6 +3133,114 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/admin/users/lookup:
+    get:
+      tags:
+        - admin
+      description: Find a person by Kratos identity id (exact), whole email (exact) or
+        the start of an email; falls back to a substring match over email and
+        name when no address starts with it. At most 10 hits, each with groups,
+        organisations and 2FA (null = could not be read). Needs users:read.
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 320
+          in: query
+          name: q
+          required: true
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+          in: query
+          name: limit
+          required: false
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  match:
+                    type: string
+                    enum:
+                      - id
+                      - email
+                      - prefix
+                      - contains
+                      - none
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        email:
+                          type: string
+                        name:
+                          type:
+                            - "null"
+                            - string
+                        active:
+                          type: boolean
+                        groups:
+                          type:
+                            - "null"
+                            - array
+                          items:
+                            type: string
+                        organizations:
+                          type:
+                            - "null"
+                            - array
+                          items:
+                            type: string
+                        mfa:
+                          type:
+                            - "null"
+                            - boolean
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   /api/admin/users/{id}:
     get:
       tags:
@@ -4119,6 +4227,9 @@ paths:
                 properties:
                   error:
                     type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
     post:
@@ -4214,6 +4325,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/users/{id}/access:
@@ -4313,6 +4426,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/sites:
@@ -7471,6 +7586,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/rbac/opal/groups:
@@ -7506,6 +7623,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/rbac/opal/site_login:
@@ -7526,6 +7645,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/rbac/opal/second_factor:
@@ -7546,6 +7667,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/rbac/opal/roles/{service}:
@@ -7730,6 +7853,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/rbac/users:
@@ -13351,6 +13476,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/organizations/{organizationId}/users/{id}/membership:
@@ -13516,6 +13643,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/organizations/{organizationId}/users/{id}/groups:
@@ -13776,6 +13905,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/organizations/{organizationId}/users/{id}/grants:
@@ -13907,6 +14038,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/organizations/{organizationId}/assignable-groups:
@@ -13995,6 +14128,8 @@ paths:
                   error:
                     type: string
                     example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/organizations/{organizationId}/api-keys:

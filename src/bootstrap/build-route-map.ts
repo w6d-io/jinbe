@@ -91,6 +91,7 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   { method: 'POST',   path: '/api/admin/users/:id/recovery-email',  permission: 'admin:update' },
   { method: 'GET',    path: '/api/admin/users/:id/access',          permission: 'admin:read' },
   { method: 'GET',    path: '/api/admin/users/search',              permission: 'admin:read' },
+  { method: 'GET',    path: '/api/admin/users/lookup',              permission: 'admin:read' },
   { method: 'POST',   path: '/api/admin/users/:id/login-link',      permission: 'admin:update' },
   { method: 'GET',    path: '/api/admin/users/:id/second-factors',  permission: 'admin:read' },
   { method: 'POST',   path: '/api/admin/users/:id/second-factors/reset', permission: 'admin:update' },
@@ -101,6 +102,7 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // (routes/user-management.routes.ts) — the gateway is not the only way in.
   { method: 'GET',    path: '/api/admin/users',                     permission: 'users:read' },
   { method: 'GET',    path: '/api/admin/users/search',              permission: 'users:read' },
+  { method: 'GET',    path: '/api/admin/users/lookup',              permission: 'users:read' },
   { method: 'POST',   path: '/api/admin/users',                     permission: 'users:create' },
   { method: 'GET',    path: '/api/admin/users/:id',                 permission: 'users:read' },
   { method: 'PUT',    path: '/api/admin/users/:id',                 permission: 'users:update' },
