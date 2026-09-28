@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   redisDown: false,
   emit: vi.fn(async () => 'id'),
   env: {} as Record<string, unknown>,
+  kv: new Map<string, number>(),
 }))
 
 vi.mock('../../config/env.js', async (importOriginal) => {
@@ -23,6 +24,13 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     }),
     setConfig: vi.fn(async (k: string, v: string) => { h.config[k] = v }),
   },
+}))
+vi.mock('../../services/redis-client.service.js', () => ({
+  getRedisClient: () => ({
+    exists: async (k: string) => (h.kv.has(k) ? 1 : 0),
+    incr: async (k: string) => { const v = (h.kv.get(k) ?? 0) + 1; h.kv.set(k, v); return v },
+    set: async (k: string, v: string) => { h.kv.set(k, Number(v)); return 'OK' },
+  }),
 }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
 vi.mock('../../middleware/require-admin.js', () => ({
@@ -79,6 +87,7 @@ function siteverify(answer: Record<string, unknown> | 'down' | number) {
 beforeEach(() => {
   h.config = {}
   h.redisDown = false
+  h.kv.clear()
   h.env = { CAPTCHA_SITE_KEY: SITE_KEY, CAPTCHA_SECRET_KEY: PASS_SECRET, KRATOS_WEBHOOK_SECRET: HOOK_SECRET }
   resetSignInProtectionCache()
 })
@@ -129,7 +138,7 @@ describe('registration policy', () => {
     expect(registrationVerdict('ann@corp.io.evil.com', p)?.result).toBe('registration_not_allowed')
     expect(registrationVerdict('other@gmail.com', p)?.result).toBe('registration_not_allowed')
     const refused = registrationVerdict('x@y.io', p)
-    expect(refused && !refused.allow && refused.message).toMatchObject({ text: 'Sign-ups are limited to @corp.io addresses and a few others.', pointer: '#/traits/email' })
+    expect(refused && !refused.allow && refused.message).toMatchObject({ text: 'Sign-ups are limited to @corp.io addresses and a few others.', pointer: '#/' })
   })
 
   it('disposable inboxes: built-in list when switched on, the console deny-list always; a listed address wins', () => {
@@ -307,7 +316,7 @@ describe('routes', () => {
     const res = await hook({ flow: 'registration', flow_type: 'api', method: 'password', email: 'scanner@mailinator.com' })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({
-      messages: [{ instance_ptr: '#/traits/email', messages: [{ id: 4000912, text: 'Sign-ups are limited to @corp.io addresses.', type: 'error' }] }],
+      messages: [{ instance_ptr: '#/', messages: [{ id: 4000912, text: 'Sign-ups are limited to @corp.io addresses.', type: 'error' }] }],
     })
     expect(fetchSpy).not.toHaveBeenCalled()
   })
@@ -346,6 +355,18 @@ describe('routes', () => {
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
     expect((await check({ flow: 'recovery', token: DUMMY_TOKEN })).statusCode).toBe(200)
     expect((await check({ flow: 'registration', token: DUMMY_TOKEN })).statusCode).toBe(400)
+  })
+
+  it('gateway check: a passing token is a short pass for the flow (send email, submit code, resend), then spent', async () => {
+    store({ captcha: { flows: { registration: false, login: false, recovery: true, verification: false } } })
+    const check = () => app.inject({ method: 'POST', url: '/api/public/sign-in-protection/check', payload: { flow: 'recovery', token: 'tok-1' } })
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
+    expect((await check()).statusCode).toBe(200)
+    for (let i = 0; i < 4; i++) expect((await check()).statusCode).toBe(200)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const spent = await check()
+    expect(spent.statusCode).toBe(403)
+    expect(spent.json()).toMatchObject({ error: 'captcha_invalid' })
   })
 
   it('admin: read needs admin; write needs super_admin and a recent second factor', async () => {

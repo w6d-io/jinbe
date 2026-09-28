@@ -15,7 +15,8 @@ import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './
  *     once the password was accepted (see the login note below).
  *   - recovery and verification have NO hook at the moment a code or link is sent: `before` runs at
  *     flow creation (no answer yet), `after` once the code was used. Their bot check is enforced at
- *     the gateway instead (checkGatewayCaptcha, called by an Oathkeeper remote_json authorizer).
+ *     the gateway instead (POST /api/public/sign-in-protection/check, from an Oathkeeper remote_json
+ *     authorizer).
  *
  * The hook fires for API flows too (/self-service/registration/api), which is the point: a script
  * that never loads login-ui still meets this check.
@@ -42,7 +43,10 @@ export type Decision =
 export interface KratosText {
   id: number
   text: string
-  /** Where Kratos shows it: `#/` on the form, `#/traits/email` under the email field. */
+  /**
+   * Where Kratos shows it. Always `#/`, the form-level message: on the two-step sign-up (details, then
+   * password) the email field is hidden on the step this hook answers, so a message under it is lost.
+   */
   pointer: string
 }
 
@@ -57,8 +61,8 @@ export const GUARD_MESSAGE_IDS = {
   settings_unavailable: 4000914,
 } as const satisfies Record<Refusal, number>
 
-function refuse(result: Refusal, text: string, pointer = '#/'): Decision {
-  return { allow: false, result, message: { id: GUARD_MESSAGE_IDS[result], text, pointer } }
+function refuse(result: Refusal, text: string): Decision {
+  return { allow: false, result, message: { id: GUARD_MESSAGE_IDS[result], text, pointer: '#/' } }
 }
 
 /** The 4xx body Kratos turns into a form message (web_hook.go parseWebhookResponse). */
@@ -92,11 +96,11 @@ export function registrationVerdict(email: string | null | undefined, policy: Si
   if (!listed && domain) {
     const denied = policy.denyDomains.some((e) => domainAndParents(domain).some((d) => matchesDomain(d, e)))
     if (denied || (policy.blockDisposable && isDisposable(domain))) {
-      return refuse('registration_disposable', 'This email provider cannot be used to sign up. Use your work or personal address.', '#/traits/email')
+      return refuse('registration_disposable', 'This email provider cannot be used to sign up. Use your work or personal address.')
     }
   }
   if (policy.mode === 'allowlist' && !listed) {
-    return refuse('registration_not_allowed', limitedToText(policy.allowDomains), '#/traits/email')
+    return refuse('registration_not_allowed', limitedToText(policy.allowDomains))
   }
   return null
 }

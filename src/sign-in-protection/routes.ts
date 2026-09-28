@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { createHash } from 'crypto'
+import { getRedisClient } from '../services/redis-client.service.js'
 import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -57,6 +59,35 @@ const providerSchema = {
     testKeys: { type: 'boolean' },
     problem: { type: ['string', 'null'] },
   },
+}
+
+/**
+ * A recovery or verification flow POSTs to the same URL to send the email and to submit the code, and
+ * the gateway cannot tell them apart. So a token that passed once becomes a short pass for that flow:
+ * a few more gateway checks within ten minutes are answered from Redis, without the provider (which
+ * would refuse a second use). Redis down: every check asks the provider.
+ */
+export const GATEWAY_PASS_TTL_S = 600
+export const GATEWAY_PASS_USES = 5
+const passKey = (token: string) => `sip:pass:${createHash('sha256').update(token).digest('hex')}`
+
+async function gatewayPass(token: string): Promise<'valid' | 'spent' | 'unknown'> {
+  try {
+    const redis = getRedisClient()
+    const key = passKey(token)
+    if (!(await redis.exists(key))) return 'unknown'
+    return (await redis.incr(key)) <= GATEWAY_PASS_USES ? 'valid' : 'spent'
+  } catch {
+    return 'unknown'
+  }
+}
+
+async function rememberGatewayPass(token: string): Promise<void> {
+  try {
+    await getRedisClient().set(passKey(token), '1', 'EX', GATEWAY_PASS_TTL_S)
+  } catch {
+    // Without the pass the next check of this flow asks the provider again.
+  }
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
@@ -152,8 +183,16 @@ export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
     },
   }, async (request, reply) => {
     const b = request.body as { flow: 'recovery' | 'verification'; token?: string; ip?: string }
+    if (b.token) {
+      const pass = await gatewayPass(b.token)
+      if (pass === 'valid') return { ok: true }
+      if (pass === 'spent') return reply.status(403).send({ error: 'captcha_invalid', message: 'The bot check has expired. Please complete it again.' })
+    }
     const decision = await guardFlow({ flow: b.flow, captchaToken: b.token || null, ip: b.ip || null })
-    if (decision.allow) return { ok: true }
+    if (decision.allow) {
+      if (b.token && decision.result === 'allowed') await rememberGatewayPass(b.token)
+      return { ok: true }
+    }
     return reply.status(403).send({ error: decision.result, message: decision.message.text })
   })
 }
