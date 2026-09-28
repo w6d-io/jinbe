@@ -1,6 +1,8 @@
-import { env } from '../config/index.js'
 import { hydraService, HydraApiError, HydraOAuth2Client } from './hydra.service.js'
 import { ApiKeyCreateBody, ApiKeyView, ApiKeySecretView } from '../schemas/api-key.schema.js'
+import { scopeCatalog } from './api-key-scopes.js'
+import { isGrantableScope } from './authorization-resolution.js'
+import { apiClientsChanged } from './api-clients.js'
 
 /** Raised for caller-facing validation/authorization failures. */
 export class ApiKeyError extends Error {
@@ -19,15 +21,24 @@ interface CreateArgs {
   body: ApiKeyCreateBody
   /** Kratos identity id of the admin performing the action. */
   createdBy?: string
+  /** Their address: the catalog is what THEY hold in this org. */
+  callerEmail: string
 }
 
-function orgOf(client: HydraOAuth2Client): string | undefined {
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** RFC 3339 `days` from now, or undefined. */
+export function expiryFrom(days: number | undefined, now = Date.now()): string | undefined {
+  return days === undefined ? undefined : new Date(now + days * DAY_MS).toISOString()
+}
+
+export function orgOf(client: HydraOAuth2Client): string | undefined {
   return (client.metadata as Record<string, unknown> | undefined)?.organization_id as
     | string
     | undefined
 }
 
-function toView(client: HydraOAuth2Client): ApiKeyView {
+export function toView(client: HydraOAuth2Client): ApiKeyView {
   const meta = (client.metadata || {}) as Record<string, unknown>
   return {
     client_id: client.client_id,
@@ -36,7 +47,13 @@ function toView(client: HydraOAuth2Client): ApiKeyView {
     scopes: client.scope ? client.scope.split(' ').filter(Boolean) : [],
     created_by: (meta.created_by as string) ?? null,
     created_at: client.created_at ?? null,
+    expires_at: typeof meta.expires_at === 'string' ? meta.expires_at : null,
   }
+}
+
+/** A personal key, whatever org it names: never one of the org's machine keys. */
+export function isPersonal(client: HydraOAuth2Client): boolean {
+  return (client.metadata as Record<string, unknown> | undefined)?.kind === 'personal'
 }
 
 /**
@@ -54,10 +71,14 @@ function toView(client: HydraOAuth2Client): ApiKeyView {
  *    the request path.
  */
 export class ApiKeyService {
-  /** Validate requested scopes ⊆ allowed catalog. Throws 400 on violation. */
-  private validateScopes(scopes: string[]): void {
-    const allowed = new Set(env.API_KEY_ALLOWED_SCOPES)
-    const invalid = scopes.filter((s) => !allowed.has(s))
+  /**
+   * Validate requested scopes ⊆ this org's catalog for this caller (services/api-key-scopes.ts).
+   * Throws 400 on violation. A wildcard is refused before the catalog is even read.
+   */
+  async validateScopes(organizationId: string, callerEmail: string, scopes: string[]): Promise<void> {
+    const wildcard = scopes.filter((s) => !isGrantableScope(s))
+    const allowed = new Set((await scopeCatalog(organizationId, callerEmail)).map((e) => e.scope))
+    const invalid = [...new Set([...wildcard, ...scopes.filter((s) => !allowed.has(s))])]
     if (invalid.length > 0) {
       throw new ApiKeyError(400, 'One or more requested scopes are not allowed', {
         invalid_scopes: invalid,
@@ -77,15 +98,15 @@ export class ApiKeyService {
       }
       throw err
     }
-    if (orgOf(client) !== organizationId) {
+    if (orgOf(client) !== organizationId || isPersonal(client)) {
       throw new ApiKeyError(404, 'API key not found in this organization')
     }
     return client
   }
 
-  async create({ organizationId, body, createdBy }: CreateArgs): Promise<ApiKeySecretView> {
+  async create({ organizationId, body, createdBy, callerEmail }: CreateArgs): Promise<ApiKeySecretView> {
     const scopes = [...new Set(body.scopes)]
-    this.validateScopes(scopes)
+    await this.validateScopes(organizationId, callerEmail, scopes)
 
     const client = await hydraService.createClient({
       label: body.label,
@@ -93,7 +114,9 @@ export class ApiKeyService {
       organizationId, // -> mandatory metadata.organization_id + owner
       createdBy,
       audience: body.audience,
+      expiresAt: expiryFrom(body.expires_in_days),
     })
+    apiClientsChanged('api_key.created')
 
     return { ...toView(client), client_secret: client.client_secret ?? '' }
   }
@@ -101,7 +124,7 @@ export class ApiKeyService {
   async list(organizationId: string): Promise<ApiKeyView[]> {
     const clients = await hydraService.listClientsByOwner(organizationId)
     // Defensive: only surface client_credentials clients owned by this org.
-    return clients.filter((c) => orgOf(c) === organizationId).map(toView)
+    return clients.filter((c) => orgOf(c) === organizationId && !isPersonal(c)).map(toView)
   }
 
   /** Get one key, scoped to the org (404 if not owned by it). */
@@ -113,6 +136,7 @@ export class ApiKeyService {
   async revoke(organizationId: string, clientId: string): Promise<void> {
     await this.getOwned(organizationId, clientId)
     await hydraService.deleteClient(clientId)
+    apiClientsChanged('api_key.revoked')
   }
 
   /**

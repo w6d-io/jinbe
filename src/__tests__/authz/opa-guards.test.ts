@@ -113,6 +113,13 @@ beforeAll(async () => {
   app.addHook('onRequest', async (request) => {
     const u = request.headers['x-test-user'] as string | undefined
     if (u) request.userContext = { id: `id-${u}`, email: `${u}@example.com`, name: u, aal: 'aal2', authVia: 'session' } as never
+    const scopes = request.headers['x-test-scopes'] as string | undefined
+    if (u && scopes !== undefined) {
+      request.userContext = {
+        id: `id-${u}`, email: `${u}@example.com`, name: u, authVia: 'delegated',
+        delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), org: 'acme', kind: 'oauth', via: 'auth-mcp' },
+      } as never
+    }
   })
   const ok = async (request: { rbacInfo?: unknown }) => ({ ok: true, rbacInfo: request.rbacInfo ?? null })
   await app.register(async (api) => {
@@ -126,6 +133,7 @@ beforeAll(async () => {
       org.get('/users', { preHandler: [requireServiceAdmin('organizationId', { orgAdmin: true }), requireManageableOrg()] }, ok)
       org.get('/grants', { preHandler: requireOrgAdmin('organizationId') }, ok)
       org.get('/api-keys', { preHandler: requireOrgPermission('org:manage_api_keys') }, ok)
+      org.get('/members', { preHandler: requireOrgPermission('org:manage_users') }, ok)
     }, { prefix: '/organizations/:organizationId' })
   }, { prefix: '/api' })
   await app.ready()
@@ -240,5 +248,33 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
   it('answers are cached (≤5 s): a burst asks OPA once', async () => {
     for (let i = 0; i < 5; i++) await call('GET', '/api/t/admin', 'admin')
     expect(s.calls.filter((c) => c.rule === 'rbac/user_info')).toHaveLength(1)
+  })
+})
+
+describe('requireOrgPermission — a user through a client (delegated token)', () => {
+  const asClient = (url: string, user: string, scopes: string) =>
+    app.inject({ url, headers: { 'x-test-user': user, 'x-test-scopes': scopes } })
+
+  it('asks OPA about the USER, with the scopes and org the token carries', async () => {
+    const res = await asClient('/api/organizations/acme/members', 'acme-admin', 'org:manage_users')
+    expect(res.statusCode).toBe(200)
+    expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toEqual({
+      email: 'acme-admin@example.com', object: '/api/organizations/acme/members', action: 'GET', app: 'jinbe', client: false,
+      delegated: true, scopes: ['org:manage_users'], org: 'acme', client_id: 'claude',
+    })
+  })
+
+  it('a scope that does not cover the permission is refused before OPA is asked — even for super admin', async () => {
+    const res = await asClient('/api/organizations/acme/members', 'super', 'sites:read')
+    expect(res.statusCode).toBe(403)
+    expect(s.calls.filter((c) => c.rule === 'rbac/decision')).toEqual([])
+  })
+
+  it("another org than the token's is refused", async () => {
+    expect((await asClient('/api/organizations/globex/members', 'super', 'org:manage_users')).statusCode).toBe(403)
+  })
+
+  it('the scope never widens the user: OPA refusing the user is still a 403', async () => {
+    expect((await asClient('/api/organizations/acme/members', 'nobody', 'org:manage_users')).statusCode).toBe(403)
   })
 })

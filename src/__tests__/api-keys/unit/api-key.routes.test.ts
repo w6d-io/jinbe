@@ -36,11 +36,24 @@ vi.mock('../../../services/api-key.service.js', async (importOriginal) => {
   }
 })
 
+vi.mock('../../../services/api-key-scopes.js', () => ({
+  scopeCatalog: vi.fn(async (org: string, email: string) => {
+    if (email === 'down@x.io') {
+      const { AuthzUnavailableError } = await import('../../../authz/opa.js')
+      throw new AuthzUnavailableError('opa down')
+    }
+    return [{ scope: 'payroll:read', sites: ['payroll', `for-${org.slice(0, 4)}`] }]
+  }),
+}))
+
 import { apiKeyRoutes } from '../../../routes/api-key.routes.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  app.addHook('onRequest', async (request) => {
+    request.userContext = { email: (request.headers['x-email'] as string) || 'admin@x.io', id: 'u1', name: 'A' }
+  })
   await app.register(apiKeyRoutes, { prefix: '/api/organizations/:organizationId' })
   await app.ready()
 })
@@ -55,6 +68,24 @@ describe('API-key routes', () => {
   it('refuse when the guard refuses (e.g. a service admin of another org)', async () => {
     const res = await app.inject({ url: `/api/organizations/${ORG}/api-keys`, headers: { 'x-test-refuse': '1' } })
     expect(res.statusCode).toBe(403)
+  })
+
+  it("lists this org's scope catalog for the caller, grouped by site, behind the same guard", async () => {
+    const res = await app.inject({ url: `/api/organizations/${ORG}/api-keys/scopes` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ scopes: [{ scope: 'payroll:read', sites: ['payroll', 'for-1111'] }] })
+    expect((await app.inject({ url: `/api/organizations/${ORG}/api-keys/scopes`, headers: { 'x-test-refuse': '1' } })).statusCode).toBe(403)
+  })
+
+  it('answers 503 policy_unavailable, not an empty catalog, when OPA cannot be asked', async () => {
+    const res = await app.inject({ url: `/api/organizations/${ORG}/api-keys/scopes`, headers: { 'x-email': 'down@x.io' } })
+    expect(res.statusCode).toBe(503)
+    expect(res.json().error).toBe('policy_unavailable')
+  })
+
+  it('the personal-key policy is 404 while delegated tokens are off', async () => {
+    expect((await app.inject({ url: `/api/organizations/${ORG}/api-key-policy` })).statusCode).toBe(404)
+    expect((await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/api-key-policy`, payload: { personal_keys: 'forbidden' } })).statusCode).toBe(404)
   })
 
   it('a refused scope keeps details.allowed_scopes in the 400 body', async () => {

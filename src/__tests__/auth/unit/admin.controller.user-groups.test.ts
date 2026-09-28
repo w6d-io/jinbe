@@ -78,6 +78,8 @@ vi.mock('../../../services/opa.service.js', () => ({
 vi.mock('../../../config/env.js', () => ({
   env: {
     APP_NAME: 'jinbe',
+    // Like setup.ts: without it the audit/v1 outbox writes went to whatever Redis answers on localhost.
+    AUDIT_SINK: 'legacy',
   },
 }))
 

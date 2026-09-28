@@ -19,7 +19,7 @@ export type StepUpState = {
    * a bearer token asserts none, so re-verifying would not change the answer and must not be asked
    * for — an operator sent to prove a factor that is never read loops forever.
    */
-  authVia?: 'session' | 'bearer' | 'machine' | 'dev'
+  authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
 }
 
 /** Fail-closed: an unknown level or an unknown proof time is not fresh. */

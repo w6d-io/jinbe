@@ -16,6 +16,12 @@ export function isClient(request: FastifyRequest): boolean {
   return request.userContext?.authVia === 'machine'
 }
 
+/** What OPA is told about a delegated caller (RouteQuestion.delegation), or undefined. */
+export function delegationOf(request: FastifyRequest) {
+  const d = request.userContext?.authVia === 'delegated' ? request.userContext.delegation : undefined
+  return d ? { scopes: d.scopes, org: d.org, client_id: d.clientId } : undefined
+}
+
 /**
  * Middleware factory: admits a request to a route of ONE organisation (named by the route parameter
  * `paramName`) exactly when the gateway would — OPA's `rbac.decision` for this very request: the
@@ -69,6 +75,7 @@ export function requireServiceAdmin(
         path: requestPath(request),
         aal: request.userContext?.aal,
         client: isClient(request),
+        delegation: delegationOf(request),
       }))
       held = await rights(email)
       if (allow && options.orgAdmin) orgAdmin = (await manageableOrgs(email)).includes(organizationId)

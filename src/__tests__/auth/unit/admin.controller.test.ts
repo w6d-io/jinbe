@@ -6,6 +6,8 @@ import { createKratosIdentity, testIdentities, createIdentityRequest } from '../
 const mockState = vi.hoisted(() => ({
   env: {
     APP_NAME: 'jinbe',
+    // Like setup.ts: without it the audit/v1 outbox writes went to whatever Redis answers on localhost.
+    AUDIT_SINK: 'legacy',
   },
   identities: [] as ReturnType<typeof createKratosIdentity>[],
   opalUserInfo: null as { email: string; groups: string[]; roles: string[]; permissions: string[] } | null,

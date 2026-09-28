@@ -1,0 +1,105 @@
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
+
+// A delegated caller (user through a client): scope must cover the route permission, the route's org
+// must be the token's, ineligible routes are refused even for a super admin, no self-change, and a
+// permission-less route is read-only. A session caller is untouched.
+
+vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
+
+import { delegationGate } from '../../../middleware/delegation-gate.js'
+import { enforcing, recordRoute, resetDeclaredRoutes } from '../../../policy/declared-routes.js'
+import { auditEventService } from '../../../services/audit-event.service.js'
+
+const ACME = '11111111-1111-1111-1111-111111111111'
+const GLOBEX = '22222222-2222-2222-2222-222222222222'
+const guard = (permission: string) => enforcing(async () => {}, permission)
+const ok = async () => ({ ok: true })
+
+let app: FastifyInstance
+beforeAll(async () => {
+  resetDeclaredRoutes()
+  app = Fastify()
+  app.addHook('onRoute', (route) => recordRoute(route.method, route.url, [route.preHandler], (p) => p === '/api/health'))
+  app.addHook('onRequest', async (request: FastifyRequest) => {
+    const scopes = request.headers['x-scopes'] as string | undefined
+    request.userContext = {
+      email: 'ann@acme.io', id: 'user-1', name: 'Ann',
+      ...(scopes !== undefined
+        ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), org: ACME, kind: 'oauth' as const, via: 'auth-mcp' } }
+        : { authVia: 'session' as const }),
+    }
+  })
+  app.addHook('preHandler', delegationGate)
+
+  app.get('/api/health', ok)
+  app.get('/api/me/permissions', ok)
+  app.put('/api/me/preferences', ok)
+  app.get('/api/admin/sites', { preHandler: guard('sites:read') }, ok)
+  app.put('/api/admin/sites/:name', { preHandler: guard('sites:write') }, ok)
+  app.post('/api/admin/sites/:name/apply', { preHandler: guard('sites:apply') }, ok)
+  app.post('/api/admin/sites/requests/:id/approve', { preHandler: guard('sites:read') }, ok)
+  app.get('/api/organizations/:organizationId/users', { preHandler: guard('org:manage_users') }, ok)
+  app.put('/api/organizations/:organizationId/users/:id/groups', { preHandler: guard('org:manage_users') }, ok)
+  app.post('/api/organizations/:organizationId/api-keys', { preHandler: guard('org:manage_api_keys') }, ok)
+  app.post('/api/me/api-keys', ok)
+  app.put('/api/admin/settings/second-factor', { preHandler: guard('admin:write') }, ok)
+  app.get('/api/backups', { preHandler: guard('backups:list') }, ok)
+  app.put('/api/admin/rbac/org-admin-map', { preHandler: guard('*') }, ok)
+  await app.ready()
+})
+afterAll(() => app.close())
+
+const call = (method: 'GET' | 'PUT' | 'POST', url: string, scopes?: string) =>
+  app.inject({ method, url, headers: scopes === undefined ? {} : { 'x-scopes': scopes } })
+
+describe('delegation gate', () => {
+  it('leaves a session caller alone, everywhere', async () => {
+    expect((await call('POST', '/api/organizations/' + ACME + '/api-keys')).statusCode).toBe(200)
+    expect((await call('POST', '/api/admin/sites/x/apply')).statusCode).toBe(200)
+  })
+
+  it('needs a scope covering the route permission (dotted ancestors count, wildcards never)', async () => {
+    expect((await call('GET', '/api/admin/sites', 'sites:read')).statusCode).toBe(200)
+    expect((await call('GET', '/api/admin/sites', 'sites.x:read')).statusCode).toBe(403)
+    const denied = await call('PUT', '/api/admin/sites/x', 'sites:read')
+    expect(denied.statusCode).toBe(403)
+    expect(denied.json()).toMatchObject({ code: 'insufficient_scope', reason: 'scope_missing:sites:write' })
+    expect((await call('PUT', '/api/admin/sites/x', '* sites:*')).statusCode).toBe(403)
+    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'deny', reason: 'scope_missing:sites:write' }))
+  })
+
+  it("refuses another organization's routes, whatever the scopes", async () => {
+    expect((await call('GET', `/api/organizations/${ACME}/users`, 'org:manage_users')).statusCode).toBe(200)
+    const other = await call('GET', `/api/organizations/${GLOBEX}/users`, 'org:manage_users')
+    expect(other.statusCode).toBe(403)
+    expect(other.json().reason).toBe('delegation_other_org')
+  })
+
+  it.each([
+    ['POST', `/api/organizations/${ACME}/api-keys`, 'org:manage_api_keys', 'delegation_ineligible:api_keys'],
+    ['POST', '/api/me/api-keys', '', 'delegation_ineligible:api_keys'],
+    ['PUT', '/api/admin/settings/second-factor', 'admin:write', 'delegation_ineligible:sign_in_settings'],
+    ['GET', '/api/backups', 'backups:list', 'delegation_ineligible:infrastructure'],
+    ['PUT', '/api/admin/rbac/org-admin-map', 'admin:write', 'delegation_ineligible:org_admin_roster'],
+    ['POST', '/api/admin/sites/requests/r1/approve', 'sites:read', 'delegation_ineligible:approval'],
+    ['POST', '/api/admin/sites/x/apply', 'sites:apply', 'delegation_ineligible:sites:apply'],
+  ] as const)('refuses ineligible %s %s even with a matching scope', async (method, url, scopes, reason) => {
+    const res = await call(method, url, scopes)
+    expect(res.statusCode).toBe(403)
+    expect(res.json().reason).toBe(reason)
+  })
+
+  it("refuses a change to the caller's own groups (no self-grant), not to somebody else's", async () => {
+    const self = await call('PUT', `/api/organizations/${ACME}/users/user-1/groups`, 'org:manage_users')
+    expect(self.statusCode).toBe(403)
+    expect(self.json().reason).toBe('delegation_ineligible:self_change')
+    expect((await call('PUT', `/api/organizations/${ACME}/users/user-2/groups`, 'org:manage_users')).statusCode).toBe(200)
+  })
+
+  it('a permission-less route is read-only; a public one is open', async () => {
+    expect((await call('GET', '/api/me/permissions', '')).statusCode).toBe(200)
+    expect((await call('PUT', '/api/me/preferences', 'sites:write')).json().reason).toBe('delegation_no_scope_for_write')
+    expect((await call('GET', '/api/health', '')).statusCode).toBe(200)
+  })
+})

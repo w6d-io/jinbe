@@ -105,6 +105,15 @@ export function declaredRoutes(): DeclaredRoute[] {
   )
 }
 
+/**
+ * The row for one route PATTERN (`request.routeOptions.url`), or null when nothing recorded it. HEAD
+ * is answered by the GET route Fastify exposes for it.
+ */
+export function declaredRoute(method: string, path: string): DeclaredRoute | null {
+  const verb = method.toUpperCase()
+  return collected.get(`${verb} ${path}`) ?? (verb === 'HEAD' ? collected.get(`GET ${path}`) ?? null : null)
+}
+
 /** Test seam. */
 export function resetDeclaredRoutes(): void {
   collected.clear()
