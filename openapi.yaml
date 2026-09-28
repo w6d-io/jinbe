@@ -438,6 +438,15 @@ paths:
                           type: string
                           format: date-time
                           nullable: true
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: Last use, to the minute; null when never seen
+                        created_by_email:
+                          type: string
+                          nullable: true
+                          description: The creator, when you are them or may see users
                   total:
                     type: number
         "401":
@@ -549,6 +558,15 @@ paths:
                     type: string
                     format: date-time
                     nullable: true
+                  last_used_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Last use, to the minute; null when never seen
+                  created_by_email:
+                    type: string
+                    nullable: true
+                    description: The creator, when you are them or may see users
                   client_secret:
                     type: string
                     description: Shown only once
@@ -612,6 +630,111 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+  /api/me/api-keys/scopes:
+    get:
+      tags:
+        - api-keys
+      description: "The scopes you may give a personal key in one organization: the
+        same catalog as its machine keys (GET
+        /api/organizations/:organizationId/api-keys/scopes), computed from what
+        YOU hold there. 403 when you are not a member of it."
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: query
+          name: organization_id
+          required: true
+          description: The organization the key would act in
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope:
+                          type: string
+                          description: A permission (resource:verb)
+                        sites:
+                          type: array
+                          items:
+                            type: string
+                          description: The sites whose routes require it
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/me/api-keys/{clientId}:
@@ -15278,6 +15401,15 @@ paths:
                     type: string
                     format: date-time
                     nullable: true
+                  last_used_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Last use, to the minute; null when never seen
+                  created_by_email:
+                    type: string
+                    nullable: true
+                    description: The creator, when you are them or may see users
                   client_secret:
                     type: string
                     description: Shown only once
@@ -15372,6 +15504,15 @@ paths:
                           type: string
                           format: date-time
                           nullable: true
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: Last use, to the minute; null when never seen
+                        created_by_email:
+                          type: string
+                          nullable: true
+                          description: The creator, when you are them or may see users
                   total:
                     type: number
         "401":
@@ -15683,6 +15824,15 @@ paths:
                     type: string
                     format: date-time
                     nullable: true
+                  last_used_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Last use, to the minute; null when never seen
+                  created_by_email:
+                    type: string
+                    nullable: true
+                    description: The creator, when you are them or may see users
         "401":
           description: Default Response
           content:

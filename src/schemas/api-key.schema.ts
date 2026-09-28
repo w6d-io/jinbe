@@ -32,6 +32,10 @@ export interface ApiKeyView {
   created_at: string | null
   /** RFC 3339, or null for a key that never expires. */
   expires_at: string | null
+  /** RFC 3339 last use (within a minute), null when never seen or unknown. */
+  last_used_at: string | null
+  /** The creator's address, when the caller may see it (services/api-key-views.ts); null otherwise. */
+  created_by_email: string | null
 }
 
 // ── Personal keys ─────────────────────────────────────────────────────────────
@@ -42,6 +46,8 @@ export const personalKeyCreateBodySchema = z.object({
   expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).default(PERSONAL_KEY_MAX_DAYS),
 })
 export type PersonalKeyCreateBody = z.infer<typeof personalKeyCreateBodySchema>
+
+export const personalScopesQuerySchema = z.object({ organization_id: z.string().uuid('organization_id must be a valid UUID') })
 
 export const apiKeyPolicySchema = z.object({ personal_keys: z.enum(['allowed', 'forbidden']) }).strict()
 export type ApiKeyPolicy = z.infer<typeof apiKeyPolicySchema>
@@ -129,6 +135,8 @@ const apiKeyViewProps = {
   created_by: { type: 'string', nullable: true },
   created_at: { type: 'string', format: 'date-time', nullable: true },
   expires_at: { type: 'string', format: 'date-time', nullable: true },
+  last_used_at: { type: 'string', format: 'date-time', nullable: true, description: 'Last use, to the minute; null when never seen' },
+  created_by_email: { type: 'string', nullable: true, description: 'The creator, when you are them or may see users' },
 }
 
 export const apiKeyViewJsonSchema = {

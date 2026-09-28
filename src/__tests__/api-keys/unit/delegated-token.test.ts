@@ -10,12 +10,14 @@ const s = vi.hoisted(() => ({
   getClient: vi.fn(),
   getIdentity: vi.fn(),
   policy: vi.fn(async () => ({ personal_keys: 'allowed' })),
+  touch: vi.fn(),
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
 vi.mock('../../../services/hydra.service.js', () => ({ hydraService: { introspect: s.introspect, getClient: s.getClient } }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.getIdentity } }))
 vi.mock('../../../services/api-key-policy.js', () => ({ getApiKeyPolicy: s.policy }))
+vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
 
 import { DelegatedTokenService } from '../../../services/delegated-token.service.js'
 
@@ -35,6 +37,7 @@ beforeEach(() => {
   s.getClient.mockReset()
   s.getIdentity.mockReset().mockResolvedValue({ id: 'user-1', state: 'active', traits: { email: 'ann@acme.io', name: { first: 'Ann', last: 'Lee' } } })
   s.policy.mockReset().mockResolvedValue({ personal_keys: 'allowed' })
+  s.touch.mockReset()
   svc = new DelegatedTokenService()
 })
 
@@ -105,6 +108,19 @@ describe('DelegatedTokenService.resolve', () => {
       s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
       const r = await svc.resolve('k', NOW)
       expect(r).toMatchObject({ principal: { subject: 'user-1', org: 'acme', kind: 'personal', clientId: 'pk-1', scopes: ['payroll:read'], keyExpiresAt: Date.parse('2026-10-10T00:00:00Z') } })
+    })
+
+    it("marks the key used on every accepted token, cached or not, and never an OAuth client's", async () => {
+      s.introspect.mockResolvedValue(cc)
+      s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
+      await svc.resolve('k', NOW)
+      await svc.resolve('k', NOW + 1000)
+      expect(s.introspect).toHaveBeenCalledTimes(1)
+      expect(s.touch.mock.calls).toEqual([['pk-1', NOW], ['pk-1', NOW + 1000]])
+      s.touch.mockReset()
+      s.introspect.mockResolvedValue(oauth())
+      await svc.resolve('o', NOW)
+      expect(s.touch).not.toHaveBeenCalled()
     })
 
     it('refuses an org MACHINE key: it is not a person', async () => {

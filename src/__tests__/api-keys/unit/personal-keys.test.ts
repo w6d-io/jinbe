@@ -14,6 +14,8 @@ const s = vi.hoisted(() => ({
   superAdmin: vi.fn(async () => false),
   memberOrgs: vi.fn(async () => ['acme']),
   schedule: vi.fn(),
+  touch: vi.fn(),
+  forget: vi.fn(),
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
@@ -27,6 +29,7 @@ vi.mock('../../../services/opal-publisher.js', () => ({ opalPublisher: { schedul
 vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: s.catalog }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.identity } }))
 vi.mock('../../../audit/record.js', () => ({ recordApiKeyUse: s.used }))
+vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch, forgetApiKeyUse: s.forget }))
 
 import { personalKeyService, PersonalKeyRefused } from '../../../services/personal-key.service.js'
 import { apiKeyService } from '../../../services/api-key.service.js'
@@ -64,7 +67,7 @@ describe('PersonalKeyService', () => {
     // `mcp` rides along so auth-mcp accepts the key's tokens.
     expect(arg).toMatchObject({ organizationId: ORG, personal: { subject: 'user-1' }, audience: ['https://mcp.test'], scopes: ['payroll:read', 'mcp'] })
     expect(Date.parse(arg.expiresAt) - Date.now()).toBeLessThanOrEqual(7 * 86_400_000)
-    expect(out).toMatchObject({ client_secret: 'once', kind: 'personal', expires_at: '2026-10-05T00:00:00Z', key: 'stk_mcp_pk.once' })
+    expect(out).toMatchObject({ client_secret: 'once', kind: 'personal', created_by_email: 'ann@acme.io', last_used_at: null, expires_at: '2026-10-05T00:00:00Z', key: 'stk_mcp_pk.once' })
   })
 
   it('refuses a non-member, and an org that forbids personal keys, before touching Hydra', async () => {
@@ -91,6 +94,20 @@ describe('PersonalKeyService', () => {
     s.hydra.getClient.mockResolvedValue(mine)
     await personalKeyService.revoke('user-1', 'pk')
     expect(s.hydra.deleteClient).toHaveBeenCalledWith('pk')
+    expect(s.forget).toHaveBeenCalledWith('pk')
+  })
+
+  it('offers the catalog of what the caller holds in the org, to a member or super_admin only', async () => {
+    s.catalog.mockReset().mockResolvedValue([{ scope: 'payroll:read', sites: ['payroll'] }])
+    expect(await personalKeyService.scopes(ME, ORG)).toEqual([{ scope: 'payroll:read', sites: ['payroll'] }])
+    expect(s.catalog).toHaveBeenCalledWith(ORG, 'ann@acme.io')
+
+    s.catalog.mockClear()
+    s.memberOrgs.mockResolvedValue(['other'])
+    await expect(personalKeyService.scopes(ME, ORG)).rejects.toMatchObject({ statusCode: 403 })
+    expect(s.catalog).not.toHaveBeenCalled()
+    s.superAdmin.mockResolvedValue(true)
+    await expect(personalKeyService.scopes(ME, ORG)).resolves.toHaveLength(1)
   })
 })
 
@@ -113,6 +130,7 @@ describe('PersonalKeyService.exchange', () => {
     expect(out).toEqual({ access_token: 'ory_at_x', expires_in: 300 })
     expect(s.catalog).toHaveBeenCalledWith(ORG, 'ann@acme.io')
     expect(s.used).toHaveBeenCalledWith('pk', ORG)
+    expect(s.touch).toHaveBeenCalledWith('pk')
   })
 
   it.each([

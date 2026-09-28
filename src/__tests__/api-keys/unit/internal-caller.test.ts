@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 // /api/internal takes an allowed in-cluster ServiceAccount and nothing else: not a session, not a
 // user token, not a delegated token, not an unlisted ServiceAccount.
 
-const s = vi.hoisted(() => ({ env: { INTERNAL_API_ALLOWED_SUBJECTS: ['auth:oathkeeper'] as string[] } }))
+const s = vi.hoisted(() => ({ env: { INTERNAL_API_ALLOWED_SUBJECTS: ['auth:oathkeeper'] as string[] }, touch: vi.fn() }))
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
 vi.mock('../../../services/api-key.service.js', async (importOriginal) => {
@@ -12,6 +12,7 @@ vi.mock('../../../services/api-key.service.js', async (importOriginal) => {
   return { ...real, apiKeyService: { resolveOrganization: vi.fn(async () => ({ organization_id: 'acme', scopes: ['payroll:read'] })) } }
 })
 vi.mock('../../../audit/record.js', () => ({ recordApiKeyUse: vi.fn() }))
+vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
 
 import { apiKeyInternalRoutes } from '../../../routes/api-key.routes.js'
 
@@ -42,6 +43,8 @@ describe('/api/internal guard', () => {
     const res = await resolve('sa:auth:oathkeeper')
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ organization_id: 'acme', scopes: ['payroll:read'] })
+    // The introspection path of an org key: its last use.
+    expect(s.touch).toHaveBeenCalledWith('c1')
   })
 
   it('refuses nobody (401), a session or delegated user (401), an unlisted ServiceAccount (403)', async () => {

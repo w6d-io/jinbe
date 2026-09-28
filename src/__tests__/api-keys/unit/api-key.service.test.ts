@@ -22,12 +22,14 @@ const mockState = vi.hoisted(() => {
       { scope: 'payroll:write', sites: ['payroll'] },
     ]),
     changed: vi.fn(),
+    forget: vi.fn(),
   }
 })
 
 vi.mock('../../../config/index.js', () => ({ env: mockState.env }))
 vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: mockState.catalog }))
 vi.mock('../../../services/api-clients.js', () => ({ apiClientsChanged: mockState.changed }))
+vi.mock('../../../services/api-key-last-used.js', () => ({ forgetApiKeyUse: mockState.forget }))
 vi.mock('../../../services/hydra.service.js', () => ({
   hydraService: mockState.hydra,
   HydraApiError: mockState.HydraApiError,
@@ -108,6 +110,8 @@ describe('ApiKeyService', () => {
       )
       expect(result.client_secret).toBe('super-secret-once')
       expect(result.organization_id).toBe(ORG)
+      // The creator is the caller: their address is theirs to see; a new key was never used.
+      expect(result).toMatchObject({ created_by_email: 'a@x.io', last_used_at: null })
       // The view itself carries the secret only on the create response shape.
       expect(result.scopes).toEqual(['api:read'])
     })
@@ -166,6 +170,7 @@ describe('ApiKeyService', () => {
       mockState.hydra.deleteClient.mockResolvedValue(undefined)
       await expect(svc.revoke(ORG, 'client-abc')).resolves.toBeUndefined()
       expect(mockState.hydra.deleteClient).toHaveBeenCalledWith('client-abc')
+      expect(mockState.forget).toHaveBeenCalledWith('client-abc')
     })
   })
 
