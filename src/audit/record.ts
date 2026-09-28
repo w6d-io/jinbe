@@ -82,7 +82,11 @@ export function auditZone(
   command: 'create' | 'delete' | 'update',
   name: string,
   actor: AuditActorInput,
-  facts: { domain: string; ingress?: string; tls?: string; issuer?: string; ingressClass?: string; gateway?: string; from?: string },
+  facts: {
+    domain: string; ingress?: string; tls?: string; issuer?: string; ingressClass?: string; gateway?: string; from?: string
+    /** waf | none after the change; wafOptOut: the Ingress was chosen while wafAvailable could protect it. */
+    protection?: string; wafOptOut?: boolean; wafAvailable?: string
+  },
 ): void {
   send({
     category: 'service',

@@ -33,7 +33,7 @@ import { setKubeGateway, type KubeGateway } from '../../gateway/kube-gateway.js'
 import {
   edgePolicyOf, setKubeSites, type EdgePolicy, type GatewayObject, type KubeSites, type ListenerHosts, type RouteHosts, type ZoneCr, type ZoneCrObject,
 } from '../../sites/kube-sites.js'
-import { protectionOf } from '../../sites/gateways.service.js'
+import { protectionOf, resetGatewayCache } from '../../sites/gateways.service.js'
 import { routeCollisions } from '../../sites/host-collisions.js'
 import { resetSitesConfig } from '../../sites/config.js'
 import { setDnsLookup } from '../../sites/dns-probe.js'
@@ -158,6 +158,7 @@ beforeEach(() => {
   process.env.SITES_GATEWAYS = 'envoy-gateway-system/eg'
   process.env.SITES_RESERVED_HOSTS = ''
   resetSitesConfig()
+  resetGatewayCache()
   setKubeSites(kube)
   setKubeGateway({ get: async () => null, liveOathkeeperConfig: async () => null } as unknown as KubeGateway)
   setDnsLookup({ addresses: async (name) => h.dns[name] ?? [] })
@@ -184,7 +185,10 @@ describe('protection', () => {
     expect(protectionOf('eg', [edge])).toMatchObject({ protected: false, summary: 'Not protected: no WAF policy' })
     expect(protectionOf('eg', [edge, { ...waf, accepted: null }])).toMatchObject({ protected: false, summary: 'Not protected: WAF policy waf-coraza not accepted' })
     expect(protectionOf('eg', [edge, { ...waf, targets: [{ kind: 'Gateway', name: 'eg', sectionName: 'dev-example-https' }] }]).protected).toBe(false)
-    expect(protectionOf('eg', [{ ...edge, targets: [{ kind: 'HTTPRoute', name: 'grafana' }] }, waf]).protected).toBe(false)
+    // the WAF alone is enough (CrowdSec is wanted, not required); the missing IP bans are said
+    expect(protectionOf('eg', [{ ...edge, targets: [{ kind: 'HTTPRoute', name: 'grafana' }] }, waf])).toMatchObject({
+      protected: true, ipReputation: { accepted: false }, summary: 'Every route is inspected by the WAF (composer, coraza-waf); no IP bans (no ext_authz policy)',
+    })
     expect(protectionOf('eg', [edge, { ...waf, modules: ['lua-hello'] }]).protected).toBe(false)
     expect(protectionOf('other', livePolicies()).protected).toBe(false)
   })
@@ -231,8 +235,12 @@ describe('zones on a Gateway', () => {
     const res = await app.inject({ method: 'POST', url: '/sites/zones', headers: WM, payload: { domain: 'dev.stairfleet.com', ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } } })
     expect(res.statusCode).toBe(201)
     expect(cluster.created[0].spec).toEqual({ domain: 'dev.stairfleet.com', ingress: 'none', tls: { mode: 'default' }, gateway: { namespace: 'envoy-gateway-system', name: 'eg' } })
-    expect(res.json()).toMatchObject({ gateway: { name: 'eg' }, exposure: { entry: 'gateway', wafBypass: false, protected: true }, protection: { protected: true }, dns: { expected: ['15.236.101.5', '35.180.216.63'] } })
-    expect(zoneEvents()).toEqual([expect.objectContaining({ v1Event: 'zone.created', details: expect.objectContaining({ ingress: 'none', gateway: 'envoy-gateway-system/eg' }) })])
+    expect(res.json()).toMatchObject({
+      gateway: { name: 'eg' }, exposure: { entry: 'gateway', wafBypass: false }, checks: [],
+      protection: { state: 'waf', reason: 'gateway', gateway: 'envoy-gateway-system/eg', waf: 'envoy-gateway-system/waf-coraza', ipReputation: 'envoy-gateway-system/eg-edge' },
+      dns: { expected: ['15.236.101.5', '35.180.216.63'] },
+    })
+    expect(zoneEvents()).toEqual([expect.objectContaining({ v1Event: 'zone.created', details: expect.objectContaining({ ingress: 'none', gateway: 'envoy-gateway-system/eg', protection: 'waf' }) })])
   })
 
   it('create: refused for a Gateway not in SITES_GATEWAYS, a missing one, or no listener for the zone with TLS default', async () => {
@@ -258,7 +266,7 @@ describe('zones on a Gateway', () => {
     const attach = await patch({ gateway: { namespace: 'envoy-gateway-system', name: 'eg' } })
     expect(attach.statusCode).toBe(200)
     expect(cluster.updated.at(-1)).toMatchObject({ metadata: { name: 'dev', resourceVersion: '7' }, spec: { domain: 'dev.example.com', ingress: 'per-site', gateway: { name: 'eg' } } })
-    expect(attach.json()).toMatchObject({ exposure: { entry: 'both', wafBypass: true, protected: false }, checks: [] })
+    expect(attach.json()).toMatchObject({ exposure: { entry: 'both', wafBypass: true }, protection: { state: 'none', reason: 'ingress_bypass' }, checks: [] })
 
     // 3. ingress none while DNS still points at nginx: refused, per host
     const early = await patch({ ingress: 'none' })
@@ -277,7 +285,7 @@ describe('zones on a Gateway', () => {
     const done = await patch({ ingress: 'none' })
     expect(done.statusCode).toBe(200)
     expect(cluster.updated.at(-1)!.spec).toMatchObject({ ingress: 'none', gateway: { name: 'eg' } })
-    expect(done.json()).toMatchObject({ exposure: { entry: 'gateway', wafBypass: false, protected: true } })
+    expect(done.json()).toMatchObject({ exposure: { entry: 'gateway', wafBypass: false }, protection: { state: 'waf' } })
     expect(done.json().checks.map((c: { code: string }) => c.code)).toEqual(['dns_ok', 'dns_ok'])
     expect(zoneEvents().map((e) => e.v1Event)).toEqual(['zone.updated', 'zone.updated'])
     expect(zoneEvents()[1]).toMatchObject({ details: expect.objectContaining({ ingress: 'none', gateway: 'envoy-gateway-system/eg', from: 'ingress per-site, gateway envoy-gateway-system/eg' }) })
@@ -285,7 +293,12 @@ describe('zones on a Gateway', () => {
     // rollback: the Ingress back first (the gateway cannot go while it is the only entry point)
     expect((await patch({ gateway: null })).json().error).toBe('no_entry_point')
     expect((await patch({ ingress: 'per-site' })).statusCode).toBe(200)
-    expect((await patch({ gateway: null })).statusCode).toBe(200)
+    // detaching the Gateway while it protects: an explicit, audited choice
+    expect((await patch({ gateway: null })).json().error).toBe('waf_available')
+    const out = await patch({ gateway: null, acknowledgeNoWaf: true })
+    expect(out.statusCode).toBe(200)
+    expect(out.json()).toMatchObject({ protection: { state: 'none', reason: 'no_gateway' }, checks: [{ level: 'warn', code: 'no_waf', message: expect.stringContaining('Chosen without WAF') }] })
+    expect(zoneEvents().at(-1)).toMatchObject({ details: expect.objectContaining({ protection: 'none', wafOptOut: true, wafAvailable: 'envoy-gateway-system/eg' }) })
     expect(cluster.updated.at(-1)!.spec).toEqual({ domain: 'dev.example.com', ingress: 'per-site', ingressClass: 'nginx', tls: { mode: 'default' } })
   })
 
@@ -296,16 +309,17 @@ describe('zones on a Gateway', () => {
     const res = await patch({ ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' }, confirm: true })
     expect(res.statusCode).toBe(200)
     expect(res.json().checks[0]).toEqual({ level: 'warn', code: 'gateway_not_protected', message: 'Gateway envoy-gateway-system/eg: Not protected: no WAF policy' })
-    expect(res.json().exposure).toEqual({ entry: 'gateway', wafBypass: false, protected: false })
+    expect(res.json().exposure).toEqual({ entry: 'gateway', wafBypass: false })
+    expect(res.json().protection).toMatchObject({ state: 'none', reason: 'gateway_not_protected', waf: null, ipReputation: 'envoy-gateway-system/eg-edge' })
   })
 
   it('GET /zones/:name shows the gateway, its GatewayReady condition and protection', async () => {
     cluster.zones.set('dev', { ...sandboxZone(), spec: { ...sandboxZone().spec, ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } },
       status: { observedGeneration: 1, conditions: [cond('GatewayReady', 'True', 'Programmed', `gateway envoy-gateway-system/eg at ${ENVOY}, listener dev-example-https (*.dev.example.com)`), cond('Ready', 'True', 'Ready')] } })
     const out = (await app.inject({ method: 'GET', url: '/sites/zones/dev' })).json()
-    expect(out).toMatchObject({ ingress: 'none', exposure: { entry: 'gateway', protected: true }, status: { gateway: { status: 'True', reason: 'Programmed' } }, protection: { waf: { accepted: true } } })
+    expect(out).toMatchObject({ ingress: 'none', exposure: { entry: 'gateway' }, status: { gateway: { status: 'True', reason: 'Programmed' } }, protection: { state: 'waf', waf: 'envoy-gateway-system/waf-coraza' } })
     const list = (await app.inject({ method: 'GET', url: '/sites/zones' })).json()
-    expect(list).toContainEqual(expect.objectContaining({ suffix: 'dev.example.com', ingress: 'none', gateway: 'envoy-gateway-system/eg', ready: true }))
+    expect(list).toContainEqual(expect.objectContaining({ suffix: 'dev.example.com', ingress: 'none', gateway: 'envoy-gateway-system/eg', ready: true, protection: expect.objectContaining({ state: 'waf' }) }))
   })
 })
 
@@ -349,5 +363,70 @@ describe('host collisions on the Gateway side', () => {
     // the same host in a zone without a gateway: the Gateway side is not the operator's concern
     cluster.zones.set('dev', sandboxZone())
     expect((await app.inject({ method: 'POST', url: '/sites/check-host', headers: W, payload: { host: 'grafana.dev.example.com' } })).json().available).toBe(true)
+  })
+})
+
+describe('WAF by default (owner decision 2026-09-28)', () => {
+  const post = (payload: unknown) => app.inject({ method: 'POST', url: '/sites/zones', headers: WM, payload })
+
+  it('a zone asked with no exposure goes on the WAF-protected Gateway, without an Ingress', async () => {
+    const res = await post({ domain: 'apps.dev.example.com' })
+    // *.apps.dev is not a listener of eg: the default needs the zone's own listener (TLS issuer)
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ error: 'waf_available', message: expect.stringContaining('choose TLS issuer') })
+    const issued = await post({ domain: 'apps.dev.example.com', tls: { mode: 'issuer' } })
+    expect(issued.statusCode).toBe(201)
+    expect(cluster.created.at(-1)!.spec).toEqual({ domain: 'apps.dev.example.com', ingress: 'none', tls: { mode: 'issuer' }, gateway: { namespace: 'envoy-gateway-system', name: 'eg' } })
+    expect(issued.json().protection).toMatchObject({ state: 'waf' })
+    // a domain one of eg's listeners serves needs nothing more
+    cluster.zones.clear()
+    const direct = await post({ domain: 'dev.stairfleet.com' })
+    expect(direct.statusCode).toBe(201)
+    expect(cluster.created.at(-1)!.spec).toMatchObject({ ingress: 'none', gateway: { name: 'eg' } })
+  })
+
+  it('choosing the nginx Ingress while a protected Gateway exists is refused unless confirmed, then warned and audited', async () => {
+    cluster.zones.clear()
+    const refused = await post({ domain: 'dev.stairfleet.com', ingress: 'wildcard' })
+    expect(refused.statusCode).toBe(409)
+    expect(refused.json()).toMatchObject({ error: 'waf_available', message: expect.stringContaining('Gateway envoy-gateway-system/eg would put *.dev.stairfleet.com behind the WAF') })
+    expect(cluster.created).toEqual([])
+    const chosen = await post({ domain: 'dev.stairfleet.com', ingress: 'wildcard', acknowledgeNoWaf: true })
+    expect(chosen.statusCode).toBe(201)
+    expect(cluster.created[0].spec).toEqual({ domain: 'dev.stairfleet.com', ingress: 'wildcard', tls: { mode: 'default' } })
+    expect(chosen.json()).toMatchObject({ protection: { state: 'none', reason: 'no_gateway' } })
+    expect(chosen.json().checks).toContainEqual({ level: 'warn', code: 'no_waf', message: expect.stringContaining('Chosen without WAF: Gateway envoy-gateway-system/eg would inspect this zone') })
+    expect(zoneEvents()).toEqual([expect.objectContaining({ v1Event: 'zone.created', details: expect.objectContaining({ protection: 'none', wafOptOut: true, wafAvailable: 'envoy-gateway-system/eg' }) })])
+  })
+
+  it('no WAF-protected Gateway in the cluster: nginx is the fallback, with a No WAF warning', async () => {
+    cluster.zones.clear()
+    cluster.policies = [livePolicies()[0]] // CrowdSec alone is not a WAF
+    const res = await post({ domain: 'dev.stairfleet.com' })
+    expect(res.statusCode).toBe(201)
+    expect(cluster.created[0].spec).toEqual({ domain: 'dev.stairfleet.com', ingress: 'wildcard', tls: { mode: 'default' } })
+    expect(res.json().checks).toContainEqual({ level: 'warn', code: 'no_waf', message: 'No WAF-protected Gateway was found in the cluster: this zone is served by the nginx Ingress, without WAF or IP bans' })
+    expect(zoneEvents()[0]).toMatchObject({ details: expect.not.objectContaining({ wafOptOut: true }) })
+  })
+
+  it('the zone suggestion offers the protected Gateway by default', async () => {
+    const out = (await app.inject({ method: 'POST', url: '/sites/zones/suggest', payload: { host: 'shop.dev.stairfleet.com' } })).json()
+    expect(out).toMatchObject({ gateway: { suggested: 'envoy-gateway-system/eg' }, ingress: { suggested: 'none' }, tls: { suggested: 'default' }, protection: { state: 'waf' } })
+    const nested = (await app.inject({ method: 'POST', url: '/sites/zones/suggest', payload: { host: 'shop.apps.dev.example.com' } })).json()
+    expect(nested).toMatchObject({ gateway: { suggested: 'envoy-gateway-system/eg' }, tls: { suggested: 'issuer' } })
+  })
+
+  it('sites carry their protection in the list and in their status', async () => {
+    cluster.zones.set('dev', { ...sandboxZone(), spec: { ...sandboxZone().spec, ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } } })
+    cluster.zones.set('fleet', { metadata: { name: 'fleet' }, spec: { domain: 'dev.stairfleet.com' } })
+    records = [record('echo', 'echo-sandbox-tes.dev.example.com'), record('shop', 'shop.dev.stairfleet.com')]
+    vi.spyOn(sitesRepository, 'drafts').mockResolvedValue([])
+    vi.spyOn(sitesRepository, 'get').mockImplementation(async (name: string) => records.find((r) => r.site.name === name) ?? null)
+    const list = (await app.inject({ method: 'GET', url: '/sites' })).json()
+    const byName = Object.fromEntries(list.map((r: { name: string; protection: unknown }) => [r.name, r.protection]))
+    expect(byName.echo).toMatchObject({ state: 'waf', gateway: 'envoy-gateway-system/eg', waf: 'envoy-gateway-system/waf-coraza' })
+    expect(byName.shop).toMatchObject({ state: 'none', reason: 'no_gateway' })
+    const status = (await app.inject({ method: 'GET', url: '/sites/shop/status' })).json()
+    expect(status.protection).toMatchObject({ state: 'none', reason: 'no_gateway', message: 'Served by the nginx Ingress: no WAF, no IP bans' })
   })
 })

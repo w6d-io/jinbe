@@ -188,7 +188,8 @@ describe('GET /zones/:name', () => {
       ingress: 'wildcard',
       ingressClass: null,
       gateway: null,
-      exposure: { entry: 'ingress', wafBypass: true, protected: false },
+      exposure: { entry: 'ingress', wafBypass: true },
+      protection: { state: 'none', reason: 'no_gateway', gateway: null, waf: null, ipReputation: null, message: 'Served by the nginx Ingress: no WAF, no IP bans' },
       tls: { mode: 'issuer', issuer: 'letsencrypt-dns' },
       cookieDomain: '.dev.example.com',
       sso: true,
@@ -245,11 +246,12 @@ describe('POST /zones', () => {
       name: 'apps-stairfleet-com', domain: 'apps.stairfleet.com', cookieDomain: '.stairfleet.com', sso: true,
       status: { observed: false, ready: false }, sites: [],
       dns: { status: 'ok', expected: ['203.0.113.10'] },
-      checks: [],
+      protection: { state: 'none', reason: 'no_gateway' },
+      checks: [{ level: 'warn', code: 'no_waf', message: 'No WAF-protected Gateway was found in the cluster: this zone is served by the nginx Ingress, without WAF or IP bans' }],
     })
     expect(zoneEvents()).toEqual([expect.objectContaining({
       v1Event: 'zone.created', targetId: 'apps-stairfleet-com',
-      details: { domain: 'apps.stairfleet.com', ingress: 'wildcard', tls: 'issuer', issuer: 'letsencrypt-dns' },
+      details: { domain: 'apps.stairfleet.com', ingress: 'wildcard', tls: 'issuer', issuer: 'letsencrypt-dns', protection: 'none' },
     })])
   })
 
@@ -351,10 +353,13 @@ describe('POST /zones/suggest', () => {
       dns: { status: 'ok', addresses: ['203.0.113.10'], expected: ['203.0.113.10'] },
       tls: { modes: ['default', 'issuer', 'secret'], issuers: ['letsencrypt-dns', 'letsencrypt-staging'], suggested: 'issuer' },
       ingress: { modes: ['wildcard', 'per-site'], suggested: 'wildcard', shared: [] },
+      // No WAF-protected Gateway here: the zone falls back to nginx, and says so.
+      gateway: { options: [], suggested: null },
+      protection: { state: 'none', reason: 'no_gateway' },
       // The cookie configured for stairfleet.com reaches every zone under it.
       cookieDomain: '.stairfleet.com',
       sso: true,
-      checks: [],
+      checks: [{ level: 'warn', code: 'no_waf', message: 'No WAF-protected Gateway was found in the cluster: this zone is served by the nginx Ingress, without WAF or IP bans' }],
     })
     expect(out.dns.probe).toMatch(/^jinbe-probe-[0-9a-f]{8}\.apps\.stairfleet\.com$/)
   })

@@ -11,7 +11,7 @@ import { kratosService } from '../services/kratos.service.js'
 import { policyBundle } from '../services/policy-bundle.service.js'
 import { membersOf, organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
 import { sitesConfig } from '../sites/config.js'
-import { listSites } from '../sites/sites.service.js'
+import { listSites, protectionLookup } from '../sites/sites.service.js'
 import { sitesRepository } from '../sites/repository.js'
 import { listRequests } from '../sites/requests.js'
 import { getMigration } from '../sites/migration/migration.service.js'
@@ -162,6 +162,12 @@ export async function directoryStats(): Promise<{ stats: DirectoryStats; compute
 export const accessReviewSummary = async (): Promise<AccessReviewSummary> => (await accessReviewService.getAccessReview()).summary
 
 export const siteRows = () => listSites()
+/** Live (applied) sites behind the WAF, from the zones and the Gateways discovered (cached 30 s). */
+export const wafCoverage = async () => {
+  const [records, lookup] = await Promise.all([sitesRepository.list(), protectionLookup()])
+  const states = records.filter((r) => r.applied).map((r) => lookup(r.site.address.host))
+  return { total: states.length, waf: states.filter((p) => p?.state === 'waf').length, unknown: states.filter((p) => !p).length }
+}
 export const siteRecords = () => sitesRepository.list()
 export const deletedSites = async () => (await sitesRepository.deleted()).length
 export const pendingRequests = () => listRequests({ state: 'pending' })

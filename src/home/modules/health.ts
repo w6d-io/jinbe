@@ -168,21 +168,36 @@ export function certificatesComponent(f: PlatformFacts): HealthComponent {
   return component('certificates', 'ok', summary, extra)
 }
 
+/**
+ * Edge protection: the live sites behind the WAF (a zone on a Gateway whose Coraza policy is in force,
+ * no Ingress left). Any site without it is `degraded` — reachable around the WAF, or with no WAF at all.
+ */
+export function wafComponent(w: { total: number; waf: number; unknown: number } | null): HealthComponent {
+  const link = { link: { page: 'settings', anchor: 'zones' } }
+  if (!w) return component('waf', 'unknown', 'could not be read', link)
+  if (w.total === 0) return component('waf', 'ok', 'no live sites', link)
+  const summary = `${w.waf}/${w.total} sites behind the WAF`
+  if (w.unknown > 0) return component('waf', 'unknown', summary, link)
+  return component('waf', w.waf === w.total ? 'ok' : 'degraded', summary, link)
+}
+
 export const healthModule: ModuleDef<Health> = {
   name: 'health',
   tier: 'inline',
   freshMs: 15_000,
   timeoutMs: 400,
   async compute() {
-    const [facts, redisOk, kratos, lokiOk] = await Promise.all([
+    const [facts, redisOk, kratos, lokiOk, waf] = await Promise.all([
       platformFacts(),
       sources.redisHealthy(),
       sources.kratosReady(PROBE_MS),
       sources.lokiConfigured() ? sources.lokiReady(PROBE_MS) : Promise.resolve(null),
+      sources.kubeMode() === 'off' ? Promise.resolve(null) : probe(() => sources.wafCoverage(), PROBE_MS),
     ])
     const ready = sources.bootstrapReady()
     const sha = sources.commitSha()
     const components: HealthComponent[] = [
+      ...(waf ? [wafComponent(waf.ok ? waf.value : null)] : []),
       gatewayComponent(facts),
       rulesComponent(facts),
       opaComponent(facts),

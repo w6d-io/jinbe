@@ -239,7 +239,9 @@ describe('degradation — a dead source costs its own tile, never the response',
     expect(h.sources.kube).toEqual({ state: 'down' })
     expect(h.sources.prometheus).toEqual({ state: 'not_configured', connect: { setting: 'PROMETHEUS_URL', docs: 'jinbe/docs/observability.md' } })
     expect(h.data.components.find((c: { id: string }) => c.id === 'certificates')).toMatchObject({ state: 'unknown', summary: 'not connected' })
-    expect(h.data.components.map((c: { id: string }) => c.id)).toEqual(['gateway', 'gateway_rules', 'opa', 'opal_data', 'kratos', 'jinbe', 'redis', 'audit_store', 'audit_archive', 'certificates'])
+    // edge first: 1 of the 2 live sites is behind the WAF
+    expect(h.data.components[0]).toMatchObject({ id: 'waf', state: 'degraded', summary: '1/2 sites behind the WAF', link: { page: 'settings', anchor: 'zones' } })
+    expect(h.data.components.map((c: { id: string }) => c.id)).toEqual(['waf', 'gateway', 'gateway_rules', 'opa', 'opal_data', 'kratos', 'jinbe', 'redis', 'audit_store', 'audit_archive', 'certificates'])
   })
 
   it('health without SITES_KUBE: gateway not_deployed, connect SITES_KUBE', async () => {

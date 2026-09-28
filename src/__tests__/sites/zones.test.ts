@@ -43,9 +43,11 @@ describe('zones', () => {
   it('reads the Zone CRs when it is on; a cookie domain from SITES_ZONES still applies to the same domain', async () => {
     process.env.SITES_KUBE = 'in-cluster'
     resetSitesConfig()
+    // Zone CRs carry their protection: on the nginx Ingress, no WAF.
+    const noWaf = { state: 'none', reason: 'no_gateway', gateway: null, waf: null, ipReputation: null, message: 'Served by the nginx Ingress: no WAF, no IP bans' }
     expect(await zones()).toEqual([
-      { name: 'apps', suffix: 'apps.dev.example.com', wildcard: '*.apps.dev.example.com', cookieDomain: '.dev.example.com', sso: true, tls: 'wildcard', ingressClass: 'nginx', ingress: 'wildcard', source: 'zone' },
-      { name: 'fleet', suffix: 'dev.stairfleet.com', wildcard: '*.dev.stairfleet.com', cookieDomain: '.stairfleet.com', sso: true, tls: 'wildcard', ingress: 'wildcard', source: 'zone' },
+      { name: 'apps', suffix: 'apps.dev.example.com', wildcard: '*.apps.dev.example.com', cookieDomain: '.dev.example.com', sso: true, tls: 'wildcard', ingressClass: 'nginx', ingress: 'wildcard', protection: noWaf, source: 'zone' },
+      { name: 'fleet', suffix: 'dev.stairfleet.com', wildcard: '*.dev.stairfleet.com', cookieDomain: '.stairfleet.com', sso: true, tls: 'wildcard', ingress: 'wildcard', protection: noWaf, source: 'zone' },
     ])
     expect(await checkHost({ host: 'shop.apps.dev.example.com' })).toMatchObject({ available: true, zone: 'apps.dev.example.com' })
     // Not a Zone CR any more, so not a zone — config does not add to the cluster's list.

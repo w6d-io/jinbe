@@ -7,7 +7,8 @@ import { probeHost, probeWildcard, type DnsReport } from './dns-probe.js'
 import { placeHost, ssoOf, type Zone } from './host.js'
 import { kubeSites, KubeRefused, type IngressHosts, type SiteCondition, type ZoneCr, type ZoneCrObject, type ZoneGatewayRef, type ZoneIngressMode } from './kube-sites.js'
 import { clusterIngresses, collisionChecks, wildcardConflicts, type IngressRef } from './host-collisions.js'
-import { coveringListener, gatewayView, type GatewayView, type Protection } from './gateways.service.js'
+import { coveringListener, gatewayView, listGateways, type GatewayView } from './gateways.service.js'
+import { anyProtected, defaultGateway, protectionFor, type ProtectionStatus } from './protection.js'
 import { loadZones } from './platform.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { liveAddresses } from './address.js'
@@ -103,8 +104,13 @@ export type ZoneSuggestion =
      * or shadow them. Null `shared` = the cluster's Ingresses were not read.
      */
     ingress: { modes: ZoneIngressMode[]; suggested: ZoneIngressMode; shared: IngressRef[] | null }
-    /** The Gateways the zone may be attached to (SITES_GATEWAYS); the first is suggested. */
+    /**
+     * The Gateways the zone may be attached to (SITES_GATEWAYS). `suggested` is the default: the first
+     * one with the WAF in force that can serve the zone; null = none, the zone falls back to nginx.
+     */
     gateway: { options: string[]; suggested: string | null }
+    /** What the suggested exposure gives the zone: behind the WAF, or not. */
+    protection: ProtectionStatus
     cookieDomain: string | null
     sso: boolean
     checks: Check[]
@@ -159,7 +165,15 @@ export async function suggestFor(
   // The host itself already answered by another Ingress: no zone would give it to a site.
   checks.unshift(...collisionChecks(h, undefined, ingresses).map(({ path: _p, ...c }) => c))
   const wild = ingresses && parent ? wildcardChecks(domain, ingresses) : { checks: [], shared: ingresses ? [] : null }
-  checks.push(...wild.checks)
+  const gateways = cfg.SITES_KUBE === 'off' ? [] : (await listGateways()).gateways
+  const best = defaultGateway(gateways, domain, 'default') ?? defaultGateway(gateways, domain, 'issuer')
+  const protection = protectionFor(best ? { ingress: 'none', gateway: best.key } : { ingress: 'wildcard' }, gateways)
+  if (best) checks.push(...wild.checks.map((c) => ({ ...c, level: 'info' as const })))
+  else {
+    checks.push(...wild.checks)
+    if (parent) checks.push(noWafCheck(null))
+  }
+  const tlsSuggested = best && !coveringListener(best, domain) ? 'issuer' : cfg.SITES_ZONE_ISSUERS.length > 0 ? 'issuer' : 'default'
   return {
     host: h,
     covered: false,
@@ -169,9 +183,10 @@ export async function suggestFor(
     allowed: !!parent,
     allowedParents: cfg.SITES_ZONE_ALLOWED_PARENTS,
     dns,
-    tls: { modes: ['default', 'issuer', 'secret'], issuers: cfg.SITES_ZONE_ISSUERS, suggested: cfg.SITES_ZONE_ISSUERS.length > 0 ? 'issuer' : 'default' },
-    ingress: { modes: cfg.SITES_GATEWAYS.length ? ['wildcard', 'per-site', 'none'] : ['wildcard', 'per-site'], suggested: wild.shared?.length ? 'per-site' : 'wildcard', shared: wild.shared },
-    gateway: { options: cfg.SITES_GATEWAYS, suggested: cfg.SITES_GATEWAYS[0] ?? null },
+    tls: { modes: ['default', 'issuer', 'secret'], issuers: cfg.SITES_ZONE_ISSUERS, suggested: best ? (coveringListener(best, domain) ? 'default' : 'issuer') : tlsSuggested },
+    ingress: { modes: cfg.SITES_GATEWAYS.length ? ['wildcard', 'per-site', 'none'] : ['wildcard', 'per-site'], suggested: best ? 'none' : wild.shared?.length ? 'per-site' : 'wildcard', shared: wild.shared },
+    gateway: { options: cfg.SITES_GATEWAYS, suggested: best?.key ?? null },
+    protection,
     cookieDomain,
     sso,
     checks,
@@ -205,21 +220,31 @@ const conditionOf = (z: ZoneCrObject, type: string) => {
 const keyOf = (g: ZoneGatewayRef) => `${g.namespace}/${g.name}`
 
 /**
- * How the zone is reached: `entry` (the nginx Ingress, the Gateway, or both while it migrates),
- * `wafBypass` (an Ingress still answers: anyone can reach the hosts without the WAF), `protected`
- * (the Gateway's WAF and IP reputation are in force and nothing bypasses them; null = not known here).
+ * How the zone is reached: `entry` (the nginx Ingress, the Gateway, or both while it migrates) and
+ * `wafBypass` (an Ingress still answers: anyone can reach the hosts without the WAF).
  */
-function exposureOf(cr: ZoneCrObject, protection: Protection | null) {
+function exposureOf(cr: ZoneCrObject) {
   const ingress = (cr.spec.ingress ?? 'wildcard') !== 'none'
   const gateway = !!cr.spec.gateway
   return {
     entry: gateway && ingress ? 'both' as const : gateway ? 'gateway' as const : 'ingress' as const,
     wafBypass: ingress,
-    protected: gateway ? (protection ? protection.protected && !ingress : null) : false,
   }
 }
 
-function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>, protection: Protection | null = null) {
+/** The zone's protection from its spec and the Gateways discovered (`protection.ts`). */
+export function zoneProtection(spec: ZoneCrObject['spec'], gateways: readonly GatewayView[]): ProtectionStatus {
+  return protectionFor({ ingress: spec.ingress, ...(spec.gateway ? { gateway: keyOf(spec.gateway) } : {}) }, gateways)
+}
+
+/** The warning of a zone left without WAF: chosen while a protected Gateway exists, or none exists. */
+function noWafCheck(available: GatewayView | null): Check {
+  return available
+    ? { level: 'warn', code: 'no_waf', message: `Chosen without WAF: Gateway ${available.key} would inspect this zone with its WAF, but it is served by the nginx Ingress (no WAF, no IP bans)` }
+    : { level: 'warn', code: 'no_waf', message: 'No WAF-protected Gateway was found in the cluster: this zone is served by the nginx Ingress, without WAF or IP bans' }
+}
+
+function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>, gateways: readonly GatewayView[] = []) {
   const { cookieDomain, sso } = cookieFor(cr.spec.domain)
   const validated = conditionOf(cr, 'Validated')
   const ready = conditionOf(cr, 'Ready')
@@ -231,8 +256,8 @@ function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>, protectio
     ingress: cr.spec.ingress ?? 'wildcard',
     ingressClass: cr.spec.ingressClass ?? null,
     gateway: cr.spec.gateway ?? null,
-    exposure: exposureOf(cr, protection),
-    ...(protection ? { protection } : {}),
+    exposure: exposureOf(cr),
+    protection: zoneProtection(cr.spec, gateways),
     tls: {
       mode: cr.spec.tls?.mode ?? 'default',
       ...(cr.spec.tls?.issuer ? { issuer: cr.spec.tls.issuer } : {}),
@@ -261,13 +286,8 @@ export async function getZone(name: string) {
   if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
   const zones = await loadZones()
   const records = await sitesRepository.list()
-  const gw = cr.spec.gateway ? await allowedGateway(keyOf(cr.spec.gateway)) : null
-  return zoneView(cr, sitesOn(cr.spec.domain, zones, records, await liveAddresses(records)), gw?.protection ?? null)
-}
-
-/** The Gateway's discovery view, or null when it is not (or no longer) allowed here. */
-async function allowedGateway(key: string): Promise<GatewayView | null> {
-  return sitesConfig().SITES_GATEWAYS.includes(key) ? gatewayView(key) : null
+  const gw = cr.spec.gateway && sitesConfig().SITES_GATEWAYS.includes(keyOf(cr.spec.gateway)) ? [await gatewayView(keyOf(cr.spec.gateway))] : []
+  return zoneView(cr, sitesOn(cr.spec.domain, zones, records, await liveAddresses(records)), gw)
 }
 
 /**
@@ -294,10 +314,21 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
   const crs = await kubeSites().listZones()
   const same = crs.find((z) => z.spec.domain === body.domain)
   if (same) throw siteError(409, 'zone_exists', `*.${body.domain} is already zone ${same.metadata.name}`)
-  const gw = body.gateway ? await checkGateway(body.gateway, body.domain, body.tls.mode) : null
+  // WAF by default (owner decision 2026-09-28): with neither a gateway nor an ingress mode asked, the
+  // zone goes on the first WAF-protected Gateway that can serve it, without an Ingress. The nginx
+  // Ingress is the fallback when there is none; choosing it while there is one must be explicit.
+  const gateways = (await listGateways()).gateways
+  const auto = !body.gateway && !body.ingress ? defaultGateway(gateways, body.domain, body.tls.mode) : null
+  const ref = body.gateway ?? (auto ? { namespace: auto.namespace, name: auto.name } : undefined)
+  const available = anyProtected(gateways)
+  if (!ref && available && !body.acknowledgeNoWaf) {
+    const hint = !body.gateway && body.tls.mode === 'default' && !coveringListener(available, body.domain) ? ` (it has no listener for *.${body.domain}: choose TLS issuer so the zone brings its own)` : ''
+    throw siteError(409, 'waf_available', `Gateway ${available.key} would put *.${body.domain} behind the WAF${hint}; creating it on the nginx Ingress leaves it without WAF or IP bans. Choose the gateway, or confirm the choice (acknowledgeNoWaf)`)
+  }
+  const gw = ref ? await checkGateway(ref, body.domain, body.tls.mode) : null
 
   // A wildcard next to another one for the same domain collides; exact hosts it would shadow are a warning.
-  const ingress = body.ingress ?? 'wildcard'
+  const ingress = body.ingress ?? (auto ? 'none' : 'wildcard')
   const wild = ingress === 'wildcard' ? wildcardChecks(body.domain, (await clusterIngresses()) ?? []) : { checks: [], shared: [] }
   const taken = wild.checks.find((c) => c.code === 'wildcard_taken')
   if (taken) throw siteError(409, 'wildcard_taken', taken.message)
@@ -312,7 +343,7 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
     apiVersion: 'auth.w6d.io/v1alpha1',
     kind: 'Zone',
     metadata: { name, labels: MANAGED_BY },
-    spec: { domain: body.domain, ingress, ...(body.ingressClass ? { ingressClass: body.ingressClass } : {}), tls, ...(body.gateway ? { gateway: body.gateway } : {}) },
+    spec: { domain: body.domain, ingress, ...(body.ingressClass ? { ingressClass: body.ingressClass } : {}), tls, ...(ref ? { gateway: ref } : {}) },
   }
   try {
     await kubeSites().createZone(cr)
@@ -320,9 +351,16 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
     if (err instanceof KubeRefused) throw siteError(err.statusCode, err.code, err.message)
     throw err
   }
-  auditZone('create', name, actor, { domain: body.domain, ingress, tls: tls.mode, issuer: body.tls.issuer, ingressClass: body.ingressClass, gateway: gw?.key })
+  const protection = zoneProtection(cr.spec, gateways)
+  auditZone('create', name, actor, {
+    domain: body.domain, ingress, tls: tls.mode, issuer: body.tls.issuer, ingressClass: body.ingressClass, gateway: gw?.key,
+    protection: protection.state, ...(!gw && available ? { wafOptOut: true, wafAvailable: available.key } : {}),
+  })
+  const checks: Check[] = [...wild.checks]
+  if (!gw) checks.push(noWafCheck(available))
+  else if (!gw.protection.protected) checks.push({ level: 'warn', code: 'gateway_not_protected', message: `Gateway ${gw.key}: ${gw.protection.summary}` })
   const dns = await probeWildcard(body.domain, ingress === 'none' && gw ? gw.addresses : platformIngress(crs))
-  return { ...zoneView({ ...cr, metadata: { name } }, [], gw?.protection ?? null), dns, checks: wild.checks }
+  return { ...zoneView({ ...cr, metadata: { name } }, [], gateways), dns, checks }
 }
 
 /**
@@ -354,7 +392,15 @@ export async function updateZone(name: string, body: UpdateZoneBody, actor: Acto
     throw siteError(422, 'issuer_not_allowed', `issuer ${body.tls.issuer} is not offered here (${cfg.SITES_ZONE_ISSUERS.join(', ') || 'operator default only'})`)
   }
   const gw = spec.gateway ? await checkGateway(spec.gateway, spec.domain, spec.tls?.mode ?? 'default') : null
+  const gateways = (await listGateways()).gateways
+  // Detaching the Gateway while a WAF-protected one exists is an explicit, audited choice.
+  const available = anyProtected(gateways)
+  const optOut = body.gateway === null && !!before.gateway && !!available
+  if (optOut && !body.acknowledgeNoWaf) {
+    throw siteError(409, 'waf_available', `Detaching the Gateway leaves *.${spec.domain} on the nginx Ingress without WAF or IP bans while Gateway ${available!.key} could protect it; confirm the choice (acknowledgeNoWaf)`)
+  }
   const checks: Check[] = []
+  if (!gw) checks.push(noWafCheck(available))
   if (gw && !gw.protection.protected) checks.push({ level: 'warn', code: 'gateway_not_protected', message: `Gateway ${gw.key}: ${gw.protection.summary}` })
   if (ingress === 'wildcard' && was !== 'wildcard') {
     const taken = wildcardChecks(spec.domain, (await clusterIngresses()) ?? []).checks.find((c) => c.code === 'wildcard_taken')
@@ -382,11 +428,13 @@ export async function updateZone(name: string, body: UpdateZoneBody, actor: Acto
     if (err instanceof KubeRefused) throw siteError(err.statusCode, err.code, err.message)
     throw err
   }
+  const protection = zoneProtection(spec, gateways)
   auditZone('update', name, actor, {
     domain: spec.domain, ingress, tls: spec.tls?.mode ?? 'default', issuer: spec.tls?.issuer, ingressClass: spec.ingressClass,
     gateway: gw?.key, from: `ingress ${was}${before.gateway ? `, gateway ${keyOf(before.gateway)}` : ''}`,
+    protection: protection.state, ...(optOut ? { wafOptOut: true, wafAvailable: available!.key } : {}),
   })
-  return { ...zoneView({ ...cr, spec }, [], gw?.protection ?? null), checks: [...checks, ...dns.map(dnsHostCheck)] }
+  return { ...zoneView({ ...cr, spec }, [], gateways), checks: [...checks, ...dns.map(dnsHostCheck)] }
 }
 
 export async function deleteZone(name: string, actor: Actor) {

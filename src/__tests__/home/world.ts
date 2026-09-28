@@ -18,6 +18,7 @@ function defaults() {
   return {
     bootstrapReady: true,
     kubeMode: 'off' as 'off' | 'in-cluster',
+    waf: { total: 2, waf: 1, unknown: 0 },
     auditSink: 'dual' as 'legacy' | 'dual' | 'v1',
     lokiConfigured: false,
     grafanaUrl: null as string | null,
@@ -111,6 +112,7 @@ export function sourcesMock() {
     directoryStats: async () => (world.stats ? { stats: world.stats, computedAt: NOW() } : null),
     accessReviewSummary: async () => ({ totalPrivileged: 3, total: 3, canDoAnything: 2, selfGranted: 0, dormant: 1, noMfa: 2, withoutMfa: 2, mfa: { enrolled: 9, identities: 12 }, computedAt: new Date().toISOString() }),
     siteRows: async () => world.siteRows,
+    wafCoverage: async () => world.waf,
     siteRecords: async () => world.siteRecords,
     deletedSites: async () => 1,
     pendingRequests: async () => world.requests,
