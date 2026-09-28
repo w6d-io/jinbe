@@ -90,6 +90,17 @@ export function classifySubmit(flow: GateFlow, fields: Fields, sessionEmail: str
   return { step: 'send', address }
 }
 
+/**
+ * The bot-check token of a submit: the X-Captcha-Token header, or — for a native form post that cannot
+ * set a header (Kratos' webauthn.js passkey submit) — the `transient_payload.captcha_token` field,
+ * which the guard hook reads too.
+ */
+export function submitToken(header: string | null, fields: Fields): string | null {
+  if (header) return header
+  const v = field(fields, 'transient_payload.captcha_token')
+  return v && v.length <= 4096 ? v : null
+}
+
 /** A submitted form body as fields; anything unreadable is no fields (and so a `send`). */
 export function parseSubmitBody(contentType: string | undefined, body: Buffer): Fields {
   const type = (contentType ?? '').split(';')[0].trim().toLowerCase()

@@ -3,7 +3,7 @@ import http from 'node:http'
 import https from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
 import { env } from '../config/index.js'
-import { gateRefusalBody, gateSubmit, gatewayClientIp, hashForLog, parseSubmitBody, type GateFlow } from './gate.js'
+import { gateRefusalBody, gateSubmit, gatewayClientIp, hashForLog, parseSubmitBody, submitToken, type GateFlow } from './gate.js'
 
 /**
  * POST /api/public/sign-in-protection/gate/self-service/:flow — the sign-in gate's front door (gate.ts).
@@ -100,11 +100,12 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
     const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)
     const ip = gatewayClientIp(request.headers, request.ip ?? null)
     const tokenHeader = request.headers[GATE_TOKEN_HEADER]
+    const fields = parseSubmitBody(request.headers['content-type'], body)
     const decision = await gateSubmit({
       flow,
       flowId: flowIdOf(request.query),
-      fields: parseSubmitBody(request.headers['content-type'], body),
-      token: typeof tokenHeader === 'string' && tokenHeader ? tokenHeader : null,
+      fields,
+      token: submitToken(typeof tokenHeader === 'string' && tokenHeader ? tokenHeader : null, fields),
       ip,
       session: () => kratosSession(request, fetchImpl),
     }, fetchImpl)

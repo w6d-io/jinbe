@@ -14929,35 +14929,6 @@ paths:
       responses:
         "200":
           description: Default Response
-  /api/public/sign-in-protection/check:
-    post:
-      tags:
-        - sign-in-protection
-      description: "Gateway bot check for recovery and verification submits: 200 when
-        the flow does not ask for it or the token passes, 403 otherwise."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - flow
-              properties:
-                flow:
-                  type: string
-                  enum:
-                    - recovery
-                    - verification
-                token:
-                  type: string
-                  maxLength: 4096
-                ip:
-                  type: string
-                  maxLength: 64
-      responses:
-        "200":
-          description: Default Response
   /api/clusters/{clusterId}/jobs:
     post:
       tags:

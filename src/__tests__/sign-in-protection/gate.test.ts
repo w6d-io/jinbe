@@ -42,7 +42,7 @@ vi.mock('../../services/redis-client.service.js', () => {
 })
 
 import { signInGateRoutes } from '../../sign-in-protection/gate-routes.js'
-import { classifySubmit, gateSubmit, gatewayClientIp, parseSubmitBody, type GateFlow } from '../../sign-in-protection/gate.js'
+import { classifySubmit, gateSubmit, gatewayClientIp, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
 import { guardFlow } from '../../sign-in-protection/guard.js'
 import { SIGN_IN_PROTECTION_KEY, defaultSignInProtection, resetSignInProtectionCache, type CaptchaFlow } from '../../sign-in-protection/settings.js'
 import { buildBuiltInRules } from '../../bootstrap/build-rules.js'
@@ -95,6 +95,13 @@ describe('what a submit is', () => {
     expect(classifySubmit('login', { method: 'something-new' }).step).toBe('send')
     expect(parseSubmitBody('application/json', Buffer.from('{nope'))).toEqual({})
     expect(parseSubmitBody('text/plain', Buffer.from('method=password'))).toEqual({})
+  })
+
+  it('the token: the header first, else the transient_payload field (JSON or form)', () => {
+    expect(submitToken('h', { transient_payload: { captcha_token: 'b' } })).toBe('h')
+    expect(submitToken(null, { transient_payload: { captcha_token: 'b' } })).toBe('b')
+    expect(submitToken(null, { 'transient_payload.captcha_token': 'f' })).toBe('f')
+    expect(submitToken(null, {})).toBeNull()
   })
 
   it('reads JSON and form bodies', () => {
@@ -309,6 +316,17 @@ describe('gate route (proxy to Kratos)', () => {
     expect(res.statusCode).toBe(429)
     expect(res.headers['retry-after']).toBe('900')
     expect(res.json().error).toMatchObject({ id: 'rate_limited', retry_after: 900 })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('a native form post (passkey) carries the token in transient_payload.captcha_token', async () => {
+    guard({ login: true })
+    const form = (payload: string) => app.inject({
+      method: 'POST', url: '/api/public/sign-in-protection/gate/self-service/login?flow=f-passkey-1',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload,
+    })
+    expect((await form('method=passkey&passkey_login=x')).statusCode).toBe(403)
+    expect((await form(`method=passkey&passkey_login=x&transient_payload.captcha_token=${TOKEN}`)).statusCode).toBe(400)
     expect(seen).toHaveLength(1)
   })
 
