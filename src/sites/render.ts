@@ -247,6 +247,8 @@ export function render(site: Site, platform: Platform): Rendered {
   const landing = site.login?.defaultReturnUrl
   if (landing && new URL(landing).hostname.toLowerCase() !== host) {
     fail('return_url_host', `the landing page must be on the site's host ${host}`, 'login.defaultReturnUrl')
+  } else if (landing && prefix && new URL(landing).pathname !== prefix && !new URL(landing).pathname.startsWith(`${prefix}/`)) {
+    warn('return_url_outside_prefix', `the landing page is outside the site prefix ${prefix}; another site (or nothing) answers there`, 'login.defaultReturnUrl')
   }
   if (with2fa && !platform.accessUrl && site.gates.some((g) => g.errors === 'website')) {
     fail('access_url_missing', 'per-site 2FA needs the sign-in step-up page (SITES_ACCESS_URL) configured on the platform', 'login.twoFactor')

@@ -48,7 +48,12 @@ export function riskOf(before: Site | null, after: Site): Risk {
   const a = routes(after)
 
   if (!before) flag('new_site', 'medium', `a new site on ${after.address.host}`)
-  if (before && before.address.host !== after.address.host) flag('host_changed', 'high', `the host moves from ${before.address.host} to ${after.address.host}`)
+  if (before && before.address.host !== after.address.host) {
+    flag('host_changed', 'high', `the host moves from ${before.address.host} to ${after.address.host}; the old address stops working, and bookmarks and OAuth redirect URIs pointing at it break`)
+  }
+  if (before && (before.address.pathPrefix ?? '') !== (after.address.pathPrefix ?? '')) {
+    flag('prefix_changed', 'high', `the path prefix moves from ${before.address.pathPrefix ?? '/'} to ${after.address.pathPrefix ?? '/'}; links under the old one stop working`)
+  }
   if (after.routes.catchAll.access.kind === 'public' && before?.routes.catchAll.access.kind !== 'public') {
     flag('opened_to_public', 'high', 'every unlisted path becomes open to anyone')
   }

@@ -4,6 +4,7 @@ import { queryOpa } from '../services/opa-client.js'
 import type { Site } from './schemas.js'
 import { twoFactorOn } from './render.js'
 import { sitesRepository } from './repository.js'
+import { liveAddresses } from './address.js'
 import { siteLoginStore, type SiteLogin, type StoredLogo } from './login-store.js'
 import { assertNotSystem, siteError } from './checks.js'
 import type { Actor } from './audit.js'
@@ -32,10 +33,12 @@ export async function liveSite(name: string): Promise<Site | null> {
   return (await sitesRepository.version(name, record.applied.version))?.site ?? null
 }
 
+// By the host the applied version serves: a saved, not yet applied, address change moves nothing here.
 async function liveSiteByHost(host: string): Promise<Site | null> {
   const wanted = host.toLowerCase()
-  const record = (await sitesRepository.list()).find((r) => r.applied && r.site.address.host === wanted)
-  return record ? liveSite(record.site.name) : null
+  const live = await liveAddresses(await sitesRepository.list())
+  const name = [...live.entries()].sort(([a], [b]) => a.localeCompare(b)).find(([, a]) => a.host === wanted)?.[0]
+  return name ? liveSite(name) : null
 }
 
 export interface PublicSiteLogin {

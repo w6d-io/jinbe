@@ -2,7 +2,7 @@ import { env } from '../config/env.js'
 import type { Platform } from './render.js'
 import type { Zone } from './host.js'
 import { sitesConfig } from './config.js'
-import { kubeSites } from './kube-sites.js'
+import { kubeSites, type ZoneCrObject } from './kube-sites.js'
 import { currentSpec } from '../gateway/service.js'
 import { PLATFORM_IDENTITY_HEADERS, gatewayIdentity } from './identity-headers.js'
 
@@ -28,7 +28,15 @@ export async function loadZones(): Promise<Zone[]> {
     ...(z.spec.ingressClass ? { ingressClass: z.spec.ingressClass } : {}),
     ...(configured.find((c) => c.suffix === z.spec.domain)?.cookieDomain ? { cookieDomain: configured.find((c) => c.suffix === z.spec.domain)!.cookieDomain } : {}),
     source: 'zone' as const,
+    ...readiness(z),
   }))
+}
+
+/** The Zone's Ready condition as the operator last wrote it for its current spec; nothing when unknown. */
+function readiness(z: ZoneCrObject): { ready?: boolean } {
+  const c = z.status?.conditions?.find((x) => x.type === 'Ready')
+  if (!c || (z.status?.observedGeneration ?? 0) !== (z.metadata.generation ?? z.status?.observedGeneration)) return {}
+  return { ready: c.status === 'True' }
 }
 
 /**

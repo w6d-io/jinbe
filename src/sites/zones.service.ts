@@ -9,6 +9,7 @@ import { kubeSites, KubeRefused, type IngressHosts, type SiteCondition, type Zon
 import { clusterIngresses, collisionChecks, wildcardConflicts, type IngressRef } from './host-collisions.js'
 import { loadZones } from './platform.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
+import { liveAddresses } from './address.js'
 import type { CreateZoneBody } from './schemas.js'
 
 /**
@@ -169,11 +170,18 @@ export async function suggestZone(host: string): Promise<ZoneSuggestion> {
   return suggestFor(host, await loadZones())
 }
 
-/** Saved Sites whose host the zone serves (the most specific zone wins, as for placement). */
-function sitesOn(domain: string, zones: readonly Zone[], records: readonly SiteRecord[]) {
+/**
+ * Sites whose host the zone serves (the most specific zone wins, as for placement): the saved host,
+ * and the host an applied site still serves until a saved move is applied (`live`).
+ */
+function sitesOn(domain: string, zones: readonly Zone[], records: readonly SiteRecord[], live?: Map<string, SiteRecord['site']['address']>) {
+  const on = (host: string) => placeHost(host, zones, undefined).zone === domain
   return records
-    .filter((r) => placeHost(r.site.address.host, zones, undefined).zone === domain)
-    .map((r) => ({ name: r.site.name, host: r.site.address.host, applied: !!r.applied }))
+    .flatMap((r) => {
+      const held = live?.get(r.site.name)?.host
+      const host = on(r.site.address.host) ? r.site.address.host : held && on(held) ? held : null
+      return host ? [{ name: r.site.name, host, applied: !!r.applied }] : []
+    })
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
@@ -219,7 +227,8 @@ export async function getZone(name: string) {
   const cr = await kubeSites().getZone(name)
   if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
   const zones = await loadZones()
-  return zoneView(cr, sitesOn(cr.spec.domain, zones, await sitesRepository.list()))
+  const records = await sitesRepository.list()
+  return zoneView(cr, sitesOn(cr.spec.domain, zones, records, await liveAddresses(records)))
 }
 
 export async function createZone(body: CreateZoneBody, actor: Actor) {
@@ -268,7 +277,8 @@ export async function deleteZone(name: string, actor: Actor) {
   if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
   // A duplicate Zone (DomainTaken) serves nothing its older twin does not: removing it strands no site.
   const twin = (await kubeSites().listZones()).some((z) => z.metadata.name !== name && z.spec.domain === cr.spec.domain)
-  const using = twin ? [] : sitesOn(cr.spec.domain, await loadZones(), await sitesRepository.list())
+  const records = twin ? [] : await sitesRepository.list()
+  const using = twin ? [] : sitesOn(cr.spec.domain, await loadZones(), records, await liveAddresses(records))
   if (using.length > 0) {
     throw Object.assign(
       siteError(409, 'zone_in_use', `*.${cr.spec.domain} still serves ${using.length} site(s): ${using.map((s) => s.name).join(', ')}; move or delete them first`),

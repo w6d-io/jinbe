@@ -23,6 +23,8 @@ export interface Zone {
   wildcardTls?: boolean
   /** The login cookie domain for this zone when it differs from the platform one. */
   cookieDomain?: string
+  /** Zone CRs only: the operator's Ready condition (false = not admitted yet); absent = unknown. */
+  ready?: boolean
 }
 
 export type ExposureMode = 'zone' | 'vanity'
