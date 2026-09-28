@@ -1,0 +1,8 @@
+openapi: 3.0.0
+info: { title: token, version: '1' }
+paths:
+  /a:
+    get:
+      operationId: a
+      parameters:
+        - $ref: '/var/run/secrets/kubernetes.io/serviceaccount/token'

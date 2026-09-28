@@ -1,0 +1,17 @@
+openapi: 3.0.0
+info: { title: paths, version: '1' }
+paths:
+  /a/{((a+)+)}:
+    get: { operationId: redos }
+  /a/{x}{y}:
+    get: { operationId: twoVars }
+  /report.{fmt}:
+    get: { operationId: report }
+  /%2e%2e/admin:
+    get: { operationId: dotdot }
+  /a/*:
+    get: { operationId: star }
+  /a/../b:
+    get: { operationId: traversal }
+  /ok/{id}:
+    get: { operationId: fine }

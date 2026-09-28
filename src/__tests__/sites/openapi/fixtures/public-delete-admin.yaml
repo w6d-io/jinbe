@@ -1,0 +1,8 @@
+openapi: 3.0.0
+info: { title: admin, version: '1' }
+paths:
+  /admin/users/{id}:
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      x-w6d-access: public

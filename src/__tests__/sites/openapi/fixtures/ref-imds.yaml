@@ -1,0 +1,6 @@
+openapi: 3.0.0
+info: { title: imds, version: '1' }
+components:
+  securitySchemes:
+    s: { $ref: 'http://169.254.169.254/latest/meta-data/iam/security-credentials/' }
+paths: {}

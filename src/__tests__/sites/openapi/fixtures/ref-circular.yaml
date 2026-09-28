@@ -1,0 +1,9 @@
+openapi: 3.0.0
+info: { title: circ, version: '1' }
+paths:
+  /a:
+    $ref: '#/components/pathItems/A'
+components:
+  pathItems:
+    A: { $ref: '#/components/pathItems/B' }
+    B: { $ref: '#/components/pathItems/A' }

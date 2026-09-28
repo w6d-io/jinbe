@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sitesConfig } from './config.js'
 
 /**
  * The Site intent (site-ux.md §14.1) and the request bodies of /api/admin/sites.
@@ -67,8 +68,29 @@ export const routeSchema = z
     orgParam: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
     source: z.enum(['manual', 'openapi', 'template']).default('manual'),
     pinned: z.boolean().optional(),
+    // An imported route's operation (operationId, else `METHOD path`): the key a re-import matches on.
+    op: z.string().min(1).max(600).optional(),
   })
   .strict()
+
+/** The last OpenAPI import into this site (openapi-import.md §3): what the next re-import is compared with. */
+export const openapiImportSchema = z
+  .object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    title: z.string().max(200),
+    version: z.string().max(64),
+    source: z.literal('upload'),
+    importedAt: z.string().datetime(),
+    importedBy: z.string().max(254),
+  })
+  .strict()
+
+/** Hard ceiling of SITES_MAX_ROUTES; the configured value is checked at parse time. */
+export const ROUTES_HARD_MAX = 2000
+const maxRoutes = (items: unknown[], ctx: z.RefinementCtx) => {
+  const max = sitesConfig().SITES_MAX_ROUTES
+  if (items.length > max) ctx.addIssue({ code: 'too_big', type: 'array', maximum: max, inclusive: true, message: `at most ${max} routes (SITES_MAX_ROUTES)` })
+}
 
 const rolesMap = z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/), z.array(z.union([permission, z.literal('*')])))
 
@@ -99,8 +121,12 @@ export const siteSchema = z
     gates: z.array(gateSchema).min(1).max(20),
     routes: z
       .object({
-        items: z.array(routeSchema).max(500),
+        items: z
+          .array(routeSchema)
+          .max(ROUTES_HARD_MAX)
+          .superRefine(maxRoutes),
         catchAll: z.object({ gate: id, access: accessSchema }).strict(),
+        openapi: openapiImportSchema.optional(),
       })
       .strict(),
     roles: z.union([z.enum(['standard', 'readonly', 'operator']), rolesMap]),
@@ -115,7 +141,7 @@ export const siteSchema = z
     // honoured under every scope); branding is served by the public by-host lookup.
     login: z
       .object({
-        twoFactor: z.object({ scope: z.enum(['none', 'writes', 'all', 'routes']), routes: z.array(id).max(500).optional(), clients: z.enum(['exempt', 'refused']) }).strict(),
+        twoFactor: z.object({ scope: z.enum(['none', 'writes', 'all', 'routes']), routes: z.array(id).max(ROUTES_HARD_MAX).superRefine(maxRoutes).optional(), clients: z.enum(['exempt', 'refused']) }).strict(),
         reach: z.enum(['granted', 'any-account']),
         branding: z
           .object({
