@@ -3,7 +3,7 @@ import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware
 import { auditEventService } from '../services/audit-event.service.js'
 import { delegatedTokenService } from '../services/delegated-token.service.js'
 import { auditActor } from '../utils/audit-actor.js'
-import { defaultMcpSettings, getMcpSettings, mcpCeiling, mcpGate, setMcpSettings, validateMcpSettings } from './settings.js'
+import { defaultMcpSettings, deploymentServerUrl, effectiveServerUrl, getMcpSettings, mcpCeiling, mcpGate, setMcpSettings, validateMcpSettings } from './settings.js'
 
 const problemSchema = {
   type: 'object',
@@ -34,12 +34,15 @@ const CEILING_NOTE =
  *       assistant, and for how long a key lives, is an access change.
  */
 export async function mcpSettingsRoutes(fastify: FastifyInstance) {
+  // With no saved address the deployment's (MCP_PUBLIC_URL) is shown in its place, so the console's
+  // field holds the real address; saving it unchanged stores none, and the setting keeps following
+  // the deployment.
   const view = async () => {
     const settings = await getMcpSettings()
     const ceiling = mcpCeiling()
     return {
-      settings,
-      defaults: defaultMcpSettings(),
+      settings: { ...settings, serverUrl: effectiveServerUrl(settings) },
+      defaults: { ...defaultMcpSettings(), serverUrl: deploymentServerUrl() },
       ceiling: { enabled: ceiling, note: ceiling ? null : CEILING_NOTE },
       effective: ceiling && settings.enabled,
     }
@@ -88,6 +91,7 @@ export async function mcpSettingsRoutes(fastify: FastifyInstance) {
     if (!checked.ok) {
       return reply.status(400).send({ error: 'invalid_settings', message: checked.problems.map((p) => `${p.field}: ${p.message}`).join('; '), problems: checked.problems })
     }
+    if (checked.value.serverUrl !== null && checked.value.serverUrl === deploymentServerUrl()) checked.value.serverUrl = null
     const before = await getMcpSettings()
     const saved = await setMcpSettings(checked.value)
     // Cached tokens are re-gated on every call anyway; dropping them also re-reads what each still holds.
@@ -138,7 +142,7 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
     if (gate.off === 'deployment') return { enabled: false, serverUrl: null, off: 'deployment', personalKeys: null }
     return {
       enabled: gate.on,
-      serverUrl: gate.settings!.serverUrl,
+      serverUrl: effectiveServerUrl(gate.settings!),
       off: gate.on ? null : 'administrator',
       personalKeys: gate.settings!.personalKeys,
     }
