@@ -1,6 +1,7 @@
 import { signInGuardDecisions } from '../telemetry/metrics.js'
 import { verifyCaptcha, type VerifyResult } from './captcha.js'
 import { domainAndParents, isDisposable } from './disposable.js'
+import { registrationTraitsVerdict, settingsTraitsVerdict, type Traits, type TraitsVerdict } from './protected-traits.js'
 import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './settings.js'
 
 /**
@@ -13,6 +14,8 @@ import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './
  *     the global `after.hooks` list never runs pre-persist.
  *   - login `after` with `can_interrupt: true` runs before the session cookie is issued — but only
  *     once the password was accepted (see the login note below).
+ *   - settings `after.profile` with `response.parse: true` runs before the new traits are written:
+ *     the protected-traits check (protected-traits.ts), flow `settings`.
  *   - recovery and verification have NO hook at the moment a code or link is sent: `before` runs at
  *     flow creation (no answer yet), `after` once the code was used. Their bot check is enforced at
  *     the gateway instead (POST /api/public/sign-in-protection/check, from an Oathkeeper remote_json
@@ -35,9 +38,12 @@ export type Refusal =
   | 'registration_not_allowed'
   | 'registration_disposable'
   | 'settings_unavailable'
+  | 'protected_trait'
+  | 'protected_traits_unchecked'
 
 export type Decision =
-  | { allow: true; result: 'allowed' | 'fail_open' | 'not_guarded' }
+  /** `traits`: what Kratos writes instead of the submitted traits (a 200 `identity` patch). */
+  | { allow: true; result: 'allowed' | 'fail_open' | 'not_guarded'; traits?: Traits }
   | { allow: false; result: Refusal; message: KratosText }
 
 export interface KratosText {
@@ -59,6 +65,8 @@ export const GUARD_MESSAGE_IDS = {
   registration_not_allowed: 4000912,
   registration_disposable: 4000913,
   settings_unavailable: 4000914,
+  protected_trait: 4000915,
+  protected_traits_unchecked: 4000916,
 } as const satisfies Record<Refusal, number>
 
 function refuse(result: Refusal, text: string): Decision {
@@ -70,6 +78,24 @@ export function kratosRefusalBody(message: KratosText) {
   return {
     messages: [{ instance_ptr: message.pointer, messages: [{ id: message.id, text: message.text, type: 'error' }] }],
   }
+}
+
+/** The 200 body: `{}` goes on as submitted, an `identity.traits` patch replaces the traits Kratos writes. */
+export function kratosAllowBody(decision: Decision & { allow: true }) {
+  return decision.traits ? { identity: { traits: decision.traits } } : {}
+}
+
+function traitsRefusal(verdict: TraitsVerdict & { ok: false }, flow: 'registration' | 'settings'): Decision {
+  if (verdict.reason === 'unchecked') {
+    // The hook body has no traits to check (an older chart Jsonnet): refuse rather than let a
+    // protected trait through unseen.
+    return refuse('protected_traits_unchecked', flow === 'registration'
+      ? 'Sign-up is unavailable right now. Please try again in a minute.'
+      : 'Your profile cannot be saved right now. Please try again in a minute.')
+  }
+  return refuse('protected_trait', flow === 'registration'
+    ? 'This sign-up sets account details only an administrator can set. Leave them out and try again.'
+    : 'Some of these account details are managed by an administrator and cannot be changed here.')
 }
 
 const matchesDomain = (domain: string, entry: string): boolean =>
@@ -127,6 +153,8 @@ export interface GuardInput {
   method?: string | null
   requestedAal?: string | null
   email?: string | null
+  /** The traits Kratos is about to write (registration: the protected-traits check). */
+  traits?: unknown
   captchaToken?: string | null
   ip?: string | null
 }
@@ -148,6 +176,12 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
   if (input.flow === 'registration' && settings.registration.mode === 'closed') {
     return registrationVerdict(input.email, settings.registration) as Decision
   }
+  let traits: Traits | undefined
+  if (input.flow === 'registration') {
+    const verdict = registrationTraitsVerdict(input.traits)
+    if (!verdict.ok) return traitsRefusal(verdict, 'registration')
+    traits = verdict.traits
+  }
 
   let guarded = settings.captcha.flows[input.flow]
   // A second factor, and an IdP-vouched sign-up, are not where bots get in.
@@ -164,8 +198,22 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
     const verdict = registrationVerdict(input.email, settings.registration)
     if (verdict) return verdict
   }
-  if (failOpen) return { allow: true, result: 'fail_open' }
-  return { allow: true, result: guarded || input.flow === 'registration' ? 'allowed' : 'not_guarded' }
+  const patch = traits ? { traits } : {}
+  if (failOpen) return { allow: true, result: 'fail_open', ...patch }
+  return { allow: true, result: guarded || input.flow === 'registration' ? 'allowed' : 'not_guarded', ...patch }
+}
+
+/**
+ * A profile save (settings `after.profile`): the protected traits only. Needs no settings from
+ * Redis, so it never waits on the store.
+ */
+export function guardSettings(input: { traits?: unknown; storedTraits?: unknown }): Decision {
+  const verdict = settingsTraitsVerdict(input.traits, input.storedTraits)
+  const decision: Decision = verdict.ok
+    ? { allow: true, result: 'allowed', ...(verdict.traits ? { traits: verdict.traits } : {}) }
+    : traitsRefusal(verdict, 'settings')
+  signInGuardDecisions.inc({ flow: 'settings', result: decision.result })
+  return decision
 }
 
 /** Judges one guarded submit and counts the outcome. */

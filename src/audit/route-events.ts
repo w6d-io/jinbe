@@ -38,7 +38,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   // Refusals are counted (jinbe_sign_in_guard_decisions_total), not audited: a flood of scripted
   // sign-ups would otherwise become a flood of audit rows. A sign-up that goes through is audited by
   // the after-hook above.
-  'POST /api/webhooks/kratos/guard': exempt('judges a Kratos submit (bot check, sign-up policy) and changes nothing'),
+  'POST /api/webhooks/kratos/guard': exempt('judges a Kratos submit (bot check, sign-up policy, protected traits); jinbe stores nothing'),
   'POST /api/public/sign-in-protection/check': exempt('the gateway asking whether a bot-check token is good; changes nothing'),
   'POST /api/admin/organizations': by('org.created'),
   'POST /api/admin/users': by('user.created'),
