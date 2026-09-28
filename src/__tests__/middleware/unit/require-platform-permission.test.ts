@@ -63,6 +63,7 @@ describe('requirePlatformPermission', () => {
     await requirePlatformPermission('admin.organisation:read')(request('subject-c'), r)
 
     expect(r._statusCode).toBe(503)
+    expect(r._body).toMatchObject({ error: 'policy_unavailable' })
   })
 
   it('refuses before reading anything when there is no identity', async () => {

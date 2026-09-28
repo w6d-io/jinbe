@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerRights } from '../middleware/require-permission.js'
-import { rights as opaRights, POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { rights as opaRights } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'

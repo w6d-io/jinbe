@@ -9,7 +9,7 @@ import {
 } from '@prisma/client/runtime/library.js'
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
-import { POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 

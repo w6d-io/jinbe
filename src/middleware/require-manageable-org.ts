@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { memberOrgs, POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { memberOrgs } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { denyAudit } from '../audit/deny.js'
 
 /**

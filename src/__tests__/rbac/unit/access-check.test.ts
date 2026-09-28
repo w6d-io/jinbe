@@ -77,6 +77,7 @@ describe('POST /access-check', () => {
     const reply = createMockReply()
     await route.handler(request({ email: 'a@example.com', method: 'GET', path: '/api/x' }), reply)
     expect(reply._status).toBe(503)
+    expect(reply._body).toMatchObject({ error: 'policy_unavailable' })
     expect(JSON.stringify(reply._body)).toMatch(/OPA_URL.*OPA_TOKEN/)
     expect(fetchSpy).not.toHaveBeenCalled()
   })

@@ -179,7 +179,9 @@ describe('org scoping (AU-3, AU-4)', () => {
 
   it('unauthenticated → 401; model unreadable → 503', async () => {
     expect((await app.inject({ method: 'GET', url: `/api/audit/events?${week}` })).statusCode).toBe(401)
-    expect((await get(`/api/audit/events?${week}`, 'broken')).statusCode).toBe(503)
+    const broken = await get(`/api/audit/events?${week}`, 'broken')
+    expect(broken.statusCode).toBe(503)
+    expect(broken.json()).toMatchObject({ error: 'policy_unavailable' })
   })
 })
 

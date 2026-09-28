@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { holds, rights, POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { holds, rights } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'

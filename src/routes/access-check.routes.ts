@@ -11,7 +11,7 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
-import { POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 
 /**
  * POST /api/admin/rbac/access-check — "can X do METHOD PATH, and why?" for the console.

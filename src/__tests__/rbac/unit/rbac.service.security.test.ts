@@ -140,7 +140,7 @@ describe('RbacService - security helpers', () => {
 
       await expect(
         service.assertSuperAdmin('do y', { id: 'subject-someone', email: 'someone@example.com' }),
-      ).rejects.toMatchObject({ statusCode: 503 })
+      ).rejects.toMatchObject({ statusCode: 503, code: 'policy_unavailable' })
     })
   })
 

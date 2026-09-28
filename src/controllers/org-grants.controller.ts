@@ -10,7 +10,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import type { KratosIdentity } from '../schemas/admin.schema.js'
-import { POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 
 /**
  * Org grants: the groups an org admin hands out IN THEIR ORG (data.org_grants). They count only on

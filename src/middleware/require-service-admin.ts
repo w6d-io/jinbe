@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/index.js'
-import { decide, manageableOrgs, rights, POLICY_UNAVAILABLE } from '../authz/opa.js'
+import { decide, manageableOrgs, rights } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import type { HeldRights } from '../services/authorization-resolution.js'
 import { ORG_ADMIN_PERMISSIONS, ORG_ADMIN_ROLE } from '../services/org-admin.js'
 import { denyAudit } from '../audit/deny.js'
