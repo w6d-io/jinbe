@@ -85,6 +85,7 @@ export const AUDIT_EVENTS = {
 
   'config.auth_methods.changed': ['config', 'update', 'high'],
   'config.second_factor.changed': ['config', 'update', 'high'],
+  'config.sign_in_protection.changed': ['config', 'update', 'high'],
   'config.bundle.exported': ['config', 'export'],
   'config.bundle.imported': ['config', 'import', 'warn'],
   'config.bundle.backed_up': ['config', 'backup'],

@@ -38,6 +38,7 @@ import { auditRoutes } from './routes/audit.routes.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
 import { observabilityRoutes } from './routes/observability.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
+import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { directoryRoutes } from './routes/directory.routes.js'
 import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
@@ -166,6 +167,7 @@ export async function buildServer() {
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
       await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
+      await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' }) // bot check + sign-up policy
       await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
       await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
@@ -184,6 +186,7 @@ export async function buildServer() {
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
+      await api.register(signInProtectionPublicRoutes, { prefix: '/public/sign-in-protection' }) // login-ui: widget + sign-up mode; gateway bot check
       await api.register(jobRoutes)
     },
     { prefix: '/api' }

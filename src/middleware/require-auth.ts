@@ -46,6 +46,9 @@ const PUBLIC_ROUTES = [
   '/api/public/sites',
   // The visitor's own 2FA status for login-ui; reads their Kratos cookie itself (second-factor/routes.ts).
   '/api/public/second-factor',
+  // login-ui's sign-in page settings (bot-check site key, sign-up mode) and the gateway's bot check for
+  // recovery/verification — both answer without a session by design (sign-in-protection/routes.ts).
+  '/api/public/sign-in-protection',
   '/docs',
   '/docs/',
   // SCIM provisioning endpoints enforce their OWN bearer-token auth (hashed

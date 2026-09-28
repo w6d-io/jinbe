@@ -9978,6 +9978,191 @@ paths:
                     example: Bad Request
                   message:
                     type: string
+  /api/admin/settings/sign-in-protection:
+    get:
+      tags:
+        - sign-in-protection
+      description: Bot check per sign-in flow, the provider status (never the secret),
+        the sign-up mode and its allow and deny lists.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings:
+                    type: object
+                    properties:
+                      captcha:
+                        type: object
+                        properties:
+                          flows:
+                            type: object
+                            properties:
+                              registration:
+                                type: boolean
+                              login:
+                                type: boolean
+                              recovery:
+                                type: boolean
+                              verification:
+                                type: boolean
+                          failMode:
+                            type: string
+                      registration:
+                        type: object
+                        properties:
+                          mode:
+                            type: string
+                          allowEmails:
+                            type: array
+                            items:
+                              type: string
+                          allowDomains:
+                            type: array
+                            items:
+                              type: string
+                          denyDomains:
+                            type: array
+                            items:
+                              type: string
+                          blockDisposable:
+                            type: boolean
+                  defaults:
+                    type: object
+                    properties:
+                      captcha:
+                        type: object
+                        properties:
+                          flows:
+                            type: object
+                            properties:
+                              registration:
+                                type: boolean
+                              login:
+                                type: boolean
+                              recovery:
+                                type: boolean
+                              verification:
+                                type: boolean
+                          failMode:
+                            type: string
+                      registration:
+                        type: object
+                        properties:
+                          mode:
+                            type: string
+                          allowEmails:
+                            type: array
+                            items:
+                              type: string
+                          allowDomains:
+                            type: array
+                            items:
+                              type: string
+                          denyDomains:
+                            type: array
+                            items:
+                              type: string
+                          blockDisposable:
+                            type: boolean
+                  provider:
+                    type: object
+                    properties:
+                      provider:
+                        type: string
+                      configured:
+                        type: boolean
+                      siteKey:
+                        type:
+                          - "null"
+                          - string
+                      secretSet:
+                        type: boolean
+                      testKeys:
+                        type: boolean
+                      problem:
+                        type:
+                          - "null"
+                          - string
+                  disposableDomains:
+                    type: number
+    put:
+      tags:
+        - sign-in-protection
+      description: Replace the sign-in protection settings. Turning the bot check on
+        needs a configured provider. Enforced by the Kratos web_hook on every
+        guarded submit within 5 seconds. Requires super_admin + a second factor
+        proven within 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - captcha
+                - registration
+              additionalProperties: false
+              properties:
+                captcha:
+                  type: object
+                  properties:
+                    flows:
+                      type: object
+                      properties:
+                        registration:
+                          type: boolean
+                        login:
+                          type: boolean
+                        recovery:
+                          type: boolean
+                        verification:
+                          type: boolean
+                    failMode:
+                      type: string
+                registration:
+                  type: object
+                  properties:
+                    mode:
+                      type: string
+                    allowEmails:
+                      type: array
+                      items:
+                        type: string
+                    allowDomains:
+                      type: array
+                      items:
+                        type: string
+                    denyDomains:
+                      type: array
+                      items:
+                        type: string
+                    blockDisposable:
+                      type: boolean
+      responses:
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                  problems:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                        message:
+                          type: string
   /api/admin/audit/events:
     get:
       tags:
@@ -12183,6 +12368,25 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/webhooks/kratos/guard:
+    post:
+      tags:
+        - webhooks
+        - sign-in-protection
+      description: "Interrupting Kratos web_hook (registration after.<method> with
+        response.parse, login after with can_interrupt): 200 lets the flow go
+        on, 400 stops it with a form message. Self-authenticated via shared
+        secret."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Default Response
   /api/directory/organisations:
     get:
       tags:
@@ -14094,6 +14298,46 @@ paths:
         prove a second factor before continuing? {secondFactorRequired,
         hasSecondFactor, methods, aal}; 401 without a session; 503
         policy_unavailable | identity_unavailable.
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sign-in-protection/:
+    get:
+      tags:
+        - sign-in-protection
+      description: "What login-ui needs to draw the sign-in pages: the bot-check
+        provider, its public site key and the flows that ask for it, and the
+        sign-up mode (with the allowed domains when sign-up is limited). Never
+        the secret, never the listed addresses."
+      responses:
+        "200":
+          description: Default Response
+  /api/public/sign-in-protection/check:
+    post:
+      tags:
+        - sign-in-protection
+      description: "Gateway bot check for recovery and verification submits: 200 when
+        the flow does not ask for it or the token passes, 403 otherwise."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - flow
+              properties:
+                flow:
+                  type: string
+                  enum:
+                    - recovery
+                    - verification
+                token:
+                  type: string
+                  maxLength: 4096
+                ip:
+                  type: string
+                  maxLength: 64
       responses:
         "200":
           description: Default Response
