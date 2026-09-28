@@ -183,6 +183,23 @@ export const envSchema = z.object({
     .transform((v) => v === 'true')
     .default('false'),
 
+  // ─── Sign-in gate (sign-in-protection/gate.ts) ───
+  // Kratos sends a code the moment an address is submitted, before any hook can stop it. With the
+  // gate on, the bootstrap rules send POST /self-service/{login,registration,recovery,verification}
+  // through jinbe, which checks the bot-check token and the code-sending rate limits before Kratos
+  // sees the submit. Off: the rules go straight to Kratos, as before (the endpoint exists either way).
+  SIGN_IN_GATE_ENABLED: z
+    .string()
+    .transform((v) => v === 'true')
+    .default('false'),
+  // Code-sending submits allowed per address and per client IP, within one window.
+  SIGN_IN_GATE_CODES_PER_ADDRESS: z.coerce.number().int().positive().default(5),
+  SIGN_IN_GATE_CODES_PER_IP: z.coerce.number().int().positive().default(20),
+  SIGN_IN_GATE_WINDOW_S: z.coerce.number().int().positive().default(900),
+  // How long a token the gate verified stays good for the Kratos guard hook of the same flow (the
+  // provider answers a second siteverify of one token with timeout-or-duplicate).
+  SIGN_IN_GATE_VERIFIED_TTL_S: z.coerce.number().int().positive().max(3600).default(300),
+
   // ─── Protected identity traits (sign-in-protection/protected-traits.ts) ───
   // Kratos traits only an administrator (or jinbe, through the admin API) may set, comma-separated.
   // The gateway forwards them as trusted headers (x-person-uuid, x-applicant-uuid), so a sign-up

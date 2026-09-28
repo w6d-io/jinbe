@@ -136,6 +136,7 @@ async function main(): Promise<number> {
           adminUi: env.ADMIN_UI_URL!,
           jinbeInternal,
         },
+        signInGate: env.SIGN_IN_GATE_ENABLED,
         admin:
           adminEmail && adminPassword
             ? { email: adminEmail, password: adminPassword, name: adminName }
