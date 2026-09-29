@@ -124,8 +124,8 @@ describe('requireAuth middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
-    it('should skip auth for /api/opa routes (OPA bundle)', async () => {
-      const request = createMockRequest({ url: '/api/opa/bundle' })
+    it('should skip auth for /api/opa routes (machine token checked by their own hook)', async () => {
+      const request = createMockRequest({ url: '/api/opa/policy' })
       const reply = createMockReply()
 
       await requireAuth(request, reply)
@@ -391,8 +391,8 @@ describe('requireAuth middleware', () => {
   // New public routes: /api/opa, /api/oathkeeper, /api/webhooks
   // ===========================================================================
   describe('new public routes', () => {
-    it('should skip auth for /api/opa/bundle', async () => {
-      const request = createMockRequest({ url: '/api/opa/bundle' })
+    it('should skip auth for /api/opa/policy (its own machine-token hook guards it)', async () => {
+      const request = createMockRequest({ url: '/api/opa/policy' })
       const reply = createMockReply()
 
       await requireAuth(request, reply)

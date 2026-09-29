@@ -18,7 +18,7 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
   },
 }))
 
-import { assertNoSelfEscalation, grantsEverything } from '../../../services/rbac-escalation-guard.js'
+import { assertMayAssignGroup, assertNoSelfEscalation, grantsEverything } from '../../../services/rbac-escalation-guard.js'
 import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
 
@@ -41,6 +41,8 @@ beforeEach(() => {
   store.roles = {
     jinbe: { admin: ['admin:read', 'admin:write'], viewer: ['admin:read'], root: ['*'] },
     billing: { viewer: ['invoices:read'] },
+    // As seeded (bootstrap/seed-rbac.ts): global.admin resolves to '*', not only global.super_admin.
+    global: { super_admin: ['*'], admin: ['*'] },
   }
   opaWorld.groups['admin@example.com'] = ['ops']
   opaWorld.members['admin@example.com'] = [ORG]
@@ -98,6 +100,50 @@ describe('org → service map', () => {
 
   it('allows it for an organisation they do not belong to', async () => {
     expect(await status(assertNoSelfEscalation({ kind: 'org_services', organizationId: '22222222-2222-4222-8222-222222222222' }, ADMIN))).toBe(200)
+  })
+})
+
+describe("the global role definitions ('global.admin' is '*')", () => {
+  it("refuses a group granting global.admin — '*' by another name — even one the actor is not in", async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: { billing: ['viewer'], global: ['admin'] } }, ADMIN))).toBe(403)
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['admin'] } }, ADMIN))).toBe(403)
+  })
+
+  it("refuses redefining a global role to '*', and any global role change by a holder of one", async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'global', roles: { super_admin: ['*'], admin: ['*'], ops: ['*'] } }, ADMIN))).toBe(403)
+    store.groups.ops = { jinbe: ['admin'], global: ['auditor'] }
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'global', roles: { auditor: ['admin:write'] } }, ADMIN))).toBe(403)
+  })
+
+  it('lets a super admin grant global.admin', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['admin'] } }, ROOT))).toBe(200)
+  })
+})
+
+describe('handing out a platform group (PUT /api/admin/users/:email/groups)', () => {
+  it("refuses a group that grants '*' — super_admins, or one binding global.admin — to anyone", async () => {
+    store.groups.platform_admins = { global: ['admin'] }
+    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ADMIN))).toBe(403)
+    expect(await status(assertMayAssignGroup('platform_admins', 'someone@example.com', ADMIN))).toBe(403)
+  })
+
+  it('refuses adding oneself to any group', async () => {
+    expect(await status(assertMayAssignGroup('billing', 'Admin@Example.com', ADMIN))).toBe(403)
+  })
+
+  it('allows a group without a wildcard to somebody else', async () => {
+    expect(await status(assertMayAssignGroup('billing', 'someone@example.com', ADMIN))).toBe(200)
+  })
+
+  it('lets a super admin do both', async () => {
+    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ROOT))).toBe(200)
+    expect(await status(assertMayAssignGroup('billing', 'root@example.com', ROOT))).toBe(200)
+  })
+
+  it('fails closed', async () => {
+    expect(await status(assertMayAssignGroup('billing', 'someone@example.com'))).toBe(401)
+    opaWorld.down = true
+    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ADMIN))).toBe(503)
   })
 })
 

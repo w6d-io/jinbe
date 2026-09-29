@@ -5,6 +5,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
+// The '*'-group / self-assignment check asks OPA; it has its own tests (rbac-escalation-guard.test.ts).
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
@@ -57,6 +59,7 @@ import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
+import { assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -411,6 +414,25 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
         targetGroups: ['super_admins'],
       }),
     })
+  })
+
+  it("asks the '*' / self-assignment check for every privileged ADDITION, and refuses when it does", async () => {
+    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValueOnce(undefined)
+    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(
+      Object.assign(new Error("Only a super admin may assign 'super_admins': it grants '*'"), { statusCode: 403 }),
+    )
+
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: ['super_admins'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(vi.mocked(assertMayAssignGroup)).toHaveBeenCalledWith('super_admins', 'target@example.com', expect.objectContaining({ email: 'actor@example.com' }))
+    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked', blockingGroup: 'super_admins' } })
+    expect(allGranted()).toEqual([])
   })
 
   it('does NOT gate REMOVALS on the super_admin endpoint (a super_admin may freely remove)', async () => {

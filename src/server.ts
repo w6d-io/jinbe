@@ -33,7 +33,6 @@ import { secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-f
 import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
-import { opaBundleRoutes } from './routes/opa-bundle.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { auditRoutes } from './routes/audit.routes.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
@@ -198,7 +197,8 @@ export async function buildServer() {
       await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // allowed in-cluster ServiceAccounts only
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
-      await api.register(opaBundleRoutes, { prefix: '/opa' })
+      // GET /opa/bundle is gone: an UNAUTHENTICATED tarball of every address's groups, roles and route
+      // maps (Model A), with no consumer anywhere. The engine pulls /opa/policy, behind a machine token.
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?

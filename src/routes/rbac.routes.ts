@@ -461,13 +461,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.deleteOrgServiceMapping.bind(rbacController) as never)
 
-  // ===========================================================================
-  // Impact preview — "who gains/loses access if this change is applied?"
-  // ===========================================================================
-
-  fastify.post('/health-check', async (_request, reply) => {
-    return reply.send({ status: 'ok', redis: true, opa: true })
-  })
+  // POST /health-check is gone: a constant {status:'ok'} behind admin:read, with no caller — a write
+  // verb that asked only for reading, and a liveness answer that checked nothing.
 
   fastify.get('/history', async (request, reply) => {
     // Proxy to the rich audit stream — returns FrontendAuditEvent[] as "commits" for backward compat

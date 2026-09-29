@@ -90,7 +90,6 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/rbac/bundle/backups/restore': by('config.bundle.restored'),
   'POST /api/admin/rbac/bundle/history/:id/rollback': by('config.bundle.rolled_back'),
   'POST /api/admin/rbac/services/:name/routes/import/preview': exempt('computes the routes an OpenAPI document would produce; stores nothing'),
-  'POST /api/admin/rbac/health-check': exempt('liveness answer for the console; reads and writes nothing'),
 
   // Recertification
   'POST /api/admin/recert/campaigns': by('recert.campaign.created'),

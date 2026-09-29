@@ -129,3 +129,30 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
     }
   }
 }
+
+/**
+ * Handing out a platform group (PUT /api/admin/users/:email/groups): `admin.membership:write` lets
+ * somebody assign one, but not a group that grants `*` (the global super_admin or admin role, or a
+ * role carrying it), and not to themselves — either would be the same escalation by membership
+ * instead of by definition. Only a super admin may.
+ */
+export async function assertMayAssignGroup(group: string, targetEmail: string, actor?: AuditActorInput): Promise<void> {
+  if (!actor?.id || !actor.email) {
+    throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
+  }
+  const self = targetEmail.toLowerCase() === actor.email.toLowerCase()
+  const definition = (await redisRbacRepository.getGroups())[group]
+  const wildcard = definition ? await grantsEverything(definition) : false
+  if (!self && !wildcard) return
+
+  let superAdmin: boolean
+  try {
+    superAdmin = await isSuperAdmin(actor.email)
+  } catch (err) {
+    unavailable(err)
+  }
+  if (superAdmin) return
+  const change: RbacChange = { kind: 'group', name: group, after: null }
+  if (wildcard) refuse('grants_everything', `Only a super admin may assign '${group}': it grants '*'`, change, actor)
+  refuse('self_escalation', `Only a super admin may add themselves to '${group}'`, change, actor)
+}

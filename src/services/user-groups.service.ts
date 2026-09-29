@@ -1,5 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
+import { assertMayAssignGroup } from './rbac-escalation-guard.js'
 import { auditEventService } from './audit-event.service.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
@@ -489,12 +490,14 @@ class UserGroupsService {
           `assign group '${groupName}' (grants admin privileges)`,
           { id: actor.id, email: actor.email },
         )
+        // A group granting '*', or any platform group to oneself: a super admin only.
+        if (op === 'add') await assertMayAssignGroup(groupName, targetEmail, { id: actor.id, email: actor.email, ip: actor.ip })
         return null
       } catch (e) {
         const err = e as Error & { statusCode?: number }
         return {
           ok: false,
-          status: err.statusCode === 401 ? 401 : 422,
+          status: err.statusCode === 401 ? 401 : err.statusCode === 503 ? 503 : 422,
           body: {
             error: 'privilege_escalation_blocked',
             message: err.message,
