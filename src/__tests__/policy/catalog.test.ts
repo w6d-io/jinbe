@@ -27,6 +27,8 @@ describe('the catalogue', () => {
       'recert:manage', 'sites.requests:approve',
       // second-factor reset
       'users:reset_second_factor',
+      // tightened by the lead (2026-09-29): sign-in and MCP settings, the edge, bulk exports
+      'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
     ].sort())
   })
 })

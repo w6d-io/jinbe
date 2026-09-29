@@ -61,12 +61,12 @@ describe('platformScopes — what a personal key may carry', () => {
   it('expands a super admin\'s `*` into the delegable catalogue permissions the routes declare', async () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
     expect(await platformScopes(ROOT)).toEqual([
-      'access:check', 'access:read', 'audit:export', 'audit:read', 'gateway:apply', 'gateway:read',
+      'access:check', 'access:read', 'audit:read', 'gateway:read',
       'groups.members:revoke', 'groups:read', 'org.keys:read', 'org.members:read', 'org.members:write',
-      'org:read', 'org:write', 'policy.bundle:read', 'recert:read', 'sessions:read', 'sessions:revoke',
-      'settings.mcp:write', 'settings.signin:write', 'settings:read', 'sites:apply', 'sites:read', 'sites:write',
+      'org:read', 'org:write', 'recert:read', 'sessions:read', 'sessions:revoke',
+      'settings:read', 'sites:apply', 'sites:read', 'sites:write',
       'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
-      'users:update', 'zones:read', 'zones:write',
+      'users:update', 'zones:read',
     ])
   })
 
@@ -76,7 +76,8 @@ describe('platformScopes — what a personal key may carry', () => {
     // every legacy name: a scope is a catalogue leaf.
     for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'org.keys:revoke', 'users:delete', 'users:reset_second_factor',
       'sites:delete', 'sites.requests:approve', 'zones:delete', 'groups:write', 'org.admins:write', 'policy.bundle:write',
-      'recert:manage', 'admin:read', 'admin:write', 'admin:create']) {
+      'recert:manage', 'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
+      'admin:read', 'admin:write', 'admin:create']) {
       expect(all).not.toContain(p)
     }
   })
@@ -90,7 +91,7 @@ describe('platformScopes — what a personal key may carry', () => {
     s.rights['ada@x.io'] = ['admin:read']
     // admin:read stands for every catalogue read it used to open (and audit:export, through the audit scope).
     expect(await platformScopes('ada@x.io')).toEqual([
-      'access:read', 'audit:export', 'audit:read', 'gateway:read', 'groups:read', 'org.members:read', 'org:read',
+      'access:read', 'audit:read', 'gateway:read', 'groups:read', 'org.members:read', 'org:read',
       'recert:read', 'sessions:read', 'settings:read', 'sites:read', 'stats:read', 'users:read', 'zones:read',
     ])
   })
@@ -125,9 +126,9 @@ describe('personalScopeCatalog', () => {
     const catalog = await personalScopeCatalog('ada@x.io')
     expect(catalog.slice(0, 4)).toEqual([
       { scope: 'access:read', group: 'access' },
-      { scope: 'audit:export', group: 'audit' },
       { scope: 'audit:read', group: 'audit' },
       { scope: 'gateway:read', group: 'gateway' },
+      { scope: 'groups:read', group: 'groups' },
     ])
     expect(catalog.filter((e) => e.group === 'org')).toEqual([
       { scope: 'org.members:read', group: 'org' },

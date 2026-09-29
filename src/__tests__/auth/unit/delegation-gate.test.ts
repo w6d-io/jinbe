@@ -84,6 +84,7 @@ describe('delegation gate', () => {
     ['PUT', '/api/admin/rbac/org-admin-map', 'org.admins:write', 'delegation_ineligible:org.admins:write'],
     ['POST', '/api/admin/sites/requests/r1/approve', 'sites.requests:approve', 'delegation_ineligible:sites.requests:approve'],
     ['DELETE', '/api/admin/users/u-2', 'users:delete admin:write', 'delegation_ineligible:users:delete'],
+    ['PUT', '/api/admin/settings/second-factor', 'settings.signin:write', 'delegation_ineligible:settings.signin:write'],
     ['GET', '/api/admin/legacy', 'admin:read', 'delegation_ineligible:*'],
     // The backstop list: routes with no catalogue permission to decide on.
     ['POST', '/api/me/api-keys', '', 'delegation_ineligible:api_keys'],
@@ -96,9 +97,8 @@ describe('delegation gate', () => {
 
   it.each([
     // Owner decision: anything the user can do except the catalogue's `never`. A step-up permission
-    // passes this gate and is refused by requireRecentMfa (a token carries no second factor).
+    // passes this gate and is left to requireRecentMfa.
     ['POST', '/api/admin/sites/x/apply', 'sites:apply'],
-    ['PUT', '/api/admin/settings/second-factor', 'settings.signin:write'],
     ['GET', `/api/organizations/${ACME}/api-keys`, 'org.keys:read'],
   ] as const)('lets %s %s through with a scope granting it (delegable: direct)', async (method, url, scopes) => {
     expect((await call(method, url, scopes)).statusCode).toBe(200)

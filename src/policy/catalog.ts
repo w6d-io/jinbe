@@ -21,7 +21,8 @@ export type Sensitivity = 'low' | 'medium' | 'high' | 'critical'
  * What a delegated token (MCP, a personal key) may do with the permission. Owner decision
  * (2026-09-29): anything the user can do EXCEPT deletions, second-factor resets, key and client
  * creation, approvals and changes to the access model itself — those are `never`, for every holder,
- * super_admin included. A `stepUp` permission still needs a second factor proven in a browser, which a
+ * super_admin included. Tightened by the lead the same day (safer defaults the owner may relax):
+ * sign-in and MCP settings, zone and gateway writes, the RBAC bundle export and audit export. A `stepUp` permission still needs a second factor proven in a browser, which a
  * token never carries, so `direct` + `stepUp` reaches a human anyway.
  */
 export type Delegable = 'direct' | 'never'
@@ -94,21 +95,21 @@ export const CATALOG = {
   'sites:delete': p('sites', 'Delete a site', 'critical', { stepUp: true, delegable: 'never' }),
   'sites.requests:approve': p('sites', 'Approve or reject a publication request', 'high', { stepUp: true, delegable: 'never' }),
   'zones:read': p('sites', 'View zones', 'low'),
-  'zones:write': p('sites', 'Create or change a zone', 'high', { stepUp: true }),
+  'zones:write': p('sites', 'Create or change a zone', 'high', { stepUp: true, delegable: 'never' }),
   'zones:delete': p('sites', 'Delete a zone', 'critical', { stepUp: true, delegable: 'never' }),
   'gateway:read': p('gateway', 'View the gateway handlers and rollouts', 'low'),
-  'gateway:apply': p('gateway', 'Change or roll back the gateway configuration', 'critical', { stepUp: true, fourEyes: 'prod' }),
+  'gateway:apply': p('gateway', 'Change or roll back the gateway configuration', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
 
   // ── Settings and the policy ────────────────────────────────────────────────────────────────────
   'settings:read': p('settings', 'View sign-in, second-factor and AI assistant settings', 'low'),
-  'settings.signin:write': p('settings', 'Change how people sign in (methods, second factor, bot check)', 'critical', { stepUp: true, fourEyes: 'prod' }),
-  'settings.mcp:write': p('settings', 'Switch AI assistants (MCP) on or off', 'high', { stepUp: true }),
-  'policy.bundle:read': p('settings', 'Export the RBAC bundle, list its history and backups', 'high'),
+  'settings.signin:write': p('settings', 'Change how people sign in (methods, second factor, bot check)', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
+  'settings.mcp:write': p('settings', 'Switch AI assistants (MCP) on or off', 'high', { stepUp: true, delegable: 'never' }),
+  'policy.bundle:read': p('settings', 'Export the RBAC bundle, list its history and backups', 'high', { delegable: 'never' }),
   'policy.bundle:write': p('settings', 'Import, roll back or restore the RBAC bundle', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
 
   // ── Audit and review ───────────────────────────────────────────────────────────────────────────
   'audit:read': p('audit', 'Read the audit trail; keep saved views', 'medium'),
-  'audit:export': p('audit', 'Export audit evidence', 'high', { stepUp: true }),
+  'audit:export': p('audit', 'Export audit evidence', 'high', { stepUp: true, delegable: 'never' }),
   'recert:read': p('audit', 'View recertification campaigns and reports', 'medium'),
   'recert:manage': p('audit', 'Create, activate and close recertification campaigns (a close applies its revokes)', 'high', { delegable: 'never' }),
   'recert:delete': p('audit', 'Delete a recertification campaign', 'high', { delegable: 'never' }),
