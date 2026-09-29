@@ -27,6 +27,7 @@ const accessCheckBodySchema = () => z.object({
   method: z.string().transform((m) => m.toUpperCase()).pipe(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])),
   path: z.string().max(2048).regex(/^\/[^\s?#]*$/, 'must be an absolute path with no query or fragment'),
   app: z.string().max(63).regex(SERVICE_NAME_PATTERN).optional(),
+  aal: z.enum(['aal1', 'aal2']).optional(),
 })
 
 const errorSchema = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } }
@@ -35,7 +36,7 @@ const accessCheckResponseSchema = {
   type: 'object',
   properties: {
     allow: { type: 'boolean' },
-    reason: { type: 'string', enum: ['ok', 'not_found', 'forbidden', 'forbidden_org'] },
+    reason: { type: 'string', enum: ['ok', 'not_found', 'forbidden', 'forbidden_org', 'needs_2fa'] },
     app: { type: ['string', 'null'] },
     owners: { type: 'array', items: { type: 'string' } },
     matchingRules: {
@@ -49,6 +50,16 @@ const accessCheckResponseSchema = {
     roles: { type: 'array', items: { type: 'string' } },
     permissions: { type: 'array', items: { type: 'string' } },
     superAdmin: { type: 'boolean' },
+    aal: { type: 'string', enum: ['aal1', 'aal2'] },
+    stepUp: {
+      type: 'object',
+      description: 'Only with reason needs_2fa: the sign-in level is the one failing condition',
+      properties: {
+        requiredAal: { type: 'string', enum: ['aal2'] },
+        allowedAtAal2: { type: 'boolean' },
+        requiredBy: { type: 'array', items: { type: 'string', enum: ['site', 'platform_group'] } },
+      },
+    },
   },
   required: ['allow', 'reason', 'app', 'owners', 'matchingRules', 'groups', 'roles', 'permissions', 'superAdmin'],
 }
@@ -73,6 +84,7 @@ export async function accessCheckRoutes(fastify: FastifyInstance) {
           method: { type: 'string', description: 'GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS (any case)' },
           path: { type: 'string', description: 'Absolute request path, no query string, e.g. /api/clusters/42' },
           app: { type: 'string', description: 'Pin the service instead of letting the policy resolve the owner' },
+          aal: { type: 'string', enum: ['aal1', 'aal2'], description: 'Sign-in level to judge at: aal1 (password) or aal2 (second factor). Unset: no level' },
         },
       },
       response: {

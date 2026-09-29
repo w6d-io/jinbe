@@ -8927,6 +8927,13 @@ paths:
                 app:
                   type: string
                   description: Pin the service instead of letting the policy resolve the owner
+                aal:
+                  type: string
+                  enum:
+                    - aal1
+                    - aal2
+                  description: "Sign-in level to judge at: aal1 (password) or aal2 (second
+                    factor). Unset: no level"
       responses:
         "200":
           description: Default Response
@@ -8944,6 +8951,7 @@ paths:
                       - not_found
                       - forbidden
                       - forbidden_org
+                      - needs_2fa
                   app:
                     type:
                       - "null"
@@ -8977,6 +8985,29 @@ paths:
                       type: string
                   superAdmin:
                     type: boolean
+                  aal:
+                    type: string
+                    enum:
+                      - aal1
+                      - aal2
+                  stepUp:
+                    type: object
+                    description: "Only with reason needs_2fa: the sign-in level is the one failing
+                      condition"
+                    properties:
+                      requiredAal:
+                        type: string
+                        enum:
+                          - aal2
+                      allowedAtAal2:
+                        type: boolean
+                      requiredBy:
+                        type: array
+                        items:
+                          type: string
+                          enum:
+                            - site
+                            - platform_group
                 required:
                   - allow
                   - reason
@@ -15774,8 +15805,9 @@ paths:
     get:
       tags:
         - api-keys
-      description: Whether members may create personal API keys acting in this
-        organization (404 unless delegated tokens are enabled).
+      description: DEPRECATED — personal keys are bound to no organization and inherit
+        their holder, so this value is stored but no longer enforced (404 unless
+        delegated tokens are enabled).
       parameters:
         - schema:
             type: string
@@ -15841,8 +15873,9 @@ paths:
     put:
       tags:
         - api-keys
-      description: Allow or forbid personal API keys in this organization. Forbidding
-        stops the keys already issued at their next call.
+      description: "DEPRECATED — stored but no longer enforced: personal keys are
+        bound to no organization (MCP is limited by group in the AI assistants
+        setting)."
       requestBody:
         required: true
         content:
