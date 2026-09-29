@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   emit: vi.fn(async () => 'id'),
   clearCache: vi.fn(),
   env: { DELEGATED_TOKENS_ENABLED: true } as Record<string, unknown>,
+  groups: ['staff'] as string[],
 }))
 
 vi.mock('../../config/index.js', () => ({ env: h.env }))
@@ -23,6 +24,7 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
   },
 }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
+vi.mock('../../authz/opa.js', () => ({ rights: vi.fn(async () => ({ groups: h.groups, roles: [], permissions: [] })) }))
 vi.mock('../../services/delegated-token.service.js', () => ({ delegatedTokenService: { clearCache: h.clearCache } }))
 vi.mock('../../middleware/require-admin.js', () => ({
   requireAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
@@ -37,16 +39,15 @@ vi.mock('../../middleware/require-admin.js', () => ({
 }))
 
 import { mcpSettingsRoutes, mcpStatusRoutes } from '../../mcp/routes.js'
-import { MCP_SETTINGS_KEY, defaultMcpSettings, mcpGate, parseMcpSettings, resetMcpSettingsCache, validateMcpSettings } from '../../mcp/settings.js'
+import { MCP_SETTINGS_KEY, defaultMcpSettings, getMcpSettings, groupAllowed, mcpGate, parseMcpSettings, resetMcpSettingsCache, validateMcpSettings } from '../../mcp/settings.js'
 import { isPublicRoute } from '../../middleware/require-auth.js'
 
-const ORG_A = '11111111-1111-1111-1111-111111111111'
-const ORG_B = '22222222-2222-2222-2222-222222222222'
 const store = (v: unknown) => { h.config[MCP_SETTINGS_KEY] = JSON.stringify(v); resetMcpSettingsCache() }
 
 beforeEach(() => {
   h.config = {}
   h.redisDown = false
+  h.groups = ['staff']
   h.env.DELEGATED_TOKENS_ENABLED = true
   delete h.env.MCP_PUBLIC_URL
   h.emit.mockClear()
@@ -55,14 +56,14 @@ beforeEach(() => {
 })
 
 describe('settings', () => {
-  it('unset is OFF until an administrator opts in; no URL, 30 days, every org', () => {
-    expect(parseMcpSettings(undefined)).toEqual({ enabled: false, serverUrl: null, personalKeys: { maxDays: 30 }, allowedOrgs: 'all' })
+  it('unset is OFF until an administrator opts in; no URL, 30 days, every group', () => {
+    expect(parseMcpSettings(undefined)).toEqual({ enabled: false, serverUrl: null, personalKeys: { maxDays: 30 }, allowedGroups: 'all' })
     expect(parseMcpSettings('not json')).toEqual(defaultMcpSettings())
   })
 
-  it('accepts a clean document and canonicalises the org list', () => {
-    const r = validateMcpSettings({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedOrgs: [ORG_B, ORG_A.toUpperCase(), ORG_B] })
-    expect(r).toEqual({ ok: true, value: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedOrgs: [ORG_A, ORG_B] } })
+  it('accepts a clean document and canonicalises the group list', () => {
+    const r = validateMcpSettings({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['support', ' ops ', 'support'] })
+    expect(r).toEqual({ ok: true, value: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['ops', 'support'] } })
     expect(validateMcpSettings({ enabled: true, serverUrl: '' })).toMatchObject({ ok: true, value: { serverUrl: null } })
   })
 
@@ -71,8 +72,9 @@ describe('settings', () => {
     ['a URL with credentials', { serverUrl: 'https://u:p@mcp.example.com' }, 'serverUrl'],
     ['more than 30 days', { personalKeys: { maxDays: 31 } }, 'personalKeys.maxDays'],
     ['zero days', { personalKeys: { maxDays: 0 } }, 'personalKeys.maxDays'],
-    ['an org that is not an id', { allowedOrgs: ['acme'] }, 'allowedOrgs'],
-    ['an empty org list', { allowedOrgs: [] }, 'allowedOrgs'],
+    ['a name that is not a group', { allowedGroups: ['has space'] }, 'allowedGroups'],
+    ['an empty group list', { allowedGroups: [] }, 'allowedGroups'],
+    ['the retired org list', { allowedOrgs: 'all' }, 'allowedOrgs'],
     ['a non-boolean switch', { enabled: 'yes' }, 'enabled'],
   ])('refuses %s', (_l, input, field) => {
     const r = validateMcpSettings({ enabled: true, ...input })
@@ -103,6 +105,25 @@ describe('settings', () => {
     vi.setSystemTime(Date.now() + 10_000)
     expect(await mcpGate()).toMatchObject({ off: 'administrator' })
     vi.useRealTimers()
+  })
+})
+
+
+describe('allowedGroups', () => {
+  it('lets in a holder of any listed group, or anybody with all', () => {
+    const on = (allowedGroups: 'all' | string[]) => ({ ...defaultMcpSettings(), enabled: true, allowedGroups })
+    expect(groupAllowed(on('all'), [])).toBe(true)
+    expect(groupAllowed(on(['support', 'ops']), ['staff', 'ops'])).toBe(true)
+    expect(groupAllowed(on(['support']), ['staff'])).toBe(false)
+  })
+
+  it('migrates a document saved before groups, once: all stays all, an org list becomes no group (closed)', async () => {
+    store({ enabled: true, personalKeys: { maxDays: 7 }, allowedOrgs: 'all' })
+    expect((await getMcpSettings()).allowedGroups).toBe('all')
+    expect(JSON.parse(h.config[MCP_SETTINGS_KEY])).toEqual({ enabled: true, serverUrl: null, personalKeys: { maxDays: 7 }, allowedGroups: 'all' })
+    store({ enabled: true, allowedOrgs: ['11111111-1111-1111-1111-111111111111'] })
+    expect((await getMcpSettings()).allowedGroups).toEqual([])
+    expect(JSON.parse(h.config[MCP_SETTINGS_KEY]).allowedOrgs).toBeUndefined()
   })
 })
 
@@ -147,7 +168,7 @@ describe('routes', () => {
 
   it('PUT saves, audits config.mcp.changed, drops cached tokens when the switch flips, and takes effect at once', async () => {
     store({ enabled: true })
-    const res = await put({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedOrgs: 'all' })
+    const res = await put({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: 'all' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({ settings: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } }, effective: false })
     expect(await mcpGate()).toMatchObject({ on: false, off: 'administrator' })
@@ -175,11 +196,14 @@ describe('routes', () => {
     expect((await status({ 'x-anon': '1' })).statusCode).toBe(401)
     expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' }) // nothing saved yet
     store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } })
-    expect((await status()).json()).toEqual({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', off: null, personalKeys: { maxDays: 7 } })
+    expect((await status()).json()).toEqual({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', off: null, personalKeys: { maxDays: 7 }, allowed: true })
+    store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['support'] })
+    expect((await status()).json()).toMatchObject({ enabled: true, allowed: false })
+    store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } })
     store({ enabled: false, serverUrl: 'https://mcp.example.com/mcp' })
     expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' })
     h.env.DELEGATED_TOKENS_ENABLED = false
-    expect((await status()).json()).toEqual({ enabled: false, serverUrl: null, off: 'deployment', personalKeys: null })
+    expect((await status()).json()).toEqual({ enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null })
   })
 
   it('the deployment address (MCP_PUBLIC_URL) is shown until an administrator saves another; saving it unchanged stores none', async () => {

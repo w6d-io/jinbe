@@ -3,7 +3,8 @@ import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware
 import { auditEventService } from '../services/audit-event.service.js'
 import { delegatedTokenService } from '../services/delegated-token.service.js'
 import { auditActor } from '../utils/audit-actor.js'
-import { defaultMcpSettings, deploymentServerUrl, effectiveServerUrl, getMcpSettings, mcpCeiling, mcpGate, setMcpSettings, validateMcpSettings } from './settings.js'
+import { rights } from '../authz/opa.js'
+import { defaultMcpSettings, deploymentServerUrl, effectiveServerUrl, getMcpSettings, groupAllowed, mcpCeiling, mcpGate, setMcpSettings, validateMcpSettings } from './settings.js'
 
 const problemSchema = {
   type: 'object',
@@ -20,7 +21,7 @@ const settingsSchema = {
     enabled: { type: 'boolean' },
     serverUrl: { type: ['string', 'null'] },
     personalKeys: { type: 'object', properties: { maxDays: { type: 'integer' } } },
-    allowedOrgs: { anyOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string' } }] },
+    allowedGroups: { anyOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string' } }] },
   },
 }
 
@@ -110,7 +111,8 @@ export async function mcpSettingsRoutes(fastify: FastifyInstance) {
 
 /**
  * GET /api/mcp/status — for any signed-in person (kuma Connections): is MCP on, where is the server,
- * how long may a new personal key live. `off` says why not: 'deployment' (the env ceiling) or
+ * how long may a new personal key live, and whether THEIR groups may use it (`allowed`; null when off
+ * or when that cannot be told right now). `off` says why not: 'deployment' (the env ceiling) or
  * 'administrator' (the switch). Registered beside mcpRoutes, outside its actor-only hook; /api/mcp is
  * on the session gate's bypass list for auth-mcp, so the session is checked here.
  */
@@ -127,6 +129,7 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
             serverUrl: { type: ['string', 'null'] },
             off: { type: ['string', 'null'], enum: ['deployment', 'administrator', null] },
             personalKeys: { type: ['object', 'null'], properties: { maxDays: { type: 'integer' } } },
+            allowed: { type: ['boolean', 'null'], description: 'Whether your groups may use MCP (allowedGroups); null when MCP is off or it cannot be told' },
           },
         },
         401: problemSchema,
@@ -139,12 +142,21 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
     reply.header('cache-control', 'private, max-age=5')
     const gate = await mcpGate()
     if (gate.off === 'unavailable') return reply.status(503).send({ error: 'settings_unavailable', message: 'The AI assistant settings cannot be read right now.' })
-    if (gate.off === 'deployment') return { enabled: false, serverUrl: null, off: 'deployment', personalKeys: null }
+    if (gate.off === 'deployment') return { enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null }
+    let allowed: boolean | null = null
+    if (gate.on) {
+      try {
+        allowed = groupAllowed(gate.settings, (await rights(uc.email)).groups)
+      } catch {
+        allowed = null
+      }
+    }
     return {
       enabled: gate.on,
       serverUrl: effectiveServerUrl(gate.settings!),
       off: gate.on ? null : 'administrator',
       personalKeys: gate.settings!.personalKeys,
+      allowed,
     }
   })
 }

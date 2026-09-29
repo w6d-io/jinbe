@@ -117,7 +117,7 @@ beforeAll(async () => {
     if (u && scopes !== undefined) {
       request.userContext = {
         id: `id-${u}`, email: `${u}@example.com`, name: u, authVia: 'delegated',
-        delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), org: 'acme', kind: 'oauth', via: 'auth-mcp' },
+        delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), kind: 'oauth', via: 'auth-mcp' },
       } as never
     }
   })
@@ -255,12 +255,12 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
   const asClient = (url: string, user: string, scopes: string) =>
     app.inject({ url, headers: { 'x-test-user': user, 'x-test-scopes': scopes } })
 
-  it('asks OPA about the USER, with the scopes and org the token carries', async () => {
+  it('asks OPA about the USER, with the scopes the token carries (bound to no org)', async () => {
     const res = await asClient('/api/organizations/acme/members', 'acme-admin', 'org:manage_users')
     expect(res.statusCode).toBe(200)
     expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toEqual({
       email: 'acme-admin@example.com', object: '/api/organizations/acme/members', action: 'GET', app: 'jinbe', client: false,
-      delegated: true, scopes: ['org:manage_users'], org: 'acme', client_id: 'claude',
+      delegated: true, scopes: ['org:manage_users'], client_id: 'claude',
     })
   })
 
@@ -270,8 +270,9 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
     expect(s.calls.filter((c) => c.rule === 'rbac/decision')).toEqual([])
   })
 
-  it("another org than the token's is refused", async () => {
-    expect((await asClient('/api/organizations/globex/members', 'super', 'org:manage_users')).statusCode).toBe(403)
+  it('which org a call may touch is decided for the USER by the normal rules, not by the token', async () => {
+    expect((await asClient('/api/organizations/globex/members', 'super', 'org:manage_users')).statusCode).toBe(200)
+    expect((await asClient('/api/organizations/globex/members', 'acme-admin', 'org:manage_users')).statusCode).toBe(403)
   })
 
   it('the scope never widens the user: OPA refusing the user is still a 403', async () => {

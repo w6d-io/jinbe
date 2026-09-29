@@ -6,9 +6,9 @@ import type { ApiKeyPolicy } from '../schemas/api-key.schema.js'
  *
  *   rbac:org_api_key_policy → Hash: { organizationId: JSON({ personal_keys: 'allowed' | 'forbidden' }) }
  *
- * Default `allowed` (owner decision: personal keys allowed, 30 days at most; an org admin may forbid
- * them). Read at creation AND on every call a personal key makes, so forbidding them stops the keys
- * already out there, not only new ones.
+ * DEPRECATED: personal keys are no longer bound to an organization (they inherit their holder, and
+ * MCP is limited by group — mcp/settings.ts), so nothing enforces this any more. Kept readable until
+ * the routes are removed.
  */
 
 const KEY = 'rbac:org_api_key_policy'

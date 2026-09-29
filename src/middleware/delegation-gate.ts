@@ -1,6 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { declaredRoute } from '../policy/declared-routes.js'
-import { JINBE_BUILT_IN_ROUTES } from '../bootstrap/build-route-map.js'
 import { scopeCovers } from '../services/authorization-resolution.js'
 import { denyAudit } from '../audit/deny.js'
 
@@ -14,8 +13,13 @@ import { denyAudit } from '../audit/deny.js'
  *      roster, SCIM, backups and infrastructure, the policy and gateway data, approvals and applies,
  *      and any change to the caller's own groups or account (no self-grant);
  *   2. a route that requires a permission needs a SCOPE covering it (`covers`, never a wildcard);
- *   3. a route of one organization must be the token's organization;
+ *   3. a token is bound to no organization: which org a route may touch is decided for the USER by
+ *      the normal rules (membership, org grants, the roster) in the route's own guard;
  *   4. a route that requires no permission is reachable read-only — it answers about the caller.
+ *
+ * A personal key inherits its holder: its scopes are what the holder holds NOW (all of it, or the
+ * subset chosen for the key), recomputed on every introspection (delegated-token.service.ts), and the
+ * route gates ask the user's current rights again — a removed group stops the key at once.
  *
  * A step-up is never satisfied: the token carries no second factor (services/step-up.ts refuses
  * authVia 'delegated' as `step_up_unavailable`), so anything behind requireRecentMfa goes to a human
@@ -76,13 +80,6 @@ function targetsSelf(request: FastifyRequest, method: string, pattern: string): 
   return target !== '' && (target === uc?.id?.toLowerCase() || target === uc?.email?.toLowerCase())
 }
 
-/** The path param naming the route's organization, when it is one organization's. */
-export function orgParamOf(method: string, pattern: string): string | null {
-  const row = JINBE_BUILT_IN_ROUTES.find((r) => r.method === method && r.path === pattern && r.org_param)
-  if (row?.org_param) return row.org_param
-  return pattern.startsWith('/api/organizations/:organizationId') ? 'organizationId' : null
-}
-
 /**
  * Why a delegated caller may not reach this route, or null. `permission` overrides the published
  * route table (a guard that knows its own permission passes it).
@@ -97,12 +94,6 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
   const why = ineligibleWhy(method, pattern)
   if (why) return `delegation_ineligible:${why}`
   if (targetsSelf(request, method, pattern)) return 'delegation_ineligible:self_change'
-
-  const orgParam = orgParamOf(method, pattern)
-  if (orgParam) {
-    const org = ((request.params ?? {}) as Record<string, string | undefined>)[orgParam]
-    if (org !== delegation.org) return 'delegation_other_org'
-  }
 
   const required = permission ?? declaredRoute(method, pattern)?.permission
   if (required) {

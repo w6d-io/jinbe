@@ -115,12 +115,13 @@ export interface RouteQuestion {
   aal?: string
   client?: boolean
   /**
-   * A delegated caller (a user through a client): the scopes its token carries and the organization
-   * it is bound to. Sent only then, so every other question keeps its input — and its cache key.
-   * The policy's `delegated_ok` (proposed) requires a scope covering the route's permission and the
-   * route's org to be this one; jinbe enforces the same before asking (middleware/delegation-gate.ts).
+   * A delegated caller (a user through a client): the scopes its token carries, and an OAuth token's
+   * consent org when it names one (informational: a token is bound to no org). Sent only then, so
+   * every other question keeps its input — and its cache key. The policy's `delegated_ok` (proposed)
+   * requires a scope covering the route's permission; jinbe enforces the same before asking
+   * (middleware/delegation-gate.ts).
    */
-  delegation?: { scopes: readonly string[]; org: string; client_id: string }
+  delegation?: { scopes: readonly string[]; org?: string; client_id: string }
 }
 
 export interface Decision {
@@ -145,7 +146,7 @@ export function decide(q: RouteQuestion): Promise<Decision> {
   if (q.delegation) {
     input.delegated = true
     input.scopes = [...q.delegation.scopes].sort()
-    input.org = q.delegation.org
+    if (q.delegation.org) input.org = q.delegation.org
     input.client_id = q.delegation.client_id
   }
   return ask('rbac/decision', input, (r) => {

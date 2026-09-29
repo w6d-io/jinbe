@@ -78,14 +78,9 @@ export class ApiKeyService {
    * Validate requested scopes ⊆ this org's catalog for this caller (services/api-key-scopes.ts).
    * Throws 400 on violation. A wildcard is refused before the catalog is even read.
    */
-  async validateScopes(
-    organizationId: string,
-    callerEmail: string,
-    scopes: string[],
-    catalog: (org: string, email: string) => Promise<{ scope: string }[]> = scopeCatalog,
-  ): Promise<void> {
+  async validateScopes(organizationId: string, callerEmail: string, scopes: string[]): Promise<void> {
     const wildcard = scopes.filter((s) => !isGrantableScope(s))
-    const allowed = new Set((await catalog(organizationId, callerEmail)).map((e) => e.scope))
+    const allowed = new Set((await scopeCatalog(organizationId, callerEmail)).map((e) => e.scope))
     const invalid = [...new Set([...wildcard, ...scopes.filter((s) => !allowed.has(s))])]
     if (invalid.length > 0) {
       throw new ApiKeyError(400, 'One or more requested scopes are not allowed', {
