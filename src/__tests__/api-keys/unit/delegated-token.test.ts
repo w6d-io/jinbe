@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Delegated user tokens: an opaque Hydra token → the user, their one org, their scopes. Refused when
-// inactive, expired, for another audience, not org-bound, an org MACHINE key, or a personal key past
-// its expiry or in an org that forbids them.
+// Delegated user tokens: an opaque Hydra token → the user and their scopes, bound to no org. Refused
+// when inactive, expired, for another audience, an org MACHINE key, a personal key past its expiry, or
+// a holder whose groups may not use MCP. A personal key's scopes are what its holder holds NOW.
 
 const s = vi.hoisted(() => ({
   mcpConfig: {} as Record<string, string>,
@@ -10,8 +10,10 @@ const s = vi.hoisted(() => ({
   introspect: vi.fn(),
   getClient: vi.fn(),
   getIdentity: vi.fn(),
-  policy: vi.fn(async () => ({ personal_keys: 'allowed' })),
   touch: vi.fn(),
+  groups: ['staff'] as string[],
+  held: ['admin:read', 'users:read'] as string[],
+  heldFails: false,
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
@@ -19,7 +21,13 @@ vi.mock('../../../config/index.js', () => ({ env: s.env }))
 vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/hydra.service.js', () => ({ hydraService: { introspect: s.introspect, getClient: s.getClient } }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.getIdentity } }))
-vi.mock('../../../services/api-key-policy.js', () => ({ getApiKeyPolicy: s.policy }))
+vi.mock('../../../authz/opa.js', () => ({ rights: vi.fn(async () => ({ groups: s.groups, roles: [], permissions: [] })) }))
+vi.mock('../../../services/platform-scopes.js', () => ({
+  platformScopes: vi.fn(async () => {
+    if (s.heldFails) throw new Error('opa down')
+    return s.held
+  }),
+}))
 vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
 
 import { DelegatedTokenService } from '../../../services/delegated-token.service.js'
@@ -42,13 +50,15 @@ beforeEach(() => {
   s.introspect.mockReset()
   s.getClient.mockReset()
   s.getIdentity.mockReset().mockResolvedValue({ id: 'user-1', state: 'active', traits: { email: 'ann@acme.io', name: { first: 'Ann', last: 'Lee' } } })
-  s.policy.mockReset().mockResolvedValue({ personal_keys: 'allowed' })
+  s.groups = ['staff']
+  s.held = ['admin:read', 'users:read']
+  s.heldFails = false
   s.touch.mockReset()
   svc = new DelegatedTokenService()
 })
 
 describe('DelegatedTokenService.resolve', () => {
-  it('maps an OAuth token to its user, org and grantable scopes only', async () => {
+  it('maps an OAuth token to its user, grantable scopes only, and its consent org for information', async () => {
     s.introspect.mockResolvedValue(oauth())
     const r = await svc.resolve('ory_at_abc', NOW)
     expect(r).toEqual({
@@ -65,7 +75,6 @@ describe('DelegatedTokenService.resolve', () => {
     ['expired', { exp: NOW / 1000 - 1 }, 'token_expired'],
     ['another audience', { aud: ['https://jinbe'] }, 'audience_mismatch'],
     ['a refresh token', { token_use: 'refresh_token' }, 'not_an_access_token'],
-    ['not bound to an org', { ext: {} }, 'token_not_org_bound'],
   ])('refuses a token that is %s', async (_label, over, error) => {
     s.introspect.mockResolvedValue(oauth(over))
     expect(await svc.resolve('t', NOW)).toEqual({ error })
@@ -117,26 +126,51 @@ describe('DelegatedTokenService.resolve', () => {
     expect(s.introspect).toHaveBeenCalledTimes(1)
   })
 
-  it("refuses a token whose org is outside the administrator's scope, cached or not", async () => {
-    s.introspect.mockResolvedValue(oauth({ ext: { org: '11111111-1111-1111-1111-111111111111' } }))
+  it('accepts a token that names no org', async () => {
+    s.introspect.mockResolvedValue(oauth({ ext: {} }))
+    const r = await svc.resolve('t', NOW)
+    expect(r).toHaveProperty('principal')
+    expect((r as { principal: Record<string, unknown> }).principal).not.toHaveProperty('org')
+  })
+
+  it("refuses a holder whose groups the administrator has not allowed, cached or not — at once", async () => {
+    s.introspect.mockResolvedValue(oauth())
     expect(await svc.resolve('same', NOW)).toHaveProperty('principal')
-    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['22222222-2222-2222-2222-222222222222'] }) }
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedGroups: ['support'] }) }
     resetMcpSettingsCache()
-    expect(await svc.resolve('same', NOW + 1000)).toEqual({ error: 'mcp_org_not_allowed' })
-    s.mcpConfig = { mcp: JSON.stringify({ enabled: true, allowedOrgs: ['11111111-1111-1111-1111-111111111111'] }) }
-    resetMcpSettingsCache()
+    expect(await svc.resolve('same', NOW + 1000)).toEqual({ error: 'mcp_group_not_allowed' })
+    s.groups = ['staff', 'support']
     expect(await svc.resolve('same', NOW + 2000)).toHaveProperty('principal')
+    expect(s.introspect).toHaveBeenCalledTimes(1)
   })
 
   describe('personal keys (client_credentials, sub = client)', () => {
-    const cc = oauth({ sub: 'pk-1', client_id: 'pk-1', ext: undefined, scope: 'payroll:read' })
-    const meta = { kind: 'personal', subject: 'user-1', organization_id: 'acme', expires_at: '2026-10-10T00:00:00Z' }
+    const cc = oauth({ sub: 'pk-1', client_id: 'pk-1', ext: undefined, scope: 'users:read sessions:read mcp' })
+    const meta = { kind: 'personal', subject: 'user-1', scope_mode: 'selected', expires_at: '2026-10-10T00:00:00Z' }
 
-    it('acts as the subject in its metadata, until the earlier of token exp and key expiry', async () => {
+    it('acts as the subject in its metadata, bound to no org, with the stored scopes it STILL holds', async () => {
       s.introspect.mockResolvedValue(cc)
       s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
       const r = await svc.resolve('k', NOW)
-      expect(r).toMatchObject({ principal: { subject: 'user-1', org: 'acme', kind: 'personal', clientId: 'pk-1', scopes: ['payroll:read'], keyExpiresAt: Date.parse('2026-10-10T00:00:00Z') } })
+      expect(r).toMatchObject({ principal: { subject: 'user-1', kind: 'personal', clientId: 'pk-1', scopes: ['users:read'], tokenScope: 'users:read mcp', allPermissions: false, keyExpiresAt: Date.parse('2026-10-10T00:00:00Z') } })
+      expect((r as { principal: Record<string, unknown> }).principal).not.toHaveProperty('org')
+    })
+
+    it('an all-permissions key carries everything its holder holds now, recomputed on every call', async () => {
+      s.introspect.mockResolvedValue({ ...cc, scope: 'mcp' })
+      s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: { ...meta, scope_mode: 'all' } })
+      expect(await svc.resolve('k', NOW)).toMatchObject({ principal: { scopes: ['admin:read', 'users:read'], tokenScope: 'admin:read users:read mcp', allPermissions: true } })
+      // A group removed: the next call, cached token or not, carries less.
+      s.held = ['users:read']
+      expect(await svc.resolve('k', NOW + 1000)).toMatchObject({ principal: { scopes: ['users:read'] } })
+      expect(s.introspect).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses when what the holder holds cannot be told, never guesses', async () => {
+      s.introspect.mockResolvedValue(cc)
+      s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
+      s.heldFails = true
+      expect(await svc.resolve('k', NOW)).toEqual({ error: 'authz_unavailable' })
     })
 
     it("marks the key used on every accepted token, cached or not, and never an OAuth client's", async () => {
@@ -166,11 +200,10 @@ describe('DelegatedTokenService.resolve', () => {
       expect(await svc.resolve('k2', NOW)).toEqual({ error: 'key_expired' })
     })
 
-    it('refuses once the org forbids personal keys', async () => {
+    it('an older key still naming an org works as any other: the org means nothing now', async () => {
       s.introspect.mockResolvedValue(cc)
-      s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
-      s.policy.mockResolvedValue({ personal_keys: 'forbidden' })
-      expect(await svc.resolve('k', NOW)).toEqual({ error: 'personal_keys_forbidden' })
+      s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: { ...meta, organization_id: 'acme' } })
+      expect(await svc.resolve('k', NOW)).toHaveProperty('principal')
     })
   })
 })

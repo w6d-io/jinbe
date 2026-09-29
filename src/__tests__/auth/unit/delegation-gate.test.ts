@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 
-// A delegated caller (user through a client): scope must cover the route permission, the route's org
-// must be the token's, ineligible routes are refused even for a super admin, no self-change, and a
-// permission-less route is read-only. A session caller is untouched.
+// A delegated caller (user through a client): scope must cover the route permission, the token is
+// bound to no org, ineligible routes are refused even
+// for a super admin, no self-change, and a permission-less route is read-only. A session caller is
+// untouched.
 
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
 
@@ -26,7 +27,7 @@ beforeAll(async () => {
     request.userContext = {
       email: 'ann@acme.io', id: 'user-1', name: 'Ann',
       ...(scopes !== undefined
-        ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), org: ACME, kind: 'oauth' as const, via: 'auth-mcp' } }
+        ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), kind: 'oauth' as const, via: 'auth-mcp' } }
         : { authVia: 'session' as const }),
     }
   })
@@ -69,11 +70,9 @@ describe('delegation gate', () => {
     expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'deny', reason: 'scope_missing:sites:write' }))
   })
 
-  it("refuses another organization's routes, whatever the scopes", async () => {
+  it('binds to no organization: any org\'s route is the user\'s to be authorized for, by its own guard', async () => {
     expect((await call('GET', `/api/organizations/${ACME}/users`, 'org:manage_users')).statusCode).toBe(200)
-    const other = await call('GET', `/api/organizations/${GLOBEX}/users`, 'org:manage_users')
-    expect(other.statusCode).toBe(403)
-    expect(other.json().reason).toBe('delegation_other_org')
+    expect((await call('GET', `/api/organizations/${GLOBEX}/users`, 'org:manage_users')).statusCode).toBe(200)
   })
 
   it.each([

@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto'
 import { env } from '../config/index.js'
 import { hydraService, type HydraIntrospection } from './hydra.service.js'
 import { kratosService } from './kratos.service.js'
-import { getApiKeyPolicy } from './api-key-policy.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { touchApiKeyUse } from './api-key-last-used.js'
-import { mcpGate, orgAllowed } from '../mcp/settings.js'
+import { groupAllowed, mcpGate, type McpSettings } from '../mcp/settings.js'
+import { rights } from '../authz/opa.js'
+import { platformScopes } from './platform-scopes.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -14,11 +15,16 @@ const log = () => componentLogger('delegated-token')
  * A USER acting through a client, proven by an opaque Hydra access token (MCP prerequisite).
  *
  * Two ways in, one shape out:
- *   - an OAuth token (authorization code): `sub` is the user, `ext.org` the ONE organization the user
- *     picked at consent;
- *   - a personal key (client_credentials, `owner = user:<id>`): `sub` is the client, and the user and
- *     org are read from the client's own metadata, re-read on every introspection — so revoking the
- *     key, letting it expire, or the org forbidding personal keys stops it within the cache window.
+ *   - an OAuth token (authorization code): `sub` is the user; `ext.org`, when the consent named one,
+ *     is carried along for information only;
+ *   - a personal key (client_credentials, `owner = user:<id>`): `sub` is the client, and the user is
+ *     read from the client's own metadata, re-read on every introspection — so revoking the key or
+ *     letting it expire stops it within the cache window.
+ *
+ * Bound to no organization: a personal key inherits its holder. Its scopes are recomputed on EVERY
+ * call from what the holder holds now (platform-scopes.ts) — all of it for an "all my permissions" key,
+ * the stored subset still held otherwise — and the holder's groups must still be allowed MCP
+ * (mcp/settings.ts allowedGroups). A removed group narrows the very next call.
  *
  * An org machine key is NOT a user and never comes out of here.
  *
@@ -31,13 +37,19 @@ export interface DelegatedPrincipal {
   email: string
   name: string
   clientId: string
-  /** Grantable scopes only (resource:verb) — `mcp`, `offline_access` and wildcards are dropped. */
+  /**
+   * Grantable scopes only (resource:verb) — `mcp`, `offline_access` and wildcards are dropped. For a
+   * personal key: what its holder holds NOW (all of it, or the stored subset still held).
+   */
   scopes: string[]
-  org: string
+  /** An OAuth token's consent org, when it names one — informational, never an authorization. */
+  org?: string
   kind: 'oauth' | 'personal'
+  /** Personal keys: the key carries all its holder's permissions (no stored subset). */
+  allPermissions?: boolean
   /** ms since epoch. */
   expiresAt: number
-  /** The scope string as Hydra granted it (with `mcp`, `offline_access`) — for /api/mcp/token-info. */
+  /** The effective scope string (with `mcp`, `offline_access` as granted) — for /api/mcp/token-info. */
   tokenScope: string
   /** The introspected audience. */
   aud: string[]
@@ -75,19 +87,19 @@ export class DelegatedTokenService {
   async resolve(token: string, now: number = Date.now()): Promise<DelegatedResult> {
     if (!this.enabled) return { error: 'delegated_tokens_disabled' }
     if (!env.DELEGATED_TOKEN_AUDIENCE) return { error: 'delegated_audience_unset' }
-    // The administrator's switch and org scope, asked on every call — before the cache, so turning MCP
-    // off (or an org out of scope) refuses tokens already cached, and turning it back on restores them.
+    // The administrator's switch, asked on every call — before the cache, so turning MCP off refuses
+    // tokens already cached, and turning it back on restores them.
     const gate = await mcpGate()
     if (!gate.on) return { error: gate.off === 'unavailable' ? 'mcp_settings_unavailable' : 'mcp_disabled' }
 
     const key = createHash('sha256').update(token).digest('hex')
     const hit = this.cache.get(key)
-    if (hit && now < hit.until) return this.used(this.inScope(hit.result, gate.settings), now)
+    if (hit && now < hit.until) return this.used(await this.current(hit.result, gate.settings), now)
     if (hit) this.cache.delete(key)
 
     const evaluated = await this.evaluate(token, now)
-    const result = this.used(this.inScope(evaluated, gate.settings), now)
-    // What is cached is the token's own answer; the org scope is re-applied on every hit.
+    const result = this.used(await this.current(evaluated, gate.settings), now)
+    // What is cached is the token's own answer; the holder's groups and rights are re-read every call.
     const ttl = 'principal' in evaluated
       ? Math.min(env.DELEGATED_TOKEN_CACHE_MS, evaluated.principal.expiresAt - now)
       : NEGATIVE_TTL_MS
@@ -98,9 +110,24 @@ export class DelegatedTokenService {
     return result
   }
 
-  private inScope(result: DelegatedResult, settings: Parameters<typeof orgAllowed>[0]): DelegatedResult {
-    if ('principal' in result && !orgAllowed(settings, result.principal.org)) return { error: 'mcp_org_not_allowed' }
-    return result
+  /**
+   * The cached answer made current: the holder's groups still allowed MCP, and a personal key's scopes
+   * recomputed from what they hold now. "Could not tell" refuses (authz_unavailable), never guesses.
+   */
+  private async current(result: DelegatedResult, settings: McpSettings): Promise<DelegatedResult> {
+    if (!('principal' in result)) return result
+    const p = result.principal
+    try {
+      if (!groupAllowed(settings, (await rights(p.email)).groups)) return { error: 'mcp_group_not_allowed' }
+      if (p.kind !== 'personal') return result
+      const held = new Set(await platformScopes(p.email))
+      const scopes = p.allPermissions ? [...held] : p.scopes.filter((s) => held.has(s))
+      const extra = p.tokenScope.split(' ').filter((s) => s && !isGrantableScope(s))
+      return { principal: { ...p, scopes: scopes.sort(), tokenScope: [...scopes.sort(), ...extra].join(' ') } }
+    } catch (err) {
+      log().warn({ reason: (err as Error).message }, 'could not read what the holder holds (deny)')
+      return { error: 'authz_unavailable' }
+    }
   }
 
   /** A personal key's token accepted: the key was used (throttled, never awaited). */
@@ -152,8 +179,9 @@ export class DelegatedTokenService {
         name,
         clientId: intro.client_id,
         scopes: [...new Set((intro.scope ?? '').split(' ').filter(isGrantableScope))].sort(),
-        org: bound.org,
+        ...(bound.org ? { org: bound.org } : {}),
         kind: bound.kind,
+        ...(bound.kind === 'personal' ? { allPermissions: bound.allPermissions } : {}),
         expiresAt: Math.min(intro.exp * 1000, bound.expiresAt ?? Infinity),
         tokenScope: intro.scope ?? '',
         aud: intro.aud,
@@ -162,13 +190,12 @@ export class DelegatedTokenService {
     }
   }
 
-  private oauth(intro: HydraIntrospection): { subject: string; org: string; kind: 'oauth'; expiresAt?: number } | { error: string } {
+  private oauth(intro: HydraIntrospection): Bound {
     const org = intro.ext?.org
-    if (typeof org !== 'string' || org === '') return { error: 'token_not_org_bound' }
-    return { subject: intro.sub as string, org, kind: 'oauth' }
+    return { subject: intro.sub as string, kind: 'oauth', ...(typeof org === 'string' && org ? { org } : {}) }
   }
 
-  private async personalKey(clientId: string, now: number): Promise<{ subject: string; org: string; kind: 'personal'; expiresAt: number } | { error: string }> {
+  private async personalKey(clientId: string, now: number): Promise<Bound> {
     let meta: Record<string, unknown>
     try {
       meta = ((await hydraService.getClient(clientId)).metadata ?? {}) as Record<string, unknown>
@@ -178,18 +205,21 @@ export class DelegatedTokenService {
     // An org machine key authenticates a machine, never a person.
     if (meta.kind !== 'personal') return { error: 'not_a_user_token' }
     const subject = meta.subject
-    const org = meta.organization_id
     const expiresAt = typeof meta.expires_at === 'string' ? Date.parse(meta.expires_at) : NaN
-    if (typeof subject !== 'string' || !subject || typeof org !== 'string' || !org) return { error: 'client_incomplete' }
+    if (typeof subject !== 'string' || !subject) return { error: 'client_incomplete' }
     // Mandatory expiry: a personal key without one is refused, not treated as eternal.
     if (!(expiresAt > now)) return { error: 'key_expired' }
-    try {
-      if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') return { error: 'personal_keys_forbidden' }
-    } catch {
-      return { error: 'policy_unavailable' }
-    }
-    return { subject, org, kind: 'personal', expiresAt }
+    return { subject, kind: 'personal', expiresAt, allPermissions: allPermissionsKey(meta) }
   }
+}
+
+type Bound =
+  | { subject: string; kind: 'oauth' | 'personal'; org?: string; expiresAt?: number; allPermissions?: boolean }
+  | { error: string }
+
+/** A personal key carrying all its holder's permissions (`scope_mode: all`) rather than a stored subset. */
+export function allPermissionsKey(meta: Record<string, unknown> | undefined): boolean {
+  return meta?.scope_mode === 'all'
 }
 
 export const delegatedTokenService = new DelegatedTokenService()

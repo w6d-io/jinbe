@@ -25,7 +25,9 @@ async function maySeeUsers(request: FastifyRequest, email: string): Promise<bool
   }
 }
 
-async function creatorEmails(request: FastifyRequest, views: readonly ApiKeyView[]): Promise<Map<string, string>> {
+type DecoratedView = Pick<ApiKeyView, 'client_id' | 'created_by' | 'last_used_at' | 'created_by_email'>
+
+async function creatorEmails(request: FastifyRequest, views: readonly DecoratedView[]): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   const me = request.userContext
   if (me?.id && me.email && me.email !== 'unknown') out.set(me.id, me.email)
@@ -43,7 +45,7 @@ async function creatorEmails(request: FastifyRequest, views: readonly ApiKeyView
   return out
 }
 
-export async function decorateKeyViews<T extends ApiKeyView>(request: FastifyRequest, views: T[]): Promise<T[]> {
+export async function decorateKeyViews<T extends DecoratedView>(request: FastifyRequest, views: T[]): Promise<T[]> {
   if (views.length === 0) return views
   const [used, emails] = await Promise.all([lastUsedOf(views.map((v) => v.client_id)), creatorEmails(request, views)])
   return views.map((v) => ({

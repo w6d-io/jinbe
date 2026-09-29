@@ -13,20 +13,21 @@ import { mcpGate } from '../mcp/settings.js'
  * (auth-mcp src/auth/verifier.ts JinbeTokenInfoVerifier, src/auth/personal-key.ts JinbeKeyExchanger).
  *
  * POST /api/mcp/token-info               Authorization: Bearer <opaque token>   X-Actor-Token: <SA token>
- *   200 → introspection claims {active, scope, client_id, sub, exp, aud, token_use, ext{org, email, kind,
- *         subject, key_id, key_expires_at}}; 401 → not active, or refused by jinbe's rules.
+ *   200 → introspection claims {active, scope, client_id, sub, exp, aud, token_use, ext{org?, email, kind,
+ *         subject, key_id, key_expires_at, all_permissions}}; 401 → not active, or refused by jinbe's rules.
+ *         `scope` is the EFFECTIVE one: for a personal key, what its holder holds now (plus `mcp`).
  * POST /api/mcp/personal-keys/exchange   Authorization: Bearer stk_mcp_<client_id>.<secret>   X-Actor-Token
- *   200 → {access_token, expires_in}; 401 → unknown, wrong secret, expired, revoked, forbidden by the org.
+ *   200 → {access_token, expires_in}; 401 → unknown, wrong secret, expired, revoked, holder gone.
  *
  * The CALLER is the actor — an allowed in-cluster ServiceAccount (DELEGATED_ACTOR_SUBJECTS, verified by
  * TokenReview) — and nobody else: not a session, not a user token, not a random pod. The Authorization
  * header carries what is being asked about. 404 on every route unless DELEGATED_TOKENS_ENABLED (the
  * deployment's ceiling). With the ceiling up but MCP turned off by an administrator (mcp/settings.ts),
- * or the token's/key's org outside its scope: 403 {error: 'mcp_disabled'}, so auth-mcp can say so.
+ * or the person's groups not allowed it: 403 {error: 'mcp_disabled'}, so auth-mcp can say so.
  */
 
 const MCP_OFF_MESSAGE = 'MCP access is turned off by an administrator.'
-const MCP_ORG_MESSAGE = 'MCP access is turned off for this organization by an administrator.'
+const MCP_GROUP_MESSAGE = 'MCP access is not enabled for your groups by an administrator.'
 
 async function actorOnly(request: FastifyRequest, reply: FastifyReply) {
   if (!env.DELEGATED_TOKENS_ENABLED) return reply.status(404).send({ error: 'Not Found', message: 'Route not found' })
@@ -42,8 +43,8 @@ async function actorOnly(request: FastifyRequest, reply: FastifyReply) {
 /** A refusal reason that means "turned off", not "bad credential": 403 mcp_disabled rather than 401. */
 function mcpOff(reply: FastifyReply, reason: string): FastifyReply | null {
   if (reason === 'mcp_disabled') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_OFF_MESSAGE, reason: 'disabled' })
-  if (reason === 'mcp_org_not_allowed') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_ORG_MESSAGE, reason: 'org_not_allowed' })
-  if (reason === 'mcp_settings_unavailable') return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })
+  if (reason === 'mcp_group_not_allowed') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_GROUP_MESSAGE, reason: 'group_not_allowed' })
+  if (reason === 'mcp_settings_unavailable' || reason === 'authz_unavailable') return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })
   return null
 }
 
@@ -73,6 +74,7 @@ const claimsSchema = {
         subject: { type: 'string' },
         key_id: { type: 'string' },
         key_expires_at: { type: 'integer' },
+        all_permissions: { type: 'boolean' },
       },
     },
   },
@@ -86,9 +88,9 @@ export async function mcpRoutes(fastify: FastifyInstance) {
     schema: {
       description:
         "Introspect a delegated (opaque Hydra) token for auth-mcp, with jinbe's rules: active, access token, the " +
-        'delegated audience, bound to one org, an active user; personal keys re-read from their client (expiry, org ' +
-        'policy). Caller: an allowed ServiceAccount in X-Actor-Token. 403 mcp_disabled when an administrator turned MCP off ' +
-        "or the token's org is outside its scope.",
+        'delegated audience, an active user whose groups may use MCP; personal keys re-read from their client (expiry) ' +
+        'and their scope recomputed from what the holder holds now. Caller: an allowed ServiceAccount in X-Actor-Token. ' +
+        "403 mcp_disabled when an administrator turned MCP off or the person's groups may not use it.",
       tags: ['mcp'],
       response: { 200: claimsSchema, 401: refusalSchema, 403: refusalSchema, 404: refusalSchema, 503: refusalSchema },
     },
@@ -109,10 +111,12 @@ export async function mcpRoutes(fastify: FastifyInstance) {
       exp: sec(p.expiresAt),
       aud: p.aud,
       ext: {
-        org: p.org,
+        ...(p.org ? { org: p.org } : {}),
         email: p.email,
         kind: p.kind,
-        ...(p.kind === 'personal' ? { subject: p.subject, key_id: p.clientId, key_expires_at: sec(p.keyExpiresAt ?? p.expiresAt) } : {}),
+        ...(p.kind === 'personal'
+          ? { subject: p.subject, key_id: p.clientId, key_expires_at: sec(p.keyExpiresAt ?? p.expiresAt), all_permissions: p.allPermissions === true }
+          : {}),
       },
     })
   })
@@ -120,10 +124,11 @@ export async function mcpRoutes(fastify: FastifyInstance) {
   fastify.post('/personal-keys/exchange', {
     schema: {
       description:
-        'Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a short-lived access token carrying the ' +
-        "key's stored scopes that its holder STILL holds in the key's org (plus mcp). Refused (401) when unknown, wrong " +
-        'secret, expired, or the org forbids personal keys; 403 mcp_disabled when an administrator turned MCP off or the ' +
-        "key's org is outside its scope. Caller: an allowed ServiceAccount in X-Actor-Token.",
+        'Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a short-lived access token: a narrowed key ' +
+        "carries its stored scopes that its holder STILL holds (plus mcp); an all-permissions key carries mcp and its " +
+        'permissions are computed at each call. Refused (401) when unknown, wrong secret, expired or the holder is gone; ' +
+        "403 mcp_disabled when an administrator turned MCP off or the holder's groups may not use it. Caller: an allowed " +
+        'ServiceAccount in X-Actor-Token.',
       tags: ['mcp'],
       response: {
         200: { type: 'object', properties: { access_token: { type: 'string' }, expires_in: { type: 'integer' } } },

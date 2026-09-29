@@ -420,7 +420,9 @@ paths:
                           type: string
                         organization_id:
                           type: string
-                          format: uuid
+                          nullable: true
+                          description: "null: a personal key belongs to no organization (older keys may
+                            still name one; it means nothing now)"
                         label:
                           type: string
                         scopes:
@@ -447,6 +449,14 @@ paths:
                           type: string
                           nullable: true
                           description: The creator, when you are them or may see users
+                        kind:
+                          type: string
+                          enum:
+                            - personal
+                        all_permissions:
+                          type: boolean
+                          description: The key carries all your permissions as they are at each call;
+                            `scopes` is then empty
                   total:
                     type: number
         "401":
@@ -490,11 +500,12 @@ paths:
     post:
       tags:
         - api-keys
-      description: "Create a personal API key acting as you in ONE organization:
-        scopes among the permissions you hold there, expiry at most 30 days, or
-        the administrator's shorter maximum (the default). Returns client_secret
-        ONCE. 403 when the organization forbids personal keys or is outside the
-        AI assistant scope."
+      description: Create a personal API key acting as you, bound to no organization.
+        Without `scopes` it carries all your permissions as they are at each
+        call; with them, that subset of what you hold (still re-checked at each
+        call). Expiry at most 30 days, or the administrator's shorter maximum
+        (the default). Returns the key ONCE. 403 when your groups may not use
+        MCP.
       requestBody:
         required: true
         content:
@@ -503,23 +514,18 @@ paths:
               type: object
               required:
                 - label
-                - organization_id
-                - scopes
               properties:
                 label:
                   type: string
                   minLength: 1
                   maxLength: 200
-                organization_id:
-                  type: string
-                  format: uuid
-                  description: The one organization the key acts in
                 scopes:
                   type: array
                   items:
                     type: string
                   minItems: 1
-                  description: Permissions you hold in that organization
+                  description: A subset of the permissions you hold (GET /api/me/api-keys/scopes);
+                    absent = all of them, as they are at each call
                 expires_in_days:
                   type: integer
                   minimum: 1
@@ -529,20 +535,22 @@ paths:
               additionalProperties: false
       responses:
         "201":
-          description: Returned ONCE on creation. Copy the client_secret now — it cannot
-            be retrieved again.
+          description: Returned ONCE on creation. Copy the key now — it cannot be
+            retrieved again.
           content:
             application/json:
               schema:
                 type: object
-                description: Returned ONCE on creation. Copy the client_secret now — it cannot
-                  be retrieved again.
+                description: Returned ONCE on creation. Copy the key now — it cannot be
+                  retrieved again.
                 properties:
                   client_id:
                     type: string
                   organization_id:
                     type: string
-                    format: uuid
+                    nullable: true
+                    description: "null: a personal key belongs to no organization (older keys may
+                      still name one; it means nothing now)"
                   label:
                     type: string
                   scopes:
@@ -569,13 +577,17 @@ paths:
                     type: string
                     nullable: true
                     description: The creator, when you are them or may see users
-                  client_secret:
-                    type: string
-                    description: Shown only once
                   kind:
                     type: string
                     enum:
                       - personal
+                  all_permissions:
+                    type: boolean
+                    description: The key carries all your permissions as they are at each call;
+                      `scopes` is then empty
+                  client_secret:
+                    type: string
+                    description: Shown only once
                   key:
                     type: string
                     description: "Shown only once: stk_mcp_<client_id>.<secret>, the header value an
@@ -652,18 +664,11 @@ paths:
     get:
       tags:
         - api-keys
-      description: "The scopes you may give a personal key in one organization: the
-        same catalog as its machine keys (GET
-        /api/organizations/:organizationId/api-keys/scopes), computed from what
-        YOU hold there. 403 when you are not a member of it."
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: query
-          name: organization_id
-          required: true
-          description: The organization the key would act in
+      description: "The permissions you may narrow a personal key to: the jinbe
+        permissions you hold (from your groups), concrete — a wildcard is
+        expanded to the permissions the routes declare, never offered as such —
+        and never one that only opens routes a key may not use. Grouped by
+        resource. 403 when your groups may not use MCP."
       responses:
         "200":
           description: Default Response
@@ -679,20 +684,11 @@ paths:
                       properties:
                         scope:
                           type: string
-                          description: A permission (resource:verb)
-                        sites:
-                          type: array
-                          items:
-                            type: string
-                          description: The sites whose routes require it; 'platform' for jinbe's own API
-                            (personal keys only)
-                        kind:
+                          description: A jinbe permission you hold (resource:verb), concrete — never a
+                            wildcard
+                        group:
                           type: string
-                          enum:
-                            - site
-                            - platform
-                          description: "Personal keys only: 'platform' when only jinbe's own API requires
-                            it"
+                          description: Its resource root, for a grouped checklist
         "400":
           description: Default Response
           content:
@@ -11679,7 +11675,7 @@ paths:
                         properties:
                           maxDays:
                             type: integer
-                      allowedOrgs:
+                      allowedGroups:
                         anyOf:
                           - type: string
                             enum:
@@ -11701,7 +11697,7 @@ paths:
                         properties:
                           maxDays:
                             type: integer
-                      allowedOrgs:
+                      allowedGroups:
                         anyOf:
                           - type: string
                             enum:
@@ -11751,7 +11747,7 @@ paths:
                   properties:
                     maxDays:
                       type: integer
-                allowedOrgs:
+                allowedGroups:
                   anyOf:
                     - type: string
                       enum:
@@ -15735,15 +15731,7 @@ paths:
                           type: array
                           items:
                             type: string
-                          description: The sites whose routes require it; 'platform' for jinbe's own API
-                            (personal keys only)
-                        kind:
-                          type: string
-                          enum:
-                            - site
-                            - platform
-                          description: "Personal keys only: 'platform' when only jinbe's own API requires
-                            it"
+                          description: The sites whose routes require it
         "401":
           description: Default Response
           content:
@@ -16133,11 +16121,12 @@ paths:
       tags:
         - mcp
       description: "Introspect a delegated (opaque Hydra) token for auth-mcp, with
-        jinbe's rules: active, access token, the delegated audience, bound to
-        one org, an active user; personal keys re-read from their client
-        (expiry, org policy). Caller: an allowed ServiceAccount in
-        X-Actor-Token. 403 mcp_disabled when an administrator turned MCP off or
-        the token's org is outside its scope."
+        jinbe's rules: active, access token, the delegated audience, an active
+        user whose groups may use MCP; personal keys re-read from their client
+        (expiry) and their scope recomputed from what the holder holds now.
+        Caller: an allowed ServiceAccount in X-Actor-Token. 403 mcp_disabled
+        when an administrator turned MCP off or the person's groups may not use
+        it."
       responses:
         "200":
           description: Default Response
@@ -16180,6 +16169,8 @@ paths:
                         type: string
                       key_expires_at:
                         type: integer
+                      all_permissions:
+                        type: boolean
         "401":
           description: Default Response
           content:
@@ -16237,11 +16228,12 @@ paths:
       tags:
         - mcp
       description: "Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a
-        short-lived access token carrying the key's stored scopes that its
-        holder STILL holds in the key's org (plus mcp). Refused (401) when
-        unknown, wrong secret, expired, or the org forbids personal keys; 403
-        mcp_disabled when an administrator turned MCP off or the key's org is
-        outside its scope. Caller: an allowed ServiceAccount in X-Actor-Token."
+        short-lived access token: a narrowed key carries its stored scopes that
+        its holder STILL holds (plus mcp); an all-permissions key carries mcp
+        and its permissions are computed at each call. Refused (401) when
+        unknown, wrong secret, expired or the holder is gone; 403 mcp_disabled
+        when an administrator turned MCP off or the holder's groups may not use
+        it. Caller: an allowed ServiceAccount in X-Actor-Token."
       responses:
         "200":
           description: Default Response
@@ -16341,6 +16333,12 @@ paths:
                     properties:
                       maxDays:
                         type: integer
+                  allowed:
+                    type:
+                      - "null"
+                      - boolean
+                    description: Whether your groups may use MCP (allowedGroups); null when MCP is
+                      off or it cannot be told
         "401":
           description: Default Response
           content:

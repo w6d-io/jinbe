@@ -47,7 +47,8 @@ export interface CreateClientInput {
   label: string
   /** Space-separated scope list is built from this array. */
   scopes: string[]
-  organizationId: string
+  /** An org machine key's organization (mandatory for one); a personal key belongs to no org. */
+  organizationId?: string
   createdBy?: string
   audience?: string[]
   /** RFC 3339. Recorded in metadata.expires_at; jinbe and the policy refuse the key past it. */
@@ -56,7 +57,7 @@ export interface CreateClientInput {
    * A personal key: owned by the user (`owner = user:<id>`), not listed with the org's keys, and
    * acting as that user. Absent = an org machine key.
    */
-  personal?: { subject: string }
+  personal?: { subject: string; allPermissions?: boolean }
 }
 
 /** Hydra's introspection answer (RFC 7662 plus Hydra's `ext`), the fields jinbe reads. */
@@ -136,14 +137,16 @@ export class HydraService {
    * available here and must be surfaced to the caller exactly once.
    */
   async createClient(input: CreateClientInput): Promise<HydraOAuth2Client> {
-    const metadata: Record<string, unknown> = {
-      organization_id: input.organizationId, // mandatory
-    }
+    if (!input.personal && !input.organizationId) throw new Error('an org machine key needs its organization')
+    const metadata: Record<string, unknown> = {}
+    if (input.organizationId) metadata.organization_id = input.organizationId // mandatory for an org key
     if (input.createdBy) metadata.created_by = input.createdBy
     if (input.expiresAt) metadata.expires_at = input.expiresAt
     if (input.personal) {
       metadata.kind = 'personal'
       metadata.subject = input.personal.subject
+      // `all`: the key carries whatever its holder holds at each call; `selected`: the stored scopes.
+      metadata.scope_mode = input.personal.allPermissions ? 'all' : 'selected'
     }
 
     const body = {

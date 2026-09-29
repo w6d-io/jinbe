@@ -41,14 +41,12 @@ export interface ApiKeyView {
 // ── Personal keys ─────────────────────────────────────────────────────────────
 export const personalKeyCreateBodySchema = z.object({
   label: z.string().min(1, 'label is required').max(200),
-  organization_id: z.string().uuid('organization_id must be a valid UUID'),
-  scopes: z.array(z.string().min(1)).min(1, 'at least one scope is required'),
+  /** Absent = "all my permissions": the key carries whatever its holder holds at each call. */
+  scopes: z.array(z.string().min(1)).min(1, 'choose at least one permission, or leave scopes out for all of yours').optional(),
   /** Absent = the longest allowed now (the administrator's maximum, mcp/settings.ts). */
   expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).optional(),
 })
 export type PersonalKeyCreateBody = z.infer<typeof personalKeyCreateBodySchema>
-
-export const personalScopesQuerySchema = z.object({ organization_id: z.string().uuid('organization_id must be a valid UUID') })
 
 export const apiKeyPolicySchema = z.object({ personal_keys: z.enum(['allowed', 'forbidden']) }).strict()
 export type ApiKeyPolicy = z.infer<typeof apiKeyPolicySchema>
@@ -95,11 +93,10 @@ export const apiKeyCreateBodyJsonSchema = {
 
 export const personalKeyCreateBodyJsonSchema = {
   type: 'object',
-  required: ['label', 'organization_id', 'scopes'],
+  required: ['label'],
   properties: {
     label: { type: 'string', minLength: 1, maxLength: 200 },
-    organization_id: { type: 'string', format: 'uuid', description: 'The one organization the key acts in' },
-    scopes: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Permissions you hold in that organization' },
+    scopes: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'A subset of the permissions you hold (GET /api/me/api-keys/scopes); absent = all of them, as they are at each call' },
     expires_in_days: { type: 'integer', minimum: 1, maximum: PERSONAL_KEY_MAX_DAYS, description: 'At most the maximum an administrator set (30 days or less); absent = that maximum' },
   },
   additionalProperties: false,
@@ -121,8 +118,7 @@ export const scopeCatalogResponseJsonSchema = {
         type: 'object',
         properties: {
           scope: { type: 'string', description: 'A permission (resource:verb)' },
-          sites: { type: 'array', items: { type: 'string' }, description: "The sites whose routes require it; 'platform' for jinbe's own API (personal keys only)" },
-          kind: { type: 'string', enum: ['site', 'platform'], description: "Personal keys only: 'platform' when only jinbe's own API requires it" },
+          sites: { type: 'array', items: { type: 'string' }, description: 'The sites whose routes require it' },
         },
       },
     },
@@ -152,6 +148,47 @@ export const apiKeySecretViewJsonSchema = {
   properties: {
     ...apiKeyViewProps,
     client_secret: { type: 'string', description: 'Shown only once' },
+  },
+}
+
+const personalKeyViewProps = {
+  ...apiKeyViewProps,
+  organization_id: { type: 'string', nullable: true, description: 'null: a personal key belongs to no organization (older keys may still name one; it means nothing now)' },
+  kind: { type: 'string', enum: ['personal'] },
+  all_permissions: { type: 'boolean', description: 'The key carries all your permissions as they are at each call; `scopes` is then empty' },
+}
+
+export const personalKeySecretViewJsonSchema = {
+  type: 'object',
+  description: 'Returned ONCE on creation. Copy the key now — it cannot be retrieved again.',
+  properties: {
+    ...personalKeyViewProps,
+    client_secret: { type: 'string', description: 'Shown only once' },
+    key: { type: 'string', description: 'Shown only once: stk_mcp_<client_id>.<secret>, the header value an MCP client sends' },
+  },
+}
+
+export const personalKeyListResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    data: { type: 'array', items: { type: 'object', properties: personalKeyViewProps } },
+    total: { type: 'number' },
+  },
+}
+
+export const personalScopeCatalogResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    scopes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          scope: { type: 'string', description: 'A jinbe permission you hold (resource:verb), concrete — never a wildcard' },
+          group: { type: 'string', description: 'Its resource root, for a grouped checklist' },
+        },
+      },
+    },
   },
 }
 

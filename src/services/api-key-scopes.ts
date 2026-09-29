@@ -40,7 +40,7 @@ export async function heldIn(email: string, site: string, grantedGroups: readonl
   return [...held]
 }
 
-export function withinCeiling(scope: string): boolean {
+function withinCeiling(scope: string): boolean {
   const ceiling = env.API_KEY_ALLOWED_SCOPES
   return ceiling.length === 0 || ceiling.some((c) => covers(c, scope))
 }

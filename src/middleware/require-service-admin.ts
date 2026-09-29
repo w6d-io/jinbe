@@ -19,7 +19,7 @@ export function isClient(request: FastifyRequest): boolean {
 /** What OPA is told about a delegated caller (RouteQuestion.delegation), or undefined. */
 export function delegationOf(request: FastifyRequest) {
   const d = request.userContext?.authVia === 'delegated' ? request.userContext.delegation : undefined
-  return d ? { scopes: d.scopes, org: d.org, client_id: d.clientId } : undefined
+  return d ? { scopes: d.scopes, client_id: d.clientId, ...(d.org ? { org: d.org } : {}) } : undefined
 }
 
 /**

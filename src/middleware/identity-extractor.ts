@@ -28,8 +28,8 @@ export interface UserContext {
   // How the caller was proven. Only a session carries a readable second factor.
   authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
   /**
-   * Set only with authVia 'delegated': the client acting for this user, the scopes the token
-   * narrows them to, and the ONE organization it is bound to (middleware/delegation-gate.ts).
+   * Set only with authVia 'delegated': the client acting for this user and the scopes the token
+   * narrows them to (middleware/delegation-gate.ts). Bound to no organization.
    */
   delegation?: Delegation
   /**
@@ -45,7 +45,8 @@ export interface UserContext {
 export interface Delegation {
   clientId: string
   scopes: readonly string[]
-  org: string
+  /** An OAuth token's consent org, when it names one — informational, never an authorization. */
+  org?: string
   kind: 'oauth' | 'personal'
   /** The in-cluster service that presented the token (its ServiceAccount name, e.g. auth-mcp). */
   via: string
@@ -214,7 +215,7 @@ async function secondFactorFromSession(request: FastifyRequest, subject: string)
         id: p.subject,
         name: p.name,
         authVia: 'delegated',
-        delegation: { clientId: p.clientId, scopes: p.scopes, org: p.org, kind: p.kind, via: actor },
+        delegation: { clientId: p.clientId, scopes: p.scopes, kind: p.kind, via: actor, ...(p.org ? { org: p.org } : {}) },
       }
       request.log.debug(
         { subject: p.subject, clientId: p.clientId, org: p.org, kind: p.kind, via: actor, path: request.url },

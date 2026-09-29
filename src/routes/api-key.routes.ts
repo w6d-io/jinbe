@@ -36,7 +36,7 @@ import {
  * POST   /api-keys            - create a key (returns client_secret ONCE)
  * GET    /api-keys            - list keys (no secrets)
  * GET    /api-keys/scopes     - the scopes a key may be given: permissions of this org's sites the caller holds
- * GET    /api-key-policy      - may members create personal keys in this org (DELEGATED_TOKENS_ENABLED)
+ * GET    /api-key-policy      - DEPRECATED: personal keys are no longer org-bound, the value is ignored
  * PUT    /api-key-policy      - allow or forbid them
  * GET    /api-keys/:clientId  - get one key (no secret)
  * DELETE /api-keys/:clientId  - revoke a key
@@ -117,7 +117,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
     '/api-key-policy',
     {
       schema: {
-        description: 'Whether members may create personal API keys acting in this organization (404 unless delegated tokens are enabled).',
+        description: 'DEPRECATED — personal keys are bound to no organization and inherit their holder, so this value is stored but no longer enforced (404 unless delegated tokens are enabled).',
         tags: ['api-keys'],
         params: organizationIdParamJsonSchema,
         response: { 200: apiKeyPolicyJsonSchema, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema },
@@ -130,7 +130,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
     '/api-key-policy',
     {
       schema: {
-        description: 'Allow or forbid personal API keys in this organization. Forbidding stops the keys already issued at their next call.',
+        description: 'DEPRECATED — stored but no longer enforced: personal keys are bound to no organization (MCP is limited by group in the AI assistants setting).',
         tags: ['api-keys'],
         params: organizationIdParamJsonSchema,
         body: apiKeyPolicyJsonSchema,

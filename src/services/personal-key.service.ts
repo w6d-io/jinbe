@@ -1,35 +1,43 @@
 import { env } from '../config/index.js'
 import { hydraService, HydraApiError, type HydraOAuth2Client } from './hydra.service.js'
-import { PERSONAL_KEY_PREFIX } from './delegated-token.service.js'
-import { apiKeyService, ApiKeyError, expiryFrom, isPersonal, toView } from './api-key.service.js'
-import { getApiKeyPolicy } from './api-key-policy.js'
-import { isSuperAdmin, memberOrgs } from '../authz/opa.js'
+import { PERSONAL_KEY_PREFIX, allPermissionsKey } from './delegated-token.service.js'
+import { ApiKeyError, expiryFrom, isPersonal, toView } from './api-key.service.js'
+import { rights } from '../authz/opa.js'
 import { kratosService } from './kratos.service.js'
-import { personalScopeCatalog, type PersonalScopeEntry } from './platform-scopes.js'
+import { personalScopeCatalog, platformScopes, type PersonalScopeEntry } from './platform-scopes.js'
 import { isGrantableScope } from './authorization-resolution.js'
 import { recordApiKeyUse } from '../audit/record.js'
 import { forgetApiKeyUse, touchApiKeyUse } from './api-key-last-used.js'
-import { mcpGate, orgAllowed, type McpSettings } from '../mcp/settings.js'
+import { groupAllowed, mcpGate, type McpSettings } from '../mcp/settings.js'
 import type { ApiKeySecretView, ApiKeyView, PersonalKeyCreateBody } from '../schemas/api-key.schema.js'
 
 /**
- * Personal API keys — a user's own key, acting AS that user in ONE organization (MCP groundwork,
- * behind DELEGATED_TOKENS_ENABLED).
+ * Personal API keys — a user's own key for an MCP client, acting AS that user (behind
+ * DELEGATED_TOKENS_ENABLED and the administrator's switch).
  *
- * A Hydra client_credentials client with `owner = user:<id>` and metadata
- * `{kind: personal, subject, organization_id, expires_at}`; never listed with the org's machine keys.
- * Its token is introspected by jinbe's delegated path, which re-reads that metadata, so:
- *   - it never holds more than its user: scopes ⊆ what they hold in that org at creation — the org
- *     keys' site catalog plus jinbe's own permissions, for the MCP tools (platform-scopes.ts) — and
- *     every call still asks what the user holds now;
+ * Staff rights come from groups, and a personal key INHERITS them. It is bound to no organization
+ * (orgs secure sites; their machine keys are api-key.service.ts):
+ *   - by default it carries "all my permissions" — whatever its holder holds at each call; or a
+ *     subset chosen at creation among what they hold (platform-scopes.ts: concrete permissions, never
+ *     `*`). Either way every call recomputes what the holder STILL holds (delegated-token.service.ts)
+ *     and the route gates ask their current rights again: a removed group stops the key at once;
+ *   - the always-refused delegated routes stay refused (middleware/delegation-gate.ts);
  *   - it always expires: 30 days at most (owner decision) — or less, when the administrator set a
  *     shorter maximum (mcp/settings.ts) — and is refused past `expires_at`;
- *   - the administrator may turn MCP off or limit it to some orgs: the keys stay stored, unusable;
- *   - the org may forbid personal keys, which stops the keys already issued too.
+ *   - the administrator may turn MCP off or limit it to some groups: the keys stay stored, unusable.
+ *
+ * A Hydra client_credentials client with `owner = user:<id>` and metadata
+ * `{kind: personal, subject, scope_mode: all|selected, expires_at}`; never listed with an org's keys.
  * Creating one is a browser action: the delegation gate refuses /api/me/api-keys to delegated callers.
  */
 
-export type PersonalKeyView = ApiKeyView & { kind: 'personal' }
+export type PersonalKeyView = Omit<ApiKeyView, 'organization_id'> & {
+  kind: 'personal'
+  /** Keys made before personal keys stopped being org-bound still name one; it no longer means anything. */
+  organization_id: string | null
+  /** True: the key carries all its holder's permissions, and `scopes` is empty. */
+  all_permissions: boolean
+}
 
 /** The baseline scope auth-mcp requires on every token (it is not a permission and opens nothing here). */
 export const MCP_SCOPE = 'mcp'
@@ -49,58 +57,70 @@ function subjectOf(client: HydraOAuth2Client): string | undefined {
   return typeof s === 'string' ? s : undefined
 }
 
-const view = (client: HydraOAuth2Client): PersonalKeyView => ({ ...toView(client), kind: 'personal' })
+const view = (client: HydraOAuth2Client): PersonalKeyView => {
+  const meta = (client.metadata ?? {}) as Record<string, unknown>
+  const all = allPermissionsKey(meta)
+  return {
+    ...toView(client),
+    kind: 'personal',
+    organization_id: typeof meta.organization_id === 'string' ? meta.organization_id : null,
+    scopes: all ? [] : toView(client).scopes.filter(isGrantableScope),
+    all_permissions: all,
+  }
+}
 
-/** MCP on (mcp/settings.ts) and `org` in its scope — the settings, or ApiKeyError 404/403 as the key routes answer. */
-async function assertMcpFor(org: string): Promise<McpSettings> {
+/** MCP on (mcp/settings.ts) — the settings, or ApiKeyError 404/503 as the key routes answer. */
+async function assertMcpOn(): Promise<McpSettings> {
   const gate = await mcpGate()
   if (gate.off === 'unavailable') throw new ApiKeyError(503, 'The AI assistant settings cannot be read right now')
   if (!gate.on) throw new ApiKeyError(404, 'Personal API keys are turned off by an administrator.', { reason: 'mcp_disabled' })
-  if (!orgAllowed(gate.settings, org)) {
-    throw new ApiKeyError(403, 'AI assistants are not enabled for this organization', { reason: 'mcp_org_not_allowed' })
-  }
   return gate.settings
 }
 
-async function assertMember(email: string, org: string): Promise<void> {
-  const member = (await isSuperAdmin(email)) || (await memberOrgs(email)).includes(org)
-  if (!member) throw new ApiKeyError(403, 'You are not a member of that organization')
+/** The caller's groups may use MCP (allowedGroups): 403 otherwise. */
+async function assertGroupAllowed(settings: McpSettings, email: string): Promise<void> {
+  if (!groupAllowed(settings, (await rights(email)).groups)) {
+    throw new ApiKeyError(403, 'AI assistants are not enabled for your groups', { reason: 'mcp_group_not_allowed' })
+  }
 }
 
 export class PersonalKeyService {
   /**
-   * The scopes the caller may give a personal key in `org`: that org's machine-key catalog plus the
-   * jinbe permissions the MCP tools use, computed from what THEY hold. A member only (or
-   * super_admin): 403 otherwise.
+   * What the caller may narrow a personal key to: the jinbe permissions they hold, concrete, grouped
+   * by resource. Throws AuthzUnavailableError when OPA cannot be asked.
    */
-  async scopes(caller: { email: string }, org: string): Promise<PersonalScopeEntry[]> {
-    await assertMember(caller.email, org)
-    await assertMcpFor(org)
-    return personalScopeCatalog(org, caller.email)
+  async scopes(caller: { email: string }): Promise<PersonalScopeEntry[]> {
+    const settings = await assertMcpOn()
+    await assertGroupAllowed(settings, caller.email)
+    return personalScopeCatalog(caller.email)
   }
 
+  /** `scopes` absent: "all my permissions". Present: a non-empty subset of what the caller holds. */
   async create(caller: { id: string; email: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
-    const org = body.organization_id
-    await assertMember(caller.email, org)
-    const settings = await assertMcpFor(org)
+    const settings = await assertMcpOn()
+    await assertGroupAllowed(settings, caller.email)
     const days = body.expires_in_days ?? settings.personalKeys.maxDays
     if (days > settings.personalKeys.maxDays) {
       throw new ApiKeyError(400, `A personal key may live at most ${settings.personalKeys.maxDays} days`, { reason: 'expiry_too_long', max_days: settings.personalKeys.maxDays })
     }
-    if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') {
-      throw new ApiKeyError(403, 'This organization does not allow personal API keys', { reason: 'personal_keys_forbidden' })
+    const all = body.scopes === undefined
+    const scopes = all ? [] : [...new Set(body.scopes)]
+    if (!all) {
+      const allowed = new Set(await platformScopes(caller.email))
+      const invalid = scopes.filter((s) => !isGrantableScope(s) || !allowed.has(s))
+      if (invalid.length > 0) {
+        throw new ApiKeyError(400, 'One or more requested scopes are not allowed', { invalid_scopes: invalid, allowed_scopes: [...allowed] })
+      }
     }
-    const scopes = [...new Set(body.scopes)]
-    await apiKeyService.validateScopes(org, caller.email, scopes, personalScopeCatalog)
 
     const client = await hydraService.createClient({
       label: body.label,
-      // `mcp` rides along so auth-mcp accepts the key's tokens; it is not a permission.
+      // `mcp` rides along so auth-mcp accepts the key's tokens; it is not a permission. An
+      // "all my permissions" key registers no permission: jinbe computes them at each call.
       scopes: [...scopes, MCP_SCOPE],
-      organizationId: org,
       createdBy: caller.id,
       expiresAt: expiryFrom(days),
-      personal: { subject: caller.id },
+      personal: { subject: caller.id, allPermissions: all },
       // The delegated path only takes a token for its own audience.
       ...(env.DELEGATED_TOKEN_AUDIENCE ? { audience: [env.DELEGATED_TOKEN_AUDIENCE] } : {}),
     })
@@ -109,11 +129,11 @@ export class PersonalKeyService {
   }
 
   /**
-   * A personal key's secret → a short-lived token (auth-mcp's JinbeKeyExchanger). The token carries the
-   * key's stored scopes that its holder STILL holds in the key's org (site and jinbe permissions,
-   * the same catalog as at creation) — re-read now, so a demotion narrows the next token — plus
-   * `mcp`. Refused when the key is unknown, not personal, expired, its
-   * org forbids personal keys, its holder is gone or disabled, or Hydra refuses the secret.
+   * A personal key's secret → a short-lived token (auth-mcp's JinbeKeyExchanger). A narrowed key's
+   * token carries its stored scopes that its holder STILL holds — re-read now — plus `mcp`; an "all my
+   * permissions" key's carries `mcp` alone, its permissions being computed at each call. Refused when
+   * the key is unknown, not personal, expired, its holder is gone, disabled or outside the groups
+   * allowed MCP, or Hydra refuses the secret.
    */
   async exchange(clientId: string, secret: string, now: number = Date.now()): Promise<{ access_token: string; expires_in: number }> {
     if (!env.DELEGATED_TOKEN_AUDIENCE) throw new PersonalKeyRefused('delegated_audience_unset')
@@ -126,14 +146,11 @@ export class PersonalKeyService {
     }
     const meta = (client.metadata ?? {}) as Record<string, unknown>
     const subject = subjectOf(client)
-    const org = meta.organization_id
     const expiresAt = typeof meta.expires_at === 'string' ? Date.parse(meta.expires_at) : NaN
-    if (!isPersonal(client) || !subject || typeof org !== 'string' || !org) throw new PersonalKeyRefused('not_a_personal_key')
+    if (!isPersonal(client) || !subject) throw new PersonalKeyRefused('not_a_personal_key')
     if (!(expiresAt > now)) throw new PersonalKeyRefused('key_expired')
     const gate = await mcpGate()
     if (!gate.on) throw new PersonalKeyRefused(gate.off === 'unavailable' ? 'mcp_settings_unavailable' : 'mcp_disabled')
-    if (!orgAllowed(gate.settings, org)) throw new PersonalKeyRefused('mcp_org_not_allowed')
-    if ((await getApiKeyPolicy(org)).personal_keys !== 'allowed') throw new PersonalKeyRefused('personal_keys_forbidden')
 
     let email: unknown
     try {
@@ -145,9 +162,10 @@ export class PersonalKeyService {
       throw new PersonalKeyRefused('subject_unknown')
     }
     if (typeof email !== 'string' || !email) throw new PersonalKeyRefused('subject_unknown')
+    if (!groupAllowed(gate.settings, (await rights(email)).groups)) throw new PersonalKeyRefused('mcp_group_not_allowed')
 
-    const held = new Set((await personalScopeCatalog(org, email)).map((e) => e.scope))
     const stored = (client.scope ?? '').split(' ').filter(Boolean)
+    const held = allPermissionsKey(meta) ? new Set<string>() : new Set(await platformScopes(email))
     const scopes = [...stored.filter((s) => isGrantableScope(s) && held.has(s)), ...(stored.includes(MCP_SCOPE) ? [MCP_SCOPE] : [])]
 
     let token: { access_token: string; expires_in: number }
@@ -157,7 +175,7 @@ export class PersonalKeyService {
       if (err instanceof HydraApiError && (err.statusCode === 400 || err.statusCode === 401)) throw new PersonalKeyRefused('key_refused')
       throw err
     }
-    void recordApiKeyUse(clientId, org)
+    void recordApiKeyUse(clientId, typeof meta.organization_id === 'string' ? meta.organization_id : null)
     touchApiKeyUse(clientId)
     // Never outlive the key.
     return { access_token: token.access_token, expires_in: Math.max(1, Math.min(token.expires_in, Math.floor((expiresAt - now) / 1000))) }
@@ -185,6 +203,6 @@ export class PersonalKeyService {
 }
 
 /** Returned once: the secret, and the key as auth-mcp takes it (`stk_mcp_<client_id>.<secret>`). */
-export type PersonalKeySecretView = ApiKeySecretView & { kind: 'personal'; key: string }
+export type PersonalKeySecretView = PersonalKeyView & Pick<ApiKeySecretView, 'client_secret'> & { key: string }
 
 export const personalKeyService = new PersonalKeyService()

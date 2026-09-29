@@ -6,12 +6,11 @@ import { decorateKeyViews } from '../services/api-key-views.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
-  apiKeyListResponseJsonSchema,
-  apiKeySecretViewJsonSchema,
   personalKeyCreateBodyJsonSchema,
   personalKeyCreateBodySchema,
-  personalScopesQuerySchema,
-  scopeCatalogResponseJsonSchema,
+  personalKeyListResponseJsonSchema,
+  personalKeySecretViewJsonSchema,
+  personalScopeCatalogResponseJsonSchema,
 } from '../schemas/api-key.schema.js'
 import {
   forbiddenResponseSchema,
@@ -28,8 +27,8 @@ import {
  * personal keys, and a delegated caller never reaches here (middleware/delegation-gate.ts).
  *
  * GET    /            - the caller's keys (no secrets)
- * GET    /scopes      - ?organization_id=: the scopes the caller may give a key there (what they hold)
- * POST   /            - create one (returns client_secret ONCE)
+ * GET    /scopes      - the permissions the caller may narrow a key to (what they hold, concrete)
+ * POST   /            - create one: all my permissions, or a chosen subset (returns the key ONCE)
  * DELETE /:clientId   - revoke one of the caller's keys
  */
 async function personOnly(request: FastifyRequest, reply: FastifyReply) {
@@ -49,15 +48,6 @@ async function personOnly(request: FastifyRequest, reply: FastifyReply) {
   }
 }
 
-const personalKeySecretJsonSchema = {
-  ...apiKeySecretViewJsonSchema,
-  properties: {
-    ...apiKeySecretViewJsonSchema.properties,
-    kind: { type: 'string', enum: ['personal'] },
-    key: { type: 'string', description: 'Shown only once: stk_mcp_<client_id>.<secret>, the header value an MCP client sends' },
-  },
-}
-
 const bodyWithDetails = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, details: { type: 'object', additionalProperties: true } } }
 
 export async function personalKeyRoutes(fastify: FastifyInstance) {
@@ -67,7 +57,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
     schema: {
       description: 'Your personal API keys (no secrets).',
       tags: ['api-keys'],
-      response: { 200: apiKeyListResponseJsonSchema, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema },
+      response: { 200: personalKeyListResponseJsonSchema, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema },
     },
   }, async (request, reply) => {
     try {
@@ -81,17 +71,12 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   fastify.get('/scopes', {
     schema: {
       description:
-        'The scopes you may give a personal key in one organization: the same catalog as its machine keys ' +
-        '(GET /api/organizations/:organizationId/api-keys/scopes), computed from what YOU hold there. ' +
-        '403 when you are not a member of it.',
+        'The permissions you may narrow a personal key to: the jinbe permissions you hold (from your groups), ' +
+        'concrete — a wildcard is expanded to the permissions the routes declare, never offered as such — and ' +
+        'never one that only opens routes a key may not use. Grouped by resource. 403 when your groups may not use MCP.',
       tags: ['api-keys'],
-      querystring: {
-        type: 'object',
-        required: ['organization_id'],
-        properties: { organization_id: { type: 'string', format: 'uuid', description: 'The organization the key would act in' } },
-      },
       response: {
-        200: scopeCatalogResponseJsonSchema,
+        200: personalScopeCatalogResponseJsonSchema,
         400: bodyWithDetails,
         401: unauthorizedResponseSchema,
         403: bodyWithDetails,
@@ -100,9 +85,8 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
       },
     },
   }, async (request, reply) => {
-    const { organization_id } = personalScopesQuerySchema.parse(request.query)
     try {
-      return reply.send({ scopes: await personalKeyService.scopes({ email: request.userContext!.email }, organization_id) })
+      return reply.send({ scopes: await personalKeyService.scopes({ email: request.userContext!.email }) })
     } catch (err) {
       return handleError(err, reply)
     }
@@ -111,12 +95,13 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   fastify.post('/', {
     schema: {
       description:
-        'Create a personal API key acting as you in ONE organization: scopes among the permissions you hold there, ' +
-        "expiry at most 30 days, or the administrator's shorter maximum (the default). Returns client_secret ONCE. " +
-        '403 when the organization forbids personal keys or is outside the AI assistant scope.',
+        'Create a personal API key acting as you, bound to no organization. Without `scopes` it carries all your ' +
+        'permissions as they are at each call; with them, that subset of what you hold (still re-checked at each ' +
+        "call). Expiry at most 30 days, or the administrator's shorter maximum (the default). Returns the key ONCE. " +
+        '403 when your groups may not use MCP.',
       tags: ['api-keys'],
       body: personalKeyCreateBodyJsonSchema,
-      response: { 201: personalKeySecretJsonSchema, 400: bodyWithDetails, 401: unauthorizedResponseSchema, 403: bodyWithDetails, 404: notFoundResponseSchema, 503: serviceUnavailableResponseSchema },
+      response: { 201: personalKeySecretViewJsonSchema, 400: bodyWithDetails, 401: unauthorizedResponseSchema, 403: bodyWithDetails, 404: notFoundResponseSchema, 503: serviceUnavailableResponseSchema },
     },
   }, async (request, reply) => {
     const body = personalKeyCreateBodySchema.parse(request.body)
@@ -128,7 +113,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
           type: 'api_key.created',
           actor: auditActor(request),
           target: { type: 'oauth2_client', id: result.client_id },
-          details: { organizationId: body.organization_id, label: body.label, scopes: result.scopes, kind: 'personal', expires_at: result.expires_at },
+          details: { label: body.label, scopes: result.scopes, all_permissions: result.all_permissions, kind: 'personal', expires_at: result.expires_at },
           source: 'jinbe-api',
         })
         .catch(() => {})
@@ -153,7 +138,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
           type: 'api_key.revoked',
           actor: auditActor(request),
           target: { type: 'oauth2_client', id: revoked.client_id },
-          details: { organizationId: revoked.organization_id, kind: 'personal' },
+          details: { kind: 'personal', all_permissions: revoked.all_permissions },
           source: 'jinbe-api',
         })
         .catch(() => {})

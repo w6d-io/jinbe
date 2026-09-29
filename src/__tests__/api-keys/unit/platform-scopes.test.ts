@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 
-// The personal-key catalog: the org's site scopes ∪ jinbe's own permissions the caller holds, read off
-// the REAL route table (the server is built), never a wildcard, never one only a refused route asks for.
+// What a personal key may carry: the jinbe permissions its holder holds (groups; org layer in any org),
+// read off the REAL route table (the server is built), never a wildcard, never one only a refused route asks for.
 
 const s = vi.hoisted(() => ({
   superAdmins: new Set<string>(),
@@ -10,7 +10,6 @@ const s = vi.hoisted(() => ({
   members: {} as Record<string, string[]>, // email → orgs
   roster: {} as Record<string, string[]>, // email → administered orgs
   orgHeld: {} as Record<string, string[]>, // `${org}|${email}` → jinbe permissions via org grants
-  sites: {} as Record<string, { scope: string; sites: string[] }[]>, // org → site catalog
 }))
 
 vi.mock('../../../authz/opa.js', async (importOriginal) => ({
@@ -22,7 +21,7 @@ vi.mock('../../../authz/opa.js', async (importOriginal) => ({
 }))
 vi.mock('../../../services/api-key-scopes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../services/api-key-scopes.js')>()),
-  scopeCatalog: vi.fn(async (org: string) => s.sites[org] ?? []),
+  scopeCatalog: vi.fn(async () => []),
   heldIn: vi.fn(async (email: string, _app: string, granted: readonly string[]) => (granted.length ? s.orgHeld[granted[0]] ?? [] : [])),
 }))
 
@@ -53,16 +52,15 @@ beforeEach(() => {
   s.members = {}
   s.roster = {}
   s.orgHeld = {}
-  s.sites = {}
   env.API_KEY_ALLOWED_SCOPES = []
   // The org-grant lookup keys heldIn's answer: the granted "group" is `${org}|${email}` here.
   vi.spyOn(orgGrantsRepository, 'getForMember').mockImplementation(async (org: string, email: string) => [`${org}|${email}`])
 })
 
-describe('platformScopes — jinbe permissions on a personal key', () => {
+describe('platformScopes — what a personal key may carry', () => {
   it('expands a super admin\'s `*` into the concrete permissions the routes declare, minus refused-only ones', async () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
-    expect(await platformScopes(ORG, ROOT)).toEqual([
+    expect(await platformScopes(ROOT)).toEqual([
       'admin.organisation:read',
       'admin.organisation:write',
       'admin:read',
@@ -80,7 +78,7 @@ describe('platformScopes — jinbe permissions on a personal key', () => {
   })
 
   it('never offers `*`, a permission only refused routes ask for, or one no delegated caller may use', async () => {
-    const all = await platformScopes(ORG, ROOT)
+    const all = await platformScopes(ROOT)
     // org:manage_api_keys only opens key routes; the users:* recovery set only account recovery;
     // sites:apply is ineligible outright; admin:create is a legacy rule beside org:manage_users.
     for (const p of ['*', 'org:manage_api_keys', 'users:recovery', 'users:send_login_link', 'users:reset_second_factor', 'sites:apply', 'admin:create']) {
@@ -88,58 +86,54 @@ describe('platformScopes — jinbe permissions on a personal key', () => {
     }
   })
 
-  it('offers a member just what they hold: users:read gives users:read', async () => {
+  it('offers a holder just what their groups give: users:read gives users:read, with no org at all', async () => {
     s.rights['sam@x.io'] = ['users:read']
-    s.members['sam@x.io'] = [ORG]
-    expect(await platformScopes(ORG, 'sam@x.io')).toEqual(['users:read'])
+    expect(await platformScopes('sam@x.io')).toEqual(['users:read'])
   })
 
   it('honours covers and the coarse permissions the guards accept', async () => {
     s.rights['ada@x.io'] = ['admin:read']
-    s.members['ada@x.io'] = [ORG]
     // admin:read covers admin.organisation:read, refines to users:read / sessions:read, and reads the audit trail.
-    expect(await platformScopes(ORG, 'ada@x.io')).toEqual(['admin.organisation:read', 'admin:read', 'audit:export', 'audit:read', 'sessions:read', 'users:read'])
+    expect(await platformScopes('ada@x.io')).toEqual(['admin.organisation:read', 'admin:read', 'audit:export', 'audit:read', 'sessions:read', 'users:read'])
   })
 
-  it('gives THIS org\'s roster admin org:manage_users, and nothing in another org', async () => {
+  it('gives an org\'s roster admin org:manage_users (which org a call touches is decided per request)', async () => {
     s.members['olga@x.io'] = [ORG, 'globex']
     s.roster['olga@x.io'] = [ORG]
-    expect(await platformScopes(ORG, 'olga@x.io')).toEqual(['org:manage_users'])
-    expect(await platformScopes('globex', 'olga@x.io')).toEqual([])
+    expect(await platformScopes('olga@x.io')).toEqual(['org:manage_users'])
+    s.roster['olga@x.io'] = []
+    expect(await platformScopes('olga@x.io')).toEqual([])
   })
 
-  it('counts org:manage_users granted in this org, only while a member', async () => {
+  it('counts org:manage_users granted in an org, only while a member of it', async () => {
     s.orgHeld[`${ORG}|gus@x.io`] = ['org:manage_users']
-    expect(await platformScopes(ORG, 'gus@x.io')).toEqual([])
+    expect(await platformScopes('gus@x.io')).toEqual([])
     s.members['gus@x.io'] = [ORG]
-    expect(await platformScopes(ORG, 'gus@x.io')).toEqual(['org:manage_users'])
+    expect(await platformScopes('gus@x.io')).toEqual(['org:manage_users'])
   })
 
-  it('stays under API_KEY_ALLOWED_SCOPES', async () => {
-    env.API_KEY_ALLOWED_SCOPES = ['admin:read']
-    expect(await platformScopes(ORG, ROOT)).toEqual(['admin:read', 'admin.organisation:read'].sort())
+  it('ignores API_KEY_ALLOWED_SCOPES: that ceiling bounds org machine keys, not a holder\'s own key', async () => {
+    const unbounded = await platformScopes(ROOT)
+    env.API_KEY_ALLOWED_SCOPES = ['fleet:read']
+    expect(await platformScopes(ROOT)).toEqual(unbounded)
+    expect(await personalScopeCatalog(ROOT)).toContainEqual({ scope: 'users:read', group: 'users' })
   })
 })
 
 describe('personalScopeCatalog', () => {
-  it('yields platform scopes for an org with no sites, grouped under `platform`', async () => {
-    s.rights['sam@x.io'] = ['users:read']
-    expect(await personalScopeCatalog(ORG, 'sam@x.io')).toEqual([{ scope: 'users:read', sites: ['platform'], kind: 'platform' }])
-  })
-
-  it('merges a scope both a site and jinbe ask for into one entry', async () => {
-    s.rights['sam@x.io'] = ['users:read']
-    s.sites[ORG] = [{ scope: 'payroll:read', sites: ['payroll'] }, { scope: 'users:read', sites: ['hr'] }]
-    expect(await personalScopeCatalog(ORG, 'sam@x.io')).toEqual([
-      { scope: 'payroll:read', sites: ['payroll'], kind: 'site' },
-      { scope: 'users:read', sites: ['hr', 'platform'], kind: 'site' },
+  it('groups by resource root, then scope', async () => {
+    s.rights['ada@x.io'] = ['admin:read']
+    expect(await personalScopeCatalog('ada@x.io')).toEqual([
+      { scope: 'admin.organisation:read', group: 'admin' },
+      { scope: 'admin:read', group: 'admin' },
+      { scope: 'audit:export', group: 'audit' },
+      { scope: 'audit:read', group: 'audit' },
+      { scope: 'sessions:read', group: 'sessions' },
+      { scope: 'users:read', group: 'users' },
     ])
   })
 
-  it('personal keys validate against the union; org machine keys keep the site catalog', async () => {
-    s.sites[ORG] = [{ scope: 'payroll:read', sites: ['payroll'] }]
-    await expect(apiKeyService.validateScopes(ORG, ROOT, ['payroll:read', 'admin:read'], personalScopeCatalog)).resolves.toBeUndefined()
+  it('an org machine key keeps its site catalog: jinbe permissions are not offered there', async () => {
     await expect(apiKeyService.validateScopes(ORG, ROOT, ['admin:read'])).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['admin:read'] } })
-    await expect(apiKeyService.validateScopes(ORG, ROOT, ['*'], personalScopeCatalog)).rejects.toMatchObject({ statusCode: 400 })
   })
 })

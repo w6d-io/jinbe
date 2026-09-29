@@ -74,11 +74,15 @@ describe('/api/mcp', () => {
     expect((await tokenInfo()).json()).toMatchObject({ error: 'Forbidden' })
   })
 
-  it("maps an org outside the administrator's scope to 403 mcp_disabled, for tokens and keys", async () => {
-    s.resolve.mockResolvedValue({ error: 'mcp_org_not_allowed' })
+  it("maps groups outside the administrator's scope to 403 mcp_disabled, for tokens and keys; 'cannot tell' to 503", async () => {
+    s.resolve.mockResolvedValue({ error: 'mcp_group_not_allowed' })
     const res = await tokenInfo()
     expect(res.statusCode).toBe(403)
-    expect(res.json()).toMatchObject({ error: 'mcp_disabled', reason: 'org_not_allowed' })
+    expect(res.json()).toMatchObject({ error: 'mcp_disabled', reason: 'group_not_allowed' })
+    s.resolve.mockResolvedValue({ error: 'authz_unavailable' })
+    expect((await tokenInfo()).statusCode).toBe(503)
+    s.exchange.mockRejectedValueOnce(new PersonalKeyRefused('mcp_group_not_allowed'))
+    expect((await exchange('stk_mcp_pk.secret')).json()).toMatchObject({ error: 'mcp_disabled', reason: 'group_not_allowed' })
     s.exchange.mockRejectedValue(new PersonalKeyRefused('mcp_disabled'))
     const ex = await exchange('stk_mcp_pk.secret')
     expect(ex.statusCode).toBe(403)
@@ -100,10 +104,13 @@ describe('/api/mcp', () => {
 
   it('token-info names the key and its holder for a personal-key token', async () => {
     s.resolve.mockResolvedValue({ principal: {
-      subject: 'user-1', email: 'ann@acme.io', name: 'Ann', clientId: 'pk', scopes: [], org: 'acme', kind: 'personal',
-      expiresAt: 1_900_000_000_000, keyExpiresAt: 1_900_500_000_000, tokenScope: 'mcp', aud: ['https://mcp.test'],
+      subject: 'user-1', email: 'ann@acme.io', name: 'Ann', clientId: 'pk', scopes: ['users:read'], kind: 'personal', allPermissions: true,
+      expiresAt: 1_900_000_000_000, keyExpiresAt: 1_900_500_000_000, tokenScope: 'users:read mcp', aud: ['https://mcp.test'],
     } })
-    expect((await tokenInfo()).json()).toMatchObject({ sub: 'pk', client_id: 'pk', ext: { kind: 'personal', subject: 'user-1', key_id: 'pk', key_expires_at: 1_900_500_000 } })
+    const body = (await tokenInfo()).json()
+    // Bound to no org; the scope is the effective one (what the holder holds now).
+    expect(body).toMatchObject({ sub: 'pk', client_id: 'pk', scope: 'users:read mcp', ext: { kind: 'personal', subject: 'user-1', key_id: 'pk', key_expires_at: 1_900_500_000, all_permissions: true } })
+    expect(body.ext).not.toHaveProperty('org')
   })
 
   it('token-info is 401 for a refused token, a key, or no token', async () => {

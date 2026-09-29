@@ -40,18 +40,18 @@ beforeEach(() => {
   s.mcpConfig = { mcp: JSON.stringify({ enabled: true }) }
   resetMcpSettingsCache()
   s.env.DELEGATED_TOKENS_ENABLED = true
-  s.scopes.mockReset().mockResolvedValue([{ scope: 'payroll:read', sites: ['payroll'] }])
+  s.scopes.mockReset().mockResolvedValue([{ scope: 'users:read', group: 'users' }])
 })
 
-const scopes = (query = `?organization_id=${ORG}`, headers: Record<string, string> = {}) =>
+const scopes = (query = '', headers: Record<string, string> = {}) =>
   app.inject({ url: `/api/me/api-keys/scopes${query}`, headers })
 
 describe('GET /api/me/api-keys/scopes', () => {
-  it("answers the org's catalog of what the caller holds there, in the org route's shape", async () => {
+  it('answers the permissions the caller holds, grouped, with no organization asked', async () => {
     const res = await scopes()
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ scopes: [{ scope: 'payroll:read', sites: ['payroll'] }] })
-    expect(s.scopes).toHaveBeenCalledWith({ email: 'ann@acme.io' }, ORG)
+    expect(res.json()).toEqual({ scopes: [{ scope: 'users:read', group: 'users' }] })
+    expect(s.scopes).toHaveBeenCalledWith({ email: 'ann@acme.io' })
   })
 
   it('is 404 while nothing is saved: MCP is off until an administrator opts in', async () => {
@@ -80,17 +80,16 @@ describe('GET /api/me/api-keys/scopes', () => {
     expect(s.scopes).not.toHaveBeenCalled()
   })
 
-  it('needs an organization_id', async () => {
-    expect((await scopes('')).statusCode).toBe(400)
-    expect((await scopes('?organization_id=acme')).statusCode).toBe(400)
-    expect(s.scopes).not.toHaveBeenCalled()
+  it('ignores a leftover organization_id', async () => {
+    expect((await scopes(`?organization_id=${ORG}`)).statusCode).toBe(200)
+    expect(s.scopes).toHaveBeenCalledWith({ email: 'ann@acme.io' })
   })
 
-  it('403 for a non-member, 503 (never an empty list) when OPA cannot be asked', async () => {
-    s.scopes.mockRejectedValueOnce(new ApiKeyError(403, 'You are not a member of that organization'))
+  it('403 for groups outside the AI assistant scope, 503 (never an empty list) when OPA cannot be asked', async () => {
+    s.scopes.mockRejectedValueOnce(new ApiKeyError(403, 'AI assistants are not enabled for your groups'))
     const refused = await scopes()
     expect(refused.statusCode).toBe(403)
-    expect(refused.json().message).toBe('You are not a member of that organization')
+    expect(refused.json().message).toBe('AI assistants are not enabled for your groups')
     s.scopes.mockRejectedValueOnce(new AuthzUnavailableError('opa down'))
     const down = await scopes()
     expect(down.statusCode).toBe(503)
