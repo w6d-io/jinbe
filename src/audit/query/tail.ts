@@ -19,7 +19,7 @@ import { outOfScope, parse, scopeOf } from './http.js'
 export const tailConfig = { maxMs: 15 * 60_000, pollMs: 2000 }
 
 export async function auditTailRoute(fastify: FastifyInstance) {
-  fastify.get('/tail', { preHandler: requireAuditScope('audit:read') }, async (request, reply) => {
+  fastify.get('/tail', { preHandler: requireAuditScope('audit:read'), config: { permission: 'audit:read' as const } }, async (request, reply) => {
     const q = parse(filtersSchema, request.query, reply)
     if (!q) return
     const orgs = orgsFor(scopeOf(request), q.org)

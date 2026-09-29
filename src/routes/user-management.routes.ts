@@ -3,8 +3,8 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 import { adminController } from '../controllers/admin.controller.js'
 import { rights, secondFactorRequired } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
-import { requireRecentMfa } from '../middleware/require-admin.js'
-import { callerRights, demandPermissions, requirePermission } from '../middleware/require-permission.js'
+import { callerRights, demandPermissions } from '../middleware/require-permission.js'
+import { needs } from '../policy/route-access.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { KratosApiError, kratosService, MFA_METHODS, type MfaMethod } from '../services/kratos.service.js'
@@ -24,6 +24,7 @@ import {
 } from '../services/second-factor-reset.service.js'
 import { lookupUsers, LOOKUP_MAX } from '../services/user-lookup.service.js'
 import { allows, requiredForEdit, type CheckedPermission, type EditableIdentity } from '../services/user-permissions.js'
+import { CATALOG, effectivePermissions } from '../policy/catalog.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
   userIdParamSchema,
@@ -44,17 +45,16 @@ import { clientIp } from '../utils/client-ip.js'
  * Managing users, one permission per action — so a support desk can fix somebody's address, see and
  * end their sessions and send them a way back in, without administering anything else.
  *
- * NOT behind the admin plugin's `admin:read` gate: the support role does not hold it. Each route
- * enforces its own permission here, in the app layer, because the gateway is not the only way in
- * (NetworkPolicy is not enforced). Administrators pass every check through the coarse permission
- * each fine one refines (see `USER_PERMISSIONS`).
+ * Each route declares its catalogue permission (policy/catalog.ts) and is enforced here, in the app
+ * layer, because the gateway is not the only way in (NetworkPolicy is not enforced). Holders of the
+ * retired `admin:read` / `admin:write` pass through the catalogue's aliases for one release.
  */
 export async function userManagementRoutes(fastify: FastifyInstance) {
   const idParams = zodToJsonSchema(userIdParamSchema)
   const errors = { 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema }
 
   fastify.get('/users', {
-    preHandler: requirePermission('users:read'),
+    ...needs('users:read'),
     schema: {
       description: 'List all users from Kratos identity service. Needs users:read.',
       tags: ['admin'],
@@ -71,7 +71,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
 
   // Declared before /users/:id; Fastify's router prefers the static segment.
   fastify.get('/users/search', {
-    preHandler: requirePermission('users:read'),
+    ...needs('users:read'),
     schema: {
       description: 'Search identities by email or name substring (cached; no directory walk). Needs users:read.',
       tags: ['admin'],
@@ -87,8 +87,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   // bounded Kratos query (see lookupUsers), and the limit is per caller so one open tab cannot
   // starve the others.
   fastify.get<{ Querystring: { q: string; limit?: number } }>('/users/lookup', {
-    preHandler: requirePermission('users:read'),
-    config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) } },
+    config: { permission: 'users:read', rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) } },
     schema: {
       description:
         'Find a person by Kratos identity id (exact), whole email (exact) or the start of an email; falls back to a ' +
@@ -130,7 +129,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/users/:id', {
-    preHandler: requirePermission('users:read'),
+    ...needs('users:read'),
     schema: {
       description: 'Get user by ID from Kratos identity service. Needs users:read.',
       tags: ['admin'],
@@ -140,10 +139,11 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.getUser.bind(adminController) as never)
 
   fastify.post('/users', {
+    ...needs('users:create'),
     preHandler: enforcing(requireCreatePermissions, 'users:create'),
     schema: {
       description:
-        'Create new user in Kratos identity service. Needs users:create; users:assign_group to give groups; users:recovery to send an invite.',
+        'Create new user in Kratos identity service. Needs users:create; groups.members:write to give groups; users:recovery to send an invite.',
       tags: ['admin'],
       body: {
         oneOf: [
@@ -168,10 +168,11 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.createUser.bind(adminController) as never)
 
   fastify.put('/users/:id', {
+    ...needs('users:update'),
     preHandler: enforcing(requireEditPermissions, 'users:update'),
     schema: {
       description:
-        'Update a user. Needs users:update for the name, users:update_email for the address, admin:write for anything outside the traits.',
+        'Update a user. Needs users:update for the traits, users:update_email for the address, users:disable for the state, users.metadata:write for the schema and metadata.',
       tags: ['admin'],
       params: idParams,
       body: userUpdateJsonSchema,
@@ -180,7 +181,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.updateUser.bind(adminController))
 
   fastify.delete('/users/:id', {
-    preHandler: requirePermission('users:delete'),
+    ...needs('users:delete'),
     schema: {
       description: 'Delete user by ID from Kratos identity service. Needs users:delete.',
       tags: ['admin'],
@@ -190,7 +191,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.deleteUser.bind(adminController) as never)
 
   fastify.post('/users/:id/recovery-email', {
-    preHandler: requirePermission('users:recovery'),
+    ...needs('users:recovery'),
     schema: {
       description: 'Send a recovery email to the user. Triggers Kratos self-service recovery flow. Needs users:recovery.',
       tags: ['admin'],
@@ -200,7 +201,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.sendRecoveryEmail.bind(adminController) as never)
 
   fastify.post('/users/:id/login-link', {
-    preHandler: requirePermission('users:send_login_link'),
+    ...needs('users:send_login_link'),
     schema: {
       description:
         'Email the user a one-click sign-in link (Kratos recovery link, sent by Kratos). The link is never returned. Needs users:send_login_link.',
@@ -223,7 +224,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, sendLoginLinkHandler as never)
 
   fastify.get('/users/:id/second-factors', {
-    preHandler: requirePermission('users:read'),
+    ...needs('users:read'),
     schema: {
       description:
         'The second factors the user has enrolled (passkeys are first factors and not listed), and whether their role ' +
@@ -245,7 +246,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, secondFactorsHandler as never)
 
   fastify.post('/users/:id/second-factors/reset', {
-    preHandler: [requirePermission('users:reset_second_factor'), requireRecentMfa],
+    ...needs('users:reset_second_factor'), // step-up from the catalogue
     schema: {
       description:
         'Remove the user\'s second factors (authenticator app, security keys, backup codes; passkeys stay) for somebody ' +
@@ -278,7 +279,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
 
   // Proxied from Kratos admin — never exposed directly to the browser.
   fastify.get('/users/:id/sessions', {
-    preHandler: requirePermission('sessions:read'),
+    ...needs('sessions:read'),
     schema: {
       description: 'List active sessions for a Kratos identity. Needs sessions:read.',
       tags: ['admin'],
@@ -288,7 +289,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.listUserSessions.bind(adminController) as never)
 
   fastify.delete('/sessions/:sessionId', {
-    preHandler: requirePermission('sessions:revoke'),
+    ...needs('sessions:revoke'),
     schema: {
       description: 'Revoke a session by ID. Needs sessions:revoke.',
       tags: ['admin'],
@@ -298,7 +299,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.revokeSession.bind(adminController) as never)
 
   fastify.delete('/users/:id/sessions', {
-    preHandler: requirePermission('sessions:revoke'),
+    ...needs('sessions:revoke'),
     schema: {
       description: 'Revoke all sessions for a Kratos identity. Needs sessions:revoke.',
       tags: ['admin'],
@@ -315,7 +316,7 @@ async function requireCreatePermissions(request: FastifyRequest, reply: FastifyR
   const groups = (Array.isArray(body.groups) ? body.groups : Array.isArray(meta.groups) ? meta.groups : []) as string[]
   const required: CheckedPermission[] = ['users:create']
   // Base `users` confers nothing — the same exemption the grant gate in the handler makes.
-  if (groups.some((g) => g !== 'users')) required.push('users:assign_group')
+  if (groups.some((g) => g !== 'users')) required.push('groups.members:write')
   if (body.sendInvite === true) required.push('users:recovery')
   if (!(await demandPermissions(request, reply, required))) return reply
 }
@@ -415,10 +416,10 @@ async function secondFactorsHandler(request: FastifyRequest<{ Params: { id: stri
  *     the factor first — this path would let a stolen session strip the account's last defence;
  *   - never somebody holding an administrative right you do not: with the address editable and a
  *     sign-in link one click away, removing a stronger account's factor is taking the account over.
- *     Administrative = the wildcard, the admin tree, user and session management, applying sites.
- *     Everyday site permissions are left out: an administrator can hand those out anyway.
+ *     Administrative = every catalogue permission above `low` sensitivity (the wildcard is all of
+ *     them). Everyday site permissions are left out: an administrator can hand those out anyway.
  */
-const ADMINISTRATIVE = /^(\*$|admin[.:]|users:|sessions:|sites:)/
+const administrative = (held: readonly string[]) => effectivePermissions(held).filter((p) => CATALOG[p].sensitivity !== 'low')
 
 async function resetSecondFactorsHandler(
   request: FastifyRequest<{ Params: { id: string }; Body: { reason: string; revokeSessions?: boolean } }>,
@@ -452,7 +453,7 @@ async function resetSecondFactorsHandler(
       return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify the user\'s rights. Please try again later.' })
     }
     const mine = request.rbacInfo?.permissions ?? []
-    const beyond = theirs.filter((p) => ADMINISTRATIVE.test(p) && !allows(mine, p as CheckedPermission))
+    const beyond = administrative(theirs).filter((p) => !allows(mine, p))
     if (beyond.length) {
       return reply.status(403).send({
         error: 'outranked',

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 import { payrollSite, platform } from './fixtures.js'
@@ -42,15 +43,8 @@ vi.mock('../../services/opa-client.js', async (orig) => {
   const real = await orig<typeof import('../../services/opa-client.js')>()
   return { ...real, queryOpa: h.opa }
 })
-vi.mock('../../middleware/require-admin.js', () => ({
-  requireSuperAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireSitesApply: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireRecentMfa: async () => {},
-}))
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn({ stepUpOpen: true }))
 
 import { render } from '../../sites/render.js'
 import { siteLoginOf } from '../../sites/login.js'
@@ -85,6 +79,7 @@ const PNG = Buffer.concat([
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   await app.register(rateLimit, { global: false })
   app.addHook('onRequest', async (request) => {
     if (request.url.startsWith('/sites')) request.userContext = { id: 'sam', email: 'sam@x.test', name: 'Sam' }

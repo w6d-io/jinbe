@@ -73,32 +73,20 @@ describe('the table collected from the guards', () => {
   })
 })
 
-describe('a gate put on a whole plugin', () => {
+describe('a declaration', () => {
   beforeEach(() => resetDeclaredRoutes())
 
-  it('is recorded, which a root-level collector alone cannot see', async () => {
-    const { guardAll } = await import('../../policy/declared-routes.js')
-    const gate = enforcing(async () => {}, 'admin:read')
-    let onRoute: ((r: { method: string; url: string; preHandler?: unknown }) => void) | null = null
-    const fastify = {
-      addHook: (name: string, fn: unknown) => { if (name === 'onRoute') onRoute = fn as never },
-    }
-    guardAll(fastify as never, gate, never)
-    // Fastify reports only PER-ROUTE handlers to an onRoute hook, so the gate a plugin puts on all
-    // of its routes was enforced and invisible at the same time.
-    onRoute!({ method: 'GET', url: '/api/admin/users' })
-    expect(declaredRoutes()[0]).toEqual({
-      method: 'GET', path: '/api/admin/users', class: 'authorized', permission: 'admin:read',
-    })
+  it('is the row, whatever the guards say', () => {
+    recordRoute('GET', '/api/admin/users', [], never, { permission: 'users:read' })
+    expect(declaredRoutes()[0]).toEqual({ method: 'GET', path: '/api/admin/users', class: 'authorized', permission: 'users:read' })
   })
 
-  it('does not let a blinder sighting overwrite one that found the permission', () => {
-    recordRoute('GET', '/api/admin/users', [enforcing(async () => {}, 'admin:read')], never)
-    // The root collector sees the same route with no per-route guard. Letting it win would describe
-    // a guarded route as merely authenticated.
-    recordRoute('GET', '/api/admin/users', [], never)
-    expect(declaredRoutes()[0].class).toBe('authorized')
-    expect(declaredRoutes()[0].permission).toBe('admin:read')
+  it('keeps why a route needs no permission, and the step-up and org scope a route carries', () => {
+    recordRoute('GET', '/api/me/permissions', [], never, { access: 'self' })
+    recordRoute('POST', '/api/o/:org/x', [], never, { permission: 'org.keys:write', stepUp: true, org: 'org' })
+    const [a, b] = declaredRoutes()
+    expect(a).toEqual({ method: 'GET', path: '/api/me/permissions', class: 'authenticated', access: 'self' })
+    expect(b).toEqual({ method: 'POST', path: '/api/o/:org/x', class: 'authorized', permission: 'org.keys:write', stepUp: true, org: 'org' })
   })
 })
 
@@ -122,6 +110,7 @@ describe('what the running service ends up declaring', () => {
       expect(rows.find((r) => r.path === '/api/admin/users' && r.method === 'GET')).toEqual({
         method: 'GET', path: '/api/admin/users', class: 'authorized', permission: 'users:read',
       })
+      expect(rows.find((r) => r.path === '/api/admin/users/:id' && r.method === 'DELETE')?.stepUp).toBe(true)
       // The user routes are read off their own guards: one permission per action.
       const row = (method: string, path: string) => rows.find((r) => r.method === method && r.path === path)
       expect(row('PUT', '/api/admin/users/:id')?.permission).toBe('users:update')

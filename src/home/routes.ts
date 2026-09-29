@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { recordRoute } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { open } from '../policy/route-access.js'
 import { requireHomeScope, viewFor, canSee, type HomeScope, type HomeView } from './scope.js'
 import { buildHome, buildModules, forbidden } from './service.js'
 import { HOME_MODULES, homeQuerySchema, homeResponseSchema, moduleEnvelopeSchema, type HomeModuleName } from './types.js'
@@ -38,7 +37,6 @@ function scopeAndView(request: FastifyRequest, reply: FastifyReply): { scope: Ho
 }
 
 export async function homeRoutes(fastify: FastifyInstance) {
-  fastify.addHook('onRoute', (route) => recordRoute(route.method, route.url, [route.preHandler], isPublicRoute))
   // Documentation-only schemas: zod validates, the handlers serialise.
   fastify.setValidatorCompiler(() => (data) => ({ value: data }))
   fastify.setSerializerCompiler(() => (data) => JSON.stringify(data))
@@ -47,6 +45,7 @@ export async function homeRoutes(fastify: FastifyInstance) {
   const querystring = json(homeQuerySchema)
 
   fastify.get('', {
+    ...open('self'), // its own scope guard narrows every module to the caller
     preHandler: guard,
     schema: {
       description: 'The Home briefing: every module the caller may see, each with its own status, freshness and sources',
@@ -62,6 +61,7 @@ export async function homeRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/:module', {
+    ...open('self'), // its own scope guard narrows every module to the caller
     preHandler: guard,
     schema: {
       description: 'One Home module (retry after unavailable, or refresh a single tile). 403 with status "forbidden" for a module the caller may not see.',

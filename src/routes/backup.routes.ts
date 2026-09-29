@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { backupController } from '../controllers/backup.controller.js'
 import { backupItemController } from '../controllers/backup-item.controller.js'
 import { remapParam } from '../utils/route-helpers.js'
@@ -29,12 +27,12 @@ export async function backupRoutes(fastify: FastifyInstance) {
   // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
   // session. Super admin for EVERY method until it is gone — no console calls it.
   // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
-  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
 
   // Get all backups
   fastify.get(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get all backups (optionally filtered by clusterId)',
         tags: ['backups'],
@@ -60,6 +58,7 @@ export async function backupRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get backup by ID',
         tags: ['backups'],
@@ -78,6 +77,7 @@ export async function backupRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/items',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Create new backup item under a specific backup',
         tags: ['backup-items'],
@@ -96,6 +96,7 @@ export async function backupRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Delete backup by ID',
         tags: ['backups'],

@@ -1,8 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { apiKeyController } from '../controllers/api-key.controller.js'
 import { requireOrgPermission } from '../middleware/require-org-permission.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs, open } from '../policy/route-access.js'
 import { requireInternalCaller } from '../middleware/require-internal-caller.js'
 import { apiKeyScopesController } from '../controllers/api-key-scopes.controller.js'
 import {
@@ -23,12 +22,15 @@ import {
   serviceUnavailableResponseSchema,
 } from '../schemas/response-schemas.js'
 
+/** Decided per organisation by this plugin's gate, never by a platform guard (route-access.ts). */
+const ORG = { org: 'organizationId' }
+
 /**
  * Organization-scoped API-key (Hydra OAuth2 client) management.
  *
- * Mounted under /api/organizations/:organizationId. Every route requires the
- * caller to manage THAT organization's keys (`org:manage_api_keys`): its org
- * admin, super_admin, or a member holding the permission there (site grants ∪
+ * Mounted under /api/organizations/:organizationId. Every route requires its
+ * `org.keys:*` permission IN THAT organization (`org:manage_api_keys` still counts, as a legacy
+ * alias): a staff role holding it platform-wide, its org admin, super_admin, or a member holding it there (site grants ∪
  * org_grants of that org). Holding it in another organization counts for
  * nothing. Declared in jinbe's route_map with `org_param` so the gateway draws
  * the same org boundary.
@@ -49,11 +51,13 @@ const apiKeyBadRequestResponseSchema = {
 }
 
 export async function apiKeyRoutes(fastify: FastifyInstance) {
-  guardAll(fastify, requireOrgPermission('org:manage_api_keys', 'organizationId'), isPublicRoute)
+  // One gate for every key route, asking each route's own declared permission (org.keys:*).
+  fastify.addHook('preHandler', requireOrgPermission())
 
   fastify.post(
     '/api-keys',
     {
+      ...needs('org.keys:write', ORG),
       schema: {
         description:
           'Create an API key (Hydra client_credentials client) for this organization. ' +
@@ -75,6 +79,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/api-keys',
     {
+      ...needs('org.keys:read', ORG),
       schema: {
         description: 'List API keys belonging to this organization (no secrets).',
         tags: ['api-keys'],
@@ -95,6 +100,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/api-keys/scopes',
     {
+      ...needs('org.keys:read', ORG),
       schema: {
         description:
           'The scopes an API key of this organization may be given: the permissions required by routes of the sites ' +
@@ -116,6 +122,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/api-key-policy',
     {
+      ...needs('org.keys:read', ORG),
       schema: {
         description: 'DEPRECATED — personal keys are bound to no organization and inherit their holder, so this value is stored but no longer enforced (404 unless delegated tokens are enabled).',
         tags: ['api-keys'],
@@ -129,6 +136,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/api-key-policy',
     {
+      ...needs('org.keys:write', ORG),
       schema: {
         description: 'DEPRECATED — stored but no longer enforced: personal keys are bound to no organization (MCP is limited by group in the AI assistants setting).',
         tags: ['api-keys'],
@@ -143,6 +151,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/api-keys/:clientId',
     {
+      ...needs('org.keys:read', ORG),
       schema: {
         description: 'Get a single API key within this organization (no secret).',
         tags: ['api-keys'],
@@ -161,6 +170,7 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/api-keys/:clientId',
     {
+      ...needs('org.keys:revoke', ORG),
       schema: {
         description: 'Revoke an API key. Deletes the Hydra client; opaque tokens stop on next introspection.',
         tags: ['api-keys'],
@@ -191,6 +201,7 @@ export async function apiKeyInternalRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/oauth-clients/:clientId/organization',
     {
+      ...open('machine'),
       schema: {
         description: 'Resolve a client_id to its owning organization and scopes (internal only).',
         tags: ['api-keys-internal'],

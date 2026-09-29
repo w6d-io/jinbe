@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // Removing somebody's two-step sign-in, called DIRECTLY at jinbe: the permission, the caller's own
@@ -66,6 +67,7 @@ beforeAll(async () => {
     throw new Error(`unexpected fetch ${method} ${url}`)
   }))
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const who = request.headers['x-test-user'] as string | undefined
     const proven = request.headers['x-test-proven'] as string | undefined

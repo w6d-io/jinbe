@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // GET /api/home and /api/home/:module (home-data.md §3, §11): scope from OPA, modules the caller may
@@ -20,6 +21,7 @@ let app: FastifyInstance
 beforeAll(async () => {
   resetDeclaredRoutes()
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const id = request.headers['x-test-subject'] as string | undefined
     if (id) request.userContext = { id, email: `${id}@example.com`, name: `Name ${id}`, aal: 'aal2' }

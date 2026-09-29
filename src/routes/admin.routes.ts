@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { adminController } from '../controllers/admin.controller.js'
-import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
+import { requireMembershipChange } from '../middleware/require-membership-change.js'
+import { needs, open } from '../policy/route-access.js'
 import { realtimeService } from '../services/realtime.service.js'
 import { accessReviewService } from '../services/access-review.service.js'
 import {
@@ -22,32 +23,25 @@ import {
 import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.js'
 import { holdsInJinbe } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
-import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
-import { requirePermission } from '../middleware/require-permission.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
 import { userAccessRoutes } from './user-access.routes.js'
 import { sitesRoutes } from '../sites/routes.js'
 import { gatewayRoutes } from '../gateway/routes.js'
 
 /**
- * Admin routes, all behind `admin:read` (plus what a route adds).
+ * Admin routes. Each declares its catalogue permission (policy/catalog.ts); there is no plugin-wide
+ * gate any more — `admin:read` opened every route here, writes included.
  *
  * Listing, reading, creating, editing and deleting users, their sessions, recovery and sign-in links
  * live in `user-management.routes.ts`: one permission per action, so a support role can reach them
  * without this plugin's gate.
  */
 export async function adminRoutes(fastify: FastifyInstance) {
-  // Require admin group membership for all routes in this plugin
-  guardAll(fastify, requireAdmin, isPublicRoute)
-
-  // Real-time change stream (Server-Sent Events). Auth: inherits the plugin's
-  // requireAdmin (Kratos session) — same gate as every other /admin route. It
+  // Real-time change stream (Server-Sent Events), stats:read until it folds into /audit/tail. It
   // emits a minimal {type} signal on any RBAC/directory change; the client
   // reacts by refetching through the normal auth'd endpoints (no data on wire).
-  fastify.get('/events', (request, reply) => {
+  fastify.get('/events', needs('stats:read'), (request, reply) => {
     // NB: do NOT send a `Connection: keep-alive` header. It is a
     // connection-specific header field, forbidden under HTTP/2 (RFC 7540
     // §8.1.2.2). When this SSE response is fronted by an HTTP/2 ingress/gateway
@@ -74,6 +68,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/stats',
     {
+      ...needs('stats:read'),
       schema: {
         description: 'Directory statistics (cached; total/active/per-group/per-org counts)',
         tags: ['admin'],
@@ -102,12 +97,12 @@ export async function adminRoutes(fastify: FastifyInstance) {
   // Resolves power across ALL services from the group definitions, tiers each
   // identity (T0 global super-admin → T3 broad reach), joins MFA + last-active +
   // grant provenance, and ranks by power score. SWR-cached (getDirectoryStats
-  // pattern), fail-closed on a directory/group read error. Inherits the plugin's
-  // requireAdmin preHandler. Response is additive/permissive so the kuma
+  // pattern), fail-closed on a directory/group read error. Response is additive/permissive so the kuma
   // AccessReview contract fields are never stripped.
   fastify.get(
     '/access-review',
     {
+      ...needs('access:read'),
       schema: {
         description:
           'Access review: privileged identities across all services, tiered + ranked, with grant paths, MFA, last-active and provenance.',
@@ -139,9 +134,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organizations',
     {
-      preHandler: requirePlatformPermission('admin.organisation:read'),
+      ...needs('org:read'),
       schema: {
-        description: 'Every organisation the directory holds. Needs admin.organisation:read.',
+        description: 'Every organisation the directory holds. Needs org:read.',
         tags: ['admin'],
         response: {
           200: {
@@ -196,9 +191,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Creating an organisation: its own file, behind this plugin's guard.
+  // Creating an organisation: its own file.
   await organisationAdminRoutes(fastify)
-  // One user's site + org access, behind this plugin's admin:read gate.
+  // One user's site + org access.
   await userAccessRoutes(fastify)
   // Plug a site: intent, drafts, preview, apply (its own plugin, so its zod-only validation stays local).
   await fastify.register(sitesRoutes, { prefix: '/sites' })
@@ -212,6 +207,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/assignable-groups',
     {
+      // About the caller: every declared group when they may add members, else none.
+      ...open('self'),
       schema: {
         description: 'The groups the caller may assign, and whether they may assign at all.',
         tags: ['admin'],
@@ -238,7 +235,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
       }
       try {
-        // Everything OPA knows, or nothing: holding admin.membership:write across the platform is
+        // Everything OPA knows, or nothing: holding groups.members:write across the platform is
         // the only authority over site-wide assignment, so there is no middle set to compute.
         const groups = (await holdsInJinbe(email, ASSIGN_MEMBERSHIP)) ? await declaredGroups() : []
         return reply.send({ groups, mayAssign: groups.length > 0 })
@@ -258,10 +255,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/metadata',
     {
-      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
-      preHandler: requirePermission('users:update'),
+      ...needs('users.metadata:write'),
       schema: {
-        description: 'Merge-patch user metadata_public or metadata_admin',
+        description: 'Merge-patch user metadata_public or metadata_admin. Needs users.metadata:write.',
         tags: ['admin'],
         params: zodToJsonSchema(userIdParamSchema),
         body: {
@@ -285,8 +281,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/state',
     {
-      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
-      preHandler: requirePermission('users:update'),
+      ...needs('users:disable'),
       schema: {
         description: 'Set user state to active or inactive',
         tags: ['admin'],
@@ -310,8 +305,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/organization',
     {
-      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
-      preHandler: requirePermission('users:update'),
+      // Organisation membership (to be merged into PUT /organizations/:o/users/:id/membership).
+      ...needs('org.members:write'),
       schema: {
         description: 'Set or remove the organization_id on a user (Kratos JSON Patch)',
         tags: ['admin'],
@@ -346,6 +341,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/users/:email/groups',
     {
+      ...needs('access:read'),
       schema: {
         description:
           "Get a user's groups and available groups for assignment",
@@ -361,14 +357,16 @@ export async function adminRoutes(fastify: FastifyInstance) {
     adminController.getUserGroups.bind(adminController)
   )
 
-  // Update user's groups (requires super_admin)
+  // Update user's groups: removing only needs groups.members:revoke; adding needs groups.members:write
+  // and a step-up (require-membership-change.ts).
   fastify.put(
     '/users/:email/groups',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('groups.members:revoke'),
+      preHandler: requireMembershipChange,
       schema: {
         description:
-          "Update a user's group memberships. Requires super_admin group. Groups must exist in groups.json.",
+          "Replace a user's platform groups. Removing only needs groups.members:revoke; adding needs groups.members:write and a second factor proven within 15 minutes. Groups must exist in the model.",
         tags: ['admin'],
         params: zodToJsonSchema(userEmailParamSchema),
         body: updateUserGroupsBodyJsonSchema,

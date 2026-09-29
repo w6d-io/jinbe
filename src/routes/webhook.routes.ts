@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { webhookController } from '../controllers/webhook.controller.js'
 import { signInGuardHook } from '../sign-in-protection/routes.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * Kratos after-hook webhook (A5). Public at the gateway (Kratos has no jinbe
@@ -27,6 +28,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/kratos',
     {
+      ...open('machine'),
       schema: {
         description: 'Kratos after-hook receiver (login / MFA / settings / registration). Self-authenticated via shared secret.',
         tags: ['webhooks'],
@@ -45,6 +47,7 @@ export async function webhookRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/kratos/guard',
     {
+      ...open('machine'),
       schema: {
         description:
           'Interrupting Kratos web_hook (registration after.<method> and settings after.profile with response.parse, login after ' +

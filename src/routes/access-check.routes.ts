@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { requireSuperAdmin } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { checkAccess, AccessCheckUnavailableError, OpaQueryError } from '../services/access-check.service.js'
 import { auditAccessCheck } from '../audit/record.js'
@@ -16,9 +16,8 @@ import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 /**
  * POST /api/admin/rbac/access-check — "can X do METHOD PATH, and why?" for the console.
  *
- * Platform admins only: registered inside rbacRoutes, so the admin:read gate there runs first and
- * admin:write is required on top — the answer lists what somebody else holds. Declared admin-only
- * in the jinbe route_map too, so the gateway never lets an anonymous or ordinary caller reach it.
+ * Needs access:check — the answer lists what somebody else holds. Declared in the jinbe route_map
+ * too, so the gateway never lets an anonymous or ordinary caller reach it.
  */
 
 // Built when the plugin registers, not at import: modules that mock rbac.service import this one.
@@ -57,13 +56,13 @@ export async function accessCheckRoutes(fastify: FastifyInstance) {
   const bodySchema = accessCheckBodySchema()
 
   fastify.post('/access-check', {
-    preHandler: requireSuperAdmin,
+    ...needs('access:check'),
     schema: {
       description:
         'Ask OPA whether a user may call METHOD PATH and why: the gateway verdict (rbac.decision) plus the ' +
         'owning service, the route rules that matched, and the groups, roles and permissions that applied ' +
         '(rbac.simulate). `owners` with two or more services is a route tie, which the policy answers not_found. ' +
-        'Requires admin:write. 503 when OPA_URL / OPA_TOKEN are not configured; 502 when OPA does not answer.',
+        'Requires access:check. 503 when OPA_URL / OPA_TOKEN are not configured; 502 when OPA does not answer.',
       tags: ['rbac'],
       body: {
         type: 'object',

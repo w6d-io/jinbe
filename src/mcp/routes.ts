@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
+import { needs, open } from '../policy/route-access.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { delegatedTokenService } from '../services/delegated-token.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -31,7 +31,7 @@ const CEILING_NOTE =
 /**
  * The setting (settings.ts).
  *   GET /api/admin/settings/mcp — admin
- *   PUT /api/admin/settings/mcp — super_admin + a recent second factor: who may act through an AI
+ *   PUT /api/admin/settings/mcp — settings.mcp:write + a recent second factor: who may act through an AI
  *       assistant, and for how long a key lives, is an access change.
  */
 export async function mcpSettingsRoutes(fastify: FastifyInstance) {
@@ -50,7 +50,7 @@ export async function mcpSettingsRoutes(fastify: FastifyInstance) {
   }
 
   fastify.get('/mcp', {
-    preHandler: requireAdmin,
+    ...needs('settings:read'),
     schema: {
       description:
         'The AI assistants (MCP) setting, the deployment ceiling (DELEGATED_TOKENS_ENABLED) and whether MCP is effectively ' +
@@ -71,13 +71,13 @@ export async function mcpSettingsRoutes(fastify: FastifyInstance) {
   }, view)
 
   fastify.put('/mcp', {
-    preHandler: [requireSuperAdmin, requireRecentMfa],
+    ...needs('settings.mcp:write'),
     schema: {
       description:
         'Replace the AI assistants (MCP) setting. Turning it off refuses delegated tokens and personal-key exchange at ' +
         'once on this replica and within 5 seconds everywhere (keys stay stored, unusable); turning it on restores them. ' +
         'It can never lift the deployment ceiling: with DELEGATED_TOKENS_ENABLED=false the value is saved but MCP stays ' +
-        'off (see `ceiling` and `effective`). Requires super_admin + a second factor proven within 15 minutes.',
+        'off (see `ceiling` and `effective`). Requires settings.mcp:write + a second factor proven within 15 minutes.',
       tags: ['mcp'],
       body: {
         type: 'object',
@@ -118,6 +118,7 @@ export async function mcpSettingsRoutes(fastify: FastifyInstance) {
  */
 export async function mcpStatusRoutes(fastify: FastifyInstance) {
   fastify.get('/status', {
+    ...open('authenticated'),
     schema: {
       description: 'Whether AI assistants (MCP) are on, the MCP server address, and why not when off. Any signed-in person.',
       tags: ['mcp'],

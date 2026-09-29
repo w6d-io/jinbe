@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { databaseController } from '../controllers/database.controller.js'
 import { databaseAPIController } from '../controllers/database-api.controller.js'
 import { remapParam } from '../utils/route-helpers.js'
@@ -35,12 +33,12 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
   // session. Super admin for EVERY method until it is gone — no console calls it.
   // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
-  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
 
   // Get all databases
   fastify.get(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description:
           'Get all databases (optionally filtered by clusterId, with pagination)',
@@ -89,6 +87,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get database by ID',
         tags: ['databases'],
@@ -107,6 +106,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id/list',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'List all databases from the PostgreSQL/MongoDB server with their roles and sizes. Uses db-agent API if configured, otherwise connects directly.',
         tags: ['databases'],
@@ -146,6 +146,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id/api',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get database API configuration for a specific database',
         tags: ['database-apis'],
@@ -164,6 +165,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/api',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description:
           'Create database API configuration for a specific database',
@@ -183,6 +185,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Update database by ID',
         tags: ['databases'],
@@ -201,6 +204,7 @@ export async function databaseRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Delete database by ID',
         tags: ['databases'],

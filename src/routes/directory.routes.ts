@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { scimTokenService } from '../services/scim-token.service.js'
 import { organisationsForSubject, organisationsById, organisationStoreConfigured } from '../services/organisation-store.js'
 import { denyAudit } from '../audit/deny.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * What this service knows about somebody OTHER than the caller.
@@ -26,6 +27,7 @@ export async function directoryRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organisations',
     {
+      ...open('machine'),
       schema: {
         description: "The organisations a subject belongs to — for a caller acting on nobody's behalf",
         tags: ['directory'],

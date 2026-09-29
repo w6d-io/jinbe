@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
-// requireSitesApply: `sites:apply`, held only through the global "*" (super_admin). An admin with
-// admin:write is refused; OPA unreachable is 503, never 403.
+// The guard the route-access hook attaches for `sites:apply`: held through the global "*" (super_admin)
+// or the ops role. An admin with the legacy admin:write is refused; OPA unreachable is 503, never 403.
 
 const m = vi.hoisted(() => ({ held: null as string[] | null, env: { DEV_BYPASS_AUTH: false, NODE_ENV: 'test' } }))
 vi.mock('../../config/env.js', () => ({ env: m.env }))
@@ -15,7 +15,9 @@ vi.mock('../../authz/opa.js', async (importOriginal) => ({
 }))
 vi.mock('../../audit/deny.js', () => ({ denyAudit: vi.fn() }))
 
-import { requireSitesApply } from '../../middleware/require-admin.js'
+import { requirePermission } from '../../middleware/require-permission.js'
+
+const requireSitesApply = requirePermission('sites:apply')
 import { enforcedBy } from '../../policy/declared-routes.js'
 
 const request = () => ({ userContext: { id: 'sub-1', email: 'a@x.test' }, log: { warn: vi.fn(), debug: vi.fn() }, headers: {}, method: 'POST', url: '/x' }) as unknown as FastifyRequest
@@ -29,7 +31,7 @@ const run = async () => {
   return r.code
 }
 
-describe('requireSitesApply', () => {
+describe("requirePermission('sites:apply')", () => {
   beforeEach(() => { m.held = null })
 
   it('publishes sites:apply in the route table', () => {

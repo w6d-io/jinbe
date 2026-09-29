@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { payrollSite } from './fixtures.js'
 
@@ -13,20 +14,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../services/redis-client.service.js', () => ({ getRedisClient: () => ({}) }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  return {
-    requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs admin:write' })
-    }, 'admin:write'),
-    requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs sites:apply' })
-    }, 'sites:apply'),
-    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required', message: 'mfa' })
-    },
-  }
-})
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeGateway, type KubeGateway } from '../../gateway/kube-gateway.js'
@@ -35,7 +24,7 @@ import { resetSitesConfig } from '../../sites/config.js'
 import { setDnsLookup } from '../../sites/dns-probe.js'
 import { sitesRepository, type SiteRecord } from '../../sites/repository.js'
 import { redisRbacRepository } from '../../services/redis-rbac.repository.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../policy/declared-routes.js'
 
 const W = { 'x-test-write': '1' }
 const WM = { 'x-test-write': '1', 'x-test-mfa': '1' }
@@ -105,6 +94,7 @@ let app: FastifyInstance
 
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     request.userContext = { id: 'sam-id', email: 'sam@x.test', name: 'Sam' }
   })
@@ -150,23 +140,21 @@ beforeEach(() => {
 const zoneEvents = () => h.emit.mock.calls.map((c) => (c as unknown as [{ v1Event?: string; targetId?: string; details?: unknown }])[0]).filter((e) => e.v1Event?.startsWith('zone.'))
 
 describe('guards', () => {
-  it('publishes its route rows: reads admin:read, create/delete sites:apply', async () => {
+  it('publishes its route rows: reads zones:read, create zones:write, delete zones:delete', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(sitesRoutes, { prefix: '/sites' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(sitesRoutes, { prefix: '/api/admin/sites' })
     await admin.ready()
     const find = (method: string, path: string) => declaredRoutes().find((r) => r.method === method && r.path === path)?.permission
-    expect(find('GET', '/api/admin/sites/zones/:name')).toBe('admin:read')
-    expect(find('POST', '/api/admin/sites/zones/suggest')).toBe('admin:read')
-    expect(find('POST', '/api/admin/sites/zones')).toBe('sites:apply')
-    expect(find('DELETE', '/api/admin/sites/zones/:name')).toBe('sites:apply')
+    expect(find('GET', '/api/admin/sites/zones/:name')).toBe('zones:read')
+    expect(find('POST', '/api/admin/sites/zones/suggest')).toBe('zones:read')
+    expect(find('POST', '/api/admin/sites/zones')).toBe('zones:write')
+    expect(find('DELETE', '/api/admin/sites/zones/:name')).toBe('zones:delete')
     await admin.close()
   })
 
-  it('create and delete need sites:apply, then a recent second factor; nothing reaches the cluster otherwise', async () => {
+  it('create and delete need zones:write / zones:delete, then a recent second factor; nothing reaches the cluster otherwise', async () => {
     expect((await app.inject({ method: 'POST', url: '/sites/zones', payload: { domain: 'apps.stairfleet.com' } })).statusCode).toBe(403)
     expect((await app.inject({ method: 'POST', url: '/sites/zones', headers: W, payload: { domain: 'apps.stairfleet.com' } })).statusCode).toBe(422)
     expect((await app.inject({ method: 'DELETE', url: '/sites/zones/dev', headers: W })).statusCode).toBe(422)

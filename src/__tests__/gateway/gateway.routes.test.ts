@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 
 // GW-2: /api/admin/gateway. Reads the Gateway CR (or, before one exists, the live Oathkeeper config,
@@ -7,29 +8,16 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 const h = vi.hoisted(() => ({ emit: vi.fn() }))
 
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  return {
-    requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-    }, 'admin:write'),
-    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-    },
-    // Same contract as the real guard: `*` or `sites:apply` (super_admin) — keyed on x-test-perm here.
-    requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (request.headers['x-test-perm'] !== 'sites:apply') return reply.status(403).send({ error: 'Forbidden', message: 'This needs sites:apply.' })
-    }, 'sites:apply'),
-  }
-})
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ writeCovers: (p: string) => p !== 'gateway:apply' }))
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 import { gatewayRoutes, setRolloutPolling } from '../../gateway/routes.js'
 import { setKubeGateway, toCrSpec, PREVIOUS_SPEC_ANNOTATION, type GatewayCr, type GatewaySpec, type KubeGateway } from '../../gateway/kube-gateway.js'
 import { GATEWAY_ROUTE_AUDIT } from '../../gateway/audit.js'
 import { KubeUnavailable, type SiteCrObject } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../policy/declared-routes.js'
 
-const APPLY = { 'x-test-perm': 'sites:apply', 'x-test-mfa': '1' }
+const APPLY = { 'x-test-perms': 'gateway:apply', 'x-test-mfa': '1' }
 const W = { 'x-test-write': '1' }
 
 const spec = (): GatewaySpec => ({
@@ -100,6 +88,7 @@ const managed = (s = spec(), annotations: Record<string, string> = {}): GatewayC
 
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     request.userContext = { id: 'sam-id', email: 'sam@x.test', name: 'Sam' }
   })
@@ -125,37 +114,37 @@ const byName = (body: { handlers: Array<{ kind: string; name: string }> }, kind:
   body.handlers.find((x) => x.kind === kind && x.name === name) as Record<string, unknown>
 
 describe('guards and route table', () => {
-  it('publishes: reads admin:read, preview admin:write, put and rollback sites:apply', async () => {
+  it('publishes: reads and the preview gateway:read, put and rollback gateway:apply with a step-up', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(gatewayRoutes, { prefix: '/gateway' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(gatewayRoutes, { prefix: '/api/admin/gateway' })
     await admin.ready()
     const find = (method: string, path: string) => declaredRoutes().find((r) => r.method === method && r.path === path)?.permission
-    expect(find('GET', '/api/admin/gateway')).toBe('admin:read')
-    expect(find('GET', '/api/admin/gateway/rollout')).toBe('admin:read')
-    expect(find('GET', '/api/admin/gateway/rollout/events')).toBe('admin:read')
-    expect(find('POST', '/api/admin/gateway/preview')).toBe('admin:write')
-    expect(find('PUT', '/api/admin/gateway')).toBe('sites:apply')
-    expect(find('POST', '/api/admin/gateway/rollback')).toBe('sites:apply')
+    expect(find('GET', '/api/admin/gateway')).toBe('gateway:read')
+    expect(find('GET', '/api/admin/gateway/rollout')).toBe('gateway:read')
+    expect(find('GET', '/api/admin/gateway/rollout/events')).toBe('gateway:read')
+    expect(find('POST', '/api/admin/gateway/preview')).toBe('gateway:read')
+    expect(find('PUT', '/api/admin/gateway')).toBe('gateway:apply')
+    expect(find('POST', '/api/admin/gateway/rollback')).toBe('gateway:apply')
+    expect(declaredRoutes().find((r) => r.method === 'PUT' && r.path === '/api/admin/gateway')?.stepUp).toBe(true)
     // AU-2: every mutating route of the module has its audit row.
     const writes = declaredRoutes().filter((r) => r.path.startsWith('/api/admin/gateway') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method))
     expect(writes.map((r) => `${r.method} ${r.path}`).sort()).toEqual(Object.keys(GATEWAY_ROUTE_AUDIT).sort())
     await admin.close()
   })
 
-  it('a write without sites:apply, or without a recent second factor, is refused and writes nothing', async () => {
+  it('a write without gateway:apply, or without a recent second factor, is refused and writes nothing', async () => {
     kube.cr = managed()
     expect((await put({ spec: spec() }, { 'x-test-mfa': '1', 'if-match': '"rv:7"' })).statusCode).toBe(403)
-    expect((await put({ spec: spec() }, { 'x-test-perm': 'sites:apply', 'if-match': '"rv:7"' })).statusCode).toBe(422)
-    expect((await app.inject({ method: 'POST', url: '/gateway/rollback', headers: { 'x-test-perm': 'sites:apply' } })).statusCode).toBe(422)
+    expect((await put({ spec: spec() }, { 'x-test-write': '1', 'x-test-mfa': '1', 'if-match': '"rv:7"' })).statusCode).toBe(403)
+    expect((await put({ spec: spec() }, { 'x-test-perms': 'gateway:apply', 'if-match': '"rv:7"' })).statusCode).toBe(422)
+    expect((await app.inject({ method: 'POST', url: '/gateway/rollback', headers: { 'x-test-perms': 'gateway:apply' } })).statusCode).toBe(422)
     expect(kube.writes).toEqual([])
   })
 
-  it('preview needs admin:write', async () => {
-    expect((await app.inject({ method: 'POST', url: '/gateway/preview', payload: { spec: spec() } })).statusCode).toBe(403)
+  it('preview writes nothing, so it needs gateway:read only', async () => {
+    expect((await app.inject({ method: 'POST', url: '/gateway/preview', headers: { 'x-test-perms': 'gateway:read' }, payload: { spec: spec() } })).statusCode).not.toBe(403)
   })
 })
 

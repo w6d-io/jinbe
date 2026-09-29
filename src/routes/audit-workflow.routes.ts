@@ -11,8 +11,8 @@ import { auditActor } from '../utils/audit-actor.js'
  * prefix and its route recorder.
  */
 export async function auditWorkflowRoutes(fastify: FastifyInstance) {
-  const exporter = { preHandler: requireAuditScope('audit:export'), config: perUserRate }
-  const reader = { preHandler: requireAuditScope('audit:read'), config: perUserRate }
+  const exporter = { preHandler: requireAuditScope('audit:export'), config: { permission: 'audit:export' as const, ...perUserRate } }
+  const reader = { preHandler: requireAuditScope('audit:read'), config: { permission: 'audit:read' as const, ...perUserRate } }
 
   fastify.post('/exports', exporter, async (request, reply) => {
     const body = parse(exportBodySchema, request.body, reply)

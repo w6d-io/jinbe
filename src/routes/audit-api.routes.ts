@@ -7,7 +7,7 @@ import {
   eventsQuerySchema, facetsQuerySchema, summaryQuerySchema, timelineQuerySchema, myLoginsQuerySchema,
   eventByIdQuerySchema, eventIdSchema, userIdSchema, type Cursor,
 } from '../audit/query/params.js'
-import { orUnavailable, outOfScope, parse, perUserRate, recordPluginRoutes, scopeOf } from '../audit/query/http.js'
+import { orUnavailable, outOfScope, parse, perUserRate, scopeOf } from '../audit/query/http.js'
 import { auditWorkflowRoutes } from './audit-workflow.routes.js'
 import { auditTailRoute } from '../audit/query/tail.js'
 import { gatewayAccessRoute } from '../audit/gateway/routes.js'
@@ -27,9 +27,8 @@ import { actorDirectory, userActorIds } from '../audit/query/actors.js'
  * Replaces /api/admin/audit/* (Redis) once AUDIT_READ switches; both live side by side until AUD-14.
  */
 export async function auditApiRoutes(fastify: FastifyInstance) {
-  recordPluginRoutes(fastify)
   const read = requireAuditScope('audit:read')
-  const opts = { preHandler: read, config: perUserRate }
+  const opts = { preHandler: read, config: { permission: 'audit:read' as const, ...perUserRate } }
 
   fastify.get('/events', opts, async (request, reply) => {
     const q = parse(eventsQuerySchema, request.query, reply)
@@ -135,7 +134,7 @@ export async function auditApiRoutes(fastify: FastifyInstance) {
   })
 
   // Any authenticated user, about themselves (GDPR access right): no scope guard, no org filter.
-  fastify.get('/me/logins', { config: perUserRate }, async (request, reply) => {
+  fastify.get('/me/logins', { config: { access: 'self' as const, ...perUserRate } }, async (request, reply) => {
     const subject = request.userContext?.id
     if (!subject || subject === 'unknown') return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
     const q = parse(myLoginsQuerySchema, request.query, reply)

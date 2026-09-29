@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { clusterController } from '../controllers/cluster.controller.js'
 import { databaseController } from '../controllers/database.controller.js'
 import { backupController } from '../controllers/backup.controller.js'
@@ -88,12 +86,12 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
   // session. Super admin for EVERY method until it is gone — no console calls it.
   // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
-  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
 
   // Get all clusters
   fastify.get(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get all clusters with optional pagination',
         tags: ['clusters'],
@@ -123,6 +121,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get cluster by ID',
         tags: ['clusters'],
@@ -142,6 +141,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Create new cluster',
         tags: ['clusters'],
@@ -159,6 +159,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/databases',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Create new database under a specific cluster',
         tags: ['databases'],
@@ -177,6 +178,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/backups',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Create new backup under a specific cluster',
         tags: ['backups'],
@@ -195,6 +197,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Update cluster by ID',
         tags: ['clusters'],
@@ -213,6 +216,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Delete cluster by ID',
         tags: ['clusters'],
@@ -230,6 +234,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/verify',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description:
           'Verify a kubeconfig and retrieve token identity/permissions. Use this before creating a cluster to validate the configuration.',
@@ -257,6 +262,7 @@ export async function clusterRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/verify',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description:
           'Verify the kubeconfig of an existing cluster and retrieve token identity/permissions',

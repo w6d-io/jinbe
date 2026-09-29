@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { backupItemController } from '../controllers/backup-item.controller.js'
 import {
   backupItemUpdateSchema,
@@ -28,12 +26,12 @@ export async function backupItemRoutes(fastify: FastifyInstance) {
   // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
   // session. Super admin for EVERY method until it is gone — no console calls it.
   // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
-  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
 
   // Get all backup items
   fastify.get(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get all backup items (optionally filtered by backupId)',
         tags: ['backup-items'],
@@ -59,6 +57,7 @@ export async function backupItemRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get backup item by ID',
         tags: ['backup-items'],
@@ -77,6 +76,7 @@ export async function backupItemRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Update backup item by ID',
         tags: ['backup-items'],
@@ -95,6 +95,7 @@ export async function backupItemRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Delete backup item by ID',
         tags: ['backup-items'],

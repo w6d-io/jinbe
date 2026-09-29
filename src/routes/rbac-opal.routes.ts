@@ -10,6 +10,7 @@ import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js
 import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSuccess } from '../telemetry/metrics.js'
 import { mirrorOpalFetch } from '../home/runtime.js'
 import { apiClientsDataset } from '../services/api-clients.js'
+import { open } from '../policy/route-access.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -22,6 +23,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // Bindings: user → groups + org membership (from Kratos). Routed through the
   // service so the shape can't drift from the tested getBindingsFromKratos().
   fastify.get('/bindings', {
+    ...open('machine'),
     schema: {
       description:
         'OPAL data source: user → groups + org membership, read from Kratos. 503 when Kratos cannot be ' +
@@ -48,7 +50,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   })
 
   // Groups: group → service → roles
-  fastify.get('/opal/groups', async (_request, reply) => {
+  fastify.get('/opal/groups', open('machine'), async (_request, reply) => {
     const groups = await redisRbacRepository.getGroups()
     return reply.send(groups)
   })
@@ -56,13 +58,13 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
   // Values are service bundles (arrays). Legacy scalar values in Redis are
   // normalized to single-element arrays by the repository before serving.
-  fastify.get('/opal/org_service_map', async (_request, reply) => {
+  fastify.get('/opal/org_service_map', open('machine'), async (_request, reply) => {
     const map = await redisRbacRepository.getOrgServiceMap()
     return reply.send(map)
   })
 
   // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
-  fastify.get('/opal/org_admin_map', async (_request, reply) => {
+  fastify.get('/opal/org_admin_map', open('machine'), async (_request, reply) => {
     const map = await redisRbacRepository.getOrgAdminMap()
     return reply.send(map)
   })
@@ -71,6 +73,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // error, never an empty or partial map — same rule as /bindings: OPAL then keeps what OPA holds,
   // where an empty 200 would silently take every org grant away.
   fastify.get('/opal/org_grants', {
+    ...open('machine'),
     schema: {
       description:
         'OPAL data source: groups handed out per org by its admins (data.org_grants). 503 when the store ' +
@@ -95,6 +98,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // site asks for a second factor; 503 on a store error — an empty 200 would silently drop every
   // site's 2FA bar until the next fetch.
   fastify.get('/opal/site_login', {
+    ...open('machine'),
     schema: {
       description:
         'OPAL data source: per-site sign-in strength (data.site_login). 503 when the store cannot be read, ' +
@@ -118,6 +122,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // needs to decide a machine caller on a site. 503 when Hydra cannot be read: an empty 200 would
   // replace what OPA holds and cut every integration off until the next fetch.
   fastify.get('/opal/api_clients', {
+    ...open('machine'),
     schema: {
       description:
         'OPAL data source: org API keys (Hydra client_credentials clients) by client_id — organization, registered ' +
@@ -140,6 +145,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   // Platform 2FA: { groups: [...] } (feeds data.second_factor; default ["super_admins"]). 503 on a store
   // error — an empty 200 would silently let every privileged account sign in without a second factor.
   fastify.get('/opal/second_factor', {
+    ...open('machine'),
     schema: {
       description:
         'OPAL data source: groups whose members must hold a second factor (data.second_factor). 503 when the store ' +
@@ -161,25 +167,25 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
 
   // Roles of every service plus "global": { <svc>: roles } (feeds data.roles). No try/catch: a read
   // error answers 500 and OPAL keeps what OPA holds — this entry replaces the whole subtree.
-  fastify.get('/opal/roles', async (_request, reply) => {
+  fastify.get('/opal/roles', open('machine'), async (_request, reply) => {
     return reply.send(await opalRolesDataset())
   })
 
   // Route map of every service that has one: { <svc>: {rules} } (feeds data.route_map). Same rule.
-  fastify.get('/opal/route_maps', async (_request, reply) => {
+  fastify.get('/opal/route_maps', open('machine'), async (_request, reply) => {
     return reply.send(await opalRouteMapsDataset())
   })
 
   // Roles per service. No longer in the manifest; kept for an OPAL client still polling the entries
   // of the manifest it pulled before the aggregate entries shipped.
-  fastify.get('/opal/roles/:service', async (request, reply) => {
+  fastify.get('/opal/roles/:service', open('machine'), async (request, reply) => {
     const { service } = request.params as { service: string }
     const roles = await redisRbacRepository.getRoles(service)
     return reply.send(roles || {})
   })
 
   // Route map per service (same: kept for clients on an older manifest)
-  fastify.get('/opal/route_map/:service', async (request, reply) => {
+  fastify.get('/opal/route_map/:service', open('machine'), async (request, reply) => {
     const { service } = request.params as { service: string }
     const routeMap = await redisRbacRepository.getRouteMap(service)
     return reply.send(routeMap || { rules: [] })
@@ -187,7 +193,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
 
   // OPAL datasource config (tells OPAL what to fetch)
   // Only reached once the caller proved it holds the OPAL client token the entries carry.
-  fastify.get('/opal-datasource', async (_request, reply) => {
+  fastify.get('/opal-datasource', open('machine'), async (_request, reply) => {
     return reply.send({ entries: await buildOpalDatasourceEntries() })
   })
 }

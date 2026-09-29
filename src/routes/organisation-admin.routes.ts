@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
+import { needs } from '../policy/route-access.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import {
   createOrganisation,
@@ -79,10 +79,10 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/organizations',
     {
-      preHandler: requirePlatformPermission('admin.organisation:write'),
+      ...needs('org:write'),
       schema: {
         description:
-          'Create an organisation from a name. No service bundle is required. Needs admin.organisation:write.',
+          'Create an organisation from a name. No service bundle is required. Needs org:write.',
         tags: ['admin'],
         body: {
           type: 'object',
@@ -161,10 +161,10 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/organizations/:id',
     {
-      preHandler: requirePlatformPermission('admin.organisation:write'),
+      ...needs('org:write'),
       schema: {
         description:
-          'Change an organisation: name, tenant, and/or the whole set of applications it has. Needs admin.organisation:write.',
+          'Change an organisation: name, tenant, and/or the whole set of applications it has. Needs org:write.',
         tags: ['admin'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
         body: {
@@ -225,9 +225,9 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/organizations/:id',
     {
-      preHandler: requirePlatformPermission('admin.organisation:write'),
+      ...needs('org:delete'),
       schema: {
-        description: 'Delete an organisation that has no members left. Needs admin.organisation:write.',
+        description: 'Delete an organisation that has no members left. Needs org:delete and a recent second factor.',
         tags: ['admin'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
         response: {

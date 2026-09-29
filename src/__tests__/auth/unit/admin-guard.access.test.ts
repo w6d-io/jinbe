@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // The admin plugin's gate: anonymous → 401 (never 503), signed in without admin:read → 403 — on the
@@ -19,6 +20,7 @@ import { adminRoutes } from '../../../routes/admin.routes.js'
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', extractIdentity)
   app.addHook('onRequest', async (request) => {
     if (request.headers['x-test-user']) request.userContext = { id: 'subject-nina', email: 'nina@example.com', name: 'Nina' } as never

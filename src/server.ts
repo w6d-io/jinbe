@@ -61,8 +61,8 @@ import { getRedisClient } from './services/redis-client.service.js'
 import { rootLogger, componentLogger, captureProcessWarnings, fastifyLoggingOptions } from './telemetry/logger.js'
 import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
-import { isPublicRoute } from './middleware/require-auth.js'
-import { recordRoute } from './policy/declared-routes.js'
+import { installRouteAccess } from './policy/route-access.js'
+import { catalogRoutes } from './routes/catalog.routes.js'
 import { auditRouteWrite } from './audit/route-events.js'
 import { isBootstrapReady, markBootstrapReady } from './bootstrap/ready-state.js'
 import { homeRoutes } from './home/routes.js'
@@ -97,12 +97,10 @@ export async function buildServer() {
   // Add request ID to all requests
   fastify.addHook('onRequest', requestIdMiddleware)
 
-  // The published route table, collected as Fastify registers each route. Read off the guards that
-  // were actually attached, so a row and the refusal behind it cannot disagree — and a route added
-  // without a guard is absent from the table rather than described as open.
-  fastify.addHook('onRoute', (route) => {
-    recordRoute(route.method, route.url, [route.preHandler, route.onRequest], isPublicRoute)
-  })
+  // Every route declares its catalogue permission (or why it needs none) in its options; this hook
+  // attaches the guard and the step-up, and records the route table. An undeclared route fails the
+  // boot (policy/route-access.ts, policy/catalog.ts).
+  installRouteAccess(fastify)
 
   // Extract user identity from Kratos session or proxy headers
   fastify.addHook('onRequest', extractIdentity)
@@ -135,6 +133,7 @@ export async function buildServer() {
   // Health check endpoint. Returns 503 until the bootstrap marker has been
   // observed, so Kubernetes startupProbe stays unsatisfied until ready.
   fastify.get('/api/health', {
+    config: { access: 'public' },
     schema: {
       description: 'Health check endpoint',
       tags: ['health'],
@@ -165,6 +164,7 @@ export async function buildServer() {
     async function (api) {
       await api.register(telemetryRoutes)
       await api.register(whoamiRoutes)
+      await api.register(catalogRoutes) // the permission catalogue and roles, for kuma and auth-mcp
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless MCP is on (env ceiling + admin switch)
       await api.register(clusterRoutes, { prefix: '/clusters' })

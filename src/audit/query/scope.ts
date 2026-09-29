@@ -6,7 +6,7 @@ import { enforcing } from '../../policy/declared-routes.js'
 /**
  * Who may read which part of the audit trail (audit-tab.md §4.4, CONTROL C8).
  *
- *   - `audit:read` (or `admin:read`, which super_admin and platform admins hold) across the platform:
+ *   - `audit:read` (`audit:export` for exports; `admin:read` still passes as a legacy alias) across the platform:
  *     every event, every org, platform events included.
  *   - an org admin: the events of the organisations they administer, and nothing else — the org
  *     filter is injected into the query HERE, never taken from the client.
@@ -25,8 +25,6 @@ declare module 'fastify' {
   }
 }
 
-const PLATFORM_READ = 'admin:read'
-
 class ScopeUnknown extends Error {}
 
 async function tell<T>(fn: () => Promise<T>): Promise<T> {
@@ -41,7 +39,7 @@ export async function resolveAuditScope(request: FastifyRequest, permission: str
   const email = request.userContext?.email
   if (!request.userContext?.id || !email || email === 'unknown') return null
   const held = (await tell(() => rights(email))).permissions
-  if (holds(held, permission) || holds(held, PLATFORM_READ)) return { platform: true, orgs: [] }
+  if (holds(held, permission)) return { platform: true, orgs: [] }
 
   const administered = await tell(() => manageableOrgs(email))
   return { platform: false, orgs: [...new Set(administered)].sort() }

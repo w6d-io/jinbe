@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { allows, requiredForEdit, userActions, USER_PERMISSIONS } from '../../../services/user-permissions.js'
+import { allows, requiredForEdit, userActions } from '../../../services/user-permissions.js'
 
-describe('a fine permission is refined out of a coarse one', () => {
+describe('a catalogue permission, held or through a legacy alias', () => {
   it('holding it, or the coarse permission it refines, or `*`, allows it', () => {
     expect(allows(['users:update_email'], 'users:update_email')).toBe(true)
     expect(allows(['admin:write'], 'users:update_email')).toBe(true)
@@ -21,10 +21,11 @@ describe('a fine permission is refined out of a coarse one', () => {
     expect(allows(['users:read'], 'admin:read')).toBe(false)
   })
 
-  it('every action is answered, true or false', () => {
+  it('every action is answered, true or false — the legacy keys kuma reads included', () => {
     const actions = userActions([])
-    expect(Object.keys(actions).sort()).toEqual([...Object.keys(USER_PERMISSIONS), 'admin:read', 'admin:write'].sort())
+    expect(Object.keys(actions)).toEqual(expect.arrayContaining(['users:read', 'users:disable', 'users:verify', 'groups.members:revoke', 'admin:read', 'admin:write', 'users:assign_group']))
     expect(Object.values(actions).some(Boolean)).toBe(false)
+    expect(userActions(['admin:write'])['users:assign_group']).toBe(true)
   })
 })
 
@@ -42,10 +43,10 @@ describe('an edit requires what it changes', () => {
     expect(requiredForEdit(bob, { state: 'active', traits: { name: 'Robert' } })).toEqual(['users:update'])
   })
 
-  it('anything outside the traits is administration', () => {
-    expect(requiredForEdit(bob, { state: 'inactive' })).toEqual(['admin:write'])
-    expect(requiredForEdit(bob, { metadata_admin: { groups: ['users'], note: 'y' } })).toEqual(['admin:write'])
-    expect(requiredForEdit(bob, { metadata_public: { a: 1 } })).toEqual(['admin:write'])
+  it('the state is deactivation; the rest outside the traits is users.metadata:write', () => {
+    expect(requiredForEdit(bob, { state: 'inactive' })).toEqual(['users:disable'])
+    expect(requiredForEdit(bob, { metadata_admin: { groups: ['users'], note: 'y' } })).toEqual(['users.metadata:write'])
+    expect(requiredForEdit(bob, { metadata_public: { a: 1 } })).toEqual(['users.metadata:write'])
   })
 
   it('pinned membership is not compared (the handler refuses a change to it)', () => {

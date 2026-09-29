@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { FakeLoki } from './mocks.js'
 
@@ -18,12 +19,12 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../config/env.js')>()
   return { ...real, env: new Proxy(real.env, { get: (t, k) => (k in cfg ? cfg[k as keyof typeof cfg] : t[k as keyof typeof t]) }) }
 })
-vi.mock('../../../middleware/require-admin.js', async () => {
+vi.mock('../../../middleware/require-permission.js', async () => {
   const { enforcing } = await import('../../../policy/declared-routes.js')
   return {
-    requireAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
+    requirePermission: (permission: string) => enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
       if (request.headers['x-test-admin'] !== 'yes') return reply.status(403).send({ error: 'Forbidden' })
-    }, 'admin:read'),
+    }, permission),
   }
 })
 
@@ -41,6 +42,7 @@ let app: FastifyInstance
 beforeAll(async () => {
   setLokiClient(loki)
   app = Fastify()
+  installRouteAccess(app)
   await app.register(observabilityRoutes, { prefix: '/api/admin/observability' })
   await app.ready()
 })
@@ -144,9 +146,9 @@ describe('GET /links', () => {
 })
 
 describe('route table', () => {
-  it('declares admin:read on every observability route', () => {
+  it('declares audit:read on every observability route', () => {
     const rows = declaredRoutes().filter((r) => r.path.startsWith('/api/admin/observability') && r.method === 'GET')
     expect(rows.length).toBe(3)
-    for (const r of rows) expect(r.permission).toBe('admin:read')
+    for (const r of rows) expect(r.permission).toBe('audit:read')
   })
 })

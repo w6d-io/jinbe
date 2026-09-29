@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { databaseAPIController } from '../controllers/database-api.controller.js'
 import {
   databaseAPIUpdateSchema,
@@ -28,12 +26,12 @@ export async function databaseAPIRoutes(fastify: FastifyInstance) {
   // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
   // session. Super admin for EVERY method until it is gone — no console calls it.
   // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
-  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
 
   // Get all database APIs
   fastify.get(
     '/',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get all database APIs',
         tags: ['database-apis'],
@@ -53,6 +51,7 @@ export async function databaseAPIRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Get database API by ID',
         tags: ['database-apis'],
@@ -71,6 +70,7 @@ export async function databaseAPIRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Update database API by ID',
         tags: ['database-apis'],
@@ -89,6 +89,7 @@ export async function databaseAPIRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
+      ...needs('*'), // legacy infrastructure, super admins only (removal: proposal W0)
       schema: {
         description: 'Delete database API by ID',
         tags: ['database-apis'],

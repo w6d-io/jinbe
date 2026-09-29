@@ -1,22 +1,14 @@
 /**
  * The route table jinbe publishes about ITSELF: which permission each of its routes requires.
  *
- * DERIVED FROM THE GATES, never written beside them. Each guard carries the permission it enforces,
- * and this table is collected from the guards Fastify actually attached — so a row and the refusal
- * behind it cannot disagree, and a route added without a guard is absent rather than silently
- * described as open.
+ * Collected as Fastify registers each route, from what the route DECLARES (`config.permission` /
+ * `config.access`, policy/route-access.ts) — the same declaration the hook turns into the guard, so a
+ * row and the refusal behind it cannot disagree, and an undeclared route fails the boot instead of
+ * appearing here as open. Guards still carry the permission they enforce (`enforcing`), so a route
+ * with its own guard is checked against its declaration.
  *
- * Why publish it at all, when jinbe is not behind the gateway and nothing looks it up to decide:
- *
- *   - a console could not say what `admin:read` opens, so the screen that hands out rights showed
- *     "no route declares it" beside every administrative permission;
- *   - the 76 rows that did describe these routes were seeded into Redis, which nothing reads any
- *     more, and had drifted to a vocabulary the model no longer knows (`clusters:list`);
- *   - and the permission was spelled once in the guard and once in that dead table — two
- *     descriptions, free to disagree.
- *
- * It describes what IS enforced, not what ought to be. Refining `admin:read` into the resource tree
- * is a real authorization change and belongs in its own review, not in the act of writing it down.
+ * Read by the delegation gate (what scope a token needs), `GET /api/catalog` (which routes need each
+ * permission) and the generated jinbe route_map.
  */
 
 export type DeclaredRoute = {
@@ -26,7 +18,16 @@ export type DeclaredRoute = {
   class: 'public' | 'authenticated' | 'authorized'
   /** Only for `authorized`: the permission the guard checks. */
   permission?: string
+  /** Why no permission is needed (route-access.ts `Access`). */
+  access?: 'public' | 'machine' | 'self' | 'authenticated'
+  /** A second factor proven within 15 minutes is required. */
+  stepUp?: boolean
+  /** Org-scoped: the route parameter naming the organisation. */
+  org?: string
 }
+
+/** What a route declared about itself, as the route-access hook read it. */
+export type Declaration = Pick<DeclaredRoute, 'permission' | 'access' | 'stepUp' | 'org'>
 
 /** The property a guard carries to say what it enforces. */
 export const ENFORCES = Symbol.for('jinbe.enforces')
@@ -48,54 +49,30 @@ const collected = new Map<string, DeclaredRoute>()
 /**
  * Records one route as Fastify registers it.
  *
+ * With a declaration (the route-access hook), the row IS the declaration. Without one, the permission
+ * is read off the guards — two levels deep, since a route's preHandler may itself be an array.
+ *
  * `public` is asserted only for the paths this service answers with no credential at all. Anything
- * else carrying no permission-bearing guard is `authenticated`, because the session gate runs before
- * every route — calling an unguarded route `public` would be the comfortable reading and the wrong
- * one.
+ * else carrying no permission is `authenticated`, because the session gate runs before every route —
+ * calling an unguarded route `public` would be the comfortable reading and the wrong one.
  */
 export function recordRoute(
   method: string | string[],
   path: string,
   guards: unknown,
   isPublic: (path: string) => boolean,
+  declared?: Declaration,
 ): void {
-  // Two levels: guardAll passes `[route.preHandler, guard]`, and a route's preHandler may itself be
-  // an array — one level left `[requireSuperAdmin, requireRecentMfa]` unread and the plugin's
-  // `admin:read` described a write route.
-  const permission = [guards].flat(2).map(enforcedBy).find((p) => p !== null) ?? null
+  const permission = declared ? declared.permission ?? null : [guards].flat(2).map(enforcedBy).find((p) => p !== null) ?? null
+  const extra: Declaration = {}
+  if (declared?.access) extra.access = declared.access
+  if (declared?.stepUp) extra.stepUp = true
+  if (declared?.org) extra.org = declared.org
   for (const verb of [method].flat()) {
-    const key = `${verb} ${path}`
-    // A route is seen twice: once by the collector on the root instance, which sees only per-route
-    // guards, and once by the one a guarded plugin installs, which knows the gate it put on all of
-    // them. Whichever sighting found a permission is the true one — the other simply could not see
-    // it, and letting it win would describe a guarded route as merely authenticated.
-    if (!permission && collected.get(key)?.class === 'authorized') continue
-    collected.set(key, permission
-      ? { method: verb, path, class: 'authorized', permission }
-      : { method: verb, path, class: isPublic(path) ? 'public' : 'authenticated' })
+    collected.set(`${verb} ${path}`, permission
+      ? { method: verb, path, class: 'authorized', permission, ...extra }
+      : { method: verb, path, class: isPublic(path) ? 'public' : 'authenticated', ...extra })
   }
-}
-
-/**
- * Puts a guard on every route of a plugin AND records what it requires, in one call.
- *
- * Separately, a plugin-level `addHook('preHandler', …)` is invisible to an `onRoute` hook on the
- * root instance: Fastify reports only per-route handlers there. So the gate that actually protects
- * most of the administration API was enforced and absent from the table at the same time. Doing
- * both here is what stops the table and the enforcement from drifting apart again.
- */
-export function guardAll(
-  fastify: {
-    addHook(name: 'preHandler', fn: unknown): unknown
-    addHook(name: 'onRoute', fn: (route: { method: string | string[]; url: string; preHandler?: unknown }) => void): unknown
-  },
-  guard: unknown,
-  isPublic: (path: string) => boolean,
-): void {
-  fastify.addHook('preHandler', guard)
-  fastify.addHook('onRoute', (route) => {
-    recordRoute(route.method, route.url, [route.preHandler, guard], isPublic)
-  })
 }
 
 /** Everything recorded so far, ordered so a diff between two versions is readable. */

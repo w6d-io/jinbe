@@ -18,6 +18,7 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * The caller's own API keys — /api/me/api-keys (services/personal-key.service.ts).
@@ -54,6 +55,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', personOnly)
 
   fastify.get('/', {
+    ...open('self'),
     schema: {
       description: 'Your personal API keys (no secrets).',
       tags: ['api-keys'],
@@ -69,6 +71,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/scopes', {
+    ...open('self'),
     schema: {
       description:
         'The permissions you may narrow a personal key to: the jinbe permissions you hold (from your groups), ' +
@@ -93,6 +96,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/', {
+    ...open('self'),
     schema: {
       description:
         'Create a personal API key acting as you, bound to no organization. Without `scopes` it carries all your ' +
@@ -124,6 +128,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
   })
 
   fastify.delete('/:clientId', {
+    ...open('self'),
     schema: {
       description: 'Revoke one of your personal API keys. Its tokens stop at the next introspection.',
       tags: ['api-keys'],

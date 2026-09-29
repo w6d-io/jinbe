@@ -20,7 +20,7 @@ export const accessQuerySchema = z.object({
 }).strict()
 
 export async function gatewayAccessRoute(fastify: FastifyInstance) {
-  fastify.get('/access', { preHandler: requireAuditScope('audit:read'), config: perUserRate }, async (request, reply) => {
+  fastify.get('/access', { preHandler: requireAuditScope('audit:read'), config: { permission: 'audit:read' as const, ...perUserRate } }, async (request, reply) => {
     const q = parse(accessQuerySchema, request.query, reply)
     if (!q) return
     const range = checkRange(q.from, q.to)

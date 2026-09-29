@@ -7,6 +7,7 @@ import { AuthzUnavailableError } from '../authz/opa.js'
 import { HydraUnavailableError } from '../services/hydra.service.js'
 import { denyAudit } from '../audit/deny.js'
 import { mcpGate } from '../mcp/settings.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * What auth-mcp asks jinbe, so hydra-admin stays closed to everything but jinbe
@@ -85,6 +86,7 @@ export async function mcpRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', actorOnly)
 
   fastify.post('/token-info', {
+    ...open('machine'),
     schema: {
       description:
         "Introspect a delegated (opaque Hydra) token for auth-mcp, with jinbe's rules: active, access token, the " +
@@ -122,6 +124,7 @@ export async function mcpRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/personal-keys/exchange', {
+    ...open('machine'),
     schema: {
       description:
         'Exchange a personal MCP key (stk_mcp_<client_id>.<secret>) for a short-lived access token: a narrowed key ' +

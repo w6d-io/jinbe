@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ZodSchema } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { requireRecentMfa, requireSitesApply, requireSuperAdmin } from '../middleware/require-admin.js'
+import type { Permission } from '../policy/catalog.js'
 import {
   applyBodySchema, checkHostBodySchema, createZoneBodySchema, diffBodySchema, draftBodySchema, matchBodySchema, nameParamsSchema,
   previewBodySchema, renderTemplateBodySchema, rollbackBodySchema, saveBodySchema, suggestZoneBodySchema, updateZoneBodySchema, zoneParamsSchema,
@@ -18,87 +18,86 @@ import { siteImportRoutes } from './openapi/routes.js'
 /**
  * /api/admin/sites — plug a site (SERVICE_PLUG.md, site-ux.md §14.2).
  *
- * Registered inside the admin plugin, so every route already needs `admin:read`. Drafts, saves and
- * requests need `admin:write`; anything that changes what the gateway serves — apply, rollback,
- * pause/resume, delete, restore — needs `sites:apply` (super_admin) and a second factor proven in
- * the last 15 minutes (owner decision: admins draft and ask, super admins apply).
+ * Each route names its catalogue permission as the first argument of `doc`: reading `sites:read`,
+ * drafts, saves and requests `sites:write`, anything that changes what the gateway serves — apply,
+ * rollback, pause/resume, restore — `sites:apply`, deleting `sites:delete`, zones `zones:*`; the
+ * catalogue adds the second factor proven in the last 15 minutes where it says stepUp.
  *
  * Bodies are validated by zod here, and only here: the JSON schemas below document them in the
  * OpenAPI spec but are not a second validator with its own coercions.
  */
 
 const TAGS = ['sites']
-const write = { preHandler: [requireSuperAdmin] }
-const gateway = { preHandler: [requireSitesApply, requireRecentMfa] }
-const doc = (description: string, body?: ZodSchema) => ({
+const doc = (permission: Permission, description: string, body?: ZodSchema) => ({
+  config: { permission },
   schema: {
     description,
     tags: TAGS,
     ...(body ? { body: zodToJsonSchema(body, { target: 'openApi3' }) } : {}),
   },
 })
-const docNamed = (description: string, body?: ZodSchema) => {
-  const d = doc(description, body)
-  return { schema: { ...d.schema, params: zodToJsonSchema(nameParamsSchema, { target: 'openApi3' }) } }
+const docNamed = (permission: Permission, description: string, body?: ZodSchema) => {
+  const d = doc(permission, description, body)
+  return { ...d, schema: { ...d.schema, params: zodToJsonSchema(nameParamsSchema, { target: 'openApi3' }) } }
 }
 
 export async function sitesRoutes(fastify: FastifyInstance) {
   // Documentation-only body schemas (see above): zod is the validator.
   fastify.setValidatorCompiler(() => (data) => ({ value: data }))
 
-  fastify.get('', doc('List sites with their status'), handle(async () => sites.listSites()))
+  fastify.get('', doc('sites:read', 'List sites with their status'), handle(async () => sites.listSites()))
 
   // Static paths before `/:name` ones (Fastify prefers static segments anyway).
-  fastify.post('/preview', { ...write, ...doc('Render an intent and run every check (gatekit compile + overlap against all live rules, ties, groups, host). Writes nothing; 503 when gatekit is unavailable', previewBodySchema) },
+  fastify.post('/preview', { ...doc('sites:write', 'Render an intent and run every check (gatekit compile + overlap against all live rules, ties, groups, host). Writes nothing; 503 when gatekit is unavailable', previewBodySchema) },
     handle(async (request) => sites.preview(parse(previewBodySchema, request.body).site)))
 
-  fastify.get('/zones', doc('The admin-defined wildcard zones a site host can live under, with SSO (login cookie) coverage'),
+  fastify.get('/zones', doc('zones:read', 'The admin-defined wildcard zones a site host can live under, with SSO (login cookie) coverage'),
     handle(async () => sites.zones()))
 
   // Zones (zones.auth.w6d.io, cluster-scoped): creating or deleting one changes what the platform
   // serves, so it is gated like an apply.
-  fastify.get('/zones/:name', doc('A zone: spec, operator status (IngressReady, CertificateReady, DomainTaken), the sites it serves'),
+  fastify.get('/zones/:name', doc('zones:read', 'A zone: spec, operator status (IngressReady, CertificateReady, DomainTaken), the sites it serves'),
     handle(async (request) => zones.getZone(parse(zoneParamsSchema, request.params).name)))
 
-  fastify.post('/zones', { ...gateway, ...doc('Create a zone (Zone CR): domain under SITES_ZONE_ALLOWED_PARENTS, TLS default | issuer | secret. The operator makes the wildcard Ingress and certificate', createZoneBodySchema) },
+  fastify.post('/zones', { ...doc('zones:write', 'Create a zone (Zone CR): domain under SITES_ZONE_ALLOWED_PARENTS, TLS default | issuer | secret. The operator makes the wildcard Ingress and certificate', createZoneBodySchema) },
     handle(async (request, reply) => {
       const out = await zones.createZone(parse(createZoneBodySchema, request.body), actorOf(request))
       return reply.status(201).send(out)
     }))
 
-  fastify.patch('/zones/:name', { ...gateway, ...doc('Change a zone\'s exposure (never its domain): ingress wildcard | per-site | none, gateway (null detaches), TLS. ingress none is refused (409 dns_not_on_gateway, per-host checks) while a site host does not resolve to the Gateway, unless confirm', updateZoneBodySchema) },
+  fastify.patch('/zones/:name', { ...doc('zones:write', 'Change a zone\'s exposure (never its domain): ingress wildcard | per-site | none, gateway (null detaches), TLS. ingress none is refused (409 dns_not_on_gateway, per-host checks) while a site host does not resolve to the Gateway, unless confirm', updateZoneBodySchema) },
     handle(async (request) => zones.updateZone(parse(zoneParamsSchema, request.params).name, parse(updateZoneBodySchema, request.body), actorOf(request))))
 
-  fastify.get('/gateways', doc('The Gateway API Gateways a zone may be attached to (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP reputation policies are in force'),
+  fastify.get('/gateways', doc('sites:read', 'The Gateway API Gateways a zone may be attached to (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP reputation policies are in force'),
     handle(async () => gateways.listGateways()))
 
-  fastify.delete('/zones/:name', { ...gateway, ...doc('Delete a zone; refused (409, with the sites) while a saved site has a host under it') },
+  fastify.delete('/zones/:name', { ...doc('zones:delete', 'Delete a zone; refused (409, with the sites) while a saved site has a host under it') },
     handle(async (request) => zones.deleteZone(parse(zoneParamsSchema, request.params).name, actorOf(request))))
 
-  fastify.post('/zones/suggest', doc('The zone to create for a host outside every zone: its parent domain, allow-list, wildcard DNS probe, TLS choices, SSO coverage. Writes nothing', suggestZoneBodySchema),
+  fastify.post('/zones/suggest', doc('zones:read', 'The zone to create for a host outside every zone: its parent domain, allow-list, wildcard DNS probe, TLS choices, SSO coverage. Writes nothing', suggestZoneBodySchema),
     handle(async (request) => zones.suggestZone(parse(suggestZoneBodySchema, request.body).host)))
 
-  fastify.post('/check-host', { ...write, ...doc('Resolve a host against the zones: zone, SSO coverage, possible exposures (zone / vanity), owner', checkHostBodySchema) },
+  fastify.post('/check-host', { ...doc('sites:write', 'Resolve a host against the zones: zone, SSO coverage, possible exposures (zone / vanity), owner', checkHostBodySchema) },
     handle(async (request) => sites.checkHost(parse(checkHostBodySchema, request.body))))
 
-  fastify.get('/platform', doc('This environment: name, production flag, four-eyes mode, expected rule-load time, zones'),
+  fastify.get('/platform', doc('sites:read', 'This environment: name, production flag, four-eyes mode, expected rule-load time, zones'),
     handle(async () => sites.platformView()))
 
-  fastify.get('/deleted', doc('Deleted sites whose snapshot is kept (30 days)'), handle(async () => sites.deletedSites()))
+  fastify.get('/deleted', doc('sites:read', 'Deleted sites whose snapshot is kept (30 days)'), handle(async () => sites.deletedSites()))
 
-  fastify.post('/match', { ...write, ...doc('Which gateway rule and which route a request would hit, live or with a draft (gatekit)', matchBodySchema) },
+  fastify.post('/match', { ...doc('sites:read', 'Which gateway rule and which route a request would hit, live or with a draft (gatekit)', matchBodySchema) },
     handle(async (request) => sites.match(parse(matchBodySchema, request.body))))
 
-  fastify.post('/render', { ...write, ...doc('Render a header/payload/claims template exactly as Oathkeeper would (gatekit)', renderTemplateBodySchema) },
+  fastify.post('/render', { ...doc('sites:read', 'Render a header/payload/claims template exactly as Oathkeeper would (gatekit)', renderTemplateBodySchema) },
     handle(async (request) => sites.renderTemplate(parse(renderTemplateBodySchema, request.body))))
 
-  fastify.get('/:name', docNamed('A site: saved intent, version, etag, status'), handle(async (request, reply) => {
+  fastify.get('/:name', docNamed('sites:read', 'A site: saved intent, version, etag, status'), handle(async (request, reply) => {
     const out = await sites.getSite(nameOf(request))
     reply.header('etag', `"${out.etag}"`)
     return out
   }))
 
-  fastify.put('/:name', { ...write, ...docNamed('Save the intent as a new version (If-Match: the etag you edited; absent only for a new site)', saveBodySchema) },
+  fastify.put('/:name', { ...docNamed('sites:write', 'Save the intent as a new version (If-Match: the etag you edited; absent only for a new site)', saveBodySchema) },
     handle(async (request, reply) => {
       const name = nameOf(request)
       const body = parse(saveBodySchema, request.body)
@@ -107,50 +106,50 @@ export async function sitesRoutes(fastify: FastifyInstance) {
       return { name, version: record.version, etag: record.etag, savedAt: record.savedAt }
     }))
 
-  fastify.delete('/:name', { ...gateway, ...docNamed('Delete a site: rules first, then its permissions; a snapshot is kept 30 days') },
+  fastify.delete('/:name', { ...docNamed('sites:delete', 'Delete a site: rules first, then its permissions; a snapshot is kept 30 days') },
     handle(async (request) => ops.remove(nameOf(request), actorOf(request))))
 
-  fastify.post('/:name/restore', { ...gateway, ...docNamed('Restore a deleted site from its snapshot, saved but not applied') },
+  fastify.post('/:name/restore', { ...docNamed('sites:apply', 'Restore a deleted site from its snapshot, saved but not applied') },
     handle(async (request) => ops.restore(nameOf(request))))
 
-  fastify.get('/:name/draft', docNamed('The server-side draft'), handle(async (request) => sites.getDraft(nameOf(request))))
+  fastify.get('/:name/draft', docNamed('sites:read', 'The server-side draft'), handle(async (request) => sites.getDraft(nameOf(request))))
 
-  fastify.put('/:name/draft', { ...write, ...docNamed('Autosave the draft (may be incomplete)', draftBodySchema) },
+  fastify.put('/:name/draft', { ...docNamed('sites:write', 'Autosave the draft (may be incomplete)', draftBodySchema) },
     handle(async (request) => sites.putDraft(nameOf(request), parse(draftBodySchema, request.body), actorOf(request))))
 
-  fastify.delete('/:name/draft', { ...write, ...docNamed('Discard the draft') }, handle(async (request, reply) => {
+  fastify.delete('/:name/draft', { ...docNamed('sites:write', 'Discard the draft') }, handle(async (request, reply) => {
     await sites.deleteDraft(nameOf(request))
     return reply.status(204).send()
   }))
 
-  fastify.post('/:name/diff', { ...write, ...docNamed('What would change against the applied version, per artefact, with risk flags', diffBodySchema) },
+  fastify.post('/:name/diff', { ...docNamed('sites:write', 'What would change against the applied version, per artefact, with risk flags', diffBodySchema) },
     handle(async (request) => sites.diff(nameOf(request), parse(diffBodySchema, request.body ?? {}).site)))
 
-  fastify.post('/:name/apply', { ...gateway, ...docNamed('Apply the saved version: permissions first, then the Site CR. 503 and nothing written when gatekit or Kubernetes cannot answer', applyBodySchema) },
+  fastify.post('/:name/apply', { ...docNamed('sites:apply', 'Apply the saved version: permissions first, then the Site CR. 503 and nothing written when gatekit or Kubernetes cannot answer', applyBodySchema) },
     handle(async (request) => ops.apply(nameOf(request), parse(applyBodySchema, request.body).version, actorOf(request))))
 
-  fastify.get('/:name/versions', docNamed('Version history (append-only)'), handle(async (request) => sites.versions(nameOf(request))))
+  fastify.get('/:name/versions', docNamed('sites:read', 'Version history (append-only)'), handle(async (request) => sites.versions(nameOf(request))))
 
-  fastify.get('/:name/versions/:v', doc('One version, with its intent'), handle(async (request) => {
+  fastify.get('/:name/versions/:v', doc('sites:read', 'One version, with its intent'), handle(async (request) => {
     const { v } = request.params as { v: string }
     const n = Number(v)
     if (!Number.isInteger(n) || n < 1) throw Object.assign(new Error('version must be a positive integer'), { statusCode: 400, code: 'invalid_request' })
     return sites.version(nameOf(request), n)
   }))
 
-  fastify.post('/:name/rollback', { ...gateway, ...docNamed('Save an older version as a new one and apply it', rollbackBodySchema) },
+  fastify.post('/:name/rollback', { ...docNamed('sites:apply', 'Save an older version as a new one and apply it', rollbackBodySchema) },
     handle(async (request) => {
       const body = parse(rollbackBodySchema, request.body)
       return ops.rollback(nameOf(request), body.toVersion, actorOf(request), body.note)
     }))
 
-  fastify.post('/:name/pause', { ...gateway, ...docNamed('Stop serving the site (rules removed by the operator), keep everything else') },
+  fastify.post('/:name/pause', { ...docNamed('sites:apply', 'Stop serving the site (rules removed by the operator), keep everything else') },
     handle(async (request) => ops.setPaused(nameOf(request), true, actorOf(request))))
 
-  fastify.post('/:name/resume', { ...gateway, ...docNamed('Serve a paused site again') },
+  fastify.post('/:name/resume', { ...docNamed('sites:apply', 'Serve a paused site again') },
     handle(async (request) => ops.setPaused(nameOf(request), false, actorOf(request))))
 
-  fastify.get('/:name/blast-radius', docNamed('What deleting the site would take with it'), handle(async (request) => ops.blastRadius(nameOf(request))))
+  fastify.get('/:name/blast-radius', docNamed('sites:read', 'What deleting the site would take with it'), handle(async (request) => ops.blastRadius(nameOf(request))))
 
   // Day-2 (status, drift, timelines, requests, logo), OpenAPI import, and the one-time migration.
   await fastify.register(siteOpsRoutes)

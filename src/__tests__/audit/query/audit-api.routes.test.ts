@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { FakeLoki, MemoryRedis, line } from './mocks.js'
 
@@ -57,9 +58,11 @@ beforeAll(async () => {
   exportsConfig.autoDrain = false
   resetDeclaredRoutes()
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const id = request.headers['x-test-subject'] as string | undefined
-    if (id) request.userContext = { id, email: `${id}@example.com`, name: id }
+    // A second factor proven a minute ago: an export needs a step-up (catalogue audit:export).
+    if (id) request.userContext = { id, email: `${id}@example.com`, name: id, aal: 'aal2', secondFactorAt: new Date(Date.now() - 60_000), authVia: 'session' } as never
   })
   await app.register(auditApiRoutes, { prefix: '/api/audit' })
   await app.ready()

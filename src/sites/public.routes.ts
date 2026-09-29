@@ -20,7 +20,7 @@ const CACHE = 'public, max-age=60'
 
 export async function publicSitesRoutes(fastify: FastifyInstance) {
   const limit = { rateLimit: { max: sitesConfig().SITES_PUBLIC_RATE_LIMIT, timeWindow: '1 minute' } }
-  const doc = (description: string) => ({ schema: { description, tags: ['sites'] }, config: limit })
+  const doc = (description: string) => ({ schema: { description, tags: ['sites'] }, config: { access: 'public' as const, ...limit } })
 
   fastify.get('/by-host/:host', doc('Login branding and 2FA bar of the site served on exactly this host; 404 otherwise'),
     handle(async (request, reply) => {

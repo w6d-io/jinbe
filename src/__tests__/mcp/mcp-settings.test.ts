@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 
 // AI assistants (MCP): the administrator's switch (rbac:config mcp) under the deployment's ceiling
@@ -26,17 +27,8 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
 vi.mock('../../authz/opa.js', () => ({ rights: vi.fn(async () => ({ groups: h.groups, roles: [], permissions: [] })) }))
 vi.mock('../../services/delegated-token.service.js', () => ({ delegatedTokenService: { clearCache: h.clearCache } }))
-vi.mock('../../middleware/require-admin.js', () => ({
-  requireAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-admin']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireSuperAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-  },
-}))
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { mcpSettingsRoutes, mcpStatusRoutes } from '../../mcp/routes.js'
 import { MCP_SETTINGS_KEY, defaultMcpSettings, getMcpSettings, groupAllowed, mcpGate, parseMcpSettings, resetMcpSettingsCache, validateMcpSettings } from '../../mcp/settings.js'
@@ -131,6 +123,7 @@ describe('routes', () => {
   let app: FastifyInstance
   beforeAll(async () => {
     app = Fastify()
+    installRouteAccess(app)
     app.addHook('onRequest', async (request: FastifyRequest) => {
       if (request.headers['x-anon']) return
       request.userContext = { email: 'ann@acme.io', id: 'u1', name: 'Ann', authVia: 'session' }

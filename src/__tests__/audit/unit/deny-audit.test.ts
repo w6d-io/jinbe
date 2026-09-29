@@ -14,7 +14,7 @@ vi.mock('../../../authz/opa.js', async (importOriginal) => ({
 }))
 
 import { denyAudit } from '../../../audit/deny.js'
-import { requireAdmin } from '../../../middleware/require-admin.js'
+import { requirePermission } from '../../../middleware/require-permission.js'
 import { requireAuth } from '../../../middleware/require-auth.js'
 
 const SUBJECT = '3f2a8c1e-0000-4000-8000-00000000abcd'
@@ -75,13 +75,13 @@ describe('denyAudit()', () => {
 describe('the guards use it', () => {
   beforeEach(() => { h.emit.mockClear(); h.rights.mockReset() })
 
-  it('requireAdmin refuses with the subject id on the event', async () => {
+  it('the catalogue gate refuses with the subject id on the event', async () => {
     h.rights.mockResolvedValue({ groups: [], roles: [], permissions: [] })
     const r = reply()
-    await requireAdmin(request(), r)
+    await requirePermission('users:read')(request(), r)
     expect(r.code).toBe(403)
     expect(h.emit).toHaveBeenCalledTimes(1)
-    expect((h.emit.mock.calls[0] as unknown as [Record<string, any>])[0]).toMatchObject({ v1Event: 'access.denied', reason: 'not_admin', actor: { id: SUBJECT } })
+    expect((h.emit.mock.calls[0] as unknown as [Record<string, any>])[0]).toMatchObject({ v1Event: 'access.denied', reason: 'missing:users:read', actor: { id: SUBJECT } })
   })
 
   it('requireAuth refuses an anonymous caller through the same helper', async () => {

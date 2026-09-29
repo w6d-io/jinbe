@@ -3,7 +3,9 @@ import { env } from '../config/env.js'
 import { denyAudit } from '../audit/deny.js'
 import { rights } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
-import { allows, type CheckedPermission } from '../services/user-permissions.js'
+import { allows } from '../services/user-permissions.js'
+import type { Permission } from '../policy/catalog.js'
+import { devRights } from './require-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 
@@ -26,9 +28,8 @@ export async function callerRights(request: FastifyRequest, reply: FastifyReply)
   }
 
   if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    // The same stamp `requireAdmin` gives local development: the coarse pair, which every
-    // user-management permission refines.
-    request.rbacInfo = { email, groups: ['platform-admin'], roles: ['platform-admin'], permissions: ['admin:read', 'admin:write'] }
+    // Local development acts as the staff role DEV_ROLE names (super_admin unless set).
+    request.rbacInfo = { email, ...devRights() }
     return request.rbacInfo
   }
 
@@ -51,7 +52,7 @@ export async function callerRights(request: FastifyRequest, reply: FastifyReply)
 export async function demandPermissions(
   request: FastifyRequest,
   reply: FastifyReply,
-  required: readonly CheckedPermission[],
+  required: readonly Permission[],
 ): Promise<boolean> {
   const rights = await callerRights(request, reply)
   if (!rights) return false
@@ -59,20 +60,18 @@ export async function demandPermissions(
   const missing = required.filter((p) => !allows(rights.permissions, p))
   if (missing.length === 0) return true
 
-  request.log.warn({ subject: request.userContext?.id, missing }, 'Access denied — missing a user-management permission')
+  request.log.warn({ subject: request.userContext?.id, missing }, 'Access denied — missing a catalogue permission')
   denyAudit(request, `missing:${missing.join(',')}`, { statusCode: 403 })
   reply.status(403).send({ error: 'Forbidden', message: `This needs ${missing.join(' and ')}.` })
   return false
 }
 
 /**
- * Requires one user-management permission, in THIS service — never only at the gateway, which a pod
- * in the cluster can go around (NetworkPolicy is not enforced).
- *
- * Holding the coarse permission it refines (`admin:read` / `admin:write`) or the per-service `*`
- * passes, so existing administrators keep every action.
+ * Requires one catalogue permission, in THIS service — never only at the gateway, which a pod in the
+ * cluster can go around (NetworkPolicy is not enforced). Attached by the route-access hook from the
+ * route's `config.permission` (policy/route-access.ts); `*` and the legacy aliases pass (catalog.ts).
  */
-export function requirePermission(required: CheckedPermission) {
+export function requirePermission(required: Permission) {
   return enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
     if (!(await demandPermissions(request, reply, [required]))) return reply
   }, required)

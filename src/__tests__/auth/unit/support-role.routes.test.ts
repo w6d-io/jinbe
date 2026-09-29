@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // The support role, called DIRECTLY at jinbe (no gateway in front — NetworkPolicy is not enforced):
@@ -96,9 +97,11 @@ beforeAll(async () => {
     return Response.json({ state: 'sent_email' })
   }))
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const who = request.headers['x-test-user'] as string | undefined
-    if (who) request.userContext = { id: who, email: `${who}@example.com`, name: who } as never
+    const fresh = request.headers['x-test-fresh'] ? { aal: 'aal2', secondFactorAt: new Date(Date.now() - 60_000), authVia: 'session' } : {}
+    if (who) request.userContext = { id: who, email: `${who}@example.com`, name: who, ...fresh } as never
   })
   await app.register(async (api) => {
     await api.register(userManagementRoutes, { prefix: '/admin' })
@@ -160,7 +163,6 @@ describe('support is refused by jinbe itself, not only at the gateway', () => {
     ['GET', '/api/admin/rbac/groups'],
     ['DELETE', '/api/admin/rbac/groups/support'],
     ['GET', '/api/admin/rbac/services'],
-    ['GET', '/api/admin/assignable-groups'],
     ['GET', '/api/admin/sites'],
   ]
   for (const [method, url, payload] of refused) {
@@ -170,7 +172,13 @@ describe('support is refused by jinbe itself, not only at the gateway', () => {
     })
   }
 
-  it('an edit reaching outside the traits (state) needs admin:write', async () => {
+  it('asking which groups it may assign answers none (a question about the caller, not a refusal)', async () => {
+    const res = await app.inject({ url: '/api/admin/assignable-groups', headers: as('support') })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ groups: [], mayAssign: false })
+  })
+
+  it('an edit reaching outside the traits (state) needs users:disable', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('support'), payload: { state: 'inactive' } })
     expect(res.statusCode).toBe(403)
   })
@@ -199,9 +207,10 @@ describe('an edit needs what it changes', () => {
 })
 
 describe('administrators keep everything; a reader no longer writes', () => {
-  it('admin:write edits, deletes and creates', async () => {
+  it('admin:write edits, deletes (with a recent second factor) and creates', async () => {
     expect((await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('admin'), payload: { traits: { email: 'x@example.com' }, state: 'inactive' } })).statusCode).toBe(200)
-    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('admin') })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('admin') })).statusCode).toBe(422)
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('admin'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })
 
   it('admin:read alone reads but cannot delete', async () => {
@@ -297,12 +306,12 @@ describe('the guard asks OPA, and only OPA', () => {
     s.rights.creator = [...SUPPORT, 'users:create']
     const res = await app.inject({ method: 'POST', url: '/api/admin/users', headers: as('creator'), payload: { email: 'n@example.com', groups: ['admins'] } })
     expect(res.statusCode).toBe(403)
-    expect(res.json().message).toContain('users:assign_group')
+    expect(res.json().message).toContain('groups.members:write')
   })
 
   it('the per-service `*` (jinbe admin role) passes every action', async () => {
     s.rights.star = ['*']
-    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('star') })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('star'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })
 })
 

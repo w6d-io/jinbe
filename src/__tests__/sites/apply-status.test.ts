@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { payrollSite } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
@@ -31,15 +32,8 @@ vi.mock('../../services/redis-rbac.repository.js', async () => {
 })
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateBundle: vi.fn() } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', () => ({
-  requireSuperAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireSitesApply: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireRecentMfa: async () => {},
-}))
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn({ stepUpOpen: true }))
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeSites } from '../../sites/kube-sites.js'
@@ -59,6 +53,7 @@ const cluster = fakeCluster()
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => { request.userContext = { id: 'sam', email: 'sam@x.test', name: 'Sam' } })
   await app.register(sitesRoutes, { prefix: '/sites' })
   await app.ready()

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -22,7 +22,7 @@ const groupsBody = {
  */
 export async function secondFactorPublicRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
-    config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+    config: { access: 'public', rateLimit: { max: 120, timeWindow: '1 minute' } },
     schema: {
       description:
         'The signed-in visitor (own Kratos session cookie) must set up or prove a second factor before continuing? ' +
@@ -44,12 +44,12 @@ export async function secondFactorPublicRoutes(fastify: FastifyInstance) {
 /**
  * The groups whose members must hold a second factor (settings.ts).
  *   GET /api/admin/settings/second-factor — admin
- *   PUT /api/admin/settings/second-factor — super_admin + a recent second factor: deciding who may
+ *   PUT /api/admin/settings/second-factor — settings.signin:write + a recent second factor: deciding who may
  *       sign in without one is itself a sign-in-security change.
  */
 export async function secondFactorSettingsRoutes(fastify: FastifyInstance) {
   fastify.get('/second-factor', {
-    preHandler: requireAdmin,
+    ...needs('settings:read'),
     schema: {
       description: 'Groups whose members must set up a second factor at sign-in and hold aal2 on every permission-carrying route.',
       tags: ['second-factor'],
@@ -58,11 +58,11 @@ export async function secondFactorSettingsRoutes(fastify: FastifyInstance) {
   }, async () => ({ groups: await getSecondFactorGroups(), defaultGroups: [...DEFAULT_SECOND_FACTOR_GROUPS] }))
 
   fastify.put('/second-factor', {
-    preHandler: [requireSuperAdmin, requireRecentMfa],
+    ...needs('settings.signin:write'),
     schema: {
       description:
         'Replace the groups whose members must use two-step sign-in. Every name must be an existing group; an empty list ' +
-        'requires nobody. Published to OPA as data.second_factor. Requires super_admin + a second factor proven within 15 minutes.',
+        'requires nobody. Published to OPA as data.second_factor. Requires settings.signin:write + a second factor proven within 15 minutes.',
       tags: ['second-factor'],
       body: {
         type: 'object',

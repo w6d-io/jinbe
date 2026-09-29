@@ -1,9 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { env } from '../config/env.js'
-import { requireAdmin } from '../middleware/require-admin.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
+import { needs } from '../policy/route-access.js'
 import { opsLogsQuery } from '../audit/query/logql.js'
 import { lokiClient, msToNs } from '../audit/query/loki.js'
 import { orUnavailable, parse } from '../audit/query/http.js'
@@ -73,9 +71,7 @@ function explore(datasource: string, query: Record<string, unknown>): string {
 }
 
 export async function observabilityRoutes(fastify: FastifyInstance) {
-  guardAll(fastify, requireAdmin, isPublicRoute)
-
-  fastify.get('/logs', { config: { rateLimit: { max: 10, timeWindow: 1000 } } }, async (request, reply) => {
+  fastify.get('/logs', { config: { permission: 'audit:read', rateLimit: { max: 10, timeWindow: 1000 } } }, async (request, reply) => {
     const q = parse(logsQuery, request.query, reply)
     if (!q) return
     const namespace = env.LOKI_NAMESPACE ?? env.SERVICE_DEFAULT_NAMESPACE
@@ -94,7 +90,7 @@ export async function observabilityRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.get('/trace/:traceId', async (request, reply) => {
+  fastify.get('/trace/:traceId', needs('audit:read'), async (request, reply) => {
     if (!env.TEMPO_URL) return reply.status(404).send({ error: 'not_configured', message: 'Tracing is not configured here.' })
     const traceId = (request.params as { traceId: string }).traceId
     if (!HEX32.test(traceId)) return reply.status(400).send({ error: 'invalid_request', message: 'traceId: 32 lowercase hex characters' })
@@ -110,7 +106,7 @@ export async function observabilityRoutes(fastify: FastifyInstance) {
     return reply.send({ traceId, spans: spansOf(await res.json() as Parameters<typeof spansOf>[0]) })
   })
 
-  fastify.get('/links', async (request, reply) => {
+  fastify.get('/links', needs('audit:read'), async (request, reply) => {
     const q = parse(linksQuery, request.query, reply)
     if (!q) return
     if (!env.GRAFANA_URL) return reply.status(404).send({ error: 'not_configured', message: 'Grafana is not configured here.' })

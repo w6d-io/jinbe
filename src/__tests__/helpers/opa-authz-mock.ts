@@ -1,4 +1,5 @@
 import { vi } from 'vitest'
+import { grants } from '../../policy/catalog.js'
 
 /**
  * A stand-in for `src/authz/opa.js` — what OPA answers, per address — for suites that test what a
@@ -36,14 +37,8 @@ function up(): void {
   if (opaWorld.down) throw new AuthzUnavailableError('OPA is unreachable (TypeError).')
 }
 
-const holds = (permissions: readonly string[], required: string) =>
-  permissions.includes('*') ||
-  permissions.some((held) => {
-    if (held === required) return true
-    const [hr, hv] = held.split(':')
-    const [rr, rv] = required.split(':')
-    return hv === rv && rr.startsWith(`${hr}.`)
-  })
+// The real rule (exact, `*`, legacy aliases): pure, so the stand-in uses it rather than a copy.
+const holds = grants
 
 export function opaAuthzMock() {
   const rights = vi.fn(async (email: string, _app?: string) => {

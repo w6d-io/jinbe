@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { requireAdmin, requireRecentMfa, requireSuperAdmin } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { verifyKratosWebhookAuth } from '../controllers/webhook.controller.js'
@@ -110,7 +110,7 @@ export async function signInGuardHook(request: FastifyRequest, reply: FastifyRep
  */
 export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
   fastify.get('/', {
-    config: { rateLimit: { max: 600, timeWindow: '1 minute' } },
+    config: { access: 'public', rateLimit: { max: 600, timeWindow: '1 minute' } },
     schema: {
       description:
         'What login-ui needs to draw the sign-in pages: the bot-check provider, its public site key and the flows that ask for it, ' +
@@ -147,7 +147,7 @@ export async function signInProtectionPublicRoutes(fastify: FastifyInstance) {
 /**
  * The setting (settings.ts).
  *   GET /api/admin/settings/sign-in-protection — admin
- *   PUT /api/admin/settings/sign-in-protection — super_admin + a recent second factor: who may create
+ *   PUT /api/admin/settings/sign-in-protection — settings.signin:write + a recent second factor: who may create
  *       an account and whether bots are stopped is itself a sign-in-security change.
  */
 export async function signInProtectionSettingsRoutes(fastify: FastifyInstance) {
@@ -159,7 +159,7 @@ export async function signInProtectionSettingsRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/sign-in-protection', {
-    preHandler: requireAdmin,
+    ...needs('settings:read'),
     schema: {
       description: 'Bot check per sign-in flow, the provider status (never the secret), the sign-up mode and its allow and deny lists.',
       tags: ['sign-in-protection'],
@@ -168,11 +168,11 @@ export async function signInProtectionSettingsRoutes(fastify: FastifyInstance) {
   }, view)
 
   fastify.put('/sign-in-protection', {
-    preHandler: [requireSuperAdmin, requireRecentMfa],
+    ...needs('settings.signin:write'),
     schema: {
       description:
         'Replace the sign-in protection settings. Turning the bot check on needs a configured provider. Enforced by the Kratos ' +
-        'web_hook on every guarded submit within 5 seconds. Requires super_admin + a second factor proven within 15 minutes.',
+        'web_hook on every guarded submit within 5 seconds. Requires settings.signin:write + a second factor proven within 15 minutes.',
       tags: ['sign-in-protection'],
       body: { type: 'object', required: ['captcha', 'registration'], additionalProperties: false, properties: settingsSchema.properties },
       response: { 400: problemSchema },

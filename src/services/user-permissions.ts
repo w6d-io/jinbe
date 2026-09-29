@@ -1,56 +1,42 @@
-import { permits } from './authorization-resolution.js'
+import { grants, type Permission } from '../policy/catalog.js'
 
 /**
- * The user-management permissions, one per thing a person at a support desk may be allowed to do.
- *
- * They REFINE the administration API rather than replace it: whoever holds the coarse permission a
- * row names keeps every action under it, so the admin roles that carry `admin:read` / `admin:write`
- * (or `*` in the retired per-service model) work exactly as before. Only a caller holding nothing but
- * the fine permissions — the support role — is confined to them.
- *
- * Reading needs `admin:read`, writing `admin:write`: before this, every user write sat behind the
- * plugin's `admin:read` gate alone, so a read-only administrator could delete a user.
+ * What a user-management check may name: a catalogue permission (policy/catalog.ts). The coarse
+ * `admin:read` / `admin:write` fallback that lived here is now the catalogue's alias table, honoured
+ * for one release like every other retired name.
  */
-export const USER_PERMISSIONS = {
-  'users:read': 'admin:read',
-  'users:create': 'admin:write',
-  'users:update': 'admin:write',
-  'users:update_email': 'admin:write',
-  'users:delete': 'admin:write',
-  'users:assign_group': 'admin:write',
-  'sessions:read': 'admin:read',
-  'sessions:revoke': 'admin:write',
-  'users:recovery': 'admin:write',
-  'users:send_login_link': 'admin:write',
-  // Not the support role's: paired with a sign-in link it hands an account to whoever reads the mail.
-  'users:reset_second_factor': 'admin:write',
-} as const
+export type CheckedPermission = Permission
 
-export type UserPermission = keyof typeof USER_PERMISSIONS
+/** Whether these held permissions allow the required one (`*`, itself, or a legacy alias of it). */
+export function allows(held: readonly string[], required: string): boolean {
+  return grants(held, required)
+}
 
-/** Every permission a check here may name: the fine ones and the coarse ones they refine. */
-export type CheckedPermission = UserPermission | 'admin:read' | 'admin:write'
+/** The user-management actions a console offers, in the order it lists them. */
+const USER_ACTIONS: readonly Permission[] = [
+  'users:read', 'users:create', 'users:update', 'users:update_email', 'users:disable', 'users:delete',
+  'users:recovery', 'users:verify', 'users:send_login_link', 'users:reset_second_factor',
+  'sessions:read', 'sessions:revoke', 'groups.members:write', 'groups.members:revoke',
+]
 
-/** The wildcard of the per-service model. The tree model has none, so it only ever appears there. */
-const EVERYTHING = '*'
-
-/** Whether these held permissions allow the required one. */
-export function allows(held: readonly string[], required: CheckedPermission): boolean {
-  if (held.includes(EVERYTHING)) return true
-  if (permits(held, required)) return true
-  const coarse = (USER_PERMISSIONS as Record<string, string>)[required]
-  return coarse !== undefined && permits(held, coarse)
+/**
+ * Keys kuma read before the catalogue, kept for one release: the coarse pair (whether the caller
+ * holds it, as a name) and `users:assign_group` (now `groups.members:write`).
+ */
+const LEGACY_ACTIONS: Record<string, (held: readonly string[]) => boolean> = {
+  'admin:read': (held) => grants(held, 'admin:read'),
+  'admin:write': (held) => grants(held, 'admin:write'),
+  'users:assign_group': (held) => grants(held, 'groups.members:write'),
 }
 
 /**
  * What a console may offer this caller: each user-management action, and whether it is allowed.
  * Every key is always present, so a missing one can never be read as "allowed".
  */
-export function userActions(held: readonly string[]): Record<CheckedPermission, boolean> {
-  const out = {} as Record<CheckedPermission, boolean>
-  for (const p of [...Object.keys(USER_PERMISSIONS), 'admin:read', 'admin:write'] as CheckedPermission[]) {
-    out[p] = allows(held, p)
-  }
+export function userActions(held: readonly string[]): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  for (const p of USER_ACTIONS) out[p] = grants(held, p)
+  for (const [name, test] of Object.entries(LEGACY_ACTIONS)) out[name] = test(held)
   return out
 }
 
@@ -63,7 +49,7 @@ export interface EditableIdentity {
   metadata_admin?: unknown
 }
 
-/** Outside the traits: an administrator's business, not a support desk's. */
+/** Outside the traits: the state is deactivation (`users:disable`), the rest `users.metadata:write`. */
 const ADMINISTRATIVE_FIELDS = ['schema_id', 'state', 'metadata_public', 'metadata_admin'] as const
 
 /**
@@ -91,7 +77,7 @@ export function requiredForEdit(current: EditableIdentity, incoming: EditableIde
     if (!(field in incoming) || incoming[field] === undefined) continue
     const next = field === 'metadata_admin' ? withoutGroups(incoming[field]) : incoming[field]
     const stored = field === 'metadata_admin' ? withoutGroups(current[field]) : current[field]
-    if (!sameValue(next, stored)) required.add('admin:write')
+    if (!sameValue(next, stored)) required.add(field === 'state' ? 'users:disable' : 'users.metadata:write')
   }
 
   // An edit that changes nothing still is one: it needs the right to edit.

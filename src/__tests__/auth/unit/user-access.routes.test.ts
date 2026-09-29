@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // J-1: GET /api/admin/users/:id/access — site access and org access side by side, for the console.
@@ -52,8 +53,8 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
 // Stand-in for the platform permission gate: refuses when the test marks the caller as lacking it,
 // and records which permission the route asked for.
 const gate = vi.hoisted(() => ({ asked: [] as string[] }))
-vi.mock('../../../middleware/require-platform-permission.js', () => ({
-  requirePlatformPermission: (perm: string) => {
+vi.mock('../../../middleware/require-permission.js', () => ({
+  requirePermission: (perm: string) => {
     gate.asked.push(perm)
     return async (request: { headers: Record<string, unknown> }, reply: { status: (c: number) => { send: (b: unknown) => unknown } }) => {
       if (request.headers['x-test-lacks']) return reply.status(403).send({ error: 'Forbidden', message: `requires ${perm}` })
@@ -66,6 +67,7 @@ import { userAccessRoutes } from '../../../routes/user-access.routes.js'
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   await app.register(userAccessRoutes, { prefix: '/api/admin' })
   await app.ready()
 })
@@ -99,8 +101,8 @@ describe('GET /api/admin/users/:id/access', () => {
     })
   })
 
-  it('is gated on admin:read in the app layer, not only at the gateway', async () => {
-    expect(gate.asked).toContain('admin:read')
+  it('is gated on access:read in the app layer, not only at the gateway', async () => {
+    expect(gate.asked).toContain('access:read')
     const res = await app.inject({ url: `/api/admin/users/u-1/access`, headers: { 'x-test-lacks': '1' } })
     expect(res.statusCode).toBe(403)
   })

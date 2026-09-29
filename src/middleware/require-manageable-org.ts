@@ -2,6 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { memberOrgs } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { denyAudit } from '../audit/deny.js'
+import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
 
 /**
  * Middleware factory: scopes an org-parameterised route to organisations the
@@ -57,6 +58,8 @@ export function requireManageableOrg(paramName = 'organizationId') {
     // Resolved server-side by OPA — never trusted from input.
     let manageable: string[]
     try {
+      // A staff role holding the route's permission across the platform is confined to no org.
+      if (await holdsDeclaredPermissionGlobally(request)) return
       manageable = await memberOrgs(email)
     } catch (err) {
       request.log.warn({ email, organizationId, err: (err as Error).message }, '[requireManageableOrg] OPA could not be asked')

@@ -20,8 +20,11 @@ const READ_VERBS = new Set(['GET', 'HEAD', 'OPTIONS'])
 const readOnly = (permission: string) => /:(read|list)$/.test(permission)
 
 const EXCEPTIONS: Record<string, string> = {
-  // ── Writes nothing ─────────────────────────────────────────────────────────────────────────────
+  // ── Writes nothing (computeOnly: a POST only because the input is a body) ─────────────────────
   'POST /api/admin/sites/zones/suggest': 'computes a suggested zone for a host; writes nothing',
+  'POST /api/admin/sites/match': 'which gateway rule and route a request would hit (gatekit); writes nothing',
+  'POST /api/admin/sites/render': 'renders a header/claims template as Oathkeeper would (gatekit); writes nothing',
+  'POST /api/admin/gateway/preview': 'validates a proposed gateway configuration; writes nothing',
 
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────
   'POST /api/audit/saved-queries': "the caller's own saved query; a shared one is refused outside the caller's audit scope",
@@ -32,17 +35,6 @@ const EXCEPTIONS: Record<string, string> = {
   // ── Decided in the handler, against the item ───────────────────────────────────────────────────
   'POST /api/admin/recert/items/:campaignId/:itemId/decision':
     'the assigned reviewer, or else admin:write (requireSuperAdmin in the handler); self-review blocked',
-
-  // ── One organisation's people: decided per request by OPA (rbac.decision) ─────────────────────
-  // requireServiceAdmin asks OPA about this very method and path against the jinbe route_map
-  // (org:manage_users / admin:create|update|delete — write permissions), then requireManageableOrg
-  // confines the caller to their organisations. The guard is not marked, so the table cannot see it.
-  'POST /api/organizations/:organizationId/users': 'OPA rbac.decision: org:manage_users or admin:create',
-  'PUT /api/organizations/:organizationId/users/:id': 'OPA rbac.decision: org:manage_users or admin:update',
-  'DELETE /api/organizations/:organizationId/users/:id': 'OPA rbac.decision: org:manage_users or admin:delete',
-  'PUT /api/organizations/:organizationId/users/:id/membership': 'OPA rbac.decision: org:manage_users',
-  'PUT /api/organizations/:organizationId/users/:id/groups': 'OPA rbac.decision: org:manage_users, plus users:assign_group',
-  'PUT /api/organizations/:organizationId/users/:id/grants': 'OPA rbac.decision: org:manage_users, plus OPA can_grant',
 
   // ── Machine callers with their own credential (no session) ─────────────────────────────────────
   'POST /api/mcp/token-info': 'auth-mcp only: allowed ServiceAccount actor token; answers about a token',
@@ -130,10 +122,14 @@ describe('every write route asks for more than reading', () => {
       ['PUT', '/api/admin/rbac/services/:name/roles'], ['PUT', '/api/admin/rbac/services/:name/routes'],
       ['PUT', '/api/admin/rbac/org-service-map'], ['DELETE', '/api/admin/rbac/org-service-map/:organizationId'],
       ['POST', '/api/admin/recert/campaigns'], ['POST', '/api/admin/recert/campaigns/:id/close'],
-    ]) expect(permission(method, path), `${method} ${path}`).toBe('admin:write')
-    for (const path of ['/api/admin/users/:id/state', '/api/admin/users/:id/metadata', '/api/admin/users/:id/organization']) {
-      expect(permission('PATCH', path), path).toBe('users:update')
-    }
+    ]) expect(permission(method, path), `${method} ${path}`).not.toMatch(/:read$|^admin:/)
+    for (const [method, path, want] of [
+      ['POST', '/api/admin/rbac/groups', 'groups:write'], ['PUT', '/api/admin/rbac/services/:name/roles', 'groups:write'],
+      ['PUT', '/api/admin/rbac/org-service-map', 'groups:write'], ['POST', '/api/admin/recert/campaigns/:id/close', 'recert:manage'],
+      ['PATCH', '/api/admin/users/:id/state', 'users:disable'], ['PATCH', '/api/admin/users/:id/metadata', 'users.metadata:write'],
+      ['PATCH', '/api/admin/users/:id/organization', 'org.members:write'],
+      ['PUT', '/api/organizations/:organizationId/users/:id/grants', 'org.members:write'],
+    ]) expect(permission(method, path), `${method} ${path}`).toBe(want)
     for (const r of rows.filter((r) => /^\/api\/(clusters|databases|backups|backup-items|database-apis)(\/|$)/.test(r.path))) {
       expect(r.permission, key(r)).toBe('*')
     }

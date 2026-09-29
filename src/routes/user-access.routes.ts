@@ -4,7 +4,7 @@ import { organisationsOf } from '../services/org-membership.service.js'
 import { organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
-import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
+import { needs } from '../policy/route-access.js'
 import {
   notFoundResponseSchema,
   serviceUnavailableResponseSchema,
@@ -18,7 +18,7 @@ import {
  *   site: the groups they hold and the roles those give per service (org membership never touches it)
  *   orgs: each org they belong to, whether they administer it, and the groups granted to them there
  *
- * Mounted inside the admin plugin, so its admin:read gate runs first. A store that cannot be read
+ * Needs access:read (enforced here: nothing stops a pod from calling jinbe directly). A store that cannot be read
  * answers 503: an empty `grants` would read as "nothing granted".
  */
 
@@ -35,12 +35,11 @@ async function namesFor(ids: readonly string[]): Promise<Record<string, string>>
 
 export async function userAccessRoutes(fastify: FastifyInstance) {
   fastify.get('/users/:id/access', {
-    // The gateway checks admin:read too, but nothing stops a pod from calling jinbe directly.
-    preHandler: requirePlatformPermission('admin:read'),
+    ...needs('access:read'),
     schema: {
       description:
         "A user's site access (groups → roles per service) and org access (per org: admin flag and the " +
-        'groups granted there). Needs admin:read.',
+        'groups granted there). Needs access:read.',
       tags: ['admin'],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
       response: {
