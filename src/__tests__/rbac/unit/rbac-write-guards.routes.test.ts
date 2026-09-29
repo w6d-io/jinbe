@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // The writes that sat behind the administration API's `admin:read` gate alone — an administrator who
@@ -40,13 +41,16 @@ import { rbacRoutes } from '../../../routes/rbac.routes.js'
 import { recertRoutes } from '../../../routes/recert.routes.js'
 import { clusterRoutes } from '../../../routes/cluster.routes.js'
 import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
-import { ineligibleWhy, INELIGIBLE_PERMISSIONS } from '../../../middleware/delegation-gate.js'
+import { delegationRefusal, ineligibleWhy } from '../../../middleware/delegation-gate.js'
+import { declaredRoute } from '../../../policy/declared-routes.js'
+import { PERMISSIONS } from '../../../policy/catalog.js'
 
 const ORG = '11111111-1111-4111-8111-111111111111'
 
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const who = request.headers['x-test-user'] as string | undefined
     const fresh = request.headers['x-test-fresh'] === '1'
@@ -115,10 +119,11 @@ describe('RBAC-changing writes', () => {
     expect(handled.calls).toHaveLength(1)
   })
 
-  it('the import preview (it fetches a URL server-side) needs admin:write, not a second factor', async () => {
+  it('the import preview (it fetches a URL server-side) needs groups:write and its step-up', async () => {
     const body = { source: { content: '{}' } }
     expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'reader', { body })).statusCode).toBe(403)
-    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'writer', { body })).statusCode).toBe(200)
+    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'writer', { body })).statusCode).toBe(422)
+    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'writer', { fresh: true, body })).statusCode).toBe(200)
   })
 
   it('reads stay open to admin:read', async () => {
@@ -134,10 +139,15 @@ describe('recertification campaign writes', () => {
     ['POST', '/api/admin/recert/campaigns/c1/close', undefined],
     ['DELETE', '/api/admin/recert/campaigns/c1', undefined],
   ]
-  it.each(WRITES)('%s %s needs admin:write', async (method, url, body) => {
+  it.each(WRITES)('%s %s needs recert:manage / recert:delete (admin:write is their legacy alias)', async (method, url, body) => {
     expect((await call(method, url, 'reader', { body })).statusCode).toBe(403)
     expect(handled.calls).toEqual([])
-    expect((await call(method, url, 'writer', { body })).statusCode).toBeLessThan(300)
+    // Activation also needs a recent second factor (it generates every review item).
+    expect((await call(method, url, 'writer', { fresh: true, body })).statusCode).toBeLessThan(300)
+  })
+
+  it('activation without a recent second factor is refused', async () => {
+    expect((await call('POST', '/api/admin/recert/campaigns/c1/activate', 'writer')).statusCode).toBe(422)
   })
 
   it('a decision by somebody who is not the reviewer needs admin:write, not admin:read', async () => {
@@ -170,40 +180,51 @@ describe('legacy infrastructure API', () => {
 })
 
 describe('delegated callers never change the access model', () => {
+  // A token carrying every catalogue permission as a scope: what is left refused is refused for all.
+  const everyScope = PERMISSIONS as readonly string[]
+  const refusal = (method: string, url: string, permission?: string) => delegationRefusal({
+    method,
+    url,
+    routeOptions: { url },
+    params: {},
+    userContext: { id: 'id-u', email: 'u@example.com', authVia: 'delegated', delegation: { scopes: [...everyScope], clientId: 'mcp' } },
+  } as never, permission)
+
   it.each([
-    ['POST', '/api/admin/rbac/groups'],
-    ['PUT', '/api/admin/rbac/groups/:name'],
-    ['DELETE', '/api/admin/rbac/groups/:name'],
-    ['PUT', '/api/admin/rbac/services/:name/roles'],
-    ['PUT', '/api/admin/rbac/services/:name/routes'],
-    ['POST', '/api/admin/rbac/services/:name/routes/import/preview'],
-    ['PUT', '/api/admin/rbac/org-service-map'],
-    ['DELETE', '/api/admin/rbac/org-service-map/:organizationId'],
-    ['PUT', '/api/admin/users/:email/groups'],
-  ])('%s %s is always refused', (method, path) => {
-    expect(ineligibleWhy(method, path)).toBe('access_model')
+    ['POST', '/api/admin/rbac/groups', 'groups:write'],
+    ['PUT', '/api/admin/rbac/groups/:name', 'groups:write'],
+    ['DELETE', '/api/admin/rbac/groups/:name', 'groups:write'],
+    ['PUT', '/api/admin/rbac/services/:name/roles', 'groups:write'],
+    ['PUT', '/api/admin/rbac/services/:name/routes', 'groups:write'],
+    ['POST', '/api/admin/rbac/services/:name/routes/import/preview', 'groups:write'],
+    ['PUT', '/api/admin/rbac/org-service-map', 'groups:write'],
+    ['DELETE', '/api/admin/rbac/org-service-map/:organizationId', 'groups:write'],
+    ['POST', '/api/admin/rbac/bundle/import', 'policy.bundle:write'],
+    ['POST', '/api/admin/rbac/bundle/backups/restore', 'policy.bundle:write'],
+    ['POST', '/api/admin/rbac/bundle/history/:id/rollback', 'policy.bundle:write'],
+    ['PUT', '/api/admin/rbac/org-admin-map', 'org.admins:write'],
+    ['POST', '/api/admin/recert/campaigns/:id/close', 'recert:manage'],
+  ])('%s %s (%s) is always refused, whatever the scopes', (method, path, permission) => {
+    expect(declaredRoute(method, path)?.permission ?? permission).toBe(permission)
+    expect(refusal(method, path, permission)).toBe(`delegation_ineligible:${permission}`)
   })
 
   it.each([
-    ['POST', '/api/admin/rbac/bundle/import'],
-    ['POST', '/api/admin/rbac/bundle/backups/restore'],
-    ['POST', '/api/admin/rbac/bundle/history/:id/rollback'],
-    ['PUT', '/api/admin/auth/methods'],
-    ['PUT', '/api/admin/rbac/org-admin-map'],
-    ['POST', '/api/admin/recert/campaigns/:id/close'],
     ['GET', '/api/clusters'],
     ['POST', '/api/clusters/:clusterId/jobs'],
     ['GET', '/api/databases/:id'],
     ['PUT', '/api/backup-items/:id'],
-  ])('%s %s is always refused', (method, path) => {
+  ])('%s %s is on the backstop list', (method, path) => {
     expect(ineligibleWhy(method, path)).not.toBeNull()
   })
 
   it('reading the model is not refused on that ground', () => {
     expect(ineligibleWhy('GET', '/api/admin/rbac/groups')).toBeNull()
+    expect(refusal('GET', '/api/admin/rbac/groups', 'groups:read')).toBeNull()
   })
 
   it('no scope ever exercises the super-admin wildcard', () => {
-    expect(INELIGIBLE_PERMISSIONS.has('*')).toBe(true)
+    expect(refusal('GET', '/api/clusters', '*')).not.toBeNull()
+    expect(refusal('GET', '/api/admin/x', '*')).toBe('delegation_ineligible:*')
   })
 })

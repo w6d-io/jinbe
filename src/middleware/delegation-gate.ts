@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { declaredRoute } from '../policy/declared-routes.js'
-import { scopeCovers } from '../services/authorization-resolution.js'
+import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
 
 /**
@@ -8,61 +8,48 @@ import { denyAudit } from '../audit/deny.js'
  * Runs before every route gate; the route gates then decide the USER exactly as for a session. The
  * token can only narrow that answer:
  *
- *   1. never an ineligible route — below, hard-coded, the same for every org and every user, super
- *      admin included: what mints credentials, what changes how people sign in, the org-admin
- *      roster, the access model (groups, roles, route maps, org → service map), SCIM, backups and
- *      infrastructure, the policy and gateway data, approvals and applies,
- *      and any change to the caller's own groups or account (no self-grant);
- *   2. a route that requires a permission needs a SCOPE covering it (`covers`, never a wildcard);
- *   3. a token is bound to no organization: which org a route may touch is decided for the USER by
+ *   1. never a permission the catalogue marks `delegable: 'never'` (policy/catalog.ts) — deletions,
+ *      second-factor resets, key and client creation, approvals, the access model itself — nor `*`;
+ *      the same for every org and every user, super admin included (owner decision 2026-09-29);
+ *   2. never a route on the backstop list below: the machine feeds, SCIM, infrastructure and the
+ *      caller's own credentials, which carry no catalogue permission to decide on;
+ *   3. never a change to the caller's own groups or account (no self-grant);
+ *   4. a route that requires a permission needs a SCOPE granting it (`scopeGrants`: exact, or a
+ *      legacy alias for one release — never a wildcard);
+ *   5. a token is bound to no organization: which org a route may touch is decided for the USER by
  *      the normal rules (membership, org grants, the roster) in the route's own guard;
- *   4. a route that requires no permission is reachable read-only — it answers about the caller.
+ *   6. a route that requires no permission is reachable read-only — it answers about the caller.
  *
  * A personal key inherits its holder: its scopes are what the holder holds NOW (all of it, or the
  * subset chosen for the key), recomputed on every introspection (delegated-token.service.ts), and the
  * route gates ask the user's current rights again — a removed group stops the key at once.
  *
  * A step-up is never satisfied: the token carries no second factor (services/step-up.ts refuses
- * authVia 'delegated' as `step_up_unavailable`), so anything behind requireRecentMfa goes to a human
- * in a browser.
+ * authVia 'delegated' as `step_up_unavailable`), so anything the catalogue marks stepUp goes to a
+ * human in a browser even when it is `direct`.
  */
 
 type Ineligible = { methods?: readonly string[]; pattern: RegExp; why: string }
 
 const WRITES = ['POST', 'PUT', 'PATCH', 'DELETE'] as const
 
+/**
+ * The backstop: routes with no catalogue permission to decide on (their own credential, or the
+ * caller's own keys) that a token must never reach. Everything a catalogue permission guards is
+ * decided by its `delegable` flag instead — one list, not two.
+ */
 export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
-  // Credentials: API keys (org and personal), the OAuth2 client, key policy.
-  { pattern: /^\/api\/organizations\/:organizationId\/api-key/, why: 'api_keys' },
+  // The caller's own credentials: a token must not mint or list the keys that make tokens.
   { pattern: /^\/api\/me\/api-keys/, why: 'api_keys' },
-  // How people sign in: second-factor settings and resets, recovery and sign-in links, auth methods.
-  { pattern: /^\/api\/admin\/settings\//, why: 'sign_in_settings' },
-  { pattern: /^\/api\/admin\/auth\//, why: 'sign_in_settings' },
-  { pattern: /^\/api\/admin\/users\/:id\/(second-factors|recovery-email|login-link)/, why: 'account_recovery' },
-  // The org-admin roster.
-  { pattern: /^\/api\/admin\/rbac\/org-admin-map/, why: 'org_admin_roster' },
-  // The access model itself: groups, service roles and route maps, the org → service map. A token
-  // must never change who holds what, whatever scope it carries.
-  { pattern: /^\/api\/admin\/rbac\/(groups|services|org-service-map)(\/|$)/, methods: WRITES, why: 'access_model' },
-  // Platform (global) group membership: who is an administrator.
-  { pattern: /^\/api\/admin\/users\/:email\/groups$/, methods: WRITES, why: 'access_model' },
-  // SCIM, backups, databases, clusters (kubeconfigs), jobs — every method, like the super-admin gate on them.
+  // SCIM, backups, databases, clusters (kubeconfigs), jobs — every method.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
   { pattern: /^\/api\/(backups|backup-items|databases|database-apis|clusters|jobs)(\/|$)/, why: 'infrastructure' },
-  // The policy, the gateway rules and the data behind them; bundle import/export.
+  // The policy engine's and the gateway's machine feeds.
   { pattern: /^\/api\/(opa|oathkeeper|internal)(\/|$)/, why: 'policy_data' },
-  { pattern: /^\/api\/admin\/rbac\/(opal|bindings|bundle|access-rules|oathkeeper)/, why: 'policy_data' },
-  // Approvals and the migration cut-over: a human decides, in a browser.
-  { pattern: /^\/api\/admin\/sites\/requests\/:id\/(approve|reject)$/, why: 'approval' },
-  { pattern: /^\/api\/admin\/sites\/migration/, methods: WRITES, why: 'approval' },
-  { pattern: /^\/api\/admin\/gateway\/(rollout|rollback)/, methods: WRITES, why: 'approval' },
+  { pattern: /^\/api\/admin\/rbac\/(opal|bindings)/, why: 'policy_data' },
+  // A reviewer's decision: a human decides, in a browser.
   { pattern: /^\/api\/admin\/recert\/items\//, methods: WRITES, why: 'approval' },
-  // A campaign's close applies its revokes.
-  { pattern: /^\/api\/admin\/recert\/campaigns/, methods: WRITES, why: 'approval' },
 ]
-
-/** Permissions a delegated caller can never exercise, whatever its scopes say. */
-export const INELIGIBLE_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply', '*'])
 
 // Writes about ONE person: refused when that person is the caller (their own groups, grants,
 // membership, metadata or state — any of which could hand them more than they hold).
@@ -105,8 +92,8 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
 
   const required = permission ?? declaredRoute(method, pattern)?.permission
   if (required) {
-    if (INELIGIBLE_PERMISSIONS.has(required)) return `delegation_ineligible:${required}`
-    return scopeCovers(delegation.scopes, required) ? null : `scope_missing:${required}`
+    if (required === EVERYTHING || specOf(required)?.delegable === 'never') return `delegation_ineligible:${required}`
+    return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
   }
   const row = declaredRoute(method, pattern)
   if (row?.class === 'public') return null

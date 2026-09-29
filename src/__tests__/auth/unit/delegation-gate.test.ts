@@ -39,19 +39,22 @@ beforeAll(async () => {
   app.get('/api/admin/sites', { preHandler: guard('sites:read') }, ok)
   app.put('/api/admin/sites/:name', { preHandler: guard('sites:write') }, ok)
   app.post('/api/admin/sites/:name/apply', { preHandler: guard('sites:apply') }, ok)
-  app.post('/api/admin/sites/requests/:id/approve', { preHandler: guard('sites:read') }, ok)
+  app.post('/api/admin/sites/requests/:id/approve', { preHandler: guard('sites.requests:approve') }, ok)
   app.get('/api/organizations/:organizationId/users', { preHandler: guard('org:manage_users') }, ok)
   app.put('/api/organizations/:organizationId/users/:id/groups', { preHandler: guard('org:manage_users') }, ok)
-  app.post('/api/organizations/:organizationId/api-keys', { preHandler: guard('org:manage_api_keys') }, ok)
+  app.post('/api/organizations/:organizationId/api-keys', { preHandler: guard('org.keys:write') }, ok)
+  app.get('/api/organizations/:organizationId/api-keys', { preHandler: guard('org.keys:read') }, ok)
   app.post('/api/me/api-keys', ok)
-  app.put('/api/admin/settings/second-factor', { preHandler: guard('admin:write') }, ok)
+  app.put('/api/admin/settings/second-factor', { preHandler: guard('settings.signin:write') }, ok)
   app.get('/api/backups', { preHandler: guard('backups:list') }, ok)
-  app.put('/api/admin/rbac/org-admin-map', { preHandler: guard('*') }, ok)
+  app.put('/api/admin/rbac/org-admin-map', { preHandler: guard('org.admins:write') }, ok)
+  app.delete('/api/admin/users/:id', { preHandler: guard('users:delete') }, ok)
+  app.get('/api/admin/legacy', { preHandler: guard('*') }, ok)
   await app.ready()
 })
 afterAll(() => app.close())
 
-const call = (method: 'GET' | 'PUT' | 'POST', url: string, scopes?: string) =>
+const call = (method: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, scopes?: string) =>
   app.inject({ method, url, headers: scopes === undefined ? {} : { 'x-scopes': scopes } })
 
 describe('delegation gate', () => {
@@ -76,17 +79,34 @@ describe('delegation gate', () => {
   })
 
   it.each([
-    ['POST', `/api/organizations/${ACME}/api-keys`, 'org:manage_api_keys', 'delegation_ineligible:api_keys'],
+    // The catalogue's `never`: key creation, the org-admin roster, approvals, deletions — whatever the scope.
+    ['POST', `/api/organizations/${ACME}/api-keys`, 'org.keys:write', 'delegation_ineligible:org.keys:write'],
+    ['PUT', '/api/admin/rbac/org-admin-map', 'org.admins:write', 'delegation_ineligible:org.admins:write'],
+    ['POST', '/api/admin/sites/requests/r1/approve', 'sites.requests:approve', 'delegation_ineligible:sites.requests:approve'],
+    ['DELETE', '/api/admin/users/u-2', 'users:delete admin:write', 'delegation_ineligible:users:delete'],
+    ['GET', '/api/admin/legacy', 'admin:read', 'delegation_ineligible:*'],
+    // The backstop list: routes with no catalogue permission to decide on.
     ['POST', '/api/me/api-keys', '', 'delegation_ineligible:api_keys'],
-    ['PUT', '/api/admin/settings/second-factor', 'admin:write', 'delegation_ineligible:sign_in_settings'],
     ['GET', '/api/backups', 'backups:list', 'delegation_ineligible:infrastructure'],
-    ['PUT', '/api/admin/rbac/org-admin-map', 'admin:write', 'delegation_ineligible:org_admin_roster'],
-    ['POST', '/api/admin/sites/requests/r1/approve', 'sites:read', 'delegation_ineligible:approval'],
-    ['POST', '/api/admin/sites/x/apply', 'sites:apply', 'delegation_ineligible:sites:apply'],
   ] as const)('refuses ineligible %s %s even with a matching scope', async (method, url, scopes, reason) => {
     const res = await call(method, url, scopes)
     expect(res.statusCode).toBe(403)
     expect(res.json().reason).toBe(reason)
+  })
+
+  it.each([
+    // Owner decision: anything the user can do except the catalogue's `never`. A step-up permission
+    // passes this gate and is refused by requireRecentMfa (a token carries no second factor).
+    ['POST', '/api/admin/sites/x/apply', 'sites:apply'],
+    ['PUT', '/api/admin/settings/second-factor', 'settings.signin:write'],
+    ['GET', `/api/organizations/${ACME}/api-keys`, 'org.keys:read'],
+  ] as const)('lets %s %s through with a scope granting it (delegable: direct)', async (method, url, scopes) => {
+    expect((await call(method, url, scopes)).statusCode).toBe(200)
+  })
+
+  it('a legacy name still grants its catalogue permissions as a scope, for one release', async () => {
+    expect((await call('PUT', '/api/admin/sites/x', 'admin:write')).statusCode).toBe(200)
+    expect((await call('POST', '/api/admin/sites/x/apply', 'admin:write')).statusCode).toBe(403)
   })
 
   it("refuses a change to the caller's own groups (no self-grant), not to somebody else's", async () => {
