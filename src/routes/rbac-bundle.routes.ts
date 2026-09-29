@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { badRequestResponseSchema, conflictResponseSchema } from '../schemas/response-schemas.js'
-import { requireSuperAdmin } from '../middleware/require-admin.js'
+import { requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, BundleValidationError } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
@@ -69,7 +69,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/import',
     {
-      preHandler: requireSuperAdmin,
+      // A full replace of the access model: super_admin + a fresh second factor.
+      preHandler: [requireSuperAdmin, requireRecentMfa],
       schema: {
         description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore. 409 (nothing written) when the resulting route maps tie two services on one route at the same specificity.',
         tags: ['rbac', 'backup'],
@@ -119,7 +120,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/backups/restore',
     {
-      preHandler: requireSuperAdmin,
+      // A full replace of the access model: super_admin + a fresh second factor.
+      preHandler: [requireSuperAdmin, requireRecentMfa],
       schema: {
         description: 'Restore RBAC config from an S3 backup snapshot (full replace).',
         tags: ['rbac', 'backup'],
@@ -213,7 +215,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/history/:id/rollback',
     {
-      preHandler: requireSuperAdmin,
+      // A full replace of the access model: super_admin + a fresh second factor.
+      preHandler: [requireSuperAdmin, requireRecentMfa],
       schema: {
         description: "Restore the RBAC config snapshot of a history entry (full replace). The current state is snapshotted first (reason 'pre-rollback'), so a rollback is itself reversible.",
         tags: ['rbac', 'backup'],

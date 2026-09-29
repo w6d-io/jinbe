@@ -1,4 +1,7 @@
 import { FastifyInstance } from 'fastify'
+import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import { clusterController } from '../controllers/cluster.controller.js'
 import { databaseController } from '../controllers/database.controller.js'
 import { backupController } from '../controllers/backup.controller.js'
@@ -82,6 +85,11 @@ const verifyResponseSchema = {
  * DELETE /clusters/:id - Delete cluster by ID
  */
 export async function clusterRoutes(fastify: FastifyInstance) {
+  // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
+  // session. Super admin for EVERY method until it is gone — no console calls it.
+  // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
+  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
+
   // Get all clusters
   fastify.get(
     '/',

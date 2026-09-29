@@ -1,4 +1,7 @@
 import { FastifyInstance } from 'fastify'
+import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import { databaseAPIController } from '../controllers/database-api.controller.js'
 import {
   databaseAPIUpdateSchema,
@@ -22,6 +25,11 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
  * Note: GET/POST by databaseId are at /databases/:id/api (see database.routes.ts)
  */
 export async function databaseAPIRoutes(fastify: FastifyInstance) {
+  // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
+  // session. Super admin for EVERY method until it is gone — no console calls it.
+  // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
+  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
+
   // Get all database APIs
   fastify.get(
     '/',

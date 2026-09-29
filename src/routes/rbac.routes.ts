@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { rbacController } from '../controllers/rbac.controller.js'
-import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { requireAdmin, requireSuperAdmin, requireRecentMfa, requireRbacWrite } from '../middleware/require-admin.js'
 import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { accessCheckRoutes } from './access-check.routes.js'
 import { guardAll } from '../policy/declared-routes.js'
@@ -76,7 +76,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getGroups.bind(rbacController))
 
   fastify.post('/groups', {
-    preHandler: refuseWhenSourcedFromGit,
+    // admin:write + a fresh second factor: this changes who holds what.
+    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
     schema: {
       description: 'Create a new group.',
       tags: ['rbac'],
@@ -92,7 +93,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.createGroup.bind(rbacController) as never)
 
   fastify.put('/groups/:name', {
-    preHandler: refuseWhenSourcedFromGit,
+    // admin:write + a fresh second factor: this changes who holds what.
+    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
     schema: {
       description: 'Update an existing group.',
       tags: ['rbac'],
@@ -109,7 +111,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateGroup.bind(rbacController) as never)
 
   fastify.delete('/groups/:name', {
-    preHandler: refuseWhenSourcedFromGit,
+    // admin:write + a fresh second factor: this changes who holds what.
+    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
     schema: {
       description: 'Delete a group.',
       tags: ['rbac'],
@@ -184,7 +187,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoles.bind(rbacController))
 
   fastify.put('/services/:name/roles', {
-    preHandler: refuseWhenSourcedFromGit,
+    // admin:write + a fresh second factor: this changes who holds what.
+    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
     schema: {
       description: 'Replace roles for a specific service.',
       tags: ['rbac'],
@@ -220,7 +224,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoutes.bind(rbacController))
 
   fastify.put('/services/:name/routes', {
-    preHandler: refuseWhenSourcedFromGit,
+    // admin:write + a fresh second factor: this changes who holds what.
+    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
     schema: {
       description: 'Replace the route map for a specific service. 409 when a route ties with another service\'s at the same specificity (exact == exact, same :param shape, same :any* prefix): the policy would leave it with no owner and refuse every request on it.',
       tags: ['rbac'],
@@ -260,7 +265,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
   fastify.post('/services/:name/routes/import/preview', {
-    preHandler: refuseWhenSourcedFromGit,
+    // Writes nothing, but it is the first step of a route-map write and fetches a URL server-side.
+    preHandler: [requireSuperAdmin, refuseWhenSourcedFromGit],
     bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
     schema: {
       description:
@@ -370,6 +376,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getOrgServiceMap.bind(rbacController))
 
   fastify.put('/org-service-map', {
+    // admin:write + a fresh second factor: which services an org's members reach.
+    preHandler: requireRbacWrite,
     schema: {
       description: 'Set an organization → service bundle mapping. Replaces the org\'s entire bundle with the provided (non-empty) list of service names.',
       tags: ['rbac'],
@@ -392,7 +400,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         403: forbiddenResponseSchema,
       },
     },
-  }, rbacController.setOrgServiceMapping.bind(rbacController))
+  }, rbacController.setOrgServiceMapping.bind(rbacController) as never)
 
   // Org → admin roster (per-org admin list; feeds data.org_admin_map).
   fastify.get('/org-admin-map', {
@@ -438,6 +446,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.setOrgAdmins.bind(rbacController))
 
   fastify.delete('/org-service-map/:organizationId', {
+    // admin:write + a fresh second factor: which services an org's members reach.
+    preHandler: requireRbacWrite,
     schema: {
       description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',
       tags: ['rbac'],
@@ -449,7 +459,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
         404: notFoundResponseSchema,
       },
     },
-  }, rbacController.deleteOrgServiceMapping.bind(rbacController))
+  }, rbacController.deleteOrgServiceMapping.bind(rbacController) as never)
 
   // ===========================================================================
   // Impact preview — "who gains/loses access if this change is applied?"

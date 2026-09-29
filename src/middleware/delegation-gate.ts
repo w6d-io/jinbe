@@ -11,7 +11,8 @@ import { denyAudit } from '../audit/deny.js'
  *
  *   1. never an ineligible route — below, hard-coded, the same for every org and every user, super
  *      admin included: what mints credentials, what changes how people sign in, the org-admin
- *      roster, SCIM, backups and infrastructure, the policy and gateway data, approvals and applies,
+ *      roster, the access model (groups, roles, route maps, org → service map), SCIM, backups and
+ *      infrastructure, the policy and gateway data, approvals and applies,
  *      and any change to the caller's own groups or account (no self-grant);
  *   2. a route that requires a permission needs a SCOPE covering it (`covers`, never a wildcard);
  *   3. a route of one organization must be the token's organization;
@@ -36,9 +37,14 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
   { pattern: /^\/api\/admin\/users\/:id\/(second-factors|recovery-email|login-link)/, why: 'account_recovery' },
   // The org-admin roster.
   { pattern: /^\/api\/admin\/rbac\/org-admin-map/, why: 'org_admin_roster' },
-  // SCIM, backups, databases, clusters (kubeconfigs), jobs.
+  // The access model itself: groups, service roles and route maps, the org → service map. A token
+  // must never change who holds what, whatever scope it carries.
+  { pattern: /^\/api\/admin\/rbac\/(groups|services|org-service-map)(\/|$)/, methods: WRITES, why: 'access_model' },
+  // Platform (global) group membership: who is an administrator.
+  { pattern: /^\/api\/admin\/users\/:email\/groups$/, methods: WRITES, why: 'access_model' },
+  // SCIM, backups, databases, clusters (kubeconfigs), jobs — every method, like the super-admin gate on them.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
-  { pattern: /^\/api\/(backups|backup-items|databases|database-apis|clusters)(\/|$)/, why: 'infrastructure' },
+  { pattern: /^\/api\/(backups|backup-items|databases|database-apis|clusters|jobs)(\/|$)/, why: 'infrastructure' },
   // The policy, the gateway rules and the data behind them; bundle import/export.
   { pattern: /^\/api\/(opa|oathkeeper|internal)(\/|$)/, why: 'policy_data' },
   { pattern: /^\/api\/admin\/rbac\/(opal|bindings|bundle|access-rules|oathkeeper)/, why: 'policy_data' },
@@ -47,10 +53,12 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
   { pattern: /^\/api\/admin\/sites\/migration/, methods: WRITES, why: 'approval' },
   { pattern: /^\/api\/admin\/gateway\/(rollout|rollback)/, methods: WRITES, why: 'approval' },
   { pattern: /^\/api\/admin\/recert\/items\//, methods: WRITES, why: 'approval' },
+  // A campaign's close applies its revokes.
+  { pattern: /^\/api\/admin\/recert\/campaigns/, methods: WRITES, why: 'approval' },
 ]
 
 /** Permissions a delegated caller can never exercise, whatever its scopes say. */
-export const INELIGIBLE_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply'])
+export const INELIGIBLE_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply', '*'])
 
 // Writes about ONE person: refused when that person is the caller (their own groups, grants,
 // membership, metadata or state — any of which could hand them more than they hold).

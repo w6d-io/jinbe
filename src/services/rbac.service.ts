@@ -12,6 +12,7 @@ import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
+import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
@@ -634,6 +635,7 @@ export class RbacService {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
     }
+    await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Block creating a group that grants the global super_admin role unless
     // the actor is themselves a super_admin.
     const grantsSuperAdmin = (services.global ?? []).includes('super_admin')
@@ -655,6 +657,7 @@ export class RbacService {
     if (name === 'super_admins') {
       await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
+    await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Capture the pre-image for the before→after diff (A3).
     const before = await redisRbacRepository.getGroup(name)
     // PUT semantics: full replace. Earlier behavior merged the incoming
@@ -672,6 +675,7 @@ export class RbacService {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
     }
+    await assertNoSelfEscalation({ kind: 'group', name, after: null }, actor)
     if (await this.isSystemGroup(name)) {
       // System groups are never deletable — even by super_admins. Removing
       // super_admins leaves the cluster with no path back to global admin.
@@ -954,6 +958,7 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    await assertNoSelfEscalation({ kind: 'routes', service: serviceName }, actor)
     // An org_param the policy cannot read would deny every request on the route: refuse it first.
     assertOrgParams(serviceName, rules)
     // Refuse before writing: a tie would leave the route with no owner in policy (not_found for all).
@@ -986,6 +991,7 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)
     const before = await redisRbacRepository.getRoles(serviceName)
     await redisRbacRepository.setRoles(serviceName, roles)
     const changes = diffRoles(serviceName, before, roles)
@@ -1188,6 +1194,7 @@ export class RbacService {
   }
 
   async setOrgServiceMapping(organizationId: string, services: string[], actor?: AuditActorInput): Promise<void> {
+    await assertNoSelfEscalation({ kind: 'org_services', organizationId }, actor)
     // Fail-closed: validate EVERY service in the bundle exists before writing.
     // Reject the whole set if any is unknown rather than mapping an org to a
     // phantom service (which would resolve to no route_map / no roles in OPA).
@@ -1204,6 +1211,7 @@ export class RbacService {
   }
 
   async deleteOrgServiceMapping(organizationId: string, actor?: AuditActorInput): Promise<void> {
+    await assertNoSelfEscalation({ kind: 'org_services', organizationId }, actor)
     const before = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
     const deleted = await redisRbacRepository.deleteOrgServiceMapping(organizationId)
     if (!deleted) {

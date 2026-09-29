@@ -1,0 +1,116 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import type { FastifyInstance } from 'fastify'
+import { declaredRoutes, resetDeclaredRoutes, type DeclaredRoute } from '../../policy/declared-routes.js'
+
+/**
+ * No route that changes something may be satisfiable by a READ permission, or by a session alone.
+ *
+ * Read off the table the running service declares (policy/declared-routes.ts), which is collected
+ * from the guards Fastify actually attached — so a write added behind a plugin's `admin:read` gate,
+ * or with no guard at all, fails the build here rather than shipping. That is how RBAC groups, roles
+ * and route maps ended up editable by a read-only administrator (a privilege escalation).
+ *
+ * A route may be listed below only when it is safe for a reason the table cannot see; each says why.
+ * An entry that no longer matches a route fails too, so the list cannot rot into a blanket pass.
+ */
+
+const READ_VERBS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/** A permission that only grants reading. */
+const readOnly = (permission: string) => /:(read|list)$/.test(permission)
+
+const EXCEPTIONS: Record<string, string> = {
+  // ── Writes nothing ─────────────────────────────────────────────────────────────────────────────
+  'POST /api/admin/rbac/health-check': 'constant answer, touches no state',
+  'POST /api/admin/sites/zones/suggest': 'computes a suggested zone for a host; writes nothing',
+
+  // ── The caller's own objects ───────────────────────────────────────────────────────────────────
+  'POST /api/audit/saved-queries': "the caller's own saved query; a shared one is refused outside the caller's audit scope",
+  'DELETE /api/audit/saved-queries/:id': "deletes only the caller's own saved query (keyed on the caller)",
+  'POST /api/me/api-keys': "the caller's own personal key, scopes capped at what they hold; refused to delegated callers",
+  'DELETE /api/me/api-keys/:clientId': "revokes the caller's own personal key; refused to delegated callers",
+
+  // ── Decided in the handler, against the item ───────────────────────────────────────────────────
+  'POST /api/admin/recert/items/:campaignId/:itemId/decision':
+    'the assigned reviewer, or else admin:write (requireSuperAdmin in the handler); self-review blocked',
+
+  // ── One organisation's people: decided per request by OPA (rbac.decision) ─────────────────────
+  // requireServiceAdmin asks OPA about this very method and path against the jinbe route_map
+  // (org:manage_users / admin:create|update|delete — write permissions), then requireManageableOrg
+  // confines the caller to their organisations. The guard is not marked, so the table cannot see it.
+  'POST /api/organizations/:organizationId/users': 'OPA rbac.decision: org:manage_users or admin:create',
+  'PUT /api/organizations/:organizationId/users/:id': 'OPA rbac.decision: org:manage_users or admin:update',
+  'DELETE /api/organizations/:organizationId/users/:id': 'OPA rbac.decision: org:manage_users or admin:delete',
+  'PUT /api/organizations/:organizationId/users/:id/membership': 'OPA rbac.decision: org:manage_users',
+  'PUT /api/organizations/:organizationId/users/:id/groups': 'OPA rbac.decision: org:manage_users, plus users:assign_group',
+  'PUT /api/organizations/:organizationId/users/:id/grants': 'OPA rbac.decision: org:manage_users, plus OPA can_grant',
+
+  // ── Machine callers with their own credential (no session) ─────────────────────────────────────
+  'POST /api/mcp/token-info': 'auth-mcp only: allowed ServiceAccount actor token; answers about a token',
+  'POST /api/mcp/personal-keys/exchange': 'auth-mcp only: actor token + the personal key secret itself',
+  'POST /api/opa/status': 'OPA engines, with the bundle machine credential; records which revision is active',
+  'POST /api/webhooks/kratos': 'Kratos after-hooks, authenticated by the shared webhook secret',
+  'POST /api/webhooks/kratos/guard': 'Kratos before-hooks, authenticated by the shared webhook secret',
+  'POST /api/public/sign-in-protection/gate/self-service/:flow': 'the gateway judging an anonymous sign-in submit; by design pre-auth',
+  'POST /scim/v2/Users': 'SCIM bearer token (scim-auth)',
+  'PUT /scim/v2/Users/:id': 'SCIM bearer token (scim-auth)',
+  'PATCH /scim/v2/Users/:id': 'SCIM bearer token (scim-auth)',
+  'DELETE /scim/v2/Users/:id': 'SCIM bearer token (scim-auth)',
+}
+
+const key = (r: DeclaredRoute) => `${r.method} ${r.path}`
+
+function weak(r: DeclaredRoute): boolean {
+  if (READ_VERBS.has(r.method)) return false
+  if (r.class !== 'authorized') return true
+  return readOnly(r.permission ?? '')
+}
+
+let app: FastifyInstance
+let rows: DeclaredRoute[]
+
+beforeAll(async () => {
+  process.env.NODE_ENV = 'development'
+  process.env.DEV_BYPASS_AUTH = 'true'
+  process.env.ENCRYPTION_KEY = 'x'.repeat(32)
+  process.env.DEV_USER_EMAIL = 'dev@localhost.io'
+  resetDeclaredRoutes()
+  const { buildServer } = await import('../../server.js')
+  app = await buildServer()
+  rows = declaredRoutes()
+}, 30_000)
+
+afterAll(async () => { await app?.close() })
+
+describe('every write route asks for more than reading', () => {
+  it('no non-GET route is satisfiable by a read-only permission or a session alone', () => {
+    const offenders = rows.filter((r) => weak(r) && !(key(r) in EXCEPTIONS))
+      .map((r) => `${key(r)} → ${r.class}${r.permission ? ` ${r.permission}` : ''}`)
+    expect(offenders, 'guard these with a write permission, or add a justified EXCEPTIONS entry').toEqual([])
+  })
+
+  it('every exception still names a weak route (no stale entries)', () => {
+    const weakKeys = new Set(rows.filter(weak).map(key))
+    expect(Object.keys(EXCEPTIONS).filter((k) => !weakKeys.has(k))).toEqual([])
+  })
+
+  it('the table is the running service, not an empty one', () => {
+    expect(rows.filter((r) => !READ_VERBS.has(r.method)).length).toBeGreaterThan(100)
+  })
+
+  it('pins the permissions of the writes this check was written for', () => {
+    const permission = (method: string, path: string) => rows.find((r) => r.method === method && r.path === path)?.permission
+    for (const [method, path] of [
+      ['POST', '/api/admin/rbac/groups'], ['PUT', '/api/admin/rbac/groups/:name'], ['DELETE', '/api/admin/rbac/groups/:name'],
+      ['PUT', '/api/admin/rbac/services/:name/roles'], ['PUT', '/api/admin/rbac/services/:name/routes'],
+      ['PUT', '/api/admin/rbac/org-service-map'], ['DELETE', '/api/admin/rbac/org-service-map/:organizationId'],
+      ['POST', '/api/admin/recert/campaigns'], ['POST', '/api/admin/recert/campaigns/:id/close'],
+    ]) expect(permission(method, path), `${method} ${path}`).toBe('admin:write')
+    for (const path of ['/api/admin/users/:id/state', '/api/admin/users/:id/metadata', '/api/admin/users/:id/organization']) {
+      expect(permission('PATCH', path), path).toBe('users:update')
+    }
+    for (const r of rows.filter((r) => /^\/api\/(clusters|databases|backups|backup-items|database-apis)(\/|$)/.test(r.path))) {
+      expect(r.permission, key(r)).toBe('*')
+    }
+  })
+})
