@@ -1,15 +1,18 @@
 import type { FastifyInstance } from 'fastify'
 import { opaBundleService } from '../services/opa-bundle.service.js'
+import { requireInternalCaller } from '../middleware/require-internal-caller.js'
 
 /**
  * OPA Bundle endpoint — polled by OPA replicas
  *
  * GET /api/opa/bundle → tar.gz containing rbac.rego + data.json
  * Supports ETag for efficient polling (304 Not Modified)
- * Public — no auth required (internal cluster only)
+ * Internal callers only (a ServiceAccount listed in INTERNAL_API_ALLOWED_SUBJECTS): the bundle's
+ * data.json maps every email to its groups. No consumer today (OPA is fed by OPAL).
  */
 export async function opaBundleRoutes(fastify: FastifyInstance) {
   fastify.get('/bundle', {
+    preHandler: requireInternalCaller,
     schema: {
       description: 'Get OPA policy bundle (tar.gz). Polled by OPA replicas.',
       tags: ['opa'],
