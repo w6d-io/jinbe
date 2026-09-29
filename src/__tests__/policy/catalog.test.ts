@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ALIASES, CATALOG, PERMISSIONS, effectivePermissions, grants, isCatalogPermission, scopeGrants } from '../../policy/catalog.js'
+import { ALIASES, CATALOG, PERMISSIONS, catalogPermission, effectivePermissions, grants, isCatalogPermission, scopeGrants } from '../../policy/catalog.js'
 import { ROLES, STAFF_ROLES, globalRoleDefinitions, roleProblems } from '../../policy/roles.js'
 
 describe('the catalogue', () => {
@@ -28,6 +28,15 @@ describe('the catalogue', () => {
       // second-factor reset
       'users:reset_second_factor',
     ].sort())
+  })
+})
+
+describe('catalogPermission', () => {
+  it('answers stepUp and delegable per name, undefined outside the catalogue', () => {
+    expect(catalogPermission('sites:apply')).toMatchObject({ stepUp: true, delegable: 'direct' })
+    expect(catalogPermission('users:delete')).toMatchObject({ stepUp: true, delegable: 'never' })
+    expect(catalogPermission('users:read')).toMatchObject({ stepUp: false, delegable: 'direct' })
+    expect(catalogPermission('admin:read')).toBeUndefined()
   })
 })
 

@@ -128,6 +128,12 @@ export function specOf(name: string): PermissionSpec | undefined {
   return isCatalogPermission(name) ? CATALOG[name] : undefined
 }
 
+/**
+ * The catalogue entry for a permission name (`stepUp`, `delegable`, …), or undefined outside the
+ * catalogue — the lookup the delegated step-up decision (middleware/delegated-step-up.ts) reads.
+ */
+export const catalogPermission = specOf
+
 export const PERMISSIONS = Object.keys(CATALOG) as Permission[]
 
 const reads = PERMISSIONS.filter((n) => n.endsWith(':read'))
