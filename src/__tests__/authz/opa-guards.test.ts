@@ -80,11 +80,14 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
     case 'rbac/caller_organizations':
       return MEMBER[who(input.email)] ?? []
     case 'rbac/decision': {
-      // The org layer: super_admin, or the roster admin of the org named in the path.
+      // The org layer: super_admin, or the roster admin of the org named in the path. Platform 2FA
+      // (§ 8c): super_admins need aal2 on a permission route unless the caller is an OAuth2 client.
       const u = who(input.email)
       const org = String(input.object).split('/')[3]
-      const allow = u === 'super' || (MANAGEABLE[u] ?? []).includes(org)
-      return { allow, groups: [], organizations: MEMBER[u] ?? [], reason: allow ? 'ok' : 'forbidden' }
+      const granted = u === 'super' || (MANAGEABLE[u] ?? []).includes(org)
+      const needs2fa = granted && u === 'super' && input.client !== true && input.aal !== 'aal2'
+      const allow = granted && !needs2fa
+      return { allow, groups: [], organizations: MEMBER[u] ?? [], reason: needs2fa ? 'needs_2fa' : allow ? 'ok' : 'forbidden' }
     }
   }
   return undefined
@@ -111,7 +114,7 @@ beforeAll(async () => {
 
   app.addHook('onRequest', async (request) => {
     const u = request.headers['x-test-user'] as string | undefined
-    if (u) request.userContext = { id: `id-${u}`, email: `${u}@example.com`, name: u, aal: 'aal2', authVia: 'session' } as never
+    if (u) request.userContext = { id: `id-${u}`, email: `${u}@example.com`, name: u, aal: (request.headers['x-test-aal'] as string | undefined) ?? 'aal2', authVia: 'session' } as never
     const scopes = request.headers['x-test-scopes'] as string | undefined
     if (u && scopes !== undefined) {
       request.userContext = {
@@ -259,7 +262,7 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
     const res = await asClient('/api/organizations/acme/members', 'acme-admin', 'org:manage_users')
     expect(res.statusCode).toBe(200)
     expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toEqual({
-      email: 'acme-admin@example.com', object: '/api/organizations/acme/members', action: 'GET', app: 'jinbe', client: false,
+      email: 'acme-admin@example.com', object: '/api/organizations/acme/members', action: 'GET', app: 'jinbe', client: true,
       delegated: true, scopes: ['org:manage_users'], client_id: 'claude',
     })
   })
@@ -277,5 +280,27 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
 
   it('the scope never widens the user: OPA refusing the user is still a 403', async () => {
     expect((await asClient('/api/organizations/acme/members', 'nobody', 'org:manage_users')).statusCode).toBe(403)
+  })
+})
+
+describe('requireServiceAdmin — the org user routes through a client (MCP list_org_users)', () => {
+  const asClient = (url: string, user: string, scopes: string) =>
+    app.inject({ url, headers: { 'x-test-user': user, 'x-test-scopes': scopes } })
+
+  it('a delegated token is a client to OPA: no AAL to hold it to, so super_admin (*) is not refused as needs_2fa', async () => {
+    const res = await asClient('/api/organizations/acme/users', 'super', 'admin:read users:read')
+    expect(res.statusCode).toBe(200)
+    expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toMatchObject({ client: true, delegated: true, object: '/api/organizations/acme/users' })
+  })
+
+  it("the org's roster admin passes for their org and is refused a sibling org, as in a session", async () => {
+    expect((await asClient('/api/organizations/acme/users', 'acme-admin', 'org:manage_users')).statusCode).toBe(200)
+    expect((await asClient('/api/organizations/globex/users', 'acme-admin', 'org:manage_users')).statusCode).toBe(403)
+    expect((await asClient('/api/organizations/acme/users', 'nobody', 'org:manage_users')).statusCode).toBe(403)
+  })
+
+  it('a browser session is still held to the second factor: super_admin at aal1 is refused', async () => {
+    const res = await app.inject({ url: '/api/organizations/acme/users', headers: { 'x-test-user': 'super', 'x-test-aal': 'aal1' } })
+    expect(res.statusCode).toBe(403)
   })
 })

@@ -151,6 +151,48 @@ describe('POST /access-check', () => {
     expect(reply._body).toMatchObject({ allow: false, reason: 'not_found', app: null, owners: ['a', 'b'], matchingRules: [] })
   })
 
+  it('needs_2fa: asked at the level given, and says the sign-in level alone fails, who demands aal2, and that aal2 passes', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const u = String(url)
+      const input = JSON.parse(String((init as RequestInit).body)).input
+      if (u.endsWith('/v1/data/rbac/decision')) {
+        return opaAnswer(input.aal === 'aal2' ? { allow: true, reason: 'ok', groups: ['super_admins'] } : { allow: false, reason: 'needs_2fa', groups: ['super_admins'] })
+      }
+      if (u.endsWith('/owning_apps')) return opaAnswer(['echo-mfa'])
+      if (u.endsWith('/simulate')) return opaAnswer({ matching_rules: [{ method: 'GET', path: '/', permission: 'echo:read' }], roles: ['super_admin'], permissions: ['*'], super_admin: true })
+      if (u.endsWith('/site_login_cfg')) return opaAnswer({ min_aal: 'aal2', scope: 'all' })
+      if (u.endsWith('/second_factor_required')) return opaAnswer(true)
+      throw new Error(`unexpected ${u}`)
+    })
+    const reply = createMockReply()
+    await route.handler(request({ email: 'root@example.com', method: 'GET', path: '/', aal: 'aal1' }), reply)
+    expect(reply._status).toBe(200)
+    expect(reply._body).toMatchObject({
+      allow: false, reason: 'needs_2fa', aal: 'aal1', superAdmin: true,
+      stepUp: { requiredAal: 'aal2', allowedAtAal2: true, requiredBy: ['site', 'platform_group'] },
+    })
+    const first = JSON.parse(String((fetchSpy.mock.calls.find(([u]) => String(u).endsWith('/decision'))![1] as RequestInit).body)).input
+    expect(first.aal).toBe('aal1')
+  })
+
+  it('asked at aal2, or refused for another reason: no stepUp', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url)
+      if (u.endsWith('/decision')) return opaAnswer({ allow: false, reason: 'forbidden', groups: [] })
+      if (u.endsWith('/owning_apps')) return opaAnswer(['a'])
+      if (u.endsWith('/simulate')) return opaAnswer({})
+      throw new Error(`unexpected ${u}`)
+    })
+    for (const aal of ['aal1', 'aal2']) {
+      const reply = createMockReply()
+      await route.handler(request({ email: 'a@example.com', method: 'GET', path: '/x', aal }), reply)
+      expect((reply._body as Record<string, unknown>).stepUp).toBeUndefined()
+    }
+    const bad = createMockReply()
+    await route.handler(request({ email: 'a@example.com', method: 'GET', path: '/x', aal: 'aal3' }), bad)
+    expect(bad._status).toBe(400)
+  })
+
   it('answers 502 when OPA refuses or is unreachable, without leaking the token', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(opaAnswer({ code: 'unauthorized' }, 401))
     const reply = createMockReply()
