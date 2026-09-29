@@ -289,11 +289,88 @@ paths:
                     type: array
                     items:
                       type: string
+                  effective_permissions:
+                    type: array
+                    items:
+                      type: string
                   rules_source:
                     type: string
                     enum:
                       - service
                       - gitops
+  /api/catalog:
+    get:
+      tags:
+        - auth
+      description: The permission catalogue (labels, sensitivity, step-up, four-eyes,
+        delegable, routes), the staff roles and the legacy aliases.
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        area:
+                          type: string
+                        label:
+                          type: string
+                        sensitivity:
+                          type: string
+                          enum:
+                            - low
+                            - medium
+                            - high
+                            - critical
+                        stepUp:
+                          type: boolean
+                        fourEyes:
+                          type:
+                            - string
+                            - boolean
+                        delegable:
+                          type: string
+                          enum:
+                            - direct
+                            - never
+                        routes:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              method:
+                                type: string
+                              path:
+                                type: string
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        group:
+                          type: string
+                        label:
+                          type: string
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+                  aliases:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
   /api/me/permissions:
     get:
       tags:
@@ -3288,7 +3365,7 @@ paths:
       tags:
         - admin
       description: Create new user in Kratos identity service. Needs users:create;
-        users:assign_group to give groups; users:recovery to send an invite.
+        groups.members:write to give groups; users:recovery to send an invite.
       requestBody:
         required: true
         content:
@@ -3801,8 +3878,9 @@ paths:
     put:
       tags:
         - admin
-      description: Update a user. Needs users:update for the name, users:update_email
-        for the address, admin:write for anything outside the traits.
+      description: Update a user. Needs users:update for the traits,
+        users:update_email for the address, users:disable for the state,
+        users.metadata:write for the schema and metadata.
       requestBody:
         required: true
         content:
@@ -4578,7 +4656,7 @@ paths:
     get:
       tags:
         - admin
-      description: Every organisation the directory holds. Needs admin.organisation:read.
+      description: Every organisation the directory holds. Needs org:read.
       responses:
         "200":
           description: Default Response
@@ -4649,7 +4727,7 @@ paths:
       tags:
         - admin
       description: Create an organisation from a name. No service bundle is required.
-        Needs admin.organisation:write.
+        Needs org:write.
       requestBody:
         required: true
         content:
@@ -4747,7 +4825,7 @@ paths:
       tags:
         - admin
       description: "Change an organisation: name, tenant, and/or the whole set of
-        applications it has. Needs admin.organisation:write."
+        applications it has. Needs org:write."
       requestBody:
         required: true
         content:
@@ -4864,8 +4942,8 @@ paths:
     delete:
       tags:
         - admin
-      description: Delete an organisation that has no members left. Needs
-        admin.organisation:write.
+      description: Delete an organisation that has no members left. Needs org:delete
+        and a recent second factor.
       parameters:
         - schema:
             type: string
@@ -4961,7 +5039,7 @@ paths:
       tags:
         - admin
       description: "A user's site access (groups → roles per service) and org access
-        (per org: admin flag and the groups granted there). Needs admin:read."
+        (per org: admin flag and the groups granted there). Needs access:read."
       parameters:
         - schema:
             type: string
@@ -8135,7 +8213,8 @@ paths:
     patch:
       tags:
         - admin
-      description: Merge-patch user metadata_public or metadata_admin
+      description: Merge-patch user metadata_public or metadata_admin. Needs
+        users.metadata:write.
       requestBody:
         required: true
         content:
@@ -8630,8 +8709,9 @@ paths:
     put:
       tags:
         - admin
-      description: Update a user's group memberships. Requires super_admin group.
-        Groups must exist in groups.json.
+      description: Replace a user's platform groups. Removing only needs
+        groups.members:revoke; adding needs groups.members:write and a second
+        factor proven within 15 minutes. Groups must exist in the model.
       requestBody:
         required: true
         content:
@@ -8902,7 +8982,7 @@ paths:
         verdict (rbac.decision) plus the owning service, the route rules that
         matched, and the groups, roles and permissions that applied
         (rbac.simulate). `owners` with two or more services is a route tie,
-        which the policy answers not_found. Requires admin:write. 503 when
+        which the policy answers not_found. Requires access:check. 503 when
         OPA_URL / OPA_TOKEN are not configured; 502 when OPA does not answer."
       requestBody:
         required: true
@@ -10726,8 +10806,8 @@ paths:
       tags:
         - rbac
       description: Set an organization's admin roster (emails). Replaces the org's
-        entire roster; an empty list clears it. Requires super_admin + a second
-        factor proven within 15 minutes.
+        entire roster; an empty list clears it. Requires org.admins:write + a
+        second factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -11410,8 +11490,8 @@ paths:
         - second-factor
       description: Replace the groups whose members must use two-step sign-in. Every
         name must be an existing group; an empty list requires nobody. Published
-        to OPA as data.second_factor. Requires super_admin + a second factor
-        proven within 15 minutes.
+        to OPA as data.second_factor. Requires settings.signin:write + a second
+        factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -11572,8 +11652,8 @@ paths:
         - sign-in-protection
       description: Replace the sign-in protection settings. Turning the bot check on
         needs a configured provider. Enforced by the Kratos web_hook on every
-        guarded submit within 5 seconds. Requires super_admin + a second factor
-        proven within 15 minutes.
+        guarded submit within 5 seconds. Requires settings.signin:write + a
+        second factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -11719,8 +11799,8 @@ paths:
         within 5 seconds everywhere (keys stay stored, unusable); turning it on
         restores them. It can never lift the deployment ceiling: with
         DELEGATED_TOKENS_ENABLED=false the value is saved but MCP stays off (see
-        `ceiling` and `effective`). Requires super_admin + a second factor
-        proven within 15 minutes."
+        `ceiling` and `effective`). Requires settings.mcp:write + a second
+        factor proven within 15 minutes."
       requestBody:
         required: true
         content:
@@ -15064,7 +15144,7 @@ paths:
       tags:
         - organization-users
       description: Update a user's group memberships within this organization.
-        Requires users:assign_group permission.
+        Requires groups.members:write (users:assign_group, its legacy name).
       requestBody:
         required: true
         content:
@@ -15774,8 +15854,9 @@ paths:
     get:
       tags:
         - api-keys
-      description: Whether members may create personal API keys acting in this
-        organization (404 unless delegated tokens are enabled).
+      description: DEPRECATED — personal keys are bound to no organization and inherit
+        their holder, so this value is stored but no longer enforced (404 unless
+        delegated tokens are enabled).
       parameters:
         - schema:
             type: string
@@ -15841,8 +15922,9 @@ paths:
     put:
       tags:
         - api-keys
-      description: Allow or forbid personal API keys in this organization. Forbidding
-        stops the keys already issued at their next call.
+      description: "DEPRECATED — stored but no longer enforced: personal keys are
+        bound to no organization (MCP is limited by group in the AI assistants
+        setting)."
       requestBody:
         required: true
         content:

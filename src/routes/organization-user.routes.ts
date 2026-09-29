@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
 import { requireServiceAdmin, requireServicePermission } from '../middleware/require-service-admin.js'
 import { requireManageableOrg } from '../middleware/require-manageable-org.js'
+import { needs } from '../policy/route-access.js'
 import {
   organizationIdParamJsonSchema,
   organizationUserIdParamJsonSchema,
@@ -21,6 +22,9 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+
+/** Decided per organisation by this plugin's gate, never by a platform guard (route-access.ts). */
+const ORG = { org: 'organizationId' }
 
 /**
  * Organization-scoped user management routes
@@ -47,6 +51,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/users',
     {
+      ...needs('org.members:read', ORG),
       schema: {
         description: 'List users belonging to this organization',
         tags: ['organization-users'],
@@ -77,6 +82,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/users/:id',
     {
+      ...needs('org.members:read', ORG),
       schema: {
         description: 'Get a user by ID within this organization',
         tags: ['organization-users'],
@@ -95,6 +101,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/users',
     {
+      ...needs('org.members:write', ORG),
       schema: {
         description: 'Create a new user in this organization',
         tags: ['organization-users'],
@@ -113,6 +120,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/users/:id',
     {
+      ...needs('org.members:write', ORG),
       schema: {
         description: 'Update a user within this organization',
         tags: ['organization-users'],
@@ -132,6 +140,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/users/:id',
     {
+      ...needs('org.members:write', ORG),
       schema: {
         description:
           'Remove a user from this organization. Only this membership is dropped: the identity, its other organizations and its site access are kept.',
@@ -152,6 +161,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/users/:id/membership',
     {
+      ...needs('org.members:write', ORG),
       schema: {
         description:
           'Add an existing user to this organization, keeping their other memberships. Idempotent.',
@@ -176,6 +186,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/users/:id/groups',
     {
+      ...needs('org.members:read', ORG),
       schema: {
         description: "Get a user's groups within this organization",
         tags: ['organization-users'],
@@ -194,10 +205,11 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/users/:id/groups',
     {
-      preHandler: requireServicePermission('users:assign_group'),
+      ...needs('org.members:write', ORG),
+      preHandler: requireServicePermission('groups.members:write'),
       schema: {
         description:
-          "Update a user's group memberships within this organization. Requires users:assign_group permission.",
+          "Update a user's group memberships within this organization. Requires groups.members:write (users:assign_group, its legacy name).",
         tags: ['organization-users'],
         params: organizationUserIdParamJsonSchema,
         body: updateUserGroupsBodyJsonSchema,

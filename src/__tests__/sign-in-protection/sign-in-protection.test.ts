@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 
 // Sign-in protection: the setting (rbac:config sign_in_protection), the bot check against the
@@ -33,17 +34,8 @@ vi.mock('../../services/redis-client.service.js', () => ({
   }),
 }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', () => ({
-  requireAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-admin']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireSuperAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-  },
-}))
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { webhookRoutes } from '../../routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from '../../sign-in-protection/routes.js'
@@ -293,6 +285,7 @@ describe('routes', () => {
 
   beforeAll(async () => {
     app = Fastify()
+    installRouteAccess(app)
     await app.register(async (api) => {
       await api.register(webhookRoutes, { prefix: '/webhooks' })
       await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' })

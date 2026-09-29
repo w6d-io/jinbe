@@ -1,17 +1,13 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { holds, isSuperAdmin, rights } from '../authz/opa.js'
+import { isSuperAdmin } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 import { denyAudit } from '../audit/deny.js'
-
-/** Reading the administration API. `admin:write` does not imply it — a role needing both carries both. */
-const READ_ADMIN = 'admin:read'
-/** Writing the administration API. Verbs do not imply one another, so this is not `admin:read`. */
-const WRITE_ADMIN = 'admin:write'
-const SITES_APPLY = 'sites:apply'
+import { ROLES } from '../policy/roles.js'
+import { EVERYTHING } from '../policy/catalog.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -19,49 +15,13 @@ declare module 'fastify' {
   }
 }
 
-/** What local development is stamped with: the coarse pair every administration gate refines. */
-const DEV_RIGHTS = { groups: ['platform-admin'], roles: ['platform-admin'], permissions: [READ_ADMIN, WRITE_ADMIN] }
-
 /**
- * A gate on one platform permission, asked of OPA — what the caller holds in jinbe, global roles
- * included (`rbac.user_info`), the same resolution the gateway decides with.
- *
- * "Holds nothing" is a decision and answers 403; "cannot be established" is an outage and answers
- * 503. Letting the second pass as the first would turn every failure of the engine into a permission
- * somebody would go and ask about.
+ * What local development (DEV_BYPASS_AUTH) is stamped with: the staff role DEV_ROLE names, its group
+ * and its permissions — so the dev bypass exercises the real matrix rather than a catch-all.
  */
-function platformGate(required: string, denyReason: string, message: string, dev: string[] = DEV_RIGHTS.permissions) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
-    const email = request.userContext?.email
-    const subject = request.userContext?.id
-    if (!email || email === 'unknown' || !subject || subject === 'unknown') {
-      return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-    }
-
-    if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-      request.log.warn({ email, required }, '⚠️  DEV MODE: authorization bypassed')
-      request.rbacInfo = { email, ...DEV_RIGHTS, permissions: dev }
-      return
-    }
-
-    let rbacInfo: UserRbacInfo
-    try {
-      rbacInfo = { email, ...(await rights(email)) }
-    } catch (err) {
-      request.log.warn({ email, err: (err as Error).message }, 'OPA could not say what the caller holds — refusing rather than guessing')
-      return reply.status(503).send({
-        error: POLICY_UNAVAILABLE,
-        message: 'Unable to verify authorization. Please try again later.',
-      })
-    }
-    request.rbacInfo = rbacInfo
-
-    if (!holds(rbacInfo.permissions, required)) {
-      request.log.warn({ email, subject, permissions: rbacInfo.permissions, required }, 'Access denied — missing the permission this API requires')
-      denyAudit(request, denyReason)
-      return reply.status(403).send({ error: 'Forbidden', message })
-    }
-  }
+export function devRights(): { groups: string[]; roles: string[]; permissions: string[] } {
+  const role = ROLES[env.DEV_ROLE]
+  return { groups: [role.group], roles: [env.DEV_ROLE], permissions: [...role.permissions] }
 }
 
 /**
@@ -100,58 +60,30 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
   }
 }
 
-// The fixed gates, marked with what they require so the published route table is read off the
-// guard rather than written beside it. Two spellings of one rule are two rules.
-export const requireAdmin = enforcing(
-  platformGate(READ_ADMIN, 'not_admin', 'Admin or superadmin access required'),
-  READ_ADMIN,
-)
-export const requireSuperAdmin = enforcing(
-  platformGate(WRITE_ADMIN, 'not_super_admin', 'Super admin access required to modify user groups'),
-  WRITE_ADMIN,
-)
-
-/**
- * Changing what the gateway serves through the Sites API — apply, rollback, pause, delete, restore,
- * approving a request, the migration cut-over (owner decision: "admin:write drafts and requests;
- * super_admin applies"). Held through `*` (super_admin) or `sites:apply` itself; an administrator with
- * `admin:write` only may draft, save and ask. Pair with requireRecentMfa.
- */
-export const requireSitesApply = enforcing(
-  platformGate(
-    SITES_APPLY,
-    'not_super_admin',
-    'Only a super admin can change what the gateway serves; send a request instead',
-    [...DEV_RIGHTS.permissions, SITES_APPLY],
-  ),
-  SITES_APPLY,
-)
-
-/**
- * A change to who holds what: groups, service roles, route maps, the org → service map. `admin:write`
- * AND a second factor proven within the last 15 minutes, so a stolen session or a delegated token
- * (which never carries one) cannot rewrite the model. The self-escalation rules sit in rbac.service.
- */
-export const requireRbacWrite = [requireSuperAdmin, requireRecentMfa]
-
 /** What the route table says a super-admin-only route requires: the wildcard, which no scope covers. */
-export const EVERYTHING = '*'
+export { EVERYTHING }
 
 /**
- * `admin:write` AND a global role carrying `*` (OPA `rbac.super_admin`) — for what nobody short of a
- * super admin may touch. Fail-closed: OPA unreachable answers 503, never an allow.
+ * A global role carrying `*` (OPA `rbac.super_admin`) — for what nobody short of a super admin may
+ * touch (`config.permission: '*'`). Fail-closed: OPA unreachable answers 503, never an allow.
  */
 export const requireGlobalSuperAdmin = enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
-  await requireSuperAdmin(request, reply)
-  if (reply.sent) return reply
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') return
-  const email = request.userContext!.email!
+  const email = request.userContext?.email
+  const subject = request.userContext?.id
+  if (!email || email === 'unknown' || !subject || subject === 'unknown') {
+    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+  }
   let superAdmin: boolean
-  try {
-    superAdmin = await isSuperAdmin(email)
-  } catch (err) {
-    request.log.warn({ email, err: (err as Error).message }, 'OPA could not say whether the caller is a super admin — refusing rather than guessing')
-    return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
+  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
+    request.rbacInfo = { email, ...devRights() }
+    superAdmin = request.rbacInfo.permissions.includes(EVERYTHING)
+  } else {
+    try {
+      superAdmin = await isSuperAdmin(email)
+    } catch (err) {
+      request.log.warn({ email, err: (err as Error).message }, 'OPA could not say whether the caller is a super admin — refusing rather than guessing')
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
+    }
   }
   if (!superAdmin) {
     denyAudit(request, 'not_super_admin')

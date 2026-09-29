@@ -10,6 +10,7 @@ import { mergeJinbeRouteMap } from './merge-route-map.js'
 import { seedKumaService } from './seed-kuma.js'
 import { seedDelegation } from './seed-delegation.js'
 import { seedSupport } from './seed-support.js'
+import { seedStaffRoles } from './seed-staff.js'
 import { seedDefaultAdmin } from './seed-admin.js'
 import {
   readMarker,
@@ -46,8 +47,11 @@ import type { RunBootstrapOptions, BootstrapLogger, BootstrapConfig } from './ty
  *     `<svc>-org-admins`/`<svc>-viewers`. The bump re-runs the additive seed so
  *     existing installs gain the new-norm group definitions (old groups are
  *     removed by the separate data migration, not the seed).
+ * v7: staff roles in code (policy/roles.ts). Writes viewer, support, ops, developer, auditor,
+ *     security and super_admin into roles.global and creates the empty staff-* groups. Roles are
+ *     re-written on EVERY run (no-op boots included), so a runtime edit never outlives a restart.
  */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 export type BootstrapOutcome =
   | 'first-run'
@@ -135,6 +139,8 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       // the protected-resource set (e.g. a newly-recognised platform service)
       // without needing a schema bump or built-in drift to trigger a re-run.
       await applySystemMetadataMigration(logger)
+      // Roles are code: converge them on every boot, like the protection tags above.
+      await seedStaffRoles(logger)
       return { outcome, marker: existing }
     }
 
@@ -203,6 +209,8 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   // Support desk role + group (jinbe user management only). Additive; an operator's own `support`
   // role or group is never overwritten. Reached on first run, schema upgrade and built-ins drift.
   await seedSupport(logger)
+  // Staff roles (code) and their empty staff-* groups; membership is the owner's decision per person.
+  await seedStaffRoles(logger)
 }
 
 function buildMarker(input: {

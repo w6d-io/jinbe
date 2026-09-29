@@ -4,7 +4,8 @@ import { policyBundle, PolicyBundleUnavailableError } from '../services/policy-b
 import { organisationStoreConfigured } from '../services/organisation-store.js'
 import { recordEngineStatus, propagation } from '../services/engine-status.service.js'
 import { mirrorEngineReport } from '../home/runtime.js'
-import { requireAdmin } from '../middleware/require-admin.js'
+import { demandPermissions } from '../middleware/require-permission.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * The bundle the authorization engine pulls: everything it decides against.
@@ -37,6 +38,7 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/policy',
     {
+      ...open('machine'),
       schema: {
         description: 'Everything the policy engine decides against, as an OPA bundle (tar.gz) rooted at ory',
         tags: ['opa'],
@@ -90,6 +92,7 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/status',
     {
+      ...open('machine'),
       bodyLimit: STATUS_BODY_LIMIT,
       schema: {
         description: 'Where an authorization engine reports the bundle revision it activated',
@@ -122,7 +125,7 @@ export async function opaPolicyBundleRoutes(fastify: FastifyInstance) {
     '/propagation',
     {
       preHandler: machineOrOperator,
-      config: { operatorReadable: true },
+      config: { access: 'machine', operatorReadable: true },
       schema: {
         description: 'The revision this service serves, and the revision each engine reports',
         tags: ['opa'],
@@ -158,7 +161,7 @@ const STATUS_BODY_LIMIT = 4 * 1024 * 1024
  * and never why.
  */
 /**
- * An administrator (admin:read), or a machine. Whether a change has reached the engines is not a
+ * A staff member who may read settings (settings:read), or a machine. Whether a change has reached the engines is not a
  * secret from the person who just made it — and the console has no machine credential, so a
  * machine-only route is one the screen that needs it cannot call.
  *
@@ -166,7 +169,10 @@ const STATUS_BODY_LIMIT = 4 * 1024 * 1024
  */
 async function machineOrOperator(request: FastifyRequest, reply: FastifyReply) {
   // Populated by the identity extractor for a session or a bearer token, before any route runs.
-  if (request.userContext?.id && request.userContext.email !== 'unknown') return requireAdmin(request, reply)
+  if (request.userContext?.id && request.userContext.email !== 'unknown') {
+    if (!(await demandPermissions(request, reply, ['settings:read']))) return reply
+    return
+  }
   return machineOnly(request, reply)
 }
 

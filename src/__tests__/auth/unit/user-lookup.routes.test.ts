@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 
@@ -36,6 +37,7 @@ beforeAll(async () => {
     return new Response('{}', { status: 404 })
   }))
   app = Fastify()
+  installRouteAccess(app)
   await app.register(rateLimit, { global: true, max: 10_000, timeWindow: '1 minute' })
   app.addHook('onRequest', async (request) => {
     const who = request.headers['x-test-user'] as string | undefined

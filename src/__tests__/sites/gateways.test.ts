@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { payrollSite } from './fixtures.js'
 
@@ -13,20 +14,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../services/redis-client.service.js', () => ({ getRedisClient: () => ({}) }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  return {
-    requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs admin:write' })
-    }, 'admin:write'),
-    requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs sites:apply' })
-    }, 'sites:apply'),
-    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required', message: 'mfa' })
-    },
-  }
-})
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeGateway, type KubeGateway } from '../../gateway/kube-gateway.js'
@@ -39,7 +28,7 @@ import { resetSitesConfig } from '../../sites/config.js'
 import { setDnsLookup } from '../../sites/dns-probe.js'
 import { sitesRepository, type SiteRecord } from '../../sites/repository.js'
 import { redisRbacRepository } from '../../services/redis-rbac.repository.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../policy/declared-routes.js'
 
 const W = { 'x-test-write': '1' }
 const WM = { 'x-test-write': '1', 'x-test-mfa': '1' }
@@ -130,6 +119,7 @@ let app: FastifyInstance
 
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     request.userContext = { id: 'sam-id', email: 'sam@x.test', name: 'Sam' }
   })
@@ -212,17 +202,15 @@ describe('GET /gateways', () => {
     expect((await app.inject({ method: 'GET', url: '/sites/gateways' })).json()).toEqual({ gateways: [] })
   })
 
-  it('reads need admin:read only; PATCH /zones/:name is gated like create', async () => {
+  it('reads need sites:read only; PATCH /zones/:name is gated like create (zones:write)', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(sitesRoutes, { prefix: '/sites' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(sitesRoutes, { prefix: '/api/admin/sites' })
     await admin.ready()
     const find = (method: string, path: string) => declaredRoutes().find((r) => r.method === method && r.path === path)?.permission
-    expect(find('GET', '/api/admin/sites/gateways')).toBe('admin:read')
-    expect(find('PATCH', '/api/admin/sites/zones/:name')).toBe('sites:apply')
+    expect(find('GET', '/api/admin/sites/gateways')).toBe('sites:read')
+    expect(find('PATCH', '/api/admin/sites/zones/:name')).toBe('zones:write')
     await admin.close()
     expect((await patch({ ingress: 'none' }, {})).statusCode).toBe(403)
     expect((await patch({ ingress: 'none' }, W)).statusCode).toBe(422)

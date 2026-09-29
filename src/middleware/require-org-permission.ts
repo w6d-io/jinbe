@@ -6,6 +6,7 @@ import { enforcing } from '../policy/declared-routes.js'
 import { denyAudit } from '../audit/deny.js'
 import { delegationOf, isClient, requestPath } from './require-service-admin.js'
 import { delegationRefusal } from './delegation-gate.js'
+import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
 
 /**
  * Gates for routes that act on ONE organisation — the one named by the route parameter — decided by
@@ -45,7 +46,10 @@ function caller(request: FastifyRequest): string | null {
   return subject && subject !== 'unknown' && email && email !== 'unknown' ? email : null
 }
 
-/** The org's own admin, or super_admin. For the routes that hand out that org's grants. */
+/**
+ * The org's own admin, super_admin, or a platform holder of the route's declared permission. For the
+ * routes that hand out that org's grants (OPA can_grant still bounds what may be handed out).
+ */
 export function requireOrgAdmin(paramName = 'organizationId') {
   return async function (request: FastifyRequest, reply: FastifyReply) {
     const email = caller(request)
@@ -60,6 +64,14 @@ export function requireOrgAdmin(paramName = 'organizationId') {
     }
     if (superAdmin) return
 
+    let staff: boolean
+    try {
+      staff = await holdsDeclaredPermissionGlobally(request)
+    } catch (err) {
+      return unavailable(request, reply, organizationId, err)
+    }
+    if (staff) return
+
     const orgAdmin = await administersOrganisation(request, organizationId)
     if (orgAdmin === null) return unavailable(request, reply, organizationId)
     if (orgAdmin) return
@@ -68,17 +80,19 @@ export function requireOrgAdmin(paramName = 'organizationId') {
 }
 
 /**
- * `permission` in the org named by the route, exactly as the gateway decides it: OPA's
- * `rbac.decision` for this request — super_admin; that org's roster admin for the org-management
- * set; or a MEMBER of that org holding the route's permission from site grants ∪ org_grants[that org].
- * `permission` names what the jinbe route_map requires of these routes, and marks the guard for the
- * published route table.
+ * `permission` in the org named by the route: a platform holder of it (a staff role), or exactly as
+ * the gateway decides it — OPA's `rbac.decision` for this request: super_admin; that org's roster
+ * admin for the org-management set; or a MEMBER of that org holding the route's permission from site
+ * grants ∪ org_grants[that org]. Without `fixed`, the permission is the route's own declaration
+ * (`config.permission`), so a plugin can mount one gate for routes needing different permissions.
  */
-export function requireOrgPermission(permission: string, paramName = 'organizationId') {
-  return enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
+export function requireOrgPermission(fixed?: string, paramName = 'organizationId') {
+  const gate = async function (request: FastifyRequest, reply: FastifyReply) {
     const email = caller(request)
     if (!email) return unauthenticated(reply)
     const organizationId = (request.params as Record<string, string>)[paramName]
+    const permission = fixed ?? request.routeOptions?.config?.permission
+    if (!permission) return refuse(request, reply, organizationId, 'route_declares_no_permission')
 
     // A user through a client: the token must cover THIS permission in THIS org, whatever the user
     // holds (the global delegation gate asks too; this guard knows its permission for certain).
@@ -87,6 +101,7 @@ export function requireOrgPermission(permission: string, paramName = 'organizati
 
     let allow: boolean
     try {
+      if (await holdsDeclaredPermissionGlobally(request)) return
       ;({ allow } = await decide({
         email,
         method: request.method,
@@ -100,5 +115,7 @@ export function requireOrgPermission(permission: string, paramName = 'organizati
     }
     if (allow) return
     return refuse(request, reply, organizationId, `missing_permission:${permission}`)
-  }, permission)
+  }
+  // Marked when fixed, so a route carrying it is checked against its declaration.
+  return fixed ? enforcing(gate, fixed) : gate
 }

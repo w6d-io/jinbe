@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { orgGrantsController } from '../controllers/org-grants.controller.js'
 import { requireOrgAdmin } from '../middleware/require-org-permission.js'
+import { needs } from '../policy/route-access.js'
 import {
   organizationIdParamJsonSchema,
   organizationUserIdParamJsonSchema,
@@ -12,6 +13,9 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
+
+/** Decided per organisation by this plugin's gate, never by a platform guard (route-access.ts). */
+const ORG = { org: 'organizationId' }
 
 /**
  * Org grants, mounted under /api/organizations/:organizationId. The org's own admin or super_admin
@@ -30,6 +34,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireOrgAdmin('organizationId'))
 
   fastify.get('/grants', {
+    ...needs('org.members:read', ORG),
     schema: {
       description: "Groups handed out in this organization, per member (data.org_grants[org]). Org admin or super_admin.",
       tags: ['organization-users'],
@@ -47,6 +52,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   }, orgGrantsController.list.bind(orgGrantsController) as never)
 
   fastify.put('/users/:id/grants', {
+    ...needs('org.members:write', ORG),
     schema: {
       description:
         "Replace a member's grants in this organization. Every group being added must pass OPA " +
@@ -82,6 +88,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   }, orgGrantsController.replace.bind(orgGrantsController) as never)
 
   fastify.get('/assignable-groups', {
+    ...needs('org.members:read', ORG),
     schema: {
       description:
         'Groups the caller may grant in this organization (OPA data.rbac.delegation.assignable_groups, kept ' +

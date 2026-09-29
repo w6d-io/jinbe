@@ -1,5 +1,6 @@
 import { queryOpa } from '../services/opa-client.js'
-import { permits, type HeldRights } from '../services/authorization-resolution.js'
+import type { HeldRights } from '../services/authorization-resolution.js'
+import { grants } from '../policy/catalog.js'
 import { SwrCache } from '../cache/swr.js'
 
 /**
@@ -183,11 +184,11 @@ export function secondFactorRequired(email: string): Promise<boolean> {
 }
 
 /**
- * Whether permissions OPA resolved allow the required one: `*`, the permission itself, or an
- * ancestor of it (`admin:read` covers `admin.organisation:read`).
+ * Whether permissions OPA resolved allow the required one: `*`, the permission itself, or a legacy
+ * name the catalogue still honours for it (policy/catalog.ts `grants`).
  */
 export function holds(permissions: readonly string[], required: string): boolean {
-  return permissions.includes('*') || permits(permissions, required)
+  return grants(permissions, required)
 }
 
 /** Whether somebody holds `required` in jinbe (global roles included). */

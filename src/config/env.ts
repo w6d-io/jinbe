@@ -84,6 +84,9 @@ export const envSchema = z.object({
     .default('false'),
   // Fake user email for dev bypass
   DEV_USER_EMAIL: z.string().email().optional(),
+  // The staff role the dev bypass acts as (policy/roles.ts), so local development can exercise the
+  // real matrix: DEV_ROLE=support. Defaults to super_admin (`*`), what the bypass always granted.
+  DEV_ROLE: z.enum(['viewer', 'support', 'ops', 'developer', 'auditor', 'security', 'super_admin']).default('super_admin'),
 
   // Kratos APIs
   // ─── Authentication methods ───

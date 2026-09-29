@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyBaseLogger } from 'fastify'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { rulesGenerated, ruleCompileErrors } from '../telemetry/metrics.js'
 import { mirrorRulesServed } from '../home/runtime.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * Oathkeeper Rules endpoint — polled by Oathkeeper
@@ -12,6 +13,7 @@ import { mirrorRulesServed } from '../home/runtime.js'
  */
 export async function oathkeeperRoutes(fastify: FastifyInstance) {
   fastify.get('/rules', {
+    ...open('machine'),
     schema: {
       description: 'Get Oathkeeper access rules. Polled by Oathkeeper.',
       tags: ['oathkeeper'],

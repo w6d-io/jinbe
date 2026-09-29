@@ -1,7 +1,5 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import { recordRoute } from '../../policy/declared-routes.js'
-import { isPublicRoute } from '../../middleware/require-auth.js'
 import { LokiUnavailableError } from './loki.js'
 import { zodMessage } from './params.js'
 import type { AuditScope } from './scope.js'
@@ -12,11 +10,6 @@ import { clientIp } from '../../utils/client-ip.js'
 /** 10 requests per second per user (§4.4), when the rate-limit plugin is registered. */
 export const perUserRate = {
   rateLimit: { max: 10, timeWindow: 1000, keyGenerator: (r: FastifyRequest) => r.userContext?.id ?? clientIp(r) },
-}
-
-/** Records every route of the plugin with its per-route guards, so the table sees them standalone too. */
-export function recordPluginRoutes(fastify: FastifyInstance): void {
-  fastify.addHook('onRoute', (route) => recordRoute(route.method, route.url, [route.preHandler], isPublicRoute))
 }
 
 export function parse<T extends z.ZodTypeAny>(schema: T, value: unknown, reply: FastifyReply): z.infer<T> | null {

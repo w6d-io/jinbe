@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { badRequestResponseSchema } from '../schemas/response-schemas.js'
-import { requireAdmin, requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import {
   kratosConfigService,
   KratosConfigError,
@@ -16,7 +16,7 @@ import { auditActor } from '../utils/audit-actor.js'
  * Kratos authentication method toggles.
  *
  * GET /api/admin/auth/methods — current state per method (admin)
- * PUT /api/admin/auth/methods — patch enabled flags (super_admin + a second factor within 15 min)
+ * PUT /api/admin/auth/methods — patch enabled flags (settings.signin:write + a second factor within 15 min)
  *
  * Writes patch the mounted kratos.yml; Kratos hot-reloads it, and the login
  * UI renders methods dynamically from the flow — so a toggle is live on the
@@ -40,7 +40,7 @@ export async function authConfigRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/methods',
     {
-      preHandler: requireAdmin,
+      ...needs('settings:read'),
       schema: {
         description:
           'Current Kratos self-service auth method state (enabled/configured per method) and the self-registration switch, read from kratos.yml.',
@@ -74,8 +74,8 @@ export async function authConfigRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/methods',
     {
-      // How everybody signs in: super_admin + a fresh second factor.
-      preHandler: [requireSuperAdmin, requireRecentMfa],
+      ...needs('settings.signin:write'),
+      // How everybody signs in: settings.signin:write + a fresh second factor (catalogue).
       schema: {
         description:
           'Toggle Kratos self-service auth methods and self-registration. Partial patch; Kratos hot-reloads (no restart). ' +

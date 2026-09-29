@@ -11,6 +11,7 @@ import { accessReviewService } from './access-review.service.js'
 import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
+import { globalRoleDefinitions } from '../policy/roles.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
@@ -277,11 +278,11 @@ export class RbacService {
   }
 
   /**
-   * Privilege escalation guard: refuses the mutation unless the actor holds `admin.membership:write`
+   * Privilege escalation guard: refuses the mutation unless the actor holds `groups.members:write`
    * across the platform.
    *
    * A DECLARED PERMISSION, not a shape, asked of OPA (what the actor holds in jinbe, global roles
-   * included): `*`, `admin.membership:write` or an ancestor of it (`admin:write`).
+   * included): `*`, `groups.members:write` or a legacy alias of it (`admin:write`, catalog.ts).
    *
    * FAIL-CLOSED on every uncertainty: no identity, or OPA unreachable, both refuse.
    */
@@ -990,6 +991,16 @@ export class RbacService {
   ): Promise<MutationResult> {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
+    }
+    if (serviceName === 'global') {
+      // The staff roles are code (policy/roles.ts): an edit would be overwritten on the next boot,
+      // and would let somebody redefine a role they hold until then.
+      const code = globalRoleDefinitions()
+      const edited = (Object.keys(code) as (keyof typeof code)[])
+        .filter((r) => JSON.stringify(roles[r] ?? null) !== JSON.stringify(code[r]))
+      if (edited.length > 0) {
+        throw Object.assign(new Error(`Roles defined in code cannot be changed here: ${edited.join(', ')}`), { statusCode: 409 })
+      }
     }
     await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)
     const before = await redisRbacRepository.getRoles(serviceName)

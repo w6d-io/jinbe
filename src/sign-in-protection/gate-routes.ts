@@ -81,6 +81,7 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
 
   fastify.post<{ Params: { flow: string } }>('/self-service/:flow', {
     config: {
+      access: 'public',
       rateLimit: {
         max: 120,
         timeWindow: '1 minute',

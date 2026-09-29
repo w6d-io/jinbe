@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 
 // Mandatory 2FA for privileged groups: the setting (rbac:config second_factor_groups → OPAL
@@ -42,17 +43,8 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
 }))
 vi.mock('../../services/opal-publisher.js', () => ({ opalPublisher: { schedule: h.schedule } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', () => ({
-  requireAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-admin']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireSuperAdmin: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden' })
-  },
-  requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-  },
-}))
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { clearAuthzCache } from '../../authz/opa.js'
 import { KratosService } from '../../services/kratos.service.js'
@@ -85,6 +77,7 @@ function opaWorld(rule: string, input: Record<string, unknown>) {
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   // Stand-in for extractIdentity: the test says who the caller is and how they were proven.
   app.addHook('onRequest', async (request) => {
     const email = request.headers['x-email'] as string | undefined
@@ -101,8 +94,8 @@ beforeAll(async () => {
     await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' })
     await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' })
     await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })
-    api.get('/admin/users', async () => ({ ok: true }))
-    api.get('/whoami', async () => ({ ok: true }))
+    api.get('/admin/users', { config: { access: 'authenticated' } }, async () => ({ ok: true }))
+    api.get('/whoami', { config: { access: 'public' } }, async () => ({ ok: true }))
   }, { prefix: '/api' })
   await app.ready()
 })

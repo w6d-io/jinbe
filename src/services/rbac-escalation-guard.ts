@@ -131,7 +131,7 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
 }
 
 /**
- * Handing out a platform group (PUT /api/admin/users/:email/groups): `admin.membership:write` lets
+ * Handing out a platform group (PUT /api/admin/users/:email/groups): `groups.members:write` lets
  * somebody assign one, but not a group that grants `*` (the global super_admin or admin role, or a
  * role carrying it), and not to themselves — either would be the same escalation by membership
  * instead of by definition. Only a super admin may.

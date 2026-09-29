@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 
-// J-3: API-key routes need THAT org (requireOrgPermission('org:manage_api_keys')), and a refused
+// J-3: API-key routes need THAT org (requireOrgPermission, asking each route's org.keys:* declaration), and a refused
 // scope keeps its explanation on the wire.
 
 const ORG = '11111111-1111-1111-1111-111111111111'
 
-const s = vi.hoisted(() => ({ guardPermission: '' as string, guardParam: '' as string }))
+const s = vi.hoisted(() => ({ guardPermission: '' as string | undefined, guardParam: '' as string }))
 
 vi.mock('../../../middleware/require-org-permission.js', () => ({
-  requireOrgPermission: vi.fn((permission: string, param = 'organizationId') => {
+  requireOrgPermission: vi.fn((permission?: string, param = 'organizationId') => {
     s.guardPermission = permission
     s.guardParam = param
     return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -53,12 +54,15 @@ vi.mock('../../../services/api-key-views.js', () => ({
 }))
 
 import { apiKeyRoutes } from '../../../routes/api-key.routes.js'
+import { declaredRoute } from '../../../policy/declared-routes.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
-    request.userContext = { email: (request.headers['x-email'] as string) || 'admin@x.io', id: 'u1', name: 'A' }
+    // A second factor proven a minute ago: creating a key and changing the policy need a step-up.
+    request.userContext = { email: (request.headers['x-email'] as string) || 'admin@x.io', id: 'u1', name: 'A', aal: 'aal2', secondFactorAt: new Date(Date.now() - 60_000), authVia: 'session' } as never
   })
   await app.register(apiKeyRoutes, { prefix: '/api/organizations/:organizationId' })
   await app.ready()
@@ -66,9 +70,14 @@ beforeAll(async () => {
 afterAll(() => app.close())
 
 describe('API-key routes', () => {
-  it('are guarded by org:manage_api_keys on :organizationId', () => {
-    expect(s.guardPermission).toBe('org:manage_api_keys')
+  it("are guarded per org on :organizationId, each by its own org.keys:* declaration", () => {
+    expect(s.guardPermission).toBeUndefined()
     expect(s.guardParam).toBe('organizationId')
+    const perm = (method: string, path: string) => declaredRoute(method, `/api/organizations/:organizationId${path}`)
+    expect(perm('GET', '/api-keys')).toMatchObject({ permission: 'org.keys:read', org: 'organizationId' })
+    expect(perm('POST', '/api-keys')).toMatchObject({ permission: 'org.keys:write', stepUp: true })
+    expect(perm('DELETE', '/api-keys/:clientId')?.permission).toBe('org.keys:revoke')
+    expect(perm('PUT', '/api-key-policy')?.permission).toBe('org.keys:write')
   })
 
   it('refuse when the guard refuses (e.g. a service admin of another org)', async () => {

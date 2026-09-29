@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
     DEV_BYPASS_AUTH: false as boolean,
     NODE_ENV: 'test' as string,
     APP_NAME: 'jinbe',
+    DEV_ROLE: 'super_admin' as string,
   },
   opalUserInfo: null as UserRbacInfo | null,
 }))
@@ -27,8 +28,12 @@ vi.mock('../../../authz/opa.js', async (importOriginal) => ({
   }),
 }))
 
-import { requireAdmin } from '../../../middleware/require-admin.js'
+import { requirePermission } from '../../../middleware/require-permission.js'
 import { rights } from '../../../authz/opa.js'
+import { ROLES } from '../../../policy/roles.js'
+
+// The gate the route-access hook attaches for a route declaring `config.permission: 'users:read'`.
+const requireAdmin = requirePermission('users:read')
 
 /** The reader the guard consults. Named as before so the assertions read the same. */
 const opalService = { getUserInfo: rights }
@@ -64,16 +69,17 @@ function createMockReply(): FastifyReply & { _statusCode?: number; _body?: unkno
   return reply as unknown as FastifyReply & { _statusCode?: number; _body?: unknown }
 }
 
-describe('requireAdmin middleware', () => {
+describe("requirePermission('users:read')", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Reset mock state
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
     mockState.opalUserInfo = null
+    mockState.env.DEV_ROLE = 'super_admin'
   })
 
-  describe('DEV_BYPASS_AUTH mode (hardcoded admin)', () => {
+  describe('DEV_BYPASS_AUTH mode (the DEV_ROLE staff role)', () => {
     it('should bypass OPAL and grant admin when DEV_BYPASS_AUTH=true AND NODE_ENV=development', async () => {
       mockState.env.DEV_BYPASS_AUTH = true
       mockState.env.NODE_ENV = 'development'
@@ -90,11 +96,10 @@ describe('requireAdmin middleware', () => {
       // Should set rbacInfo with admin groups
       expect(request.rbacInfo).toBeDefined()
       // What the bypass stamps must PASS the gate it skips: a permission, not a group name.
-      expect(request.rbacInfo?.permissions).toContain('admin:read')
-      expect(request.rbacInfo?.permissions).toContain('admin:write')
+      expect(request.rbacInfo?.permissions).toEqual(['*'])
     })
 
-    it('should set rbacInfo with superadmin and admin groups', async () => {
+    it('stamps the super_admin role by default', async () => {
       mockState.env.DEV_BYPASS_AUTH = true
       mockState.env.NODE_ENV = 'development'
 
@@ -105,10 +110,24 @@ describe('requireAdmin middleware', () => {
 
       expect(request.rbacInfo).toEqual({
         email: 'dev@example.com',
-        groups: ['platform-admin'],
-        roles: ['platform-admin'],
-        permissions: ['admin:read', 'admin:write'],
+        groups: ['super_admins'],
+        roles: ['super_admin'],
+        permissions: ['*'],
       })
+    })
+
+    it('stamps the role DEV_ROLE names, so local development exercises the real matrix', async () => {
+      mockState.env.DEV_BYPASS_AUTH = true
+      mockState.env.NODE_ENV = 'development'
+      mockState.env.DEV_ROLE = 'viewer'
+
+      const request = createMockRequest('dev@example.com')
+      const reply = createMockReply()
+
+      await requireAdmin(request, reply)
+
+      expect(request.rbacInfo?.permissions).toEqual([...ROLES.viewer.permissions])
+      expect(reply._statusCode).toBe(403)
     })
 
     it('should NOT bypass when NODE_ENV=production even if DEV_BYPASS_AUTH=true', async () => {
@@ -188,7 +207,7 @@ describe('requireAdmin middleware', () => {
         email: 'admin@example.com',
         groups: ['platform-auditor'],
         roles: ['admin'],
-        permissions: ['admin:read'],
+        permissions: ['users:read'],
       }
 
       const request = createMockRequest('admin@example.com')
@@ -200,12 +219,12 @@ describe('requireAdmin middleware', () => {
       expect(request.rbacInfo).toBeDefined()
     })
 
-    it('grants access when the caller holds an ancestor of it', async () => {
+    it('grants access through a legacy alias for one release (admin:read)', async () => {
       mockState.opalUserInfo = {
         email: 'superadmin@example.com',
         groups: ['platform-admin'],
         roles: ['superadmin'],
-        permissions: ['admin:read', 'admin:write'],
+        permissions: ['admin:read'],
       }
 
       const request = createMockRequest('superadmin@example.com')
@@ -216,10 +235,24 @@ describe('requireAdmin middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
+    it('never through a dotted ancestor: org:write does not open org.admins:write', async () => {
+      mockState.opalUserInfo = { email: 'o@example.com', groups: [], roles: [], permissions: ['org:write'] }
+      const reply = createMockReply()
+      await requirePermission('org.admins:write')(createMockRequest('o@example.com'), reply)
+      expect(reply._statusCode).toBe(403)
+    })
+
+    it('the wildcard passes every catalogue permission', async () => {
+      mockState.opalUserInfo = { email: 'root@example.com', groups: [], roles: [], permissions: ['*'] }
+      const reply = createMockReply()
+      await requirePermission('users:reset_second_factor')(createMockRequest('root@example.com'), reply)
+      expect(reply.send).not.toHaveBeenCalled()
+    })
+
     it('refuses a group named like an admin group that grants nothing', async () => {
       // The check this replaces matched group NAMES, case-insensitively — so a group called `Admin`
       // waved somebody through whatever it granted. Reading the administration API needs
-      // `admin:read`, and a name is not a permission.
+      // `users:read`, and a name is not a permission.
       mockState.opalUserInfo = {
         email: 'user@example.com',
         groups: ['Admin'],
@@ -251,7 +284,7 @@ describe('requireAdmin middleware', () => {
       expect(reply._statusCode).toBe(403)
       expect(reply._body).toEqual({
         error: 'Forbidden',
-        message: 'Admin or superadmin access required',
+        message: 'This needs users:read.',
       })
     })
 
@@ -260,7 +293,7 @@ describe('requireAdmin middleware', () => {
         email: 'admin@example.com',
         groups: ['admin', 'devs'],
         roles: ['admin', 'developer'],
-        permissions: ['read', 'write', 'admin'],
+        permissions: ['users:read', 'sessions:read'],
       }
 
       const request = createMockRequest('admin@example.com')

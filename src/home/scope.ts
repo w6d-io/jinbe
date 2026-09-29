@@ -49,7 +49,8 @@ declare module 'fastify' {
   }
 }
 
-const PLATFORM_READ = 'admin:read'
+// Every staff role holds it (policy/roles.ts), and the legacy admin:read still passes as an alias.
+const PLATFORM_READ = 'stats:read'
 const DEV_PERMISSIONS = ['admin:read', 'admin:write', 'sites:apply']
 
 export class HomeScopeUnknown extends Error {}

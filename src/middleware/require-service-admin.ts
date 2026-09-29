@@ -5,6 +5,8 @@ import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import type { HeldRights } from '../services/authorization-resolution.js'
 import { ORG_ADMIN_PERMISSIONS, ORG_ADMIN_ROLE } from '../services/org-admin.js'
 import { denyAudit } from '../audit/deny.js'
+import { grants } from '../policy/catalog.js'
+import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
 
 /** The path OPA is asked about: the request's own, without its query string. */
 export function requestPath(request: FastifyRequest): string {
@@ -78,6 +80,8 @@ export function requireServiceAdmin(
         delegation: delegationOf(request),
       }))
       held = await rights(email)
+      // A staff role holding the route's permission across the platform passes in every org.
+      if (!allow) allow = await holdsDeclaredPermissionGlobally(request)
       if (allow && options.orgAdmin) orgAdmin = (await manageableOrgs(email)).includes(organizationId)
     } catch (err) {
       request.log.warn({ subject, organizationId, err: (err as Error).message }, '[requireServiceAdmin] OPA could not be asked')
@@ -140,9 +144,7 @@ export function requireServicePermission(requiredPermission: string) {
       })
     }
 
-    const hasPermission =
-      rbacInfo.permissions.includes('*') ||
-      rbacInfo.permissions.includes(requiredPermission)
+    const hasPermission = grants(rbacInfo.permissions, requiredPermission)
 
     if (!hasPermission) {
       request.log.warn(

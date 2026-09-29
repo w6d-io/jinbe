@@ -12,6 +12,7 @@ import {
   organisationsById,
   organisationStoreConfigured,
 } from '../services/organisation-store.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * The full org universe a global super_admin administers. The union of three sources, because each
@@ -102,6 +103,7 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/permissions',
     {
+      ...open('self'),
       schema: {
         description: "The caller's effective permissions across the platform, and which user-management actions they allow.",
         tags: ['me'],
@@ -159,6 +161,7 @@ export async function meRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organizations',
     {
+      ...open('self'),
       schema: {
         description: 'List the organizations the current user may administer',
         tags: ['me'],

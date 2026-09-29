@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { readFileSync } from 'node:fs'
 import { payrollSite } from '../fixtures.js'
@@ -31,20 +32,15 @@ vi.mock('../../../services/redis-rbac.repository.js', async () => {
 })
 vi.mock('../../../services/rbac.service.js', () => ({ rbacService: { invalidateBundle: vi.fn() } }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../../policy/declared-routes.js')
-  const needs = (permission: string) => enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: `needs ${permission}` })
-  }, permission)
-  return { requireSuperAdmin: needs('admin:write'), requireSitesApply: needs('sites:apply'), requireRecentMfa: async () => {} }
-})
+vi.mock('../../../middleware/require-permission.js', async () => (await import('../../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../../middleware/require-admin.js', async () => (await import('../../helpers/permission-stand-ins.js')).adminStandIn({ stepUpOpen: true }))
 
 import { sitesRoutes } from '../../../sites/routes.js'
 import { setKubeSites } from '../../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../../sites/config.js'
 import * as redisClient from '../../../services/redis-client.service.js'
 import * as rbacRepo from '../../../services/redis-rbac.repository.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../../policy/declared-routes.js'
 
 type Store = ReturnType<typeof import('../mocks.js').makeRbacStore>
 const store = (rbacRepo as unknown as { __store: Store }).__store
@@ -68,6 +64,7 @@ paths:
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     request.userContext = { id: 'sam-id', email: 'sam@x.test', name: 'Sam' }
   })
@@ -97,21 +94,19 @@ const preview = (content: string, extra: Record<string, unknown> = {}, headers: 
 const commit = (payload: Record<string, unknown>) => app.inject({ method: 'POST', url: '/sites/payroll/import/commit', headers: W, payload })
 
 describe('guards', () => {
-  it('both routes need admin:write, like a draft save', async () => {
+  it('both routes need sites:write, like a draft save', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(sitesRoutes, { prefix: '/sites' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(sitesRoutes, { prefix: '/api/admin/sites' })
     await admin.ready()
     const find = (path: string) => declaredRoutes().find((r) => r.method === 'POST' && r.path === path)?.permission
-    expect(find('/api/admin/sites/:name/import/preview')).toBe('admin:write')
-    expect(find('/api/admin/sites/:name/import/commit')).toBe('admin:write')
+    expect(find('/api/admin/sites/:name/import/preview')).toBe('sites:write')
+    expect(find('/api/admin/sites/:name/import/commit')).toBe('sites:write')
     await admin.close()
   })
 
-  it('refuses without admin:write and stores nothing', async () => {
+  it('refuses without sites:write and stores nothing', async () => {
     await save()
     const before = redis.strings.size
     expect((await preview(SPEC, {}, {})).statusCode).toBe(403)

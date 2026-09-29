@@ -10,7 +10,7 @@ import { redisRbacRepository } from './redis-rbac.repository.js'
 export class GroupCatalogueUnavailableError extends Error {}
 
 /** The permission that lets somebody hand out a group across the platform. */
-export const ASSIGN_MEMBERSHIP = 'admin.membership:write'
+export const ASSIGN_MEMBERSHIP = 'groups.members:write'
 
 async function groups(): Promise<Record<string, Record<string, string[]>>> {
   try {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // Replacing the whole access model (bundle import, S3 restore, history rollback) and changing how
@@ -29,6 +30,7 @@ import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     const who = request.headers['x-test-user'] as string
     const fresh = request.headers['x-test-fresh'] === '1'

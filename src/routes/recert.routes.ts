@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
 import { unauthorizedResponseSchema, notFoundResponseSchema } from '../schemas/response-schemas.js'
-import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
+import { demandPermissions } from '../middleware/require-permission.js'
+import { needs, open } from '../policy/route-access.js'
 import { recertService, RecertError } from '../services/recert.service.js'
 import { startRecertScheduler } from '../services/recert-scheduler.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -9,16 +10,16 @@ import { env } from '../config/env.js'
 /**
  * Access recertification campaigns (docs/specs/access-recertification.md, phase 1).
  *
- * POST   /campaigns                          create (draft)               [admin:write]
- * GET    /campaigns                          list with progress           [admin]
- * GET    /campaigns/:id                      campaign + items             [admin]
- * POST   /campaigns/:id/activate             generate items → active      [admin:write]
- * POST   /campaigns/:id/close                manual close (apply onExpiry)[admin:write]
- * DELETE /campaigns/:id                      draft/archived only          [admin:write]
- * GET    /campaigns/:id/items                items (decision/reviewer filters, pagination) [admin]
- * GET    /campaigns/:id/report               frozen completion report     [admin]
- * GET    /inbox                              caller's pending items       [any authenticated identity]
- * POST   /items/:campaignId/:itemId/decision { decision, comment? }       [assigned reviewer or admin:write]
+ * POST   /campaigns                          create (draft)               [recert:manage]
+ * GET    /campaigns                          list with progress           [recert:read]
+ * GET    /campaigns/:id                      campaign + items             [recert:read]
+ * POST   /campaigns/:id/activate             generate items → active      [recert:manage + step-up]
+ * POST   /campaigns/:id/close                manual close (apply onExpiry)[recert:manage]
+ * DELETE /campaigns/:id                      draft/archived only          [recert:delete]
+ * GET    /campaigns/:id/items                items (decision/reviewer filters, pagination) [recert:read]
+ * GET    /campaigns/:id/report               frozen completion report     [recert:read]
+ * GET    /inbox                              caller's pending items       [self: any authenticated identity]
+ * POST   /items/:campaignId/:itemId/decision { decision, comment? }       [self: assigned reviewer, else recert:manage]
  *
  * Every decision / auto-revoke is audited via auditEventService (category
  * 'access', target recert:{campaignId}[:{itemId}], severity warn on revoke).
@@ -40,7 +41,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('recert:manage'),
       schema: {
         description: 'Create a recertification campaign (draft). Phase 1: explicit reviewer emails, one-shot schedule.',
         tags: ['recert'],
@@ -77,7 +78,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/campaigns',
     {
-      preHandler: requireAdmin,
+      ...needs('recert:read'),
       schema: {
         description: 'List recertification campaigns with item progress (newest first).',
         tags: ['recert'],
@@ -91,7 +92,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/campaigns/:id',
     {
-      preHandler: requireAdmin,
+      ...needs('recert:read'),
       schema: {
         description: 'Get a campaign with its review items.',
         tags: ['recert'],
@@ -112,7 +113,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns/:id/activate',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('recert:manage', { stepUp: true }),
       schema: {
         description: 'Activate a draft campaign: walk groups→members via Kratos and generate one review item per (user, group) in scope.',
         tags: ['recert'],
@@ -133,7 +134,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns/:id/close',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('recert:manage'),
       schema: {
         description: "Close an active campaign now: pending items get the onExpiry consequence (revoke → membership removed in Kratos, flag → marked) and the completion report is frozen.",
         tags: ['recert'],
@@ -155,7 +156,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/campaigns/:id',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('recert:delete'),
       schema: {
         description: 'Delete a campaign. Draft/archived only — completed campaigns and their frozen reports are audit evidence.',
         tags: ['recert'],
@@ -176,7 +177,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/campaigns/:id/items',
     {
-      preHandler: requireAdmin,
+      ...needs('recert:read'),
       schema: {
         description: 'List a campaign\'s review items. Optional ?decision= and ?reviewer= filters; offset/limit pagination.',
         tags: ['recert'],
@@ -211,7 +212,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/campaigns/:id/report',
     {
-      preHandler: requireAdmin,
+      ...needs('recert:read'),
       schema: {
         description: 'Frozen completion report (written once at close) — counters, per-reviewer completion, full item list, compliance header (ISO 27001 A.9.2.5 / SOC 2 CC6.2–CC6.3).',
         tags: ['recert'],
@@ -235,6 +236,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/inbox',
     {
+      ...open('self'),
       schema: {
         description: "The caller's pending review items across active campaigns. No admin gate: reviewers are arbitrary identities.",
         tags: ['recert'],
@@ -257,6 +259,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/items/:campaignId/:itemId/decision',
     {
+      ...open('self'),
       schema: {
         description: 'Record a decision on a review item (assigned reviewer or admin). revoke requires a comment and is applied immediately (membership removed in Kratos). Self-review is blocked.',
         tags: ['recert'],
@@ -290,13 +293,12 @@ export async function recertRoutes(fastify: FastifyInstance) {
 
       try {
         // Authorization: the assigned reviewer may always decide their items;
-        // anyone else must hold admin:write — a decision is a write, a revoke removes a membership
-        // (requireSuperAdmin sends its own 403).
+        // anyone else must hold recert:manage — a decision is a write, a revoke removes a membership
+        // (demandPermissions sends its own 403).
         const item = await recertService.getCampaign(campaignId).then(({ items }) => items.find((i) => i.id === itemId))
         if (!item) return reply.status(404).send({ error: 'Not Found', message: `Item not found: ${itemId}` })
         if (item.reviewer !== email.toLowerCase()) {
-          await requireSuperAdmin(request, reply)
-          if (reply.sent) return
+          if (!(await demandPermissions(request, reply, ['recert:manage']))) return
         }
         const decided = await recertService.decide(campaignId, itemId, decision, comment, auditActor(request))
         return { item: decided }

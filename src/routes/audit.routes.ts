@@ -1,14 +1,12 @@
 import type { FastifyInstance } from 'fastify'
 import { auditEventService } from '../services/audit-event.service.js'
-import { requireAdmin } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { unauthorizedResponseSchema, forbiddenResponseSchema } from '../schemas/response-schemas.js'
 import type { AuditCategory, AuditKind, AuditResult, FrontendAuditEvent } from '../services/audit-event.service.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
 
 /**
- * Audit Events endpoint — admin only
+ * Audit Events endpoint — the legacy Redis trail, until AUD-14 folds it into /api/audit
  *
  * GET /audit/events   → paginated rich audit log (newest first, filterable)
  * GET /audit/summary  → windowed stats derived from the Redis stream (P1-2)
@@ -46,10 +44,8 @@ interface EventsQuery {
 }
 
 export async function auditRoutes(fastify: FastifyInstance) {
-  // Every route requires admin
-  guardAll(fastify, requireAdmin, isPublicRoute)
-
   fastify.get('/events', {
+    ...needs('audit:read'),
     schema: {
       description: 'Query audit events (newest first). Rich schema — maps directly to UI.',
       tags: ['audit'],
@@ -96,6 +92,7 @@ export async function auditRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/summary', {
+    ...needs('audit:read'),
     schema: {
       description: 'Windowed audit summary derived from the shared Redis stream (not Prometheus).',
       tags: ['audit'],
@@ -118,6 +115,7 @@ export async function auditRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/export', {
+    ...needs('audit:export'),
     schema: {
       description: 'Export a filtered audit range as NDJSON (default) or CSV. The export itself is audited.',
       tags: ['audit'],

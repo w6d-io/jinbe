@@ -58,30 +58,26 @@ beforeEach(() => {
 })
 
 describe('platformScopes — what a personal key may carry', () => {
-  it('expands a super admin\'s `*` into the concrete permissions the routes declare, minus refused-only ones', async () => {
+  it('expands a super admin\'s `*` into the delegable catalogue permissions the routes declare', async () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
     expect(await platformScopes(ROOT)).toEqual([
-      'admin.organisation:read',
-      'admin.organisation:write',
-      'admin:read',
-      'admin:write',
-      'audit:export',
-      'audit:read',
-      'org:manage_users',
-      'sessions:read',
-      'sessions:revoke',
-      'users:create',
-      'users:delete',
-      'users:read',
-      'users:update',
+      'access:check', 'access:read', 'audit:read', 'gateway:read',
+      'groups.members:revoke', 'groups:read', 'org.keys:read', 'org.members:read', 'org.members:write',
+      'org:read', 'org:write', 'recert:read', 'sessions:read', 'sessions:revoke',
+      'settings:read', 'sites:apply', 'sites:read', 'sites:write',
+      'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
+      'users:update', 'zones:read',
     ])
   })
 
   it('never offers `*`, a permission only refused routes ask for, or one no delegated caller may use', async () => {
     const all = await platformScopes(ROOT)
-    // org:manage_api_keys only opens key routes; the users:* recovery set only account recovery;
-    // sites:apply is ineligible outright; admin:create is a legacy rule beside org:manage_users.
-    for (const p of ['*', 'org:manage_api_keys', 'users:recovery', 'users:send_login_link', 'users:reset_second_factor', 'sites:apply', 'admin:create']) {
+    // The catalogue's `never` (deletions, 2FA reset, key creation, approvals, the access model) and
+    // every legacy name: a scope is a catalogue leaf.
+    for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'org.keys:revoke', 'users:delete', 'users:reset_second_factor',
+      'sites:delete', 'sites.requests:approve', 'zones:delete', 'groups:write', 'org.admins:write', 'policy.bundle:write',
+      'recert:manage', 'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
+      'admin:read', 'admin:write', 'admin:create']) {
       expect(all).not.toContain(p)
     }
   })
@@ -91,16 +87,20 @@ describe('platformScopes — what a personal key may carry', () => {
     expect(await platformScopes('sam@x.io')).toEqual(['users:read'])
   })
 
-  it('honours covers and the coarse permissions the guards accept', async () => {
+  it('honours the legacy aliases the guards accept, for one release', async () => {
     s.rights['ada@x.io'] = ['admin:read']
-    // admin:read covers admin.organisation:read, refines to users:read / sessions:read, and reads the audit trail.
-    expect(await platformScopes('ada@x.io')).toEqual(['admin.organisation:read', 'admin:read', 'audit:export', 'audit:read', 'sessions:read', 'users:read'])
+    // admin:read stands for every catalogue read it used to open (and audit:export, through the audit scope).
+    expect(await platformScopes('ada@x.io')).toEqual([
+      'access:read', 'audit:read', 'gateway:read', 'groups:read', 'org.members:read', 'org:read',
+      'recert:read', 'sessions:read', 'settings:read', 'sites:read', 'stats:read', 'users:read', 'zones:read',
+    ])
   })
 
-  it('gives an org\'s roster admin org:manage_users (which org a call touches is decided per request)', async () => {
+  it('gives an org\'s roster admin the org-management leaves (which org a call touches is decided per request)', async () => {
     s.members['olga@x.io'] = [ORG, 'globex']
     s.roster['olga@x.io'] = [ORG]
-    expect(await platformScopes('olga@x.io')).toEqual(['org:manage_users'])
+    // org:manage_users / org:manage_api_keys, as their catalogue leaves; key creation and revocation never.
+    expect(await platformScopes('olga@x.io')).toEqual(['org.keys:read', 'org.members:read', 'org.members:write'])
     s.roster['olga@x.io'] = []
     expect(await platformScopes('olga@x.io')).toEqual([])
   })
@@ -109,7 +109,7 @@ describe('platformScopes — what a personal key may carry', () => {
     s.orgHeld[`${ORG}|gus@x.io`] = ['org:manage_users']
     expect(await platformScopes('gus@x.io')).toEqual([])
     s.members['gus@x.io'] = [ORG]
-    expect(await platformScopes('gus@x.io')).toEqual(['org:manage_users'])
+    expect(await platformScopes('gus@x.io')).toEqual(['org.members:read', 'org.members:write'])
   })
 
   it('ignores API_KEY_ALLOWED_SCOPES: that ceiling bounds org machine keys, not a holder\'s own key', async () => {
@@ -123,13 +123,16 @@ describe('platformScopes — what a personal key may carry', () => {
 describe('personalScopeCatalog', () => {
   it('groups by resource root, then scope', async () => {
     s.rights['ada@x.io'] = ['admin:read']
-    expect(await personalScopeCatalog('ada@x.io')).toEqual([
-      { scope: 'admin.organisation:read', group: 'admin' },
-      { scope: 'admin:read', group: 'admin' },
-      { scope: 'audit:export', group: 'audit' },
+    const catalog = await personalScopeCatalog('ada@x.io')
+    expect(catalog.slice(0, 4)).toEqual([
+      { scope: 'access:read', group: 'access' },
       { scope: 'audit:read', group: 'audit' },
-      { scope: 'sessions:read', group: 'sessions' },
-      { scope: 'users:read', group: 'users' },
+      { scope: 'gateway:read', group: 'gateway' },
+      { scope: 'groups:read', group: 'groups' },
+    ])
+    expect(catalog.filter((e) => e.group === 'org')).toEqual([
+      { scope: 'org.members:read', group: 'org' },
+      { scope: 'org:read', group: 'org' },
     ])
   })
 

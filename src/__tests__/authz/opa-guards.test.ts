@@ -90,8 +90,6 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
   return undefined
 }
 
-import { requireAdmin, requireSuperAdmin, requireSitesApply } from '../../middleware/require-admin.js'
-import { requirePlatformPermission } from '../../middleware/require-platform-permission.js'
 import { requirePermission } from '../../middleware/require-permission.js'
 import { requireServiceAdmin } from '../../middleware/require-service-admin.js'
 import { requireManageableOrg } from '../../middleware/require-manageable-org.js'
@@ -110,6 +108,7 @@ beforeAll(async () => {
   }))
 
   app = Fastify()
+
   app.addHook('onRequest', async (request) => {
     const u = request.headers['x-test-user'] as string | undefined
     if (u) request.userContext = { id: `id-${u}`, email: `${u}@example.com`, name: u, aal: 'aal2', authVia: 'session' } as never
@@ -123,12 +122,13 @@ beforeAll(async () => {
   })
   const ok = async (request: { rbacInfo?: unknown }) => ({ ok: true, rbacInfo: request.rbacInfo ?? null })
   await app.register(async (api) => {
-    api.get('/t/admin', { preHandler: requireAdmin }, ok)
-    api.post('/t/super', { preHandler: requireSuperAdmin }, ok)
-    api.post('/t/sites', { preHandler: requireSitesApply }, ok)
-    api.get('/t/platform', { preHandler: requirePlatformPermission('admin.organisation:read') }, ok)
+    // The catalogue gates the route-access hook attaches; admin:read / admin:write reach them as aliases.
+    api.get('/t/admin', { preHandler: requirePermission('stats:read') }, ok)
+    api.post('/t/super', { preHandler: requirePermission('groups:write') }, ok)
+    api.post('/t/sites', { preHandler: requirePermission('sites:apply') }, ok)
+    api.get('/t/platform', { preHandler: requirePermission('org:read') }, ok)
     api.get('/t/users', { preHandler: requirePermission('users:read') }, ok)
-    api.put('/t/groups', { preHandler: requirePermission('users:assign_group') }, ok)
+    api.put('/t/groups', { preHandler: requirePermission('groups.members:write') }, ok)
     await api.register(async (org) => {
       org.get('/users', { preHandler: [requireServiceAdmin('organizationId', { orgAdmin: true }), requireManageableOrg()] }, ok)
       org.get('/grants', { preHandler: requireOrgAdmin('organizationId') }, ok)

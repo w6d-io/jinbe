@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { payrollSite } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
@@ -32,26 +33,13 @@ vi.mock('../../services/redis-rbac.repository.js', async () => {
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateBundle: vi.fn() } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn() } }))
 // x-test-perms: the caller's permissions, comma-separated; x-test-mfa: a fresh second factor.
-vi.mock('../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  const holds = (request: FastifyRequest, p: string) => String(request.headers['x-test-perms'] ?? '').split(',').includes(p)
-  return {
-    requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!holds(request, 'admin:write')) return reply.status(403).send({ error: 'Forbidden' })
-    }, 'admin:write'),
-    requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!holds(request, '*')) return reply.status(403).send({ error: 'Forbidden', message: 'needs sites:apply' })
-    }, 'sites:apply'),
-    requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-      if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required' })
-    },
-  }
-})
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeSites } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../policy/declared-routes.js'
 import * as redisClient from '../../services/redis-client.service.js'
 import * as rbacRepo from '../../services/redis-rbac.repository.js'
 
@@ -65,6 +53,7 @@ const cluster = fakeCluster()
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => { request.userContext = { id: 'sam', email: 'sam@x.test', name: 'Sam' } })
   await app.register(sitesRoutes, { prefix: '/sites' })
   await app.ready()
@@ -97,22 +86,22 @@ describe('permissions: admin:write edits and asks, sites:apply applies', () => {
   it('the route table says sites:apply for everything that changes the gateway', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(sitesRoutes, { prefix: '/sites' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(sitesRoutes, { prefix: '/api/admin/sites' })
     await admin.ready()
     const perm = (method: string, path: string) => declaredRoutes().find((r) => r.method === method && r.path === `/api/admin/sites${path}`)?.permission
     for (const [m, p] of [
-      ['POST', '/:name/apply'], ['POST', '/:name/rollback'], ['POST', '/:name/pause'], ['POST', '/:name/resume'], ['DELETE', '/:name'],
-      ['POST', '/:name/restore'], ['POST', '/:name/drift/accept'], ['POST', '/requests/:id/approve'], ['POST', '/requests/:id/reject'],
-      ['POST', '/migration/cutover'], ['POST', '/migration/rollback'],
+      ['POST', '/:name/apply'], ['POST', '/:name/rollback'], ['POST', '/:name/pause'], ['POST', '/:name/resume'],
+      ['POST', '/:name/restore'], ['POST', '/:name/drift/accept'], ['POST', '/migration/cutover'], ['POST', '/migration/rollback'],
     ]) expect(`${m} ${p} ${perm(m, p)}`).toBe(`${m} ${p} sites:apply`)
+    expect(perm('DELETE', '/:name')).toBe('sites:delete')
+    expect(perm('POST', '/requests/:id/approve')).toBe('sites.requests:approve')
+    expect(perm('POST', '/requests/:id/reject')).toBe('sites.requests:approve')
     for (const [m, p] of [['PUT', '/:name'], ['PUT', '/:name/draft'], ['POST', '/:name/requests'], ['PUT', '/:name/logo'], ['POST', '/preview']]) {
-      expect(`${m} ${p} ${perm(m, p)}`).toBe(`${m} ${p} admin:write`)
+      expect(`${m} ${p} ${perm(m, p)}`).toBe(`${m} ${p} sites:write`)
     }
-    expect(perm('GET', '/platform')).toBe('admin:read')
-    expect(perm('GET', '/deleted')).toBe('admin:read')
+    expect(perm('GET', '/platform')).toBe('sites:read')
+    expect(perm('GET', '/deleted')).toBe('sites:read')
     await admin.close()
   })
 

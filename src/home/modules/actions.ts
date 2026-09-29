@@ -41,17 +41,17 @@ export const actionsModule: ModuleDef<QuickActions> = {
 
     const items: Item[] = [
       review,
-      gate('new_site', holds(p, 'admin:write')),
+      gate('new_site', holds(p, 'sites:write')),
       gate('invite_user', allows(p, 'users:create') || orgAdmin),
-      gate('grant_access', holds(p, 'admin:write') || orgAdmin),
-      gate('check_access', holds(p, 'admin:read')),
+      gate('grant_access', holds(p, 'groups.members:write') || orgAdmin),
+      gate('check_access', holds(p, 'access:check')),
       gate('find_user', allows(p, 'users:read')),
       gate('open_audit', scope.platform || holds(p, 'audit:read') || orgAdmin),
-      gate('start_recert', holds(p, 'admin:read')),
+      gate('start_recert', holds(p, 'recert:manage')),
       gate('org_api_key', orgAdmin),
       gate('revoke_sessions', allows(p, 'sessions:revoke')),
       gate('send_recovery', allows(p, 'users:recovery')),
-      holds(p, 'admin:read') && kubeOff ? { id: 'open_gateway', enabled: false, reason: 'not_deployed' } : gate('open_gateway', holds(p, 'admin:read')),
+      holds(p, 'gateway:read') && kubeOff ? { id: 'open_gateway', enabled: false, reason: 'not_deployed' } : gate('open_gateway', holds(p, 'gateway:read')),
     ]
     return ok({ items }, srcs)
   },

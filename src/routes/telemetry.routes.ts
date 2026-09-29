@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { serviceIdentity } from '../telemetry/identity.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * What a browser needs to report what happens in it — served by this API rather than baked into the
@@ -20,6 +21,7 @@ export async function telemetryRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/telemetry',
     {
+      ...open('public'),
       schema: {
         description: 'Browser telemetry settings. Empty when none is configured.',
         tags: ['health'],

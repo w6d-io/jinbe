@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { badRequestResponseSchema, conflictResponseSchema } from '../schemas/response-schemas.js'
-import { requireSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, BundleValidationError } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
@@ -17,8 +17,7 @@ import { auditActor } from '../utils/audit-actor.js'
  * GET  /api/admin/rbac/bundle/history          — pre-import snapshot history (no bundle payloads)
  * POST /api/admin/rbac/bundle/history/:id/rollback — restore a history entry's snapshot (full replace)
  *
- * All require super_admin. Internal cluster requests bypass the check (the
- * backup CronJob uses the internal Host header).
+ * Reads need policy.bundle:read, writes policy.bundle:write and a recent second factor (catalogue).
  */
 export async function rbacBundleRoutes(fastify: FastifyInstance) {
   const disabled = (reply: import('fastify').FastifyReply) =>
@@ -34,7 +33,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/bundle/export',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('policy.bundle:read'),
       schema: {
         description: 'Export RBAC config as a portable JSON bundle. ?sections=services,groups,… narrows it; omitted = full 1:1 snapshot.',
         tags: ['rbac', 'backup'],
@@ -49,7 +48,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         : undefined
       const bundle = await rbacBundleService.export(sections)
       // Audit the export — this is an exfil path (the whole RBAC config leaves
-      // the cluster). Actor is always a resolvable super_admin here.
+      // the cluster). Actor is always a resolvable policy.bundle:read holder here.
       const a = auditActor(request)
       auditEventService.emit({
         category: 'rbac', kind: 'change', verb: 'export', target: 'bundle',
@@ -69,8 +68,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/import',
     {
-      // A full replace of the access model: super_admin + a fresh second factor.
-      preHandler: [requireSuperAdmin, requireRecentMfa],
+      ...needs('policy.bundle:write'),
+      // A full replace of the access model: policy.bundle:write + a fresh second factor (catalogue).
       schema: {
         description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore. 409 (nothing written) when the resulting route maps tie two services on one route at the same specificity.',
         tags: ['rbac', 'backup'],
@@ -108,7 +107,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   // ── List S3 backup snapshots ──
   fastify.get(
     '/bundle/backups',
-    { preHandler: requireSuperAdmin, schema: { description: 'List RBAC bundle backups in S3.', tags: ['rbac', 'backup'] } },
+    { ...needs('policy.bundle:read'), schema: { description: 'List RBAC bundle backups in S3.', tags: ['rbac', 'backup'] } },
     async (_request, reply) => {
       if (!backupStore.enabled()) return disabled(reply)
       const backups = await backupStore.listBackups()
@@ -120,8 +119,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/backups/restore',
     {
-      // A full replace of the access model: super_admin + a fresh second factor.
-      preHandler: [requireSuperAdmin, requireRecentMfa],
+      ...needs('policy.bundle:write'),
+      // A full replace of the access model: policy.bundle:write + a fresh second factor (catalogue).
       schema: {
         description: 'Restore RBAC config from an S3 backup snapshot (full replace).',
         tags: ['rbac', 'backup'],
@@ -159,7 +158,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   // ── Back up now: export current config and upload to S3 ──
   fastify.post(
     '/bundle/backups/now',
-    { preHandler: requireSuperAdmin, schema: { description: 'Export current RBAC config and upload it to S3 now.', tags: ['rbac', 'backup'] } },
+    { ...needs('policy.bundle:write'), schema: { description: 'Export current RBAC config and upload it to S3 now.', tags: ['rbac', 'backup'] } },
     async (request, reply) => {
       if (!backupStore.enabled()) return disabled(reply)
       const bundle = await rbacBundleService.export()
@@ -179,7 +178,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/bundle/history',
     {
-      preHandler: requireSuperAdmin,
+      ...needs('policy.bundle:read'),
       schema: {
         description: 'List pre-import/restore/rollback snapshots (newest first, cap 10). Entries carry per-section counts, not the bundle payload.',
         tags: ['rbac', 'backup'],
@@ -215,8 +214,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/bundle/history/:id/rollback',
     {
-      // A full replace of the access model: super_admin + a fresh second factor.
-      preHandler: [requireSuperAdmin, requireRecentMfa],
+      ...needs('policy.bundle:write'),
+      // A full replace of the access model: policy.bundle:write + a fresh second factor (catalogue).
       schema: {
         description: "Restore the RBAC config snapshot of a history entry (full replace). The current state is snapshotted first (reason 'pre-rollback'), so a rollback is itself reversible.",
         tags: ['rbac', 'backup'],

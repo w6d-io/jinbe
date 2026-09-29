@@ -68,7 +68,6 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 }))
 
 const { organisationAdminRoutes } = await import('../../../routes/organisation-admin.routes.js')
-const { enforcedBy } = await import('../../../policy/declared-routes.js')
 
 type Handler = (request: unknown, reply: unknown) => Promise<unknown>
 
@@ -117,7 +116,7 @@ describe('POST /api/admin/organizations', () => {
     const [route] = await mount()
 
     expect(route.path).toBe('/organizations')
-    expect(enforcedBy(route.opts.preHandler)).toBe('admin.organisation:write')
+    expect((route.opts as { config?: { permission?: string } }).config?.permission).toBe('org:write')
     expect(route.opts.schema).toMatchObject({ tags: ['admin'], body: { required: ['name'] } })
   })
 

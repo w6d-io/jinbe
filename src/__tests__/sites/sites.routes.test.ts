@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { ACME, payrollSite } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
@@ -40,27 +41,15 @@ vi.mock('../../services/redis-rbac.repository.js', async () => {
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateBundle: h.invalidate } }))
 vi.mock('../../services/org-grants.repository.js', () => ({ orgGrantsRepository: { getAll: vi.fn(async () => h.grants) } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
-vi.mock('../../middleware/require-admin.js', async () => {
-  const { enforcing } = await import('../../policy/declared-routes.js')
-  return {
-  requireSuperAdmin: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs admin:write' })
-  }, 'admin:write'),
-  requireSitesApply: enforcing(async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-write']) return reply.status(403).send({ error: 'Forbidden', message: 'needs sites:apply' })
-  }, 'sites:apply'),
-  requireRecentMfa: async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.headers['x-test-mfa']) return reply.status(422).send({ error: 'reauth_required', message: 'mfa' })
-  },
-  }
-})
+vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
+vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
 import { sitesRoutes } from '../../sites/routes.js'
 import { setKubeSites, KubeUnavailable } from '../../sites/kube-sites.js'
 import { resetSitesConfig } from '../../sites/config.js'
 import * as redisClient from '../../services/redis-client.service.js'
 import * as rbacRepo from '../../services/redis-rbac.repository.js'
-import { declaredRoutes, enforcing, guardAll, resetDeclaredRoutes } from '../../policy/declared-routes.js'
+import { declaredRoutes, resetDeclaredRoutes } from '../../policy/declared-routes.js'
 
 type Store = ReturnType<typeof import('./mocks.js').makeRbacStore>
 const store = (rbacRepo as unknown as { __store: Store }).__store
@@ -72,6 +61,7 @@ const WM = { 'x-test-write': '1', 'x-test-mfa': '1' }
 
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.addHook('onRequest', async (request) => {
     request.userContext = { id: 'sam-id', email: 'sam@x.test', name: 'Sam' }
   })
@@ -107,26 +97,25 @@ const save = async (site = payrollSite(), headers: Record<string, string> = W) =
   app.inject({ method: 'PUT', url: `/sites/${site.name}`, headers, payload: { site, note: 'v' } })
 
 describe('guards', () => {
-  it('publishes its route table rows: reads under the admin plugin gate, writes admin:write', async () => {
+  it('publishes its route table rows: reads sites:read, writes sites:write, apply sites:apply', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
-    await admin.register(async (scope) => {
-      guardAll(scope, enforcing(async () => {}, 'admin:read'), () => false)
-      await scope.register(sitesRoutes, { prefix: '/sites' })
-    }, { prefix: '/api/admin' })
+    installRouteAccess(admin)
+    await admin.register(sitesRoutes, { prefix: '/api/admin/sites' })
     await admin.ready()
     const rows = declaredRoutes().filter((r) => r.path.startsWith('/api/admin/sites'))
     const find = (method: string, path: string) => rows.find((r) => r.method === method && r.path === path)?.permission
-    expect(find('GET', '/api/admin/sites')).toBe('admin:read')
-    expect(find('GET', '/api/admin/sites/:name/blast-radius')).toBe('admin:read')
-    expect(find('PUT', '/api/admin/sites/:name')).toBe('admin:write')
+    expect(find('GET', '/api/admin/sites')).toBe('sites:read')
+    expect(find('GET', '/api/admin/sites/:name/blast-radius')).toBe('sites:read')
+    expect(find('PUT', '/api/admin/sites/:name')).toBe('sites:write')
     expect(find('POST', '/api/admin/sites/:name/apply')).toBe('sites:apply')
-    expect(find('POST', '/api/admin/sites/preview')).toBe('admin:write')
+    expect(find('DELETE', '/api/admin/sites/:name')).toBe('sites:delete')
+    expect(find('POST', '/api/admin/sites/preview')).toBe('sites:write')
     expect(rows.every((r) => r.class === 'authorized')).toBe(true)
     await admin.close()
   })
 
-  it('a write without admin:write is refused and writes nothing', async () => {
+  it('a write without sites:write is refused and writes nothing', async () => {
     const res = await save(payrollSite(), {})
     expect(res.statusCode).toBe(403)
     expect(redis.hashes.size).toBe(0)

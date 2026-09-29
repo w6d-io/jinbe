@@ -1,7 +1,9 @@
 import type { RouteRule } from './types.js'
+import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
 
 /**
- * Built-in jinbe service route map.
+ * The hand-kept rows of jinbe's route map, for one release beside the generated ones (see the end of
+ * this file): public and self-authenticated routes, and the legacy variants already stored in Redis.
  *
  * Routes without a `permission` field are public (OPA policy: routes
  * with no permission requirement allow all authenticated users).
@@ -13,7 +15,7 @@ import type { RouteRule } from './types.js'
  * org's only (members of it, permission from site ∪ org_grants of it). The
  * policy infers it under /api/organizations/; it is set explicitly anyway.
  */
-export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
+const HAND_ROUTES: readonly RouteRule[] = [
   // Public routes
   { method: 'GET',    path: '/api/health' },
   { method: 'GET',    path: '/api/whoami' },
@@ -219,3 +221,16 @@ export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = [
   // Is MCP on (env ceiling + the administrator's switch) and where is its server — for kuma Connections.
   { method: 'GET',    path: '/api/mcp/status' },
 ] as const
+
+/**
+ * What the bootstrap merges into Redis: the hand rows, then the rows generated from the routes jinbe
+ * declares (policy/route-map.ts), each (method, path, permission) once. Additive: the merge never
+ * deletes, so a holder of a legacy name keeps every route it reached.
+ */
+export const JINBE_BUILT_IN_ROUTES: readonly RouteRule[] = (() => {
+  const seen = new Set<string>()
+  return [...HAND_ROUTES, ...GENERATED_ROUTE_MAP].filter((r) => {
+    const key = `${r.method} ${r.path} ${r.permission ?? ''}`
+    return seen.has(key) ? false : (seen.add(key), true)
+  })
+})()

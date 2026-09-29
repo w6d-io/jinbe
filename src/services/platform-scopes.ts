@@ -1,11 +1,10 @@
 import { JINBE_APP, holds, isSuperAdmin, manageableOrgs, memberOrgs, rights } from '../authz/opa.js'
 import { declaredRoutes } from '../policy/declared-routes.js'
-import { JINBE_BUILT_IN_ROUTES } from '../bootstrap/build-route-map.js'
-import { INELIGIBLE_PERMISSIONS, ineligibleWhy } from '../middleware/delegation-gate.js'
+import { ineligibleWhy } from '../middleware/delegation-gate.js'
+import { grants, specOf } from '../policy/catalog.js'
 import { heldIn } from './api-key-scopes.js'
 import { orgGrantsRepository } from './org-grants.repository.js'
-import { isGrantableScope, permits } from './authorization-resolution.js'
-import { USER_PERMISSIONS } from './user-permissions.js'
+import { isGrantableScope } from './authorization-resolution.js'
 import { ORG_ADMIN_PERMISSIONS } from './org-admin.js'
 
 /**
@@ -16,18 +15,16 @@ import { ORG_ADMIN_PERMISSIONS } from './org-admin.js'
  * keys, api-key-scopes.ts) and are not what a personal key is about.
  *
  * A permission is listed when ALL hold:
- *   - a jinbe route requires it that a delegated caller may reach — never one only the always-refused
- *     routes ask for (middleware/delegation-gate.ts: keys, sign-in settings, the org-admin roster,
- *     SCIM, infrastructure, policy data, approvals) nor one no delegated caller may exercise;
+ *   - a jinbe route requires it that a delegated caller may reach — a catalogue permission marked
+ *     `delegable: 'direct'` (policy/catalog.ts), on a route outside the delegation gate's backstop
+ *     list (middleware/delegation-gate.ts: keys, SCIM, infrastructure, policy data);
  *   - the holder passes that route's gate as a session would:
- *       · a platform route (read off the guards, policy/declared-routes.ts): what they hold in jinbe,
- *         global roles included, `*` and ancestors covering (`holds`), plus the coarse permission a
- *         user-management one refines (user-permissions.ts) and `admin:read` for the audit trail
- *         (audit/query/scope.ts);
- *       · a route of one org (the jinbe route_map's org_param rows, decided by OPA's org layer): held
- *         in AT LEAST ONE org — super_admin, an org's roster admin for the org-management set, or a
- *         member holding it exactly or through `*` from their jinbe grants ∪ that org's org_grants.
- *         Which org a call may touch is still decided per request, by the normal rules;
+ *       · a platform route (policy/declared-routes.ts): what they hold in jinbe, global roles
+ *         included, `*` and the catalogue's legacy aliases counting (`holds`);
+ *       · a route of one org (declared org-scoped): held platform-wide as above, or in AT LEAST ONE
+ *         org — super_admin, an org's roster admin for the org-management set, or a member holding it
+ *         (legacy names counting) from their jinbe grants ∪ that org's org_grants. Which org a call
+ *         may touch is still decided per request, by the normal rules;
  *   - it is grantable (no `*`, no wildcard verb): holding `*` yields the concrete permissions the
  *     routes declare, never `*` itself.
  *
@@ -46,20 +43,8 @@ type Reach = { platform: boolean; org: boolean }
 function delegable(method: string, path: string, permission: string | undefined): permission is string {
   return typeof permission === 'string'
     && isGrantableScope(permission)
-    && !INELIGIBLE_PERMISSIONS.has(permission)
+    && specOf(permission)?.delegable === 'direct'
     && ineligibleWhy(method, path) === null
-}
-
-/**
- * The permissions the route_map requires of one org route, the org-management one preferred: a route
- * matched by several rules needs any one, and `org:manage_users` is what the org layer grants — not
- * the legacy `admin:create` beside it.
- */
-function orgRoutePermissions(method: string, path: string): string[] {
-  const rows = JINBE_BUILT_IN_ROUTES.filter((r) => r.org_param && r.method === method && r.path === path && r.permission)
-  const all = rows.map((r) => r.permission as string)
-  const management = all.filter((p) => (ORG_ADMIN_PERMISSIONS as readonly string[]).includes(p))
-  return management.length > 0 ? management : all
 }
 
 /** Every permission a delegated caller could use on jinbe, and through which layer. */
@@ -72,24 +57,12 @@ export function delegableJinbePermissions(): Map<string, Reach> {
   }
 
   for (const r of declaredRoutes()) {
-    if (r.class === 'authorized' && delegable(r.method, r.path, r.permission)) mark(r.permission, 'platform')
-  }
-  // One org's routes: their guards are not marked, the route_map is what OPA decides them with.
-  const seen = new Set<string>()
-  for (const r of JINBE_BUILT_IN_ROUTES) {
-    const key = `${r.method} ${r.path}`
-    if (!r.org_param || seen.has(key)) continue
-    seen.add(key)
-    for (const p of orgRoutePermissions(r.method, r.path)) if (delegable(r.method, r.path, p)) mark(p, 'org')
+    if (r.class !== 'authorized' || !delegable(r.method, r.path, r.permission)) continue
+    // An org-scoped route is reachable platform-wide (a staff role) or through the org layer.
+    mark(r.permission, 'platform')
+    if (r.org) mark(r.permission, 'org')
   }
   return out
-}
-
-function passesPlatformGate(held: readonly string[], required: string): boolean {
-  if (holds(held, required)) return true
-  const coarse = (USER_PERMISSIONS as Record<string, string>)[required]
-  if (coarse && permits(held, coarse)) return true
-  return required.startsWith('audit:') && holds(held, 'admin:read')
 }
 
 /** What `email` holds through the org layer, in any org they belong to. */
@@ -104,7 +77,8 @@ async function orgLayerHolds(email: string): Promise<(p: string) => boolean> {
     for (const p of await heldIn(email, JINBE_APP, granted)) held.add(p)
   }
   const rosterAdmin = orgs.some((o) => administered.has(o))
-  return (p) => held.has('*') || held.has(p) || (rosterAdmin && management.has(p))
+  const names = [...held, ...(rosterAdmin ? management : [])]
+  return (p) => grants(names, p)
 }
 
 /**
@@ -122,7 +96,7 @@ export async function platformScopes(email: string): Promise<string[]> {
     : [...reach.values()].some((r) => r.org) ? await orgLayerHolds(email) : () => false
 
   return [...reach.entries()]
-    .filter(([p, r]) => (r.platform && passesPlatformGate(platformHeld, p)) || (r.org && orgHolds(p)))
+    .filter(([p, r]) => (r.platform && holds(platformHeld, p)) || (r.org && orgHolds(p)))
     .map(([p]) => p)
     .sort()
 }

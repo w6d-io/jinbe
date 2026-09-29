@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError, type ZodSchema } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
-import { requireRecentMfa, requireSitesApply, requireSuperAdmin } from '../middleware/require-admin.js'
+import type { Permission } from '../policy/catalog.js'
 import type { Actor } from './audit.js'
 import { proposalBodySchema, rollbackBodySchema } from './schemas.js'
 import * as gateway from './service.js'
@@ -9,15 +9,13 @@ import * as gateway from './service.js'
 /**
  * /api/admin/gateway — the Oathkeeper handlers every site builds on (GW-2).
  *
- * Registered inside the admin plugin, so reading needs `admin:read`. A preview needs `admin:write`;
- * writing the Gateway CR restarts every gateway pod, so it needs `sites:apply` (super_admin) and a
- * second factor proven in the last 15 minutes.
+ * Reading and a preview (which writes nothing) need `gateway:read`; writing the Gateway CR restarts
+ * every gateway pod, so it needs `gateway:apply` and a second factor proven in the last 15 minutes.
  */
 
 const TAGS = ['gateway']
-const write = { preHandler: [requireSuperAdmin] }
-const apply = { preHandler: [requireSitesApply, requireRecentMfa] }
-const doc = (description: string, body?: ZodSchema) => ({
+const doc = (permission: Permission, description: string, body?: ZodSchema) => ({
+  config: { permission },
   schema: { description, tags: TAGS, ...(body ? { body: zodToJsonSchema(body, { target: 'openApi3' }) } : {}) },
 })
 
@@ -100,28 +98,28 @@ export async function gatewayRoutes(fastify: FastifyInstance) {
   // Documentation-only body schemas: zod is the validator.
   fastify.setValidatorCompiler(() => (data) => ({ value: data }))
 
-  fastify.get('', doc('Every Oathkeeper handler: enabled, global config (secrets masked), defaults, the sites using it, form fields; plus rollout status. managed=false when no Gateway resource exists yet (live config, read-only)'),
+  fastify.get('', doc('gateway:read', 'Every Oathkeeper handler: enabled, global config (secrets masked), defaults, the sites using it, form fields; plus rollout status. managed=false when no Gateway resource exists yet (live config, read-only)'),
     handle(async (_request, reply) => {
       const out = await gateway.view()
       reply.header('etag', `"${out.etag}"`)
       return out
     }))
 
-  fastify.post('/preview', { ...write, ...doc('Validate a proposed gateway configuration: handler schemas, in-use handlers, fallback, risk flags. Writes nothing', proposalBodySchema) },
+  fastify.post('/preview', { ...doc('gateway:read', 'Validate a proposed gateway configuration: handler schemas, in-use handlers, fallback, risk flags. Writes nothing', proposalBodySchema) },
     handle(async (request) => gateway.preview(proposalBodySchema.parse(request.body))))
 
-  fastify.put('', { ...apply, ...doc('Write the Gateway resource (If-Match: the etag you edited). The site-operator rolls the gateway pods', proposalBodySchema) },
+  fastify.put('', { ...doc('gateway:apply', 'Write the Gateway resource (If-Match: the etag you edited). The site-operator rolls the gateway pods', proposalBodySchema) },
     handle(async (request, reply) => {
       const out = await gateway.put(proposalBodySchema.parse(request.body), request.headers['if-match'] as string | undefined, actorOf(request))
       reply.header('etag', `"${out.etag}"`)
       return out
     }))
 
-  fastify.get('/rollout', doc('Rollout progress of the last gateway change (from the Gateway status)'), handle(async () => gateway.rollout()))
+  fastify.get('/rollout', doc('gateway:read', 'Rollout progress of the last gateway change (from the Gateway status)'), handle(async () => gateway.rollout()))
 
-  fastify.get('/rollout/events', doc('Rollout progress as Server-Sent Events, until it settles'), streamRollout)
+  fastify.get('/rollout/events', doc('gateway:read', 'Rollout progress as Server-Sent Events, until it settles'), streamRollout)
 
-  fastify.post('/rollback', { ...apply, ...doc('Restore the configuration before the last change, re-checked against the sites using each handler', rollbackBodySchema) },
+  fastify.post('/rollback', { ...doc('gateway:apply', 'Restore the configuration before the last change, re-checked against the sites using each handler', rollbackBodySchema) },
     handle(async (request, reply) => {
       const body = rollbackBodySchema.parse(request.body ?? {})
       const out = await gateway.rollback(request.headers['if-match'] as string | undefined, actorOf(request), body.note)

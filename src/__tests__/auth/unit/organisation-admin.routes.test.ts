@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // PATCH and DELETE /api/admin/organizations/:id — change an organisation, delete an empty one.
@@ -15,7 +16,9 @@ const s = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
 }))
 
-vi.mock('../../../authz/opa.js', () => ({ holdsInJinbe: vi.fn(async () => s.holds) }))
+vi.mock('../../../authz/opa.js', () => ({
+  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: s.holds ? ['org:write', 'org:delete'] : [] })),
+}))
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn(async (e: Record<string, unknown>) => { s.audits.push(e) }) },
 }))
@@ -51,9 +54,11 @@ import { errorHandler } from '../../../middleware/error-handler.js'
 let app: FastifyInstance
 beforeAll(async () => {
   app = Fastify()
+  installRouteAccess(app)
   app.setErrorHandler(errorHandler)
   app.addHook('onRequest', async (request) => {
-    request.userContext = { id: 'subject-sam', email: 'sam@example.com', name: 'Sam' } as never
+    // A second factor proven a minute ago: deleting an organisation needs a step-up.
+    request.userContext = { id: 'subject-sam', email: 'sam@example.com', name: 'Sam', aal: 'aal2', secondFactorAt: new Date(Date.now() - 60_000), authVia: 'session' } as never
   })
   await app.register(organisationAdminRoutes, { prefix: '/api/admin' })
   await app.ready()
@@ -91,7 +96,7 @@ describe('PATCH /api/admin/organizations/:id', () => {
     expect(res.json()).toMatchObject({ error: 'organisation_not_found' })
   })
 
-  it('refuses a caller without admin.organisation:write', async () => {
+  it('refuses a caller without org:write / org:delete', async () => {
     s.holds = false
     expect((await patch({ name: 'x' })).statusCode).toBe(403)
     expect(s.record?.name).toBe('Acme')
@@ -121,7 +126,7 @@ describe('DELETE /api/admin/organizations/:id', () => {
     expect(s.record).not.toBeNull()
   })
 
-  it('refuses a caller without admin.organisation:write', async () => {
+  it('refuses a caller without org:write / org:delete', async () => {
     s.holds = false
     expect((await del()).statusCode).toBe(403)
     expect(s.record).not.toBeNull()

@@ -1,10 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { rbacController } from '../controllers/rbac.controller.js'
-import { requireAdmin, requireSuperAdmin, requireRecentMfa, requireRbacWrite } from '../middleware/require-admin.js'
+import { needs } from '../policy/route-access.js'
 import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { accessCheckRoutes } from './access-check.routes.js'
-import { guardAll } from '../policy/declared-routes.js'
-import { isPublicRoute } from '../middleware/require-auth.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -26,10 +24,7 @@ import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-h
 // =============================================================================
 
 export async function rbacRoutes(fastify: FastifyInstance) {
-  // All RBAC admin routes require admin group membership
-  guardAll(fastify, requireAdmin, isPublicRoute)
-
-  // A child plugin, so it inherits the admin gate above and adds admin:write on top.
+  // Each route declares its catalogue permission; there is no plugin-wide gate.
   await fastify.register(accessCheckRoutes)
 
   // ===========================================================================
@@ -48,6 +43,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // model are gone.
 
   fastify.get('/users', {
+    ...needs('users:read'),
     schema: {
       description: 'List all users with their group assignments.',
       tags: ['rbac'],
@@ -64,6 +60,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // ===========================================================================
 
   fastify.get('/groups', {
+    ...needs('groups:read'),
     schema: {
       description: 'List all group definitions.',
       tags: ['rbac'],
@@ -76,8 +73,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getGroups.bind(rbacController))
 
   fastify.post('/groups', {
-    // admin:write + a fresh second factor: this changes who holds what.
-    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): this changes who holds what.
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Create a new group.',
       tags: ['rbac'],
@@ -93,8 +91,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.createGroup.bind(rbacController) as never)
 
   fastify.put('/groups/:name', {
-    // admin:write + a fresh second factor: this changes who holds what.
-    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): this changes who holds what.
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Update an existing group.',
       tags: ['rbac'],
@@ -111,8 +110,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateGroup.bind(rbacController) as never)
 
   fastify.delete('/groups/:name', {
-    // admin:write + a fresh second factor: this changes who holds what.
-    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): this changes who holds what.
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Delete a group.',
       tags: ['rbac'],
@@ -131,6 +131,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // ===========================================================================
 
   fastify.get('/services', {
+    ...needs('sites:read'),
     schema: {
       description: 'List all configured services.',
       tags: ['rbac'],
@@ -143,6 +144,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServices.bind(rbacController))
 
   fastify.get('/services/:name/permissions', {
+    ...needs('sites:read'),
     schema: {
       description: 'List all unique permissions for a service (from roles + routes).',
       tags: ['rbac'],
@@ -157,6 +159,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServicePermissions.bind(rbacController))
 
   fastify.get('/services/:name/favicon', {
+    ...needs('sites:read'),
     schema: {
       description:
         "Serve the service's favicon, fetched server-side by jinbe from the service's own public host and cached in Redis (7d). Returns the image with a public Cache-Control, or 204 No Content when there is no favicon.",
@@ -173,6 +176,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceFavicon.bind(rbacController))
 
   fastify.get('/services/:name/roles', {
+    ...needs('sites:read'),
     schema: {
       description: 'Get roles for a specific service.',
       tags: ['rbac'],
@@ -187,8 +191,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoles.bind(rbacController))
 
   fastify.put('/services/:name/roles', {
-    // admin:write + a fresh second factor: this changes who holds what.
-    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): this changes who holds what.
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace roles for a specific service.',
       tags: ['rbac'],
@@ -210,6 +215,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateServiceRoles.bind(rbacController) as never)
 
   fastify.get('/services/:name/routes', {
+    ...needs('sites:read'),
     schema: {
       description: 'Get route map for a specific service.',
       tags: ['rbac'],
@@ -224,8 +230,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getServiceRoutes.bind(rbacController))
 
   fastify.put('/services/:name/routes', {
-    // admin:write + a fresh second factor: this changes who holds what.
-    preHandler: [...requireRbacWrite, refuseWhenSourcedFromGit],
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): this changes who holds what.
+    preHandler: refuseWhenSourcedFromGit,
     schema: {
       description: 'Replace the route map for a specific service. 409 when a route ties with another service\'s at the same specificity (exact == exact, same :param shape, same :any* prefix): the policy would leave it with no owner and refuse every request on it.',
       tags: ['rbac'],
@@ -265,8 +272,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
   fastify.post('/services/:name/routes/import/preview', {
+    ...needs('groups:write'),
     // Writes nothing, but it is the first step of a route-map write and fetches a URL server-side.
-    preHandler: [requireSuperAdmin, refuseWhenSourcedFromGit],
+    preHandler: refuseWhenSourcedFromGit,
     bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
     schema: {
       description:
@@ -313,6 +321,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // ===========================================================================
 
   fastify.get('/access-rules', {
+    ...needs('sites:read'),
     schema: {
       description: 'List all Oathkeeper access rules.',
       tags: ['rbac'],
@@ -325,6 +334,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getAccessRules.bind(rbacController))
 
   fastify.get('/access-rules/:id', {
+    ...needs('sites:read'),
     schema: {
       description: 'Get a specific access rule.',
       tags: ['rbac'],
@@ -339,6 +349,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getAccessRule.bind(rbacController))
 
   fastify.get('/oathkeeper/handlers', {
+    ...needs('gateway:read'),
     schema: {
       description:
         'List the Oathkeeper handlers ENABLED in the running gateway, grouped by pipeline stage, each with guided field descriptors. Drives the admin UI handler pickers/forms so it only offers handlers the gateway will accept.',
@@ -356,6 +367,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // ===========================================================================
 
   fastify.get('/org-service-map', {
+    ...needs('org:read'),
     schema: {
       description: 'List all organization → service bundle mappings (each org maps to an array of service names).',
       tags: ['rbac'],
@@ -376,8 +388,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getOrgServiceMap.bind(rbacController))
 
   fastify.put('/org-service-map', {
-    // admin:write + a fresh second factor: which services an org's members reach.
-    preHandler: requireRbacWrite,
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): which services an org's members reach.
     schema: {
       description: 'Set an organization → service bundle mapping. Replaces the org\'s entire bundle with the provided (non-empty) list of service names.',
       tags: ['rbac'],
@@ -404,6 +416,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 
   // Org → admin roster (per-org admin list; feeds data.org_admin_map).
   fastify.get('/org-admin-map', {
+    ...needs('org:read'),
     schema: {
       description: 'List all organization → admin roster mappings (each org maps to an array of admin emails).',
       tags: ['rbac'],
@@ -423,9 +436,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // Set an org's admin roster. super_admin + a RECENT second factor (R2 step-up)
   // are required — assigning who administers an org is a privileged action.
   fastify.put('/org-admin-map', {
-    preHandler: [requireSuperAdmin, requireRecentMfa],
+    ...needs('org.admins:write'),
     schema: {
-      description: "Set an organization's admin roster (emails). Replaces the org's entire roster; an empty list clears it. Requires super_admin + a second factor proven within 15 minutes.",
+      description: "Set an organization's admin roster (emails). Replaces the org's entire roster; an empty list clears it. Requires org.admins:write + a second factor proven within 15 minutes.",
       tags: ['rbac'],
       body: {
         type: 'object',
@@ -446,8 +459,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.setOrgAdmins.bind(rbacController))
 
   fastify.delete('/org-service-map/:organizationId', {
-    // admin:write + a fresh second factor: which services an org's members reach.
-    preHandler: requireRbacWrite,
+    ...needs('groups:write'),
+    // groups:write (step-up from the catalogue): which services an org's members reach.
     schema: {
       description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',
       tags: ['rbac'],
@@ -464,7 +477,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // POST /health-check is gone: a constant {status:'ok'} behind admin:read, with no caller — a write
   // verb that asked only for reading, and a liveness answer that checked nothing.
 
-  fastify.get('/history', async (request, reply) => {
+  fastify.get('/history', needs('audit:read'), async (request, reply) => {
     // Proxy to the rich audit stream — returns FrontendAuditEvent[] as "commits" for backward compat
     try {
       const { auditEventService } = await import('../services/audit-event.service.js')
