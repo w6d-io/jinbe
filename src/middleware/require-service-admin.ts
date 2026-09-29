@@ -11,9 +11,16 @@ export function requestPath(request: FastifyRequest): string {
   return (request.url || '').split('?')[0]
 }
 
-/** What the gateway passes as `client`: an OAuth2 client, not a person's session. */
+/**
+ * What the gateway passes as `client`: an OAuth2 token, not a person's session — a machine, or a user
+ * through a client (a delegated token: MCP, a personal key). A token carries no AAL, so the policy's
+ * platform 2FA (rbac.rego § 8c) does not judge it — its human met the rule in the browser session
+ * that connected the client or created the key (second-factor/gate.ts judges every session route).
+ * Sent as false, a delegated super admin was refused every org route here as `needs_2fa`.
+ */
 export function isClient(request: FastifyRequest): boolean {
-  return request.userContext?.authVia === 'machine'
+  const via = request.userContext?.authVia
+  return via === 'machine' || via === 'delegated'
 }
 
 /** What OPA is told about a delegated caller (RouteQuestion.delegation), or undefined. */
@@ -66,10 +73,11 @@ export function requireServiceAdmin(
     const organizationId = (request.params as Record<string, string>)[paramName]
 
     let allow: boolean
+    let reason: string
     let held: HeldRights
     let orgAdmin = false
     try {
-      ;({ allow } = await decide({
+      ;({ allow, reason } = await decide({
         email,
         method: request.method,
         path: requestPath(request),
@@ -88,7 +96,7 @@ export function requireServiceAdmin(
     }
 
     if (!allow) {
-      request.log.warn({ email, organizationId }, '[requireServiceAdmin] access denied by OPA')
+      request.log.warn({ email, organizationId, reason }, '[requireServiceAdmin] access denied by OPA')
       denyAudit(request, 'not_service_admin')
       return reply.status(403).send({
         error: 'Forbidden',
