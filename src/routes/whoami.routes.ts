@@ -3,6 +3,9 @@ import { FastifyInstance, FastifyRequest } from 'fastify'
 import { rights } from '../authz/opa.js'
 import { kratosService } from '../services/kratos.service.js'
 import { env } from '../config/env.js'
+import { effectivePermissions } from '../policy/catalog.js'
+import { devRights } from '../middleware/require-admin.js'
+import { open } from '../policy/route-access.js'
 
 /**
  * GET /whoami
@@ -21,6 +24,7 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/whoami',
     {
+      ...open('public'),
       schema: {
         description:
           'Return the current user identity (from Kratos session) and RBAC info (groups, roles, permissions) from OPAL',
@@ -38,7 +42,10 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
               error: { type: ['string', 'null'] },
               groups: { type: 'array', items: { type: 'string' } },
               roles: { type: 'array', items: { type: 'string' } },
+              // The names held, as the model stores them (legacy ones included, for one release).
               permissions: { type: 'array', items: { type: 'string' } },
+              // What they amount to in the catalogue (policy/catalog.ts): the leaves a console gates on.
+              effective_permissions: { type: 'array', items: { type: 'string' } },
               // Where the rules are enforced from. Answered here rather than configured again in
               // the console: the deployment states it once, and two places that can disagree about
               // whether an editor works is one place too many.
@@ -80,9 +87,7 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
       // What the console paints itself from: what OPA — the engine the gateway and every guard of
       // this service decide with — resolves for this session in jinbe, global roles included.
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-        groups = ['platform-admin']
-        roles = ['platform-admin']
-        permissions = ['admin:read', 'admin:write']
+        ;({ groups, roles, permissions } = devRights())
       } else if (email) {
         try {
           const held = await rights(email)
@@ -122,6 +127,7 @@ export async function whoamiRoutes(fastify: FastifyInstance) {
         groups,
         roles,
         permissions,
+        effective_permissions: effectivePermissions(permissions),
         rules_source: env.RULES_SOURCE,
       })
     }
