@@ -19,7 +19,7 @@ import { kratosReady } from '../../home/sources.js'
 const TOKEN = 'k'.repeat(64)
 const HTOKEN = 'h'.repeat(64)
 
-type Call = { url: string; auth: string | null }
+type Call = { url: string; auth: string | null; body: string }
 const calls: Call[] = []
 
 function authOf(init: RequestInit = {}): string | null {
@@ -36,7 +36,7 @@ function reply(body: unknown, status = 200) {
 
 const fetchMock = vi.fn(async (url: string | URL, init: RequestInit = {}) => {
   const u = String(url)
-  calls.push({ url: u, auth: authOf(init) })
+  calls.push({ url: u, auth: authOf(init), body: typeof init.body === 'string' ? init.body : '' })
   if (u.includes('/self-service/recovery/api')) return reply({ id: 'flow-1' })
   if (u.includes('/self-service/recovery?flow=')) return reply({ continue_with: [] })
   if (u.includes('/admin/identities/')) return reply({ id: 'i1', traits: { email: 'a@b.io' }, state: 'active', schema_id: 'default' })
@@ -127,7 +127,11 @@ describe('Hydra admin calls', () => {
 
     calls.length = 0
     await h.clientCredentialsToken('c1', 'secret', ['read'])
-    expect(calls[0].auth).toMatch(/^Basic /)
+    // client_secret_post, as the clients are registered: credentials in the body, no Authorization header.
+    expect(calls[0].auth).toBeNull()
+    const form = new URLSearchParams(calls[0].body)
+    expect(form.get('client_id')).toBe('c1')
+    expect(form.get('client_secret')).toBe('secret')
   })
 
   it('an unreachable admin API is named without credentials', async () => {

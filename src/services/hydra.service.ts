@@ -217,16 +217,15 @@ export class HydraService {
     audience?: string,
   ): Promise<{ access_token: string; expires_in: number }> {
     const url = `${env.HYDRA_PUBLIC_URL}/oauth2/token`
-    const body = new URLSearchParams({ grant_type: 'client_credentials', scope: scopes.join(' ') })
+    // Our clients are created with token_endpoint_auth_method client_secret_post (createClient), so the
+    // credentials go in the form body: Hydra refuses Basic for them ("invalid_client").
+    const body = new URLSearchParams({ grant_type: 'client_credentials', scope: scopes.join(' '), client_id: clientId, client_secret: secret })
     if (audience) body.set('audience', audience)
     let response: Response
     try {
       response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(secret)}`).toString('base64')}`,
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
         signal: AbortSignal.timeout(5_000),
       })
