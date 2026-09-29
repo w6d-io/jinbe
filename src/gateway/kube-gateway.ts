@@ -1,7 +1,7 @@
 import * as k8s from '@kubernetes/client-node'
 import { parse as parseYaml } from 'yaml'
 import { sitesConfig } from '../sites/config.js'
-import { KubeUnavailable, SITE_GROUP, SITE_PLURAL, SITE_VERSION, type SiteCrObject } from '../sites/kube-sites.js'
+import { KubeThrottled, KubeUnavailable, retryThrottled, SITE_GROUP, SITE_PLURAL, SITE_VERSION, type SiteCrObject } from '../sites/kube-sites.js'
 import type { HandlerKind } from './catalog.js'
 
 /**
@@ -109,7 +109,7 @@ const statusOf = (err: unknown): number | undefined => {
   return e?.code ?? e?.statusCode ?? e?.response?.statusCode
 }
 
-const unavailable = (what: string, err: unknown) =>
+const unavailable = (what: string, err: unknown) => err instanceof KubeThrottled ? err :
   new KubeUnavailable(`${what}: ${statusOf(err) ?? (err instanceof Error ? err.message : 'error')}`)
 
 class ClientNodeKubeGateway implements KubeGateway {
@@ -126,7 +126,7 @@ class ClientNodeKubeGateway implements KubeGateway {
 
   async get(): Promise<GatewayCr | null> {
     try {
-      return (await this.custom.getNamespacedCustomObject({ ...this.base(), name: GATEWAY_NAME })) as GatewayCr
+      return (await retryThrottled('get gateway', () => this.custom.getNamespacedCustomObject({ ...this.base(), name: GATEWAY_NAME }))) as GatewayCr
     } catch (err) {
       if (statusOf(err) === 404) return null
       throw unavailable('get gateway', err)
@@ -149,7 +149,7 @@ class ClientNodeKubeGateway implements KubeGateway {
 
   async listSites(): Promise<SiteCrObject[]> {
     try {
-      const out = await this.custom.listNamespacedCustomObject({ group: SITE_GROUP, version: SITE_VERSION, namespace: this.namespace, plural: SITE_PLURAL })
+      const out = await retryThrottled('list sites', () => this.custom.listNamespacedCustomObject({ group: SITE_GROUP, version: SITE_VERSION, namespace: this.namespace, plural: SITE_PLURAL }))
       return (out as { items?: SiteCrObject[] }).items ?? []
     } catch (err) {
       throw unavailable('list sites', err)
@@ -159,7 +159,7 @@ class ClientNodeKubeGateway implements KubeGateway {
   async liveOathkeeperConfig(): Promise<Record<string, unknown> | null> {
     let cm: k8s.V1ConfigMap
     try {
-      cm = await this.core.readNamespacedConfigMap({ name: this.configMap.name, namespace: this.namespace })
+      cm = await retryThrottled('read oathkeeper config', () => this.core.readNamespacedConfigMap({ name: this.configMap.name, namespace: this.namespace }))
     } catch (err) {
       if (statusOf(err) === 404) return null
       throw unavailable('read oathkeeper config', err)

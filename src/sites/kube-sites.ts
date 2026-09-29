@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
 import { sitesConfig } from './config.js'
+import { SwrCache } from '../cache/swr.js'
 import type { SiteCr } from './render.js'
 
 /**
@@ -166,9 +167,21 @@ export interface KubeSites {
 
 export class KubeUnavailable extends Error {
   readonly statusCode = 503
-  readonly code = 'kubernetes_unavailable'
+  readonly code: string = 'kubernetes_unavailable'
   constructor(detail: string) {
     super(`The Kubernetes API is unavailable, nothing was changed (${detail})`)
+  }
+}
+
+/**
+ * The API server answered 429 (API Priority and Fairness shedding load, or a watch cache still
+ * (re)initialising) and kept answering it through the retries: a moment's congestion, not an outage.
+ */
+export class KubeThrottled extends KubeUnavailable {
+  override readonly code = 'kubernetes_rate_limited'
+  constructor(detail: string, readonly retryAfterSec: number) {
+    super(detail)
+    this.message = `The Kubernetes API is temporarily rate-limiting requests, nothing was changed; retry in a few seconds (${detail})`
   }
 }
 
@@ -183,6 +196,52 @@ const statusOf = (err: unknown): number | undefined => {
   const e = err as { code?: number; statusCode?: number; response?: { statusCode?: number } }
   return e?.code ?? e?.statusCode ?? e?.response?.statusCode
 }
+
+/** A 429's Retry-After in seconds (the API server sends one), bounded. */
+function retryAfterOf(err: unknown): number | undefined {
+  const headers = (err as { headers?: Record<string, unknown> })?.headers
+  if (!headers || typeof headers !== 'object') return undefined
+  const raw = Object.entries(headers).find(([k]) => k.toLowerCase() === 'retry-after')?.[1]
+  const n = Number(Array.isArray(raw) ? raw[0] : raw)
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 30) : undefined
+}
+
+/** Waits between attempts on a 429 when the answer names no Retry-After. */
+export const THROTTLE_BACKOFF_MS = [250, 750, 1500]
+/** Longest single wait: a request is not held for a Retry-After beyond this, it fails as throttled. */
+const THROTTLE_MAX_WAIT_MS = 2_000
+let sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
+ * One API call, retried on 429 only (THROTTLE_BACKOFF_MS, or the server's Retry-After when shorter
+ * than THROTTLE_MAX_WAIT_MS). Every other failure is the caller's to classify, at once.
+ */
+export async function retryThrottled<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (statusOf(err) !== 429) throw err
+      const after = retryAfterOf(err)
+      if (attempt >= THROTTLE_BACKOFF_MS.length || (after !== undefined && after * 1000 > THROTTLE_MAX_WAIT_MS)) {
+        throw new KubeThrottled(`${what}: 429`, Math.max(1, Math.ceil(after ?? 1)))
+      }
+      await sleep(after !== undefined ? after * 1000 : THROTTLE_BACKOFF_MS[attempt])
+    }
+  }
+}
+
+/** Test seam: no real waits. */
+export function setThrottleSleep(fn: (ms: number) => Promise<void>): void {
+  sleep = fn
+}
+
+/**
+ * The cluster-wide lists every render, preview and platform read needs (Zones, and the HTTPRoutes and
+ * ListenerSets of the host-collision check): one shared, short-lived copy instead of a list per
+ * request. Zone writes through jinbe drop them at once; a change made elsewhere shows within freshMs.
+ */
+const clusterLists = new SwrCache<unknown[]>({ namespace: 'kube.lists', freshMs: 5_000, staleMs: 30_000, l1Max: 8 })
 
 /** The `message` of a Kubernetes Status body, bounded. */
 function apiMessage(err: unknown): string {
@@ -224,7 +283,7 @@ export function edgePolicyOf(kind: EdgePolicy['kind'], p: Raw): EdgePolicy {
   }
 }
 
-class ClientNodeKubeSites implements KubeSites {
+export class ClientNodeKubeSites implements KubeSites {
   constructor(private readonly api: k8s.CustomObjectsApi, private readonly net: k8s.NetworkingV1Api, private readonly namespace: string) {}
 
   async listIngresses(): Promise<IngressHosts[]> {
@@ -240,8 +299,7 @@ class ClientNodeKubeSites implements KubeSites {
   }
 
   async listHTTPRoutes(): Promise<RouteHosts[]> {
-    const out = await this.call('list httproutes', () => this.api.listClusterCustomObject({ group: GATEWAY_GROUP, version: 'v1', plural: 'httproutes' }))
-    return items(out).map((r) => ({
+    return this.cachedList('httproutes', () => this.api.listClusterCustomObject({ group: GATEWAY_GROUP, version: 'v1', plural: 'httproutes' }), (r): RouteHosts => ({
       namespace: r.metadata?.namespace ?? '',
       name: r.metadata?.name ?? '',
       hostnames: (r.spec?.hostnames ?? []).filter((h: unknown): h is string => typeof h === 'string'),
@@ -251,8 +309,7 @@ class ClientNodeKubeSites implements KubeSites {
   }
 
   async listListenerSets(): Promise<ListenerHosts[]> {
-    const out = await this.call('list listenersets', () => this.api.listClusterCustomObject({ group: GATEWAY_GROUP, version: 'v1', plural: 'listenersets' }))
-    return items(out).map((l) => ({
+    return this.cachedList('listenersets', () => this.api.listClusterCustomObject({ group: GATEWAY_GROUP, version: 'v1', plural: 'listenersets' }), (l): ListenerHosts => ({
       kind: 'ListenerSet' as const,
       namespace: l.metadata?.namespace ?? '',
       name: l.metadata?.name ?? '',
@@ -263,9 +320,10 @@ class ClientNodeKubeSites implements KubeSites {
 
   async getGateway(namespace: string, name: string): Promise<GatewayObject | null> {
     try {
-      return (await this.api.getNamespacedCustomObject({ group: GATEWAY_GROUP, version: 'v1', namespace, plural: 'gateways', name })) as GatewayObject
+      return (await retryThrottled('get gateway', () => this.api.getNamespacedCustomObject({ group: GATEWAY_GROUP, version: 'v1', namespace, plural: 'gateways', name }))) as GatewayObject
     } catch (err) {
       if (statusOf(err) === 404) return null
+      if (err instanceof KubeThrottled) throw err
       throw new KubeUnavailable(`get gateway: ${statusOf(err) ?? 'error'}`)
     }
   }
@@ -282,6 +340,7 @@ class ClientNodeKubeSites implements KubeSites {
     const body = { apiVersion: `${SITE_GROUP}/${SITE_VERSION}`, kind: 'Zone', metadata: { name: cr.metadata.name, resourceVersion: cr.metadata.resourceVersion, labels: cr.metadata.labels }, spec: cr.spec }
     try {
       await this.api.replaceClusterCustomObject({ ...this.zones(), name: cr.metadata.name, body })
+      this.dropZoneLists()
     } catch (err) {
       const status = statusOf(err)
       if (status === 409) throw new KubeRefused(409, 'zone_conflict', `Zone ${cr.metadata.name} changed meanwhile; reload and try again`)
@@ -297,8 +356,9 @@ class ClientNodeKubeSites implements KubeSites {
 
   private async call<T>(what: string, fn: () => Promise<T>): Promise<T> {
     try {
-      return await fn()
+      return await retryThrottled(what, fn)
     } catch (err) {
+      if (err instanceof KubeThrottled) throw err
       throw new KubeUnavailable(`${what}: ${statusOf(err) ?? (err instanceof Error ? err.message : 'error')}`)
     }
   }
@@ -308,8 +368,22 @@ class ClientNodeKubeSites implements KubeSites {
   }
 
   async listZones(): Promise<ZoneCrObject[]> {
-    const out = await this.call('list zones', () => this.api.listClusterCustomObject({ group: SITE_GROUP, version: SITE_VERSION, plural: 'zones' }))
-    return ((out as { items?: ZoneCrObject[] }).items ?? []).filter((z) => typeof z?.spec?.domain === 'string')
+    const out = await this.cachedList('zones', () => this.api.listClusterCustomObject(this.zones()), (z): ZoneCrObject => {
+      const { managedFields: _m, ...metadata } = z.metadata ?? {}
+      return { ...z, metadata }
+    })
+    return out.filter((z) => typeof z?.spec?.domain === 'string')
+  }
+
+  /** A cluster-wide list, mapped to what jinbe reads of it, from the shared copy (see clusterLists). */
+  private async cachedList<T>(plural: string, fn: () => Promise<unknown>, map: (raw: Raw) => T): Promise<T[]> {
+    return (await clusterLists.get(plural, async () => items(await this.call(`list ${plural}`, fn)).map(map))) as T[]
+  }
+
+  /** After a Zone write: the Zone list, and the ListenerSets the operator derives from Zones. */
+  private dropZoneLists(): void {
+    void clusterLists.invalidate('zones')
+    void clusterLists.invalidate('listenersets')
   }
 
   private zones() {
@@ -318,9 +392,10 @@ class ClientNodeKubeSites implements KubeSites {
 
   async getZone(name: string): Promise<ZoneCrObject | null> {
     try {
-      return (await this.api.getClusterCustomObject({ ...this.zones(), name })) as ZoneCrObject
+      return (await retryThrottled('get zone', () => this.api.getClusterCustomObject({ ...this.zones(), name }))) as ZoneCrObject
     } catch (err) {
       if (statusOf(err) === 404) return null
+      if (err instanceof KubeThrottled) throw err
       throw new KubeUnavailable(`get zone: ${statusOf(err) ?? 'error'}`)
     }
   }
@@ -328,6 +403,7 @@ class ClientNodeKubeSites implements KubeSites {
   async createZone(cr: ZoneCr): Promise<void> {
     try {
       await this.api.createClusterCustomObject({ ...this.zones(), body: cr })
+      this.dropZoneLists()
     } catch (err) {
       const status = statusOf(err)
       if (status === 409) throw new KubeRefused(409, 'zone_exists', `A Zone named ${cr.metadata.name} already exists`)
@@ -340,6 +416,7 @@ class ClientNodeKubeSites implements KubeSites {
   async deleteZone(name: string): Promise<void> {
     try {
       await this.api.deleteClusterCustomObject({ ...this.zones(), name })
+      this.dropZoneLists()
     } catch (err) {
       if (statusOf(err) === 404) return
       throw new KubeUnavailable(`delete zone: ${statusOf(err) ?? 'error'}`)
@@ -348,9 +425,10 @@ class ClientNodeKubeSites implements KubeSites {
 
   async get(name: string): Promise<SiteCrObject | null> {
     try {
-      return (await this.api.getNamespacedCustomObject({ ...this.base(), name })) as SiteCrObject
+      return (await retryThrottled('get site', () => this.api.getNamespacedCustomObject({ ...this.base(), name }))) as SiteCrObject
     } catch (err) {
       if (statusOf(err) === 404) return null
+      if (err instanceof KubeThrottled) throw err
       throw new KubeUnavailable(`get site: ${statusOf(err) ?? 'error'}`)
     }
   }
