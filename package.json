@@ -8,6 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc && npm run openapi",
     "openapi": "ENABLE_SWAGGER=true ENCRYPTION_KEY=openapi-generation-dummy-key-32ch DEV_USER_EMAIL=openapi@build.local node dist/scripts/generate-openapi.js",
+    "gen:route-map": "ENCRYPTION_KEY=route-map-generation-dummy-key-32c DEV_USER_EMAIL=routemap@build.local LOG_LEVEL=error tsx src/scripts/gen-route-map.ts",
     "start": "node dist/server.js",
     "bootstrap": "node dist/cli/bootstrap.js",
     "bootstrap:dev": "tsx src/cli/bootstrap.ts",

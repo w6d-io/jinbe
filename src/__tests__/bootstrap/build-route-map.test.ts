@@ -14,7 +14,7 @@ describe('bootstrap/build-route-map', () => {
       r.path.startsWith('/api/admin/users'),
     )
     for (const r of adminRoutes) {
-      expect(r.permission).toMatch(/^(admin|users|sessions):/)
+      expect(r.permission).toMatch(/^(admin|admin\.membership|users|users\.metadata|sessions|access|groups\.members|org\.members):/)
     }
   })
 
@@ -45,12 +45,12 @@ describe('bootstrap/build-route-map', () => {
     expect(JINBE_BUILT_IN_ROUTES).toContainEqual({ method: 'GET', path: '/api/me/permissions' })
   })
 
-  it('rbac management routes require admin permissions', () => {
+  it('rbac management routes require a permission', () => {
     const rbacRoutes = JINBE_BUILT_IN_ROUTES.filter((r) =>
       r.path.startsWith('/api/admin/rbac'),
     )
     for (const r of rbacRoutes) {
-      expect(r.permission).toMatch(/^admin:/)
+      expect(r.permission, `${r.method} ${r.path}`).toMatch(/^[a-z.]+:[a-z_]+$/)
     }
   })
 

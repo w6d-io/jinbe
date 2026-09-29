@@ -2,9 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { declaredRoutes, resetDeclaredRoutes, type DeclaredRoute } from '../../policy/declared-routes.js'
 import { CATALOG, PERMISSIONS, isCatalogPermission } from '../../policy/catalog.js'
+import { routeMapRows } from '../../policy/route-map.js'
+import { GENERATED_ROUTE_MAP } from '../../policy/route-map.generated.js'
+import { JINBE_BUILT_IN_ROUTES } from '../../bootstrap/build-route-map.js'
 
 /**
- * CI rules 1, 4 and 5 of staff-rbac-proposal §3, over the route table the running service declares.
+ * CI rules 1, 3, 4 and 5 of staff-rbac-proposal §3, over the route table the running service declares.
  * (Rule 2, writes need more than reading, is route-write-guards.test.ts.)
  */
 
@@ -65,6 +68,35 @@ describe('step-up comes from the catalogue (rule 5)', () => {
   it('every route whose permission says stepUp has requireRecentMfa in its chain', () => {
     const missing = rows.filter((r) => r.permission && isCatalogPermission(r.permission) && CATALOG[r.permission].stepUp && !r.stepUp).map(key)
     expect(missing).toEqual([])
+  })
+})
+
+describe('the route_map is generated from the routes (rule 3)', () => {
+  it('the committed file is what the running route table generates — run `npm run gen:route-map`', () => {
+    expect(GENERATED_ROUTE_MAP).toEqual(routeMapRows(declaredRoutes()))
+  })
+
+  it('every generated row is a live route', () => {
+    const live = new Set(rows.map(key))
+    expect(GENERATED_ROUTE_MAP.map((r) => `${r.method} ${r.path}`).filter((k) => !live.has(k))).toEqual([])
+  })
+
+  it('each permission row comes with the legacy names that still stand for it, org_param included', () => {
+    const at = (method: string, path: string) => GENERATED_ROUTE_MAP.filter((r) => r.method === method && r.path === path)
+    expect(at('GET', '/api/admin/sites').map((r) => r.permission)).toEqual(['sites:read', 'admin:read'])
+    expect(at('POST', '/api/admin/sites/:name/apply').map((r) => r.permission)).toEqual(['sites:apply'])
+    expect(at('GET', '/api/organizations/:organizationId/users')).toEqual([
+      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org.members:read', org_param: 'organizationId' },
+      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'admin:read', org_param: 'organizationId' },
+      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org:manage_users', org_param: 'organizationId' },
+    ])
+    expect(at('GET', '/api/catalog')).toEqual([{ method: 'GET', path: '/api/catalog' }])
+  })
+
+  it('the bootstrap merges the generated rows beside the hand ones, each once', () => {
+    const keys = JINBE_BUILT_IN_ROUTES.map((r) => `${r.method} ${r.path} ${r.permission ?? ''}`)
+    expect(new Set(keys).size).toBe(keys.length)
+    for (const r of GENERATED_ROUTE_MAP) expect(keys).toContain(`${r.method} ${r.path} ${r.permission ?? ''}`)
   })
 })
 
