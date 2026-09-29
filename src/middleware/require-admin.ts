@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { env } from '../config/env.js'
-import { holds, rights } from '../authz/opa.js'
+import { holds, isSuperAdmin, rights } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
 import { enforcing } from '../policy/declared-routes.js'
@@ -126,3 +126,35 @@ export const requireSitesApply = enforcing(
   ),
   SITES_APPLY,
 )
+
+/**
+ * A change to who holds what: groups, service roles, route maps, the org → service map. `admin:write`
+ * AND a second factor proven within the last 15 minutes, so a stolen session or a delegated token
+ * (which never carries one) cannot rewrite the model. The self-escalation rules sit in rbac.service.
+ */
+export const requireRbacWrite = [requireSuperAdmin, requireRecentMfa]
+
+/** What the route table says a super-admin-only route requires: the wildcard, which no scope covers. */
+export const EVERYTHING = '*'
+
+/**
+ * `admin:write` AND a global role carrying `*` (OPA `rbac.super_admin`) — for what nobody short of a
+ * super admin may touch. Fail-closed: OPA unreachable answers 503, never an allow.
+ */
+export const requireGlobalSuperAdmin = enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
+  await requireSuperAdmin(request, reply)
+  if (reply.sent) return reply
+  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') return
+  const email = request.userContext!.email!
+  let superAdmin: boolean
+  try {
+    superAdmin = await isSuperAdmin(email)
+  } catch (err) {
+    request.log.warn({ email, err: (err as Error).message }, 'OPA could not say whether the caller is a super admin — refusing rather than guessing')
+    return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
+  }
+  if (!superAdmin) {
+    denyAudit(request, 'not_super_admin')
+    return reply.status(403).send({ error: 'Forbidden', message: 'Super admin access required' })
+  }
+}, EVERYTHING)

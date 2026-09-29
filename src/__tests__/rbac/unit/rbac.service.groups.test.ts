@@ -39,6 +39,8 @@ const { redisMock, redisModule } = vi.hoisted(() => {
   }
 })
 
+// The self-escalation guard asks OPA about the actor; it has its own tests (rbac-escalation-guard.test.ts).
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertNoSelfEscalation: vi.fn(async () => {}) }))
 vi.mock('../../../services/redis-client.service.js', () => redisModule)
 
 vi.mock('../../../services/kratos.service.js', () => ({

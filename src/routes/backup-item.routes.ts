@@ -1,4 +1,7 @@
 import { FastifyInstance } from 'fastify'
+import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import { backupItemController } from '../controllers/backup-item.controller.js'
 import {
   backupItemUpdateSchema,
@@ -22,6 +25,11 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
  * Note: POST is at /backups/:id/items (see backup.routes.ts)
  */
 export async function backupItemRoutes(fastify: FastifyInstance) {
+  // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
+  // session. Super admin for EVERY method until it is gone — no console calls it.
+  // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
+  guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
+
   // Get all backup items
   fastify.get(
     '/',

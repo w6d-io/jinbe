@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
 import { unauthorizedResponseSchema, notFoundResponseSchema } from '../schemas/response-schemas.js'
-import { requireAdmin } from '../middleware/require-admin.js'
+import { requireAdmin, requireSuperAdmin } from '../middleware/require-admin.js'
 import { recertService, RecertError } from '../services/recert.service.js'
 import { startRecertScheduler } from '../services/recert-scheduler.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -9,16 +9,16 @@ import { env } from '../config/env.js'
 /**
  * Access recertification campaigns (docs/specs/access-recertification.md, phase 1).
  *
- * POST   /campaigns                          create (draft)               [admin]
+ * POST   /campaigns                          create (draft)               [admin:write]
  * GET    /campaigns                          list with progress           [admin]
  * GET    /campaigns/:id                      campaign + items             [admin]
- * POST   /campaigns/:id/activate             generate items → active      [admin]
- * POST   /campaigns/:id/close                manual close (apply onExpiry)[admin]
- * DELETE /campaigns/:id                      draft/archived only          [admin]
+ * POST   /campaigns/:id/activate             generate items → active      [admin:write]
+ * POST   /campaigns/:id/close                manual close (apply onExpiry)[admin:write]
+ * DELETE /campaigns/:id                      draft/archived only          [admin:write]
  * GET    /campaigns/:id/items                items (decision/reviewer filters, pagination) [admin]
  * GET    /campaigns/:id/report               frozen completion report     [admin]
  * GET    /inbox                              caller's pending items       [any authenticated identity]
- * POST   /items/:campaignId/:itemId/decision { decision, comment? }       [assigned reviewer or admin]
+ * POST   /items/:campaignId/:itemId/decision { decision, comment? }       [assigned reviewer or admin:write]
  *
  * Every decision / auto-revoke is audited via auditEventService (category
  * 'access', target recert:{campaignId}[:{itemId}], severity warn on revoke).
@@ -40,7 +40,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns',
     {
-      preHandler: requireAdmin,
+      preHandler: requireSuperAdmin,
       schema: {
         description: 'Create a recertification campaign (draft). Phase 1: explicit reviewer emails, one-shot schedule.',
         tags: ['recert'],
@@ -112,7 +112,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns/:id/activate',
     {
-      preHandler: requireAdmin,
+      preHandler: requireSuperAdmin,
       schema: {
         description: 'Activate a draft campaign: walk groups→members via Kratos and generate one review item per (user, group) in scope.',
         tags: ['recert'],
@@ -133,7 +133,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/campaigns/:id/close',
     {
-      preHandler: requireAdmin,
+      preHandler: requireSuperAdmin,
       schema: {
         description: "Close an active campaign now: pending items get the onExpiry consequence (revoke → membership removed in Kratos, flag → marked) and the completion report is frozen.",
         tags: ['recert'],
@@ -155,7 +155,7 @@ export async function recertRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/campaigns/:id',
     {
-      preHandler: requireAdmin,
+      preHandler: requireSuperAdmin,
       schema: {
         description: 'Delete a campaign. Draft/archived only — completed campaigns and their frozen reports are audit evidence.',
         tags: ['recert'],
@@ -290,11 +290,12 @@ export async function recertRoutes(fastify: FastifyInstance) {
 
       try {
         // Authorization: the assigned reviewer may always decide their items;
-        // anyone else must pass the admin gate (requireAdmin sends its own 403).
+        // anyone else must hold admin:write — a decision is a write, a revoke removes a membership
+        // (requireSuperAdmin sends its own 403).
         const item = await recertService.getCampaign(campaignId).then(({ items }) => items.find((i) => i.id === itemId))
         if (!item) return reply.status(404).send({ error: 'Not Found', message: `Item not found: ${itemId}` })
         if (item.reviewer !== email.toLowerCase()) {
-          await requireAdmin(request, reply)
+          await requireSuperAdmin(request, reply)
           if (reply.sent) return
         }
         const decided = await recertService.decide(campaignId, itemId, decision, comment, auditActor(request))

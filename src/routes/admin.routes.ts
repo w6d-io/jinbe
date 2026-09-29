@@ -23,6 +23,7 @@ import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.j
 import { holdsInJinbe } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { requirePlatformPermission } from '../middleware/require-platform-permission.js'
+import { requirePermission } from '../middleware/require-permission.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { guardAll } from '../policy/declared-routes.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
@@ -257,6 +258,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/metadata',
     {
+      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
+      preHandler: requirePermission('users:update'),
       schema: {
         description: 'Merge-patch user metadata_public or metadata_admin',
         tags: ['admin'],
@@ -282,6 +285,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/state',
     {
+      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
+      preHandler: requirePermission('users:update'),
       schema: {
         description: 'Set user state to active or inactive',
         tags: ['admin'],
@@ -305,6 +310,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/users/:id/organization',
     {
+      // A write: the plugin's admin:read gate alone let a read-only administrator make it.
+      preHandler: requirePermission('users:update'),
       schema: {
         description: 'Set or remove the organization_id on a user (Kratos JSON Patch)',
         tags: ['admin'],

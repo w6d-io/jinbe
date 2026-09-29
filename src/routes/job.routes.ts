@@ -1,4 +1,7 @@
 import { FastifyInstance } from 'fastify'
+import { requireGlobalSuperAdmin } from '../middleware/require-admin.js'
+import { guardAll } from '../policy/declared-routes.js'
+import { isPublicRoute } from '../middleware/require-auth.js'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { jobController } from '../controllers/job.controller.js'
 import {
@@ -48,6 +51,11 @@ const jobInfoJsonSchema = {
 }
 
 export async function jobRoutes(fastify: FastifyInstance) {
+    // Legacy infrastructure API (kubeconfigs, databases, backup/restore jobs): it used to require only a
+    // session. Super admin for EVERY method until it is gone — no console calls it.
+    // TODO(legacy-infra): remove these routes once the owner decides (an audit is classifying them).
+    guardAll(fastify, requireGlobalSuperAdmin, isPublicRoute)
+
     // Create a backup or restore job
     fastify.post(
         '/clusters/:clusterId/jobs',
