@@ -28,7 +28,6 @@ const PUBLIC_ROUTES = [
   // before signing in could not report a failure to sign in — which is the load worth reporting.
   // It holds nothing private: a collector address reaches the browser either way.
   '/api/telemetry',
-  '/api/opa/bundle',
   '/api/oathkeeper/rules',
   // [P0-1] Narrowed from '/api/webhooks' (a startsWith prefix that made every
   // sub-path public) to the EXACT Kratos webhook path. The handler still

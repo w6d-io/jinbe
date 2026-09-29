@@ -20,6 +20,8 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
 // has its own test).
 // The store the engine actually reads. Group changes land here, so a test that left it real
 // would reach for Postgres.
+// The '*'-group / self-assignment check asks OPA; it has its own tests (rbac-escalation-guard.test.ts).
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 

@@ -4,6 +4,7 @@ import { policyBundle, PolicyBundleUnavailableError } from '../services/policy-b
 import { organisationStoreConfigured } from '../services/organisation-store.js'
 import { recordEngineStatus, propagation } from '../services/engine-status.service.js'
 import { mirrorEngineReport } from '../home/runtime.js'
+import { requireAdmin } from '../middleware/require-admin.js'
 
 /**
  * The bundle the authorization engine pulls: everything it decides against.
@@ -157,15 +158,15 @@ const STATUS_BODY_LIMIT = 4 * 1024 * 1024
  * and never why.
  */
 /**
- * A signed-in operator, or a machine. Whether a change has reached the engines is not a secret from
- * the person who just made it — and the console has no machine credential, so a machine-only route
- * is one the screen that needs it cannot call.
+ * An administrator (admin:read), or a machine. Whether a change has reached the engines is not a
+ * secret from the person who just made it — and the console has no machine credential, so a
+ * machine-only route is one the screen that needs it cannot call.
  *
- * Still not public: it names the engines and what they hold.
+ * Still not public, nor any signed-in person's: it names the engines and what they hold.
  */
 async function machineOrOperator(request: FastifyRequest, reply: FastifyReply) {
   // Populated by the identity extractor for a session or a bearer token, before any route runs.
-  if (request.userContext?.id && request.userContext.email !== 'unknown') return
+  if (request.userContext?.id && request.userContext.email !== 'unknown') return requireAdmin(request, reply)
   return machineOnly(request, reply)
 }
 

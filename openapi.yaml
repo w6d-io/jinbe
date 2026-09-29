@@ -10873,11 +10873,6 @@ paths:
                 properties:
                   message:
                     type: string
-  /api/admin/rbac/health-check:
-    post:
-      responses:
-        "200":
-          description: Default Response
   /api/admin/rbac/history:
     get:
       responses:
@@ -16379,14 +16374,6 @@ paths:
                           type: string
                         message:
                           type: string
-  /api/opa/bundle:
-    get:
-      tags:
-        - opa
-      description: Get OPA policy bundle (tar.gz). Polled by OPA replicas.
-      responses:
-        "200":
-          description: Default Response
   /api/oathkeeper/rules:
     get:
       tags:

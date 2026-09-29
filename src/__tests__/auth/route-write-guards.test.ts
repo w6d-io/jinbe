@@ -21,7 +21,6 @@ const readOnly = (permission: string) => /:(read|list)$/.test(permission)
 
 const EXCEPTIONS: Record<string, string> = {
   // ── Writes nothing ─────────────────────────────────────────────────────────────────────────────
-  'POST /api/admin/rbac/health-check': 'constant answer, touches no state',
   'POST /api/admin/sites/zones/suggest': 'computes a suggested zone for a host; writes nothing',
 
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────
@@ -58,6 +57,26 @@ const EXCEPTIONS: Record<string, string> = {
   'DELETE /scim/v2/Users/:id': 'SCIM bearer token (scim-auth)',
 }
 
+/**
+ * Every route the session gate lets through with NO session, and what guards it instead. A route
+ * reachable with no credential at all shipped once already (`GET /api/opa/bundle`, every address's
+ * groups for anyone in the cluster), so a new one fails here until somebody says what guards it.
+ */
+const NO_SESSION: Array<[RegExp, string]> = [
+  [/^\/api\/(health|whoami|telemetry)$/, 'truly public: liveness, the caller\'s own identity, the telemetry address'],
+  [/^\/api\/public\//, 'login-ui before sign-in: branding and settings, rate limited; access-reason and mine read the visitor\'s own cookie'],
+  [/^\/docs(\/|$)/, 'API documentation (ENABLE_SWAGGER)'],
+  [/^\/api\/admin\/rbac\/(bindings|opal-datasource|opal\/)/, 'OPAL feeds: requireOpalClient (OPAL client token)'],
+  [/^\/api\/opa\/(policy|status)$/, 'OPA engines: machineOnly (machine token, hashed at rest)'],
+  [/^\/api\/opa\/propagation$/, 'machine token, or an administrator (admin:read)'],
+  [/^\/api\/directory\//, 'machine token checked by the plugin hook'],
+  [/^\/api\/mcp\/(token-info|personal-keys\/exchange)$/, 'auth-mcp: allowed ServiceAccount actor token'],
+  [/^\/api\/mcp\/status$/, 'checks the session itself; answers only whether MCP is on'],
+  [/^\/api\/oathkeeper\/rules$/, 'Oathkeeper rules sync (in-cluster; every upstream — owner decision pending)'],
+  [/^\/api\/webhooks\/kratos(\/guard)?$/, 'Kratos hooks: shared webhook secret'],
+  [/^\/scim\/v2\//, 'SCIM bearer token (scim-auth)'],
+]
+
 const key = (r: DeclaredRoute) => `${r.method} ${r.path}`
 
 function weak(r: DeclaredRoute): boolean {
@@ -92,6 +111,12 @@ describe('every write route asks for more than reading', () => {
   it('every exception still names a weak route (no stale entries)', () => {
     const weakKeys = new Set(rows.filter(weak).map(key))
     expect(Object.keys(EXCEPTIONS).filter((k) => !weakKeys.has(k))).toEqual([])
+  })
+
+  it('every route reachable without a session is one whose own guard is named', () => {
+    const unexplained = rows.filter((r) => r.class === 'public' && !NO_SESSION.some(([p]) => p.test(r.path))).map(key)
+    expect(unexplained).toEqual([])
+    expect(rows.find((r) => r.path === '/api/opa/bundle')).toBeUndefined()
   })
 
   it('the table is the running service, not an empty one', () => {
