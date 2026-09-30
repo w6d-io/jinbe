@@ -597,6 +597,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1069,6 +1075,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1262,6 +1274,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1488,6 +1506,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1588,6 +1612,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1728,6 +1758,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1904,6 +1940,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2104,6 +2146,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2188,6 +2236,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2274,6 +2328,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2384,6 +2444,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2488,6 +2554,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2610,6 +2682,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2702,6 +2780,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2786,6 +2870,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2870,6 +2960,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3000,6 +3096,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3112,6 +3214,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3488,6 +3596,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/organizations:
     get:
       tags:
@@ -3577,6 +3691,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -3706,6 +3826,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -3846,6 +3972,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3959,6 +4091,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -4003,7 +4141,9 @@ paths:
       tags:
         - admin
       description: "A user's site access (groups → roles per service) and org access
-        (per org: admin flag and the groups granted there). Needs access:read."
+        (per org: `admin` as OPA decides it (manageable_orgs), `rostered` as
+        jinbe's roster store says, `why` when they differ, and the groups
+        granted there). Needs access:read."
       parameters:
         - schema:
             type: string
@@ -4043,6 +4183,18 @@ paths:
                           type: string
                         admin:
                           type: boolean
+                          description: OPA would let them manage this org's people (manageable_orgs)
+                        rostered:
+                          type: boolean
+                          description: On the org's admin roster in jinbe's store
+                        why:
+                          type: string
+                          enum:
+                            - not_a_member_per_policy
+                            - email_case_mismatch
+                            - policy_not_yet_loaded
+                          description: "Only when rostered but not admin: what keeps them from
+                            administering"
                         grants:
                           type: array
                           items:
@@ -4108,6 +4260,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -7813,6 +7971,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8200,6 +8364,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "502":
           description: Default Response
           content:
@@ -8223,6 +8393,264 @@ paths:
                     example: Service Unavailable
                   reason:
                     type: string
+                  message:
+                    type: string
+  /api/admin/rbac/explain-route:
+    post:
+      tags:
+        - rbac
+      description: "Why jinbe accepts or refuses METHOD PATH for the caller (or
+        `subject`, which needs access:check): the route and its guards, the
+        catalogue permission, the delegation gate, platform holdings, OPA
+        rbac.decision with the guard's exact input (and rbac.explain: which
+        clause fired), the org trail (membership, the roster in Redis vs OPA,
+        manageable_orgs, org grants), and the real guards run in a dry run.
+        `disagreements` lists surfaces that answer the same question
+        differently."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+                - path
+              properties:
+                method:
+                  type: string
+                  description: GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS (any case)
+                path:
+                  type: string
+                  description: Absolute jinbe path, no query string, e.g.
+                    /api/organizations/3cb9…/users
+                subject:
+                  type: string
+                  description: Identity id or address; default the caller. Anybody else needs
+                    access:check
+                via:
+                  type: string
+                  enum:
+                    - session
+                    - delegated
+                    - machine
+                  description: Pose the question for this way in; default as the caller is calling
+                aal:
+                  type: string
+                  enum:
+                    - aal1
+                    - aal2
+                  description: Sign-in level for a session
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  description: A delegated caller's token scopes; default the caller's own, or
+                    what a personal key of the subject would carry
+                clientId:
+                  type: string
+                body:
+                  type: object
+                  additionalProperties: true
+                  description: The request body, for guards that read it (a create, an edit)
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                      via:
+                        type: string
+                      aal:
+                        type: string
+                      client:
+                        type: boolean
+                        description: What the guards pass OPA as `client` (a token, not a session)
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                  route:
+                    type: object
+                    properties:
+                      method:
+                        type: string
+                      path:
+                        type: string
+                      pattern:
+                        type:
+                          - "null"
+                          - string
+                      params:
+                        type: object
+                        additionalProperties:
+                          type: string
+                  verdict:
+                    type: object
+                    description: "What the caller gets from the guards: 200 when all pass (the
+                      handler may still refuse)"
+                    properties:
+                      status:
+                        type: integer
+                      allowed:
+                        type: boolean
+                      code:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                  decidedBy:
+                    type: string
+                    description: The guard that answered, or `handler`
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        step:
+                          type: string
+                          enum:
+                            - route
+                            - catalogue
+                            - delegation
+                            - platform
+                            - opa
+                            - org
+                            - guard
+                        verdict:
+                          type: string
+                          enum:
+                            - pass
+                            - refuse
+                            - info
+                            - skipped
+                            - unavailable
+                        input:
+                          type: object
+                          additionalProperties: true
+                        detail:
+                          type: object
+                          additionalProperties: true
+                      required:
+                        - step
+                        - verdict
+                        - detail
+                  disagreements:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        between:
+                          type: array
+                          items:
+                            type: string
+                        detail:
+                          type: string
+                required:
+                  - subject
+                  - route
+                  - verdict
+                  - decidedBy
+                  - steps
+                  - disagreements
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
                   message:
                     type: string
   /api/admin/rbac/users:
@@ -8304,6 +8732,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/groups:
     get:
       tags:
@@ -8396,6 +8830,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     post:
       tags:
         - rbac
@@ -8508,6 +8948,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "409":
           description: Default Response
           content:
@@ -8634,6 +9080,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8728,6 +9180,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8816,6 +9274,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/services/{name}/permissions:
     get:
       tags:
@@ -8902,6 +9366,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8999,6 +9469,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/services/{name}/roles:
     get:
       tags:
@@ -9083,6 +9559,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9192,6 +9674,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9285,6 +9773,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9424,6 +9918,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9719,6 +10219,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/org-service-map:
     get:
       tags:
@@ -9800,6 +10306,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     put:
       tags:
         - rbac
@@ -9909,6 +10421,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/org-admin-map:
     get:
       tags:
@@ -9990,6 +10508,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     put:
       tags:
         - rbac
@@ -10099,6 +10623,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "422":
           description: Default Response
           content:
@@ -10196,6 +10726,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -13357,6 +13893,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     post:
       tags:
         - organization-users
@@ -13546,6 +14088,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/organizations/{organizationId}/users/{id}:
     get:
       tags:
@@ -13721,6 +14269,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -13924,6 +14478,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14018,6 +14578,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14217,6 +14783,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14342,6 +14914,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14440,6 +15018,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -14714,6 +15298,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "502":
           description: Default Response
           content:
@@ -14907,6 +15497,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     get:
       tags:
         - api-keys
@@ -15026,6 +15622,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/organizations/{organizationId}/api-keys/scopes:
     get:
       tags:
@@ -15125,6 +15727,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -15231,6 +15839,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -15346,6 +15960,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -15474,6 +16094,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -15566,6 +16192,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
