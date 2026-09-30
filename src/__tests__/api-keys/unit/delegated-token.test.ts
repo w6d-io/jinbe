@@ -125,6 +125,15 @@ describe('DelegatedTokenService.resolve', () => {
     expect(await svc.resolve('tok', NOW + 2000)).toEqual({ error: 'token_inactive' })
   })
 
+  it('a revocation announced elsewhere reaches this replica through the invalidation channel', async () => {
+    s.introspect.mockResolvedValue(oauth())
+    await svc.resolve('tok2', NOW)
+    // Another instance stands in for the replica that revoked: only the channel links the two.
+    new DelegatedTokenService().forgetClient('claude-code')
+    await svc.resolve('tok2', NOW + 1000)
+    expect(s.introspect).toHaveBeenCalledTimes(2)
+  })
+
   it('an administrator switching MCP off refuses tokens already cached; switching it back on restores them', async () => {
     s.introspect.mockResolvedValue(oauth())
     expect(await svc.resolve('same', NOW)).toHaveProperty('principal')
