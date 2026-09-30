@@ -8060,9 +8060,9 @@ paths:
     get:
       tags:
         - rbac
-      description: "OPAL data source: groups whose members must hold a second factor
+      description: 'OPAL data source: groups switched to "Members must use 2FA"
         (data.second_factor). 503 when the store cannot be read, so OPAL keeps
-        the requirement OPA already holds."
+        the requirement OPA already holds.'
       responses:
         "503":
           description: Default Response
@@ -8446,23 +8446,25 @@ paths:
                               type: string
                         secondFactor:
                           type: object
-                          description: "required: members need two-step sign-in (aal2) on every
-                            permission-carrying route; source: setting | default
-                            (super_admins, no setting saved) | null;
-                            enrolBeforeJoining: confers a global role, so
-                            whoever is added must have enrolled a second
-                            factor."
+                          description: "The group's \"Members must use 2FA\" switch. required: members
+                            need two-step sign-in (aal2) on every
+                            permission-carrying route, and nobody is added
+                            before enrolling a second factor
+                            (enrolBeforeJoining, always equal). source:
+                            group_setting (stored) | default (not stored yet: on
+                            for a group that can write or holds *).
+                            defaultRequired: what the default would be."
                           properties:
                             required:
                               type: boolean
                             source:
                               type: string
-                              nullable: true
                               enum:
-                                - setting
+                                - group_setting
                                 - default
-                                - null
                             enrolBeforeJoining:
+                              type: boolean
+                            defaultRequired:
                               type: boolean
                       required:
                         - name
@@ -10868,9 +10870,10 @@ paths:
       tags:
         - second-factor
       description: Replace the groups whose members must use two-step sign-in. Every
-        name must be an existing group; an empty list requires nobody. Published
-        to OPA as data.second_factor. Requires settings.signin:write + a second
-        factor proven within 15 minutes.
+        name must be an existing group; an empty list turns every group off.
+        Sets each group's "Members must use 2FA" switch (listed on, others off);
+        published to OPA as data.second_factor. groups.mfa:write (super admin
+        alone), with a second factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -10883,7 +10886,7 @@ paths:
               properties:
                 groups:
                   type: array
-                  maxItems: 50
+                  maxItems: 200
                   items:
                     type: string
                     maxLength: 100
@@ -10959,8 +10962,8 @@ paths:
                   signIn:
                     type: object
                     nullable: true
-                    description: The groups whose members must use two-step sign-in; explicit false
-                      = the default applies (no setting saved).
+                    description: The groups switched to "Members must use 2FA"; explicit false =
+                      some group still runs on its default (not pinned yet).
                     properties:
                       groups:
                         type: array
@@ -10968,10 +10971,6 @@ paths:
                           type: string
                       explicit:
                         type: boolean
-                      defaultGroups:
-                        type: array
-                        items:
-                          type: string
                   groups:
                     type: array
                     nullable: true
@@ -10984,23 +10983,25 @@ paths:
                           type: string
                         secondFactor:
                           type: object
-                          description: "required: members need two-step sign-in (aal2) on every
-                            permission-carrying route; source: setting | default
-                            (super_admins, no setting saved) | null;
-                            enrolBeforeJoining: confers a global role, so
-                            whoever is added must have enrolled a second
-                            factor."
+                          description: "The group's \"Members must use 2FA\" switch. required: members
+                            need two-step sign-in (aal2) on every
+                            permission-carrying route, and nobody is added
+                            before enrolling a second factor
+                            (enrolBeforeJoining, always equal). source:
+                            group_setting (stored) | default (not stored yet: on
+                            for a group that can write or holds *).
+                            defaultRequired: what the default would be."
                           properties:
                             required:
                               type: boolean
                             source:
                               type: string
-                              nullable: true
                               enum:
-                                - setting
+                                - group_setting
                                 - default
-                                - null
                             enrolBeforeJoining:
+                              type: boolean
+                            defaultRequired:
                               type: boolean
                   permissions:
                     type: array
@@ -11107,6 +11108,89 @@ paths:
                     items:
                       type: string
                     description: Sections that could not be read (signIn, groups, sites).
+  /api/admin/rbac/groups/{name}/second-factor:
+    put:
+      tags:
+        - second-factor
+      description: "Switch a group's \"Members must use 2FA\": on, its members need
+        two-step sign-in (aal2) on every permission-carrying route and nobody
+        joins it before enrolling a second factor. Published to OPA as
+        data.second_factor. groups.mfa:write (super admin alone), with a second
+        factor proven within 15 minutes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - required
+              additionalProperties: false
+              properties:
+                required:
+                  type: boolean
+      parameters:
+        - schema:
+            type: string
+            maxLength: 64
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  secondFactor:
+                    type: object
+                    description: "The group's \"Members must use 2FA\" switch. required: members
+                      need two-step sign-in (aal2) on every permission-carrying
+                      route, and nobody is added before enrolling a second
+                      factor (enrolBeforeJoining, always equal). source:
+                      group_setting (stored) | default (not stored yet: on for a
+                      group that can write or holds *). defaultRequired: what
+                      the default would be."
+                    properties:
+                      required:
+                        type: boolean
+                      source:
+                        type: string
+                        enum:
+                          - group_setting
+                          - default
+                      enrolBeforeJoining:
+                        type: boolean
+                      defaultRequired:
+                        type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
   /api/admin/settings/sign-in-protection:
     get:
       tags:

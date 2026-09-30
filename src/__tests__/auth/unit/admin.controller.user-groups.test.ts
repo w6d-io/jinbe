@@ -24,6 +24,8 @@ const { DEFAULT_IDENTITY } = vi.hoisted(() => ({
 vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}), assertGrantWithinOwn: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
+vi.mock('../../../second-factor/settings.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).secondFactorSettingsMock())
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),

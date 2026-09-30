@@ -10,6 +10,7 @@ import { mergeJinbeRouteMap } from './merge-route-map.js'
 import { seedKumaService } from './seed-kuma.js'
 import { seedDelegation } from './seed-delegation.js'
 import { seedStaffRoles } from './seed-staff.js'
+import { migrateSecondFactorFlags } from '../second-factor/settings.js'
 import { seedDefaultAdmin } from './seed-admin.js'
 import {
   readMarker,
@@ -140,6 +141,7 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       await applySystemMetadataMigration(logger)
       // Roles are code: converge them on every boot, like the protection tags above.
       await seedStaffRoles(logger)
+      await pinSecondFactorDefaults(logger)
       return { outcome, marker: existing }
     }
 
@@ -207,6 +209,20 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   await seedDelegation(logger)
   // Staff roles (code) and their empty staff-* groups; membership is the owner's decision per person.
   await seedStaffRoles(logger)
+  await pinSecondFactorDefaults(logger)
+}
+
+/**
+ * Every group's "Members must use 2FA" switch written down (second-factor/settings.ts): its default
+ * where none is stored, stored values kept. After the staff groups exist. Not fatal — an unpinned
+ * group still gets the same default at read time.
+ */
+async function pinSecondFactorDefaults(logger: BootstrapLogger): Promise<void> {
+  try {
+    await migrateSecondFactorFlags(logger)
+  } catch (e) {
+    logger.warn({ err: String(e) }, 'second factor: could not pin the per-group defaults; they still apply at read time')
+  }
 }
 
 function buildMarker(input: {

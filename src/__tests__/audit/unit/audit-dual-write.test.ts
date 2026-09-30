@@ -15,6 +15,8 @@ const { redis } = vi.hoisted(() => {
 vi.mock('../../../services/redis-client.service.js', () => ({ getRedisClient: () => redis }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
+vi.mock('../../../second-factor/settings.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).secondFactorSettingsMock())
 vi.mock('../../../services/organisation-store.js', () => ({
   applyGroupChange: vi.fn().mockResolvedValue(undefined),
   groupsForSubjects: vi.fn().mockResolvedValue(new Map()),

@@ -8,6 +8,7 @@ import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
 import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
 import { secondFactorRefusal } from '../second-factor/requirements.js'
+import { getGroupSecondFactorFlags, type GroupFlag } from '../second-factor/settings.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -295,11 +296,28 @@ class UserGroupsService {
       }
     }
 
-    // The target's own second factor, required before receiving a platform-wide grant. Keyed on the
-    // same scope predicate as the gate above so the two cannot drift apart.
-    const platformGrants = newlyAdded.filter((g) => factsFor(g).everyOrganisation)
-    if (platformGrants.length > 0) {
-      const blocker = (await this.hasSecondFactor(identity.id)) ? null : platformGrants[0]
+    // The target's own second factor, required before joining a group switched to "Members must use
+    // 2FA" (second-factor/settings.ts) — the same switch that holds its members to aal2 at sign-in.
+    // Not the escalation scope above: a read-only staff group asks for no enrolment, a site group that
+    // can write does. A switch that cannot be read refuses rather than guessing.
+    let flags: Map<string, GroupFlag>
+    try {
+      flags = await getGroupSecondFactorFlags()
+    } catch {
+      return {
+        ok: false,
+        status: 503,
+        body: {
+          applied: false,
+          error: 'authorization_model_unavailable',
+          message: 'Whether these groups require two-step sign-in could not be read, so this change could not be checked; no change was made. Please retry.',
+          targetEmail: identity.email,
+        },
+      }
+    }
+    const requiring = newlyAdded.filter((g) => flags.get(g)?.required === true)
+    if (requiring.length > 0) {
+      const blocker = (await this.hasSecondFactor(identity.id)) ? null : requiring[0]
       if (blocker) {
         this.emitDenied('mfa_required', identity, actor, blocker, 422)
         return {
@@ -308,11 +326,11 @@ class UserGroupsService {
           body: {
             applied: false,
             error: 'mfa_required',
-            message: `Group '${blocker}' grants admin privileges; the target user must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
+            message: `Group '${blocker}' requires its members to use two-step sign-in; ${identity.email} must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
             targetEmail: identity.email,
-            targetGroups: platformGrants,
+            targetGroups: requiring,
             hint: 'Have the user complete /settings → Authenticator app, then retry.',
-            ...secondFactorRefusal('enrol_before_joining', { groups: platformGrants }),
+            ...secondFactorRefusal('enrol_before_joining', { groups: requiring }),
           },
         }
       }

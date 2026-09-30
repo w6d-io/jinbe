@@ -5,12 +5,15 @@ import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { badRequestResponseSchema } from '../schemas/response-schemas.js'
 import { secondFactorStatus } from './status.js'
-import { DEFAULT_SECOND_FACTOR_GROUPS, GROUP_NAME, MAX_GROUPS, getSecondFactorGroups, getSecondFactorSetting, setSecondFactorGroups } from './settings.js'
+import {
+  GROUP_NAME, MAX_GROUPS, getDefaultSecondFactorGroups, getGroupSecondFactorFlags, getSecondFactorGroups, getSecondFactorSetting,
+  setGroupSecondFactor, setSecondFactorGroups,
+} from './settings.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { callerRights, demandPermissions } from '../middleware/require-permission.js'
 import { allows } from '../services/user-permissions.js'
 import { sitesRepository } from '../sites/repository.js'
-import { secondFactorMapJsonSchema } from '../schemas/second-factor.schema.js'
+import { groupSecondFactorJsonSchema, secondFactorMapJsonSchema } from '../schemas/second-factor.schema.js'
 import {
   OAUTH_GRANT_MAX_AGE_HOURS, PERSONAL_KEY_MAX_AGE_DAYS, RULES, STEP_UP_MAX_AGE_MIN,
   groupSecondFactor, permissionRules, roleRules, siteSecondFactor, type GroupSecondFactor,
@@ -51,10 +54,11 @@ export async function secondFactorPublicRoutes(fastify: FastifyInstance) {
 }
 
 /**
- * The groups whose members must hold a second factor (settings.ts).
- *   GET /api/admin/settings/second-factor — admin
- *   PUT /api/admin/settings/second-factor — settings.signin:write + a recent second factor: deciding who may
- *       sign in without one is itself a sign-in-security change.
+ * The groups switched to "Members must use 2FA" (settings.ts), as one list — the settings screen's view
+ * of the per-group switch.
+ *   GET /api/admin/settings/second-factor — settings:read
+ *   PUT /api/admin/settings/second-factor — groups.mfa:write (super admin alone, owner decision
+ *       2026-09-30) + a recent second factor; listed groups on, every other group off.
  */
 export async function secondFactorSettingsRoutes(fastify: FastifyInstance) {
   fastify.get('/second-factor', {
@@ -64,14 +68,15 @@ export async function secondFactorSettingsRoutes(fastify: FastifyInstance) {
       tags: ['second-factor'],
       response: { 200: groupsBody },
     },
-  }, async () => ({ groups: await getSecondFactorGroups(), defaultGroups: [...DEFAULT_SECOND_FACTOR_GROUPS] }))
+  }, async () => ({ groups: await getSecondFactorGroups(), defaultGroups: await getDefaultSecondFactorGroups() }))
 
   fastify.put('/second-factor', {
-    ...needs('settings.signin:write'),
+    ...needs('groups.mfa:write'),
     schema: {
       description:
         'Replace the groups whose members must use two-step sign-in. Every name must be an existing group; an empty list ' +
-        'requires nobody. Published to OPA as data.second_factor. Requires settings.signin:write + a second factor proven within 15 minutes.',
+        'turns every group off. Sets each group\'s "Members must use 2FA" switch (listed on, others off); published to OPA as data.second_factor. ' +
+        'groups.mfa:write (super admin alone), with a second factor proven within 15 minutes.',
       tags: ['second-factor'],
       body: {
         type: 'object',
@@ -102,7 +107,7 @@ export async function secondFactorSettingsRoutes(fastify: FastifyInstance) {
       requestId: a.requestId,
       details: { before, after: saved },
     }).catch(() => {})
-    return { groups: saved, defaultGroups: [...DEFAULT_SECOND_FACTOR_GROUPS] }
+    return { groups: saved, defaultGroups: await getDefaultSecondFactorGroups() }
   })
 }
 
@@ -137,7 +142,7 @@ async function siteBars() {
  * and the roles are the same for every signed-in person. A section that cannot be read is null and
  * named in `unavailable`, never an empty list that would read as "nothing required".
  */
-export async function secondFactorMapRoutes(fastify: FastifyInstance) {
+export async function secondFactorRbacRoutes(fastify: FastifyInstance) {
   fastify.get('/second-factor-map', {
     ...needs('groups:read'),
     preHandler: readsGroupsOrSites,
@@ -159,9 +164,8 @@ export async function secondFactorMapRoutes(fastify: FastifyInstance) {
     let groups: Array<{ name: string; secondFactor: GroupSecondFactor }> | null = null
     if (allows(rights.permissions, 'groups:read')) {
       try {
-        if (!setting) throw new Error('no setting')
-        const defs = await redisRbacRepository.getGroups()
-        groups = Object.keys(defs).sort().map((name) => ({ name, secondFactor: groupSecondFactor(name, defs[name], setting) }))
+        const flags = await getGroupSecondFactorFlags()
+        groups = [...flags.keys()].sort().map((name) => ({ name, secondFactor: groupSecondFactor(flags.get(name)) }))
       } catch {
         unavailable.push('groups')
       }
@@ -180,7 +184,7 @@ export async function secondFactorMapRoutes(fastify: FastifyInstance) {
     return {
       rules: RULES,
       limits: { stepUpMaxAgeMin: STEP_UP_MAX_AGE_MIN, personalKeyMaxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS, oauthGrantMaxAgeHours: OAUTH_GRANT_MAX_AGE_HOURS },
-      signIn: setting ? { groups: setting.groups, explicit: setting.explicit, defaultGroups: [...DEFAULT_SECOND_FACTOR_GROUPS] } : null,
+      signIn: setting ? { groups: setting.groups, explicit: setting.explicit } : null,
       groups,
       permissions: permissionRules(),
       roles: roleRules(),
@@ -188,5 +192,44 @@ export async function secondFactorMapRoutes(fastify: FastifyInstance) {
       organizations: { rules: [], note: 'No organisation-level second-factor rule exists: the platform groups and each site decide.' },
       unavailable,
     }
+  })
+
+  /**
+   * PUT /api/admin/rbac/groups/:name/second-factor {required} — one group's "Members must use 2FA"
+   * switch. groups.mfa:write (super admin alone), with a recent second factor: it decides who may sign in without one and
+   * who may join without one. Audited with the value before and after.
+   */
+  fastify.put('/groups/:name/second-factor', {
+    ...needs('groups.mfa:write'),
+    schema: {
+      description:
+        'Switch a group\'s "Members must use 2FA": on, its members need two-step sign-in (aal2) on every permission-carrying ' +
+        'route and nobody joins it before enrolling a second factor. Published to OPA as data.second_factor. ' +
+        'groups.mfa:write (super admin alone), with a second factor proven within 15 minutes.',
+      tags: ['second-factor'],
+      params: { type: 'object', required: ['name'], properties: { name: { type: 'string', maxLength: 64 } } },
+      body: { type: 'object', required: ['required'], additionalProperties: false, properties: { required: { type: 'boolean' } } },
+      response: {
+        200: { type: 'object', properties: { name: { type: 'string' }, secondFactor: groupSecondFactorJsonSchema } },
+        400: badRequestResponseSchema,
+        404: badRequestResponseSchema,
+      },
+    },
+  }, async (request, reply) => {
+    const { name } = request.params as { name: string }
+    const { required } = request.body as { required: boolean }
+    if (!GROUP_NAME.test(name)) return reply.status(400).send({ error: 'invalid_group', message: `Not a group name: ${name}` })
+    const known = await redisRbacRepository.getGroups()
+    if (!(name in known)) return reply.status(404).send({ error: 'unknown_group', message: `No such group: ${name}` })
+    const { before, after } = await setGroupSecondFactor(name, required)
+    const a = auditActor(request)
+    auditEventService.emit({
+      category: 'rbac', kind: 'change', verb: 'update', target: 'second-factor-groups',
+      result: 'applied', severity: 'high',
+      actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+      requestId: a.requestId,
+      details: { group: name, before: before ? { required: before.required, explicit: before.explicit } : null, after: { required: after } },
+    }).catch(() => {})
+    return { name, secondFactor: groupSecondFactor((await getGroupSecondFactorFlags()).get(name)) }
   })
 }

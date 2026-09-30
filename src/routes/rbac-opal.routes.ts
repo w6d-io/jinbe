@@ -168,20 +168,21 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Platform 2FA: { groups: [...] } (feeds data.second_factor; default ["super_admins"]). 503 on a store
+  // Platform 2FA: { groups: [...] } — every group switched to "Members must use 2FA" (feeds
+  // data.second_factor; second-factor/settings.ts), read fresh so a new group is in it. 503 on a store
   // error — an empty 200 would silently let every privileged account sign in without a second factor.
   fastify.get('/opal/second_factor', {
     ...open('machine'),
     schema: {
       description:
-        'OPAL data source: groups whose members must hold a second factor (data.second_factor). 503 when the store ' +
+        'OPAL data source: groups switched to "Members must use 2FA" (data.second_factor). 503 when the store ' +
         'cannot be read, so OPAL keeps the requirement OPA already holds.',
       tags: ['rbac'],
       response: { 503: serviceUnavailableResponseSchema },
     },
   }, async (request, reply) => {
     try {
-      return reply.send({ groups: await getSecondFactorGroups() })
+      return reply.send({ groups: await getSecondFactorGroups({ fresh: true }) })
     } catch (err) {
       request.log.error({ err }, 'second_factor: store unavailable — answering 503 so OPAL keeps the last good data')
       return reply.status(503).send({

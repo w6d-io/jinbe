@@ -6,6 +6,7 @@ import type { MfaMethod } from '../services/kratos.service.js'
 import { declaredRoute } from '../policy/declared-routes.js'
 import type { Site } from '../sites/schemas.js'
 import { twoFactorOn } from '../sites/render.js'
+import type { GroupFlag } from './settings.js'
 
 /**
  * Every rule that asks for a second factor, said in one place so the console and the MCP can show
@@ -14,12 +15,12 @@ import { twoFactorOn } from '../sites/render.js'
  * catalogue step-up (requireRecentMfa), the target-enrolment check (user-groups.service) and the
  * personal-key stand-in (delegated-step-up.ts). Nothing here decides a request.
  *
- *   group_sign_in        members of the groups in data.second_factor need an aal2 session on every
- *                        route that carries a permission, on every app
+ *   group_sign_in        a group's "Members must use 2FA" switch (settings.ts): its members need an
+ *                        aal2 session on every route that carries a permission, on every app
  *   step_up              a catalogue permission marked stepUp needs a second factor proven within
  *                        15 minutes (fourEyes is shown beside it: a second person in prod)
- *   enrol_before_joining a group conferring a `global` role can only be given to somebody who has
- *                        enrolled a second factor, and giving it is a step-up for the actor
+ *   enrol_before_joining the same per-group switch: nobody is added to a group that requires 2FA
+ *                        before they have enrolled a second factor
  *   site_login           a site's own bar (login.twoFactor): all / writes / routes / none
  *   personal_key         a personal MCP key stands in for the step-up of a few permissions with the
  *                        factor proven at its creation, for 30 days
@@ -35,9 +36,9 @@ export const PERSONAL_KEY_MAX_AGE_DAYS = KEY_STEP_UP_MAX_AGE_MS / 86_400_000
 export const OAUTH_GRANT_MAX_AGE_HOURS = 12
 
 export const RULES: ReadonlyArray<{ id: SecondFactorRule; label: string; status: 'enforced' | 'planned' }> = [
-  { id: 'group_sign_in', label: 'Members of these groups must use two-step sign-in (aal2) on every permission-carrying route', status: 'enforced' },
+  { id: 'group_sign_in', label: "A group's \"Members must use 2FA\" switch: its members must use two-step sign-in (aal2) on every permission-carrying route", status: 'enforced' },
   { id: 'step_up', label: `These permissions need a second factor proven within the last ${STEP_UP_MAX_AGE_MIN} minutes`, status: 'enforced' },
-  { id: 'enrol_before_joining', label: 'Groups with a platform-wide role: the person added must have a second factor enrolled, and adding them is a step-up', status: 'enforced' },
+  { id: 'enrol_before_joining', label: 'The same switch: nobody is added to such a group before they have enrolled a second factor', status: 'enforced' },
   { id: 'site_login', label: "A site's own two-step sign-in bar: every request, changes only, chosen routes, or none", status: 'enforced' },
   { id: 'personal_key', label: `A personal AI key stands in for the step-up of a few permissions with the second factor proven when it was created, for ${PERSONAL_KEY_MAX_AGE_DAYS} days`, status: 'enforced' },
   { id: 'oauth_grant', label: `An OAuth grant stands in the same way for ${OAUTH_GRANT_MAX_AGE_HOURS} hours`, status: 'planned' },
@@ -46,26 +47,19 @@ export const RULES: ReadonlyArray<{ id: SecondFactorRule; label: string; status:
 // ── groups ────────────────────────────────────────────────────
 
 export interface GroupSecondFactor {
-  /** Members need an aal2 session on every permission-carrying route (group_sign_in). */
+  /** The group's "Members must use 2FA" switch: members sign in at aal2, and must enrol before joining. */
   required: boolean
-  /** Why: the administrator's setting, or the default (super_admins) because none was set. Null when not required. */
-  source: 'setting' | 'default' | null
-  /** Confers a `global` role: whoever is added must have enrolled a second factor (enrol_before_joining). */
+  /** group_setting: stored (a super admin, the boot migration, or the legacy list); default: not stored yet, computed from the roles. */
+  source: 'group_setting' | 'default'
+  /** Same switch, rule (b): nobody is added before they have enrolled. Always equal to `required`. */
   enrolBeforeJoining: boolean
+  /** What the default would be (on for a group that can change anything or holds `*`). */
+  defaultRequired: boolean
 }
 
-export interface SignInSetting {
-  groups: readonly string[]
-  explicit: boolean
-}
-
-export function groupSecondFactor(name: string, definition: Record<string, string[]> | undefined, setting: SignInSetting): GroupSecondFactor {
-  const required = setting.groups.includes(name)
-  return {
-    required,
-    source: required ? (setting.explicit ? 'setting' : 'default') : null,
-    enrolBeforeJoining: (definition?.global ?? []).length > 0,
-  }
+export function groupSecondFactor(flag: GroupFlag | undefined): GroupSecondFactor {
+  const required = flag?.required ?? false
+  return { required, source: flag?.explicit ? 'group_setting' : 'default', enrolBeforeJoining: required, defaultRequired: flag?.default ?? false }
 }
 
 // ── permissions ───────────────────────────────────────────────
@@ -132,6 +126,12 @@ export function siteSecondFactor(site: Pick<Site, 'login'>): SiteSecondFactor {
 }
 
 // ── one person ────────────────────────────────────────────────
+
+/** The groups switched on (settings.ts getSecondFactorSetting). */
+export interface SignInSetting {
+  groups: readonly string[]
+  explicit: boolean
+}
 
 export interface UserSecondFactor {
   /** Must sign in at aal2 (group_sign_in). */

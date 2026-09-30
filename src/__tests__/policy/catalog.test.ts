@@ -27,8 +27,8 @@ describe('the catalogue', () => {
       'org:delete', 'recert:delete', 'sites:delete', 'users:delete', 'zones:delete',
       // approvals (a campaign close applies its revokes)
       'recert:manage', 'sites.requests:approve',
-      // second-factor reset
-      'users:reset_second_factor',
+      // second-factor reset, and who must use a second factor (owner, 2026-09-30)
+      'users:reset_second_factor', 'groups.mfa:write',
       // tightened by the lead (2026-09-29): sign-in and MCP settings, the edge, bulk exports
       'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
     ].sort())
@@ -121,7 +121,7 @@ describe('the staff roles (staff-rbac-proposal §2)', () => {
   it('what no staff role holds, only super_admin does', () => {
     const held = new Set(STAFF_ROLES.filter((r) => r !== 'super_admin').flatMap((r) => [...ROLES[r].permissions]))
     expect(PERMISSIONS.filter((p) => !held.has(p)).sort()).toEqual([
-      'groups.members:write', 'groups:write', 'org.admins:write', 'org:delete', 'org:write', 'policy.bundle:write',
+      'groups.members:write', 'groups.mfa:write', 'groups:write', 'org.admins:write', 'org:delete', 'org:write', 'policy.bundle:write',
       'settings.mcp:write', 'settings.signin:write', 'users.metadata:write', 'users:delete',
     ].sort())
   })

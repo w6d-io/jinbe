@@ -78,6 +78,9 @@ export const CATALOG = {
   'groups:write': p('access', 'Create, edit or delete groups and what they bind (the access model)', 'critical', { stepUp: true, fourEyes: 'prod' }),
   'groups.members:write': p('access', 'Add people to platform groups', 'critical', { stepUp: true, fourEyes: 'prod' }),
   'groups.members:revoke': p('access', 'Remove people from platform groups', 'high', { delegable: 'never' }),
+  // Held by super_admin alone (no staff role carries it; owner decision 2026-09-30): who must sign in
+  // with a second factor, and who may join without one.
+  'groups.mfa:write': p('access', "Switch a group's \"Members must use 2FA\"", 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
 
   // ── Organisations ──────────────────────────────────────────────────────────────────────────────
   'org:read': p('organizations', 'List organisations and their admins', 'low'),

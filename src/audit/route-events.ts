@@ -34,6 +34,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   // Authentication, directory, sessions
   'PUT /api/admin/auth/methods': by('config.auth_methods.changed'),
   'PUT /api/admin/settings/second-factor': by('config.second_factor.changed'),
+  'PUT /api/admin/rbac/groups/:name/second-factor': by('config.second_factor.changed'),
   'PUT /api/admin/settings/sign-in-protection': by('config.sign_in_protection.changed'),
   'PUT /api/admin/settings/mcp': by('config.mcp.changed'),
   // Refusals are counted (jinbe_sign_in_guard_decisions_total), not audited: a flood of scripted

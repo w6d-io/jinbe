@@ -39,12 +39,14 @@ export const siteSecondFactorJsonSchema = {
 export const groupSecondFactorJsonSchema = {
   type: 'object',
   description:
-    'required: members need two-step sign-in (aal2) on every permission-carrying route; source: setting | default ' +
-    '(super_admins, no setting saved) | null; enrolBeforeJoining: confers a global role, so whoever is added must have enrolled a second factor.',
+    'The group\'s "Members must use 2FA" switch. required: members need two-step sign-in (aal2) on every permission-carrying ' +
+    'route, and nobody is added before enrolling a second factor (enrolBeforeJoining, always equal). source: group_setting ' +
+    '(stored) | default (not stored yet: on for a group that can write or holds *). defaultRequired: what the default would be.',
   properties: {
     required: { type: 'boolean' },
-    source: { type: 'string', nullable: true, enum: ['setting', 'default', null] },
+    source: { type: 'string', enum: ['group_setting', 'default'] },
     enrolBeforeJoining: { type: 'boolean' },
+    defaultRequired: { type: 'boolean' },
   },
 }
 
@@ -82,8 +84,8 @@ export const secondFactorMapJsonSchema = {
     signIn: {
       type: 'object',
       nullable: true,
-      description: 'The groups whose members must use two-step sign-in; explicit false = the default applies (no setting saved).',
-      properties: { groups: stringList, explicit: { type: 'boolean' }, defaultGroups: stringList },
+      description: 'The groups switched to "Members must use 2FA"; explicit false = some group still runs on its default (not pinned yet).',
+      properties: { groups: stringList, explicit: { type: 'boolean' } },
     },
     groups: {
       type: 'array',

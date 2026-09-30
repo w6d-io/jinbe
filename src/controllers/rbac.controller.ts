@@ -9,7 +9,7 @@ import {
   type UpdateGroupBody,
 } from '../schemas/rbac/index.js'
 import { auditActor } from '../utils/audit-actor.js'
-import { getSecondFactorSetting } from '../second-factor/settings.js'
+import { getGroupSecondFactorFlags } from '../second-factor/settings.js'
 import { groupSecondFactor } from '../second-factor/requirements.js'
 import { z } from 'zod'
 
@@ -42,16 +42,16 @@ export class RbacController {
 
   async getGroups(request: FastifyRequest, reply: FastifyReply) {
     const result = await rbacService.getGroups()
-    // Each group says whether it asks its members for a second factor. The setting is best effort:
-    // a list without the badge beats no list.
-    let setting: Awaited<ReturnType<typeof getSecondFactorSetting>> | null = null
+    // Each group carries its "Members must use 2FA" switch. Best effort: a list without the badge
+    // beats no list.
+    let flags: Awaited<ReturnType<typeof getGroupSecondFactorFlags>> | null = null
     try {
-      setting = await getSecondFactorSetting()
+      flags = await getGroupSecondFactorFlags()
     } catch (err) {
-      request.log.warn({ err: (err as Error).message }, '[rbac] second-factor setting unreadable; groups listed without it')
+      request.log.warn({ err: (err as Error).message }, '[rbac] second-factor switches unreadable; groups listed without them')
     }
-    if (!setting) return reply.send(result)
-    return reply.send({ groups: result.groups.map((g) => ({ ...g, secondFactor: groupSecondFactor(g.name, g.services, setting) })) })
+    if (!flags) return reply.send(result)
+    return reply.send({ groups: result.groups.map((g) => ({ ...g, secondFactor: groupSecondFactor(flags!.get(g.name)) })) })
   }
 
   async createGroup(

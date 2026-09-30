@@ -51,3 +51,29 @@ export function groupCatalogueMock() {
     }),
   }
 }
+
+/**
+ * The per-group "Members must use 2FA" switch (second-factor/settings.ts) over the same catalogue. A
+ * test sets `secondFactorSwitch.flags[name]`; an unset group stands for the stored default of the
+ * suite's world — on for a group with a platform-wide role (the groups these suites grant).
+ */
+export const secondFactorSwitch = { flags: {} as Record<string, boolean>, fail: false }
+
+export function resetSecondFactorSwitch(): void {
+  secondFactorSwitch.flags = {}
+  secondFactorSwitch.fail = false
+}
+
+export function secondFactorSettingsMock() {
+  return {
+    getGroupSecondFactorFlags: vi.fn(async () => {
+      if (secondFactorSwitch.fail) throw new Error('ECONNREFUSED')
+      const out = new Map<string, { required: boolean; explicit: boolean; default: boolean }>()
+      for (const [name, def] of Object.entries(groupCatalogue.groups)) {
+        const dflt = (def.global ?? []).length > 0
+        out.set(name, { required: secondFactorSwitch.flags[name] ?? dflt, explicit: name in secondFactorSwitch.flags, default: dflt })
+      }
+      return out
+    }),
+  }
+}

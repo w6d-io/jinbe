@@ -24,8 +24,12 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
       if (h.groupsFail) throw new Error('ECONNREFUSED')
       return h.groups
     }),
+    getRoles: vi.fn(async (scope: string) => ({
+      global: { super_admin: ['*'], ops: ['sites:read', 'sites:apply'] }, jinbe: { viewer: ['sites:read'] },
+    } as Record<string, Record<string, string[]>>)[scope] ?? null),
   },
 }))
+vi.mock('../../services/redis-lock.js', () => ({ withRedisLock: (_n: string, fn: () => unknown) => fn() }))
 vi.mock('../../sites/repository.js', () => ({
   sitesRepository: {
     list: vi.fn(async () => h.records),
@@ -42,22 +46,17 @@ vi.mock('../../middleware/require-admin.js', async () => (await import('../helpe
 import {
   groupSecondFactor, secondFactorRefusal, siteSecondFactor, stepUpPermissionsOf, stepUpRule, userSecondFactor,
 } from '../../second-factor/requirements.js'
-import { secondFactorMapRoutes } from '../../second-factor/routes.js'
+import { secondFactorRbacRoutes } from '../../second-factor/routes.js'
 import { resetSecondFactorSettingsCache } from '../../second-factor/settings.js'
 import { catalogRoutes } from '../../routes/catalog.routes.js'
 import { rbacController } from '../../controllers/rbac.controller.js'
 import { groupJsonSchema } from '../../schemas/rbac/index.js'
 
 describe('groups', () => {
-  it('required by the default (no setting saved), by the setting, or not at all', () => {
-    const def = { groups: ['super_admins'], explicit: false }
-    expect(groupSecondFactor('super_admins', h.groups.super_admins, def)).toEqual({ required: true, source: 'default', enrolBeforeJoining: true })
-    expect(groupSecondFactor('super_admins', h.groups.super_admins, { ...def, explicit: true }).source).toBe('setting')
-    expect(groupSecondFactor('readers', h.groups.readers, def)).toEqual({ required: false, source: null, enrolBeforeJoining: false })
-  })
-
-  it('a group with a global role needs its new members enrolled, even when sign-in does not ask them', () => {
-    expect(groupSecondFactor('staff_ops', h.groups.staff_ops, { groups: [], explicit: true })).toEqual({ required: false, source: null, enrolBeforeJoining: true })
+  it('one switch: stored (group_setting) or computed (default); enrolment follows it', () => {
+    expect(groupSecondFactor({ required: true, explicit: true, default: false })).toEqual({ required: true, source: 'group_setting', enrolBeforeJoining: true, defaultRequired: false })
+    expect(groupSecondFactor({ required: false, explicit: false, default: false })).toEqual({ required: false, source: 'default', enrolBeforeJoining: false, defaultRequired: false })
+    expect(groupSecondFactor(undefined)).toMatchObject({ required: false, source: 'default' })
   })
 })
 
@@ -125,7 +124,7 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
     app.addHook('onRequest', async (request) => {
       request.userContext = { email: 'ann@x.io', id: 'id-ann', name: 'Ann', authVia: 'session' } as never
     })
-    await app.register(secondFactorMapRoutes, { prefix: '/api/admin/rbac' })
+    await app.register(secondFactorRbacRoutes, { prefix: '/api/admin/rbac' })
     await app.register(catalogRoutes, { prefix: '/api' })
     app.get('/api/admin/rbac/groups', {
       config: { permission: 'groups:read' },
@@ -153,11 +152,11 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
     const body = res.json()
     expect(body.rules.map((r: { id: string }) => r.id)).toEqual(['group_sign_in', 'step_up', 'enrol_before_joining', 'site_login', 'personal_key', 'oauth_grant'])
     expect(body.limits).toEqual({ stepUpMaxAgeMin: 15, personalKeyMaxAgeDays: 30, oauthGrantMaxAgeHours: 12 })
-    expect(body.signIn).toEqual({ groups: ['super_admins'], explicit: false, defaultGroups: ['super_admins'] })
+    expect(body.signIn).toEqual({ groups: ['staff_ops', 'super_admins'], explicit: false })
     expect(body.groups).toEqual([
-      { name: 'readers', secondFactor: { required: false, source: null, enrolBeforeJoining: false } },
-      { name: 'staff_ops', secondFactor: { required: false, source: null, enrolBeforeJoining: true } },
-      { name: 'super_admins', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true } },
+      { name: 'readers', secondFactor: { required: false, source: 'default', enrolBeforeJoining: false, defaultRequired: false } },
+      { name: 'staff_ops', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true } },
+      { name: 'super_admins', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true } },
     ])
     expect(body.permissions.find((p: { name: string }) => p.name === 'sites:apply').stepUpRule).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, fourEyes: 'prod' })
     expect(body.roles.find((r: { name: string }) => r.name === 'ops').stepUpPermissions).toContain('gateway:apply')
@@ -185,15 +184,15 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
     expect((await get('users:read')).statusCode).toBe(403)
   })
 
-  it('a saved setting is its source; an unreadable section is null and named, never an empty list', async () => {
-    h.config = { second_factor_groups: JSON.stringify(['staff_ops']) }
+  it('a stored switch is its source; an unreadable section is null and named, never an empty list', async () => {
+    h.config = { second_factor_group_flags: JSON.stringify({ staff_ops: false }) }
     let body = (await get('groups:read')).json()
-    expect(body.groups.find((g: { name: string }) => g.name === 'staff_ops').secondFactor).toEqual({ required: true, source: 'setting', enrolBeforeJoining: true })
+    expect(body.groups.find((g: { name: string }) => g.name === 'staff_ops').secondFactor).toEqual({ required: false, source: 'group_setting', enrolBeforeJoining: false, defaultRequired: true })
     resetSecondFactorSettingsCache()
     h.groupsFail = true
     body = (await get('groups:read')).json()
     expect(body.groups).toBeNull()
-    expect(body.unavailable).toEqual(['groups'])
+    expect(body.unavailable).toEqual(['signIn', 'groups'])
   })
 
   it('/api/catalog carries each permission\'s rule and each role\'s step-up permissions', async () => {
@@ -205,7 +204,7 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
   it('the groups list badges each group (and survives the serializer)', async () => {
     const body = (await app.inject({ url: '/api/admin/rbac/groups', headers: { 'x-test-perms': 'groups:read' } })).json()
     expect(body.groups.find((g: { name: string }) => g.name === 'super_admins')).toEqual({
-      name: 'super_admins', services: { global: ['super_admin'] }, secondFactor: { required: true, source: 'default', enrolBeforeJoining: true },
+      name: 'super_admins', services: { global: ['super_admin'] }, secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true },
     })
   })
 })

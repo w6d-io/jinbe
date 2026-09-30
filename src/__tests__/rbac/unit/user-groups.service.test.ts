@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // The Redis mutex is infrastructure; these units validate the gate logic, not
 // locking (the lock has its own test). Passthrough so no Redis is required.
@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}), assertGrantWithinOwn: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
+vi.mock('../../../second-factor/settings.js', async () =>
+  (await import('../../helpers/group-catalogue-mock.js')).secondFactorSettingsMock())
 
 vi.mock('../../../services/organisation-store.js', () => ({
   addToGroup: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +69,8 @@ import {
 import {
   groupCatalogue,
   resetGroupCatalogue,
+  resetSecondFactorSwitch,
+  secondFactorSwitch,
 } from '../../helpers/group-catalogue-mock.js'
 
 /** What one call to the atomic write took away, and what it gave. */
@@ -654,6 +658,52 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
       },
     })
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+  })
+
+  // Owner decision 2026-09-30: the group's own "Members must use 2FA" switch decides, not its scope.
+  describe('the per-group switch, not the scope', () => {
+    beforeEach(() => resetSecondFactorSwitch())
+    afterEach(() => { resetSecondFactorSwitch(); resetGroupCatalogue() })
+    const add = (group: string) => userGroupsService.applyGroupUpdate({
+      identity: IDENTITY, newGroups: [group], actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+    })
+
+    it('a platform-wide group switched off (a read-only staff group) asks for no enrolment', async () => {
+      groupCatalogue.groups = { ...groupCatalogue.groups, 'staff-auditors': { global: ['auditor'] } }
+      secondFactorSwitch.flags['staff-auditors'] = false
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
+      expect((await add('staff-auditors')).ok).toBe(true)
+      expect(kratosService.hasMFA).not.toHaveBeenCalled()
+    })
+
+    it('a group bound to one app, switched on, refuses a target without a second factor and says why', async () => {
+      secondFactorSwitch.flags.devs = true
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
+      const result = await add('devs')
+      expect(result).toMatchObject({
+        ok: false, status: 422,
+        body: {
+          error: 'mfa_required', targetGroups: ['devs'],
+          secondFactor: { rule: 'enrol_before_joining', groups: ['devs'] },
+        },
+      })
+      const message = (result as { body: { message: string } }).body.message
+      expect(message).toContain("Group 'devs' requires its members to use two-step sign-in")
+      expect(message).not.toContain('admin privileges')
+    })
+
+    it('an enrolled target joins a switched-on group', async () => {
+      secondFactorSwitch.flags.devs = true
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
+      expect((await add('devs')).ok).toBe(true)
+    })
+
+    it('a switch that cannot be read refuses (503) rather than guessing', async () => {
+      secondFactorSwitch.fail = true
+      expect(await add('devs')).toMatchObject({ ok: false, status: 503, body: { error: 'authorization_model_unavailable' } })
+      expect(applyGroupChange).not.toHaveBeenCalled()
+    })
   })
 })
 

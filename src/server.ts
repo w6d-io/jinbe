@@ -25,7 +25,7 @@ import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
 import { startSitesBackground } from './sites/sync.js'
 import { startAccessRollup } from './audit/gateway/rollup.js'
-import { secondFactorMapRoutes, secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-factor/routes.js'
+import { secondFactorRbacRoutes, secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-factor/routes.js'
 import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
@@ -173,7 +173,7 @@ export async function buildServer() {
       await api.register(rbacBundleRoutes, { prefix: '/admin/rbac' }) // Bundle export/import (super_admin)
       await api.register(authConfigRoutes, { prefix: '/admin/auth' }) // Kratos auth-method toggles (super_admin)
       await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
-      await api.register(secondFactorMapRoutes, { prefix: '/admin/rbac' }) // every 2FA rule, for badges
+      await api.register(secondFactorRbacRoutes, { prefix: '/admin/rbac' }) // 2FA map + per-group switch
       await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' }) // bot check + sign-up policy
       await api.register(mcpSettingsRoutes, { prefix: '/admin/settings' }) // AI assistants (MCP) switch, under the env ceiling
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)

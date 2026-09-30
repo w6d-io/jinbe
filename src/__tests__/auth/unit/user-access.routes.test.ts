@@ -54,8 +54,12 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
     })),
     getOrgAdminMap: vi.fn(async () => s.rosters),
     getConfig: vi.fn(async () => s.config),
+    getRoles: vi.fn(async (scope: string) => ({
+      global: { super_admin: ['*'] }, kuma: { admin: ['*'], reader: ['kuma:read'] }, fleet: { viewer: ['fleet:read'] },
+    } as Record<string, Record<string, string[]>>)[scope] ?? null),
   },
 }))
+vi.mock('../../../services/redis-lock.js', () => ({ withRedisLock: (_n: string, fn: () => unknown) => fn() }))
 vi.mock('../../../authz/opa.js', () => ({
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: ['sites:read', 'groups:write'] })),
 }))
@@ -112,9 +116,10 @@ describe('GET /api/admin/users/:id/access', () => {
         { orgId: ACME, name: 'Acme', admin: false, grants: ['fleet-viewers'] },
         { orgId: GLOBEX, name: GLOBEX, admin: true, grants: [] },
       ],
+      // kuma-admins holds kuma's '*', so its switch defaults on; fleet-viewers only reads.
       secondFactor: {
-        required: false,
-        requiredBecause: [],
+        required: true,
+        requiredBecause: ['kuma-admins'],
         enrolled: true,
         methods: ['totp'],
         currentAal: null,
@@ -125,16 +130,14 @@ describe('GET /api/admin/users/:id/access', () => {
     })
   })
 
-  it('names the groups that require two-step sign-in (the default: super_admins)', async () => {
-    s.identity = { ...s.identity!, metadata_admin: { groups: ['kuma-admins', 'super_admins'] } }
+  it("follows each group's switch: a stored off removes the requirement", async () => {
+    s.config = { second_factor_group_flags: JSON.stringify({ 'kuma-admins': false }) }
     const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
-    expect(res.json().secondFactor).toMatchObject({ required: true, requiredBecause: ['super_admins'] })
+    expect(res.json().secondFactor).toMatchObject({ required: false, requiredBecause: [] })
   })
 
   it('a second-factor part that cannot be read is null, and the access view still answers', async () => {
     s.methods = null
-    s.config = { second_factor_groups: JSON.stringify(['super_admins']) }
-    s.identity = { ...s.identity!, metadata_admin: { groups: ['super_admins'] } }
     const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
     expect(res.statusCode).toBe(200)
     expect(res.json().secondFactor).toMatchObject({ required: true, enrolled: null, methods: null })

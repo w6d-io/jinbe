@@ -11,7 +11,20 @@ const h = vi.hoisted(() => ({
   session: vi.fn(),
   methods: vi.fn(),
   config: {} as Record<string, string>,
-  groups: { super_admins: {}, admins: {}, ops: {} } as Record<string, unknown>,
+  // The default switch follows the roles: ops can write and super_admins holds '*' (on); readers and
+  // staff-viewers only read, and staff-auditors is off by the owner's decision (off).
+  groups: {
+    super_admins: { global: ['super_admin'] },
+    ops: { jinbe: ['operator'] },
+    readers: { jinbe: ['viewer'] },
+    'staff-viewers': { global: ['viewer'] },
+    'staff-auditors': { global: ['auditor'] },
+    users: {},
+  } as Record<string, unknown>,
+  roles: {
+    global: { super_admin: ['*'], viewer: ['sites:read', 'access:check'], auditor: ['audit:read', 'audit:export'] },
+    jinbe: { operator: ['sites:read', 'sites:apply'], viewer: ['sites:read'] },
+  } as Record<string, Record<string, string[]>>,
   schedule: vi.fn(),
   emit: vi.fn(async () => 'id'),
 }))
@@ -38,9 +51,11 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     getConfig: vi.fn(async () => ({ ...h.config })),
     setConfig: vi.fn(async (k: string, v: string) => { h.config[k] = v }),
     getGroups: vi.fn(async () => h.groups),
+    getRoles: vi.fn(async (scope: string) => h.roles[scope] ?? null),
     getServices: vi.fn(async () => []),
   },
 }))
+vi.mock('../../services/redis-lock.js', () => ({ withRedisLock: (_n: string, fn: () => unknown) => fn() }))
 vi.mock('../../services/opal-publisher.js', () => ({ opalPublisher: { schedule: h.schedule } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
 vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
@@ -51,8 +66,11 @@ import { KratosService } from '../../services/kratos.service.js'
 import { buildOpalDatasourceEntries } from '../../services/opal-datasource.js'
 import { rbacOpalRoutes } from '../../routes/rbac-opal.routes.js'
 import { requireSecondFactor } from '../../second-factor/gate.js'
-import { secondFactorPublicRoutes, secondFactorSettingsRoutes } from '../../second-factor/routes.js'
-import { parseGroups, resetSecondFactorSettingsCache } from '../../second-factor/settings.js'
+import { secondFactorPublicRoutes, secondFactorRbacRoutes, secondFactorSettingsRoutes } from '../../second-factor/routes.js'
+import { defaultRequired, migrateSecondFactorFlags, parseFlags, parseGroups, resetSecondFactorSettingsCache } from '../../second-factor/settings.js'
+import { declaredRoute } from '../../policy/declared-routes.js'
+import { CATALOG } from '../../policy/catalog.js'
+import { ROLES, STAFF_ROLES } from '../../policy/roles.js'
 import { resetSecondFactorStatusCache } from '../../second-factor/status.js'
 
 const OPAL = { authorization: 'Bearer opal-tok' }
@@ -95,6 +113,7 @@ beforeAll(async () => {
     await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' })
     await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' })
     await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })
+    await api.register(secondFactorRbacRoutes, { prefix: '/admin/rbac' })
     api.get('/admin/users', { config: { access: 'authenticated' } }, async () => ({ ok: true }))
     api.get('/whoami', { config: { access: 'public' } }, async () => ({ ok: true }))
   }, { prefix: '/api' })
@@ -107,29 +126,47 @@ beforeEach(() => {
   h.opa.mockImplementation(async (rule: string, input: Record<string, unknown>) => opaWorld(rule, input))
   h.session.mockResolvedValue({ session: null })
   h.methods.mockResolvedValue([])
+  h.schedule.mockClear()
+  h.emit.mockClear()
   clearAuthzCache()
   resetSecondFactorSettingsCache()
   resetSecondFactorStatusCache()
 })
 
-describe('setting: groups that require a second factor', () => {
-  it('defaults to super_admins when unset, and that is what OPA receives', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/admin/rbac/opal/second_factor', headers: OPAL })
-    expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ groups: ['super_admins'] })
+describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2 and enrolment before joining)', () => {
+  const opal = async () => (await app.inject({ method: 'GET', url: '/api/admin/rbac/opal/second_factor', headers: OPAL })).json()
+  const flagsStored = () => JSON.parse(h.config.second_factor_group_flags ?? '{}')
+  const WRITE = { 'x-test-write': '1', 'x-test-mfa': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }
+
+  it('defaults: on for a group that can write or holds *, off for read-only groups, staff-viewers and staff-auditors', async () => {
+    expect(await opal()).toEqual({ groups: ['ops', 'super_admins'] })
+    expect(defaultRequired('staff-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(false)
+    expect(defaultRequired('other-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true) // audit:export writes
+    expect(defaultRequired('users', {}, {})).toBe(false)
   })
 
-  it('an explicit empty list requires nobody (not the default)', async () => {
-    h.config.second_factor_groups = '[]'
-    const res = await app.inject({ method: 'GET', url: '/api/admin/rbac/opal/second_factor', headers: OPAL })
-    expect(res.json()).toEqual({ groups: [] })
+  it('a stored value overrides the default either way', async () => {
+    h.config.second_factor_group_flags = JSON.stringify({ super_admins: false, readers: true })
+    expect(await opal()).toEqual({ groups: ['ops', 'readers'] })
   })
 
-  it('a malformed stored value falls back to the default, never to nobody', () => {
-    expect(parseGroups('not json')).toBeNull()
-    expect(parseGroups('"super_admins"')).toBeNull()
+  it('the legacy list counts as explicit ON for the groups it named, hyphens included', async () => {
+    h.config.second_factor_groups = JSON.stringify(['staff-viewers'])
+    expect(await opal()).toEqual({ groups: ['ops', 'staff-viewers', 'super_admins'] })
+    expect(parseGroups('["staff-ops","admins","staff-ops"]')).toEqual(['admins', 'staff-ops'])
     expect(parseGroups('["Bad Name"]')).toBeNull()
-    expect(parseGroups('["ops","admins","ops"]')).toEqual(['admins', 'ops'])
+    expect(parseFlags('{"staff-ops":true,"Bad Name":true,"x":"yes"}')).toEqual({ 'staff-ops': true })
+  })
+
+  it('the boot migration pins every unset group to its default and keeps stored values; a second run writes nothing', async () => {
+    h.config.second_factor_group_flags = JSON.stringify({ ops: false })
+    const { pinned } = await migrateSecondFactorFlags({ info: () => {} })
+    expect(pinned.sort()).toEqual(['readers', 'staff-auditors', 'staff-viewers', 'super_admins', 'users'])
+    expect(flagsStored()).toEqual({ ops: false, readers: false, 'staff-auditors': false, 'staff-viewers': false, super_admins: true, users: false })
+    expect(h.schedule).toHaveBeenCalledWith('second_factor')
+    h.schedule.mockClear()
+    expect((await migrateSecondFactorFlags({ info: () => {} })).pinned).toEqual([])
+    expect(h.schedule).not.toHaveBeenCalled()
   })
 
   it('the OPAL data source answers 503 when the store cannot be read, so OPA keeps what it holds', async () => {
@@ -144,40 +181,60 @@ describe('setting: groups that require a second factor', () => {
     expect(entries.find((e) => e.dst_path === '/second_factor')?.url).toMatch(/\/api\/admin\/rbac\/opal\/second_factor$/)
   })
 
-  it('admins read it with the default beside it', async () => {
+  it('the settings screen reads the groups switched on, with the default-on groups beside them', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/admin/settings/second-factor', headers: { 'x-test-admin': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' } })
     expect(res.statusCode, res.body).toBe(200)
-    expect(res.json()).toEqual({ groups: ['super_admins'], defaultGroups: ['super_admins'] })
+    expect(res.json()).toEqual({ groups: ['ops', 'super_admins'], defaultGroups: ['ops', 'super_admins'] })
   })
 
-  it('super_admin + recent 2FA replace it; stored, published to OPA and audited', async () => {
-    const res = await app.inject({
-      method: 'PUT', url: '/api/admin/settings/second-factor',
-      headers: { 'x-test-write': '1', 'x-test-mfa': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' },
-      payload: { groups: ['ops', 'super_admins', 'ops'] },
-    })
-    expect(res.statusCode).toBe(200)
-    expect(res.json().groups).toEqual(['ops', 'super_admins'])
-    expect(JSON.parse(h.config.second_factor_groups)).toEqual(['ops', 'super_admins'])
+  it('PUT one group: stored, published to OPA, audited, and read back as group_setting', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/admin/rbac/groups/staff-viewers/second-factor', headers: WRITE, payload: { required: true } })
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json()).toEqual({ name: 'staff-viewers', secondFactor: { required: true, source: 'group_setting', enrolBeforeJoining: true, defaultRequired: false } })
+    expect(flagsStored()).toEqual({ 'staff-viewers': true })
     expect(h.schedule).toHaveBeenCalledWith('second_factor')
-    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ target: 'second-factor-groups', details: { before: ['super_admins'], after: ['ops', 'super_admins'] } }))
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({
+      target: 'second-factor-groups',
+      details: { group: 'staff-viewers', before: { required: false, explicit: false }, after: { required: true } },
+    }))
+    expect(await opal()).toEqual({ groups: ['ops', 'staff-viewers', 'super_admins'] })
+  })
+
+  it('PUT one group: groups.mfa:write (super admin alone) and a recent second factor; unknown group 404', async () => {
+    const noPerm = await app.inject({ method: 'PUT', url: '/api/admin/rbac/groups/ops/second-factor', headers: { 'x-email': 'a@x.io', 'x-aal': 'aal2', 'x-test-mfa': '1' }, payload: { required: false } })
+    expect(noPerm.statusCode).toBe(403)
+    const stale = await app.inject({ method: 'PUT', url: '/api/admin/rbac/groups/ops/second-factor', headers: { 'x-test-write': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }, payload: { required: false } })
+    expect(stale.statusCode).toBe(422)
+    const ghost = await app.inject({ method: 'PUT', url: '/api/admin/rbac/groups/ghosts/second-factor', headers: WRITE, payload: { required: true } })
+    expect(ghost.statusCode).toBe(404)
+    expect(h.config.second_factor_group_flags).toBeUndefined()
+    expect(declaredRoute('PUT', '/api/admin/rbac/groups/:name/second-factor')).toMatchObject({ permission: 'groups.mfa:write', stepUp: true })
+    expect(CATALOG['groups.mfa:write']).toMatchObject({ stepUp: true, delegable: 'never' })
+    expect(STAFF_ROLES.filter((r) => (ROLES[r].permissions as readonly string[]).includes('groups.mfa:write'))).toEqual([])
+  })
+
+  it('PUT the list: listed groups on, every other group off; stored as switches and audited', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers: WRITE, payload: { groups: ['readers', 'super_admins', 'readers'] } })
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().groups).toEqual(['readers', 'super_admins'])
+    expect(flagsStored()).toEqual({ ops: false, readers: true, 'staff-auditors': false, 'staff-viewers': false, super_admins: true, users: false })
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ target: 'second-factor-groups', details: { before: ['ops', 'super_admins'], after: ['readers', 'super_admins'] } }))
   })
 
   it('refuses unknown or malformed group names, and changes nothing', async () => {
-    const headers = { 'x-test-write': '1', 'x-test-mfa': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }
-    const unknown = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers, payload: { groups: ['ghosts'] } })
+    const unknown = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers: WRITE, payload: { groups: ['ghosts'] } })
     expect(unknown.statusCode).toBe(400)
     expect(unknown.json().error).toBe('unknown_group')
-    const bad = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers, payload: { groups: ['Ops Team'] } })
+    const bad = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers: WRITE, payload: { groups: ['Ops Team'] } })
     expect(bad.json().error).toBe('invalid_group')
-    expect(h.config.second_factor_groups).toBeUndefined()
+    expect(h.config.second_factor_group_flags).toBeUndefined()
     expect(h.schedule).not.toHaveBeenCalled()
   })
 
   it('writing needs a recent second factor, not only super_admin', async () => {
     const res = await app.inject({ method: 'PUT', url: '/api/admin/settings/second-factor', headers: { 'x-test-write': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }, payload: { groups: [] } })
     expect(res.statusCode).toBe(422)
-    expect(h.config.second_factor_groups).toBeUndefined()
+    expect(h.config.second_factor_group_flags).toBeUndefined()
   })
 })
 
@@ -252,10 +309,10 @@ describe('server-side enforcement (onRequest hook: the policy\'s second_factor_r
     expect(h.opa).toHaveBeenCalledWith('rbac/second_factor_required', { email: 'root@x.io' })
   })
 
-  it('the refusal names the rule and the groups that require it (the default: super_admins)', async () => {
+  it('the refusal names the rule and the groups that require it (their switches: ops and super_admins)', async () => {
     const res = await call({ 'x-email': 'root@x.io', 'x-aal': 'aal1' })
-    expect(res.json()).toMatchObject({ secondFactor: { rule: 'group_sign_in', requiredAal: 'aal2', requiredBecause: ['super_admins'] } })
-    expect(res.json().message).toContain('super_admins')
+    expect(res.json()).toMatchObject({ secondFactor: { rule: 'group_sign_in', requiredAal: 'aal2', requiredBecause: ['ops', 'super_admins'] } })
+    expect(res.json().message).toContain('ops, super_admins')
   })
 
   it('super admin at aal2 passes', async () => {
