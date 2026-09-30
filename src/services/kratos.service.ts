@@ -429,20 +429,19 @@ export class KratosService {
       headers: { Accept: 'application/json' },
     })
     if (!flowResp.ok) throw new Error(`Failed to init recovery flow: ${flowResp.status}`)
-    const flow = await flowResp.json() as { id: string }
+    const flow = await flowResp.json() as { id: string; ui?: { nodes?: Array<{ group?: string }> } }
 
     // 2. Submit the email — Kratos queues the courier message.
-    // This cluster's Kratos enables ONLY the `code` recovery strategy (the
-    // `link` method is not configured, and password login is disabled →
-    // passwordless/code). Submitting `method: 'link'` is rejected and NO email
-    // is ever queued, which is why invited users received nothing. Request
-    // `code` to match the deployed selfservice.methods config.
+    // Use the strategy the flow offers (selfservice.flows.recovery.use): Kratos
+    // rejects any other ("could not find a strategy") and queues NO email. The
+    // chart defaults to `link`; a deployment set to `code` offers only `code`.
+    const offersLink = (flow.ui?.nodes ?? []).some((n) => n.group === 'link')
     const submitResp = await fetch(
       `${publicUrl}/self-service/recovery?flow=${flow.id}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ email, method: 'code' }),
+        body: JSON.stringify({ email, method: offersLink ? 'link' : 'code' }),
       }
     )
     if (!submitResp.ok && submitResp.status !== 422) {

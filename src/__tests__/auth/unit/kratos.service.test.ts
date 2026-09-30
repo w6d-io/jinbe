@@ -348,14 +348,25 @@ describe('KratosService', () => {
   })
 
   describe('sendRecoveryEmail', () => {
-    it('submits the `code` recovery method (this cluster does not enable `link`)', async () => {
+    it('submits the `link` method when the flow offers it (recovery.use: link, the chart default)', async () => {
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse(200, { id: 'id-1', traits: { email: 'invitee@example.com' } }))
+        .mockResolvedValueOnce(createMockResponse(200, { id: 'flow-1', ui: { nodes: [{ group: 'default' }, { group: 'link' }] } }))
+        .mockResolvedValueOnce(createMockResponse(200, { state: 'sent_email' }))
+
+      await service.sendRecoveryEmail('id-1')
+
+      expect(JSON.parse(mockFetch.mock.calls[2][1].body)).toEqual({ email: 'invitee@example.com', method: 'link' })
+    })
+
+    it('submits the `code` method when the flow offers only code (recovery.use: code)', async () => {
       mockFetch
         // 1. admin identity lookup → email
         .mockResolvedValueOnce(
           createMockResponse(200, { id: 'id-1', traits: { email: 'invitee@example.com' } })
         )
         // 2. init recovery flow
-        .mockResolvedValueOnce(createMockResponse(200, { id: 'flow-1' }))
+        .mockResolvedValueOnce(createMockResponse(200, { id: 'flow-1', ui: { nodes: [{ group: 'default' }, { group: 'code' }] } }))
         // 3. submit email → queues the courier message
         .mockResolvedValueOnce(createMockResponse(200, { state: 'sent_email' }))
 
