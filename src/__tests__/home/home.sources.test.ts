@@ -43,7 +43,10 @@ describe('opalLastSuccess — only what the current manifest refreshes', () => {
       'opal/roles/stairfleet1': String(old),
       'opal/route_map/stairfleet1': String(old),
       'opal/roles/deleted-svc': String(old),
-      'opal/groups': 'not-a-number',
+      // /bindings/groups left the manifest (groups travel inside /bindings): an older client still polling it
+      // must not age the component
+      'opal/groups': String(old),
+      'opal/second_factor': 'not-a-number',
     }
     expect(await opalLastSuccess()).toEqual({ bindings: now, 'opal/roles': now, 'opal/api_clients': now })
   })

@@ -28,8 +28,10 @@ export async function buildOpalDatasourceEntries(): Promise<OpalDataSourceEntry[
   const jinbeUrl = env.JINBE_INTERNAL_URL || 'http://jinbe:8080'
 
   const entries = [
+    // All of data.bindings, `groups` included. No entry may sit under another's dst_path: OPAL PUTs each
+    // entry on its own and OPA's PUT replaces the subtree, so a parent's write wipes its child until the
+    // child's own write lands — /bindings/groups as its own entry denied every group role for that window.
     { url: `${jinbeUrl}/api/admin/rbac/bindings`, topics: ['policy_data'], dst_path: '/bindings' },
-    { url: `${jinbeUrl}/api/admin/rbac/opal/groups`, topics: ['policy_data'], dst_path: '/bindings/groups' },
     // Roles of every service plus "global" (data.roles.<svc>). Global is not in the services registry
     // but always present: it holds the platform-wide wildcard ("*") of the super_admin role, and the
     // rego super_admin detector relies on data.roles.global being populated.
