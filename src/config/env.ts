@@ -279,6 +279,9 @@ export const envSchema = z.object({
   MCP_OAUTH_ISSUER: z.string().default(''),
   // Client registration brake: `<n>/h/ip` (per IPv4 /24 or IPv6 /48) and `<m>/d` (everyone).
   MCP_OAUTH_DCR_RATE: z.string().default('10/h/ip,200/d'),
+  // Calls a minute one replica answers on the login/consent provider (/api/public/oauth2/*), over all
+  // visitors: the backstop behind the per-visitor limit (oauth/provider-limit.ts).
+  MCP_OAUTH_PROVIDER_CEILING: z.coerce.number().int().positive().default(3000),
   // How long an introspection answer is reused (ms), capped by the token's own exp. Bounds how long a
   // revoked token still works here.
   DELEGATED_TOKEN_CACHE_MS: z

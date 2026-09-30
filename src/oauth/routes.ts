@@ -12,6 +12,7 @@ import { consentScreen, decideConsent, type ConsentDecision } from './consent.js
 import { listConnections, revokeAllConnections, revokeConnection } from './connections.js'
 import { FlowError } from './flow.js'
 import { oauthAudit } from './audit.js'
+import { PER_CALLER_PER_MINUTE, providerCeiling, providerRateKey } from './provider-limit.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { notFoundResponseSchema, serviceUnavailableResponseSchema, unauthorizedResponseSchema, forbiddenResponseSchema } from '../schemas/response-schemas.js'
 
@@ -153,9 +154,10 @@ const ctxOf = (request: FastifyRequest) => ({
 const CHALLENGE = { type: 'string', minLength: 1, maxLength: 4096 }
 
 export async function oauthProviderRoutes(fastify: FastifyInstance) {
+  fastify.addHook('onRequest', providerCeiling)
   fastify.addHook('preHandler', sessionOnly)
-  // login-ui asks from its own pods: one address for everybody signing in, hence the wide limit.
-  const limit = { max: 600, timeWindow: '1 minute' }
+  // login-ui asks from its own pods: keyed on the visitor, never on the pod (provider-limit.ts).
+  const limit = { max: PER_CALLER_PER_MINUTE, timeWindow: '1 minute', keyGenerator: providerRateKey }
 
   fastify.get('/login', {
     config: { access: 'public', rateLimit: limit },
