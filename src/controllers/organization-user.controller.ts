@@ -8,7 +8,6 @@ import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
-  updateUserGroupsBodySchema,
 } from '../schemas/admin.schema.js'
 import { notificationService } from '../server.js'
 import {
@@ -274,41 +273,6 @@ export class OrganizationUserController {
     const availableGroups = await declaredGroups()
 
     return reply.send({ email, groups, availableGroups })
-  }
-
-  /**
-   * Update a user's groups within an organization
-   * PUT /api/organizations/:organizationId/users/:id/groups
-   */
-  async updateUserGroups(
-    request: FastifyRequest<{
-      Params: { organizationId: string; id: string }
-      Body: { groups: string[] }
-    }>,
-    reply: FastifyReply
-  ) {
-    const { organizationId, id } = request.params
-    const { groups } = updateUserGroupsBodySchema.parse(request.body)
-
-    const identity = await kratosService.getIdentity(id)
-    await assertOrganizationMatch(identity, organizationId)
-
-    const email = identity.traits?.email as string
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: { id, email, organizationId },
-      newGroups: groups,
-      actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
-      privilegePolicy: {
-        kind: 'wildcard_in_org',
-        orgId: organizationId,
-      },
-      auditEventType: 'organization_user.groups_changed',
-      auditExtraDetails: { organizationId },
-    })
-
-    if (!result.ok) return reply.status(result.status).send(result.body)
-    return reply.send(result.response)
   }
 
   /**

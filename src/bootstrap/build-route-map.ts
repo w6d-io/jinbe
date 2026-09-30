@@ -132,7 +132,6 @@ const HAND_ROUTES: readonly RouteRule[] = [
   { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users', org_param: 'organizationId' },
   { method: 'DELETE', path: '/api/organizations/:organizationId/users/:id',        permission: 'org:manage_users', org_param: 'organizationId' },
   { method: 'GET',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users', org_param: 'organizationId' },
-  { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/groups', permission: 'org:manage_users', org_param: 'organizationId' },
   { method: 'PUT',    path: '/api/organizations/:organizationId/users/:id/membership', permission: 'org:manage_users', org_param: 'organizationId' },
   { method: 'GET',    path: '/api/organizations/:organizationId/assignable-groups', permission: 'org:manage_users', org_param: 'organizationId' },
 

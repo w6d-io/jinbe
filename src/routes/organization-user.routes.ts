@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
-import { requireServiceAdmin, requireServicePermission } from '../middleware/require-service-admin.js'
+import { requireServiceAdmin } from '../middleware/require-service-admin.js'
 import { requireManageableOrg } from '../middleware/require-manageable-org.js'
 import { needs } from '../policy/route-access.js'
 import {
@@ -11,12 +11,9 @@ import {
 } from '../schemas/organization-user.schema.js'
 import {
   kratosIdentityJsonSchema,
-  updateUserGroupsBodyJsonSchema,
   userGroupsResponseJsonSchema,
-  userGroupsUpdateResponseJsonSchema,
 } from '../schemas/admin.schema.js'
 import {
-  badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
   serviceUnavailableResponseSchema,
@@ -200,28 +197,5 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
       },
     },
     organizationUserController.getUserGroups.bind(organizationUserController)
-  )
-
-  fastify.put(
-    '/users/:id/groups',
-    {
-      ...needs('org.members:write', ORG),
-      preHandler: requireServicePermission('groups.members:write'),
-      schema: {
-        description:
-          "Update a user's group memberships within this organization. Requires groups.members:write (users:assign_group, its legacy name).",
-        tags: ['organization-users'],
-        params: organizationUserIdParamJsonSchema,
-        body: updateUserGroupsBodyJsonSchema,
-        response: {
-          200: userGroupsUpdateResponseJsonSchema,
-          400: badRequestResponseSchema,
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    organizationUserController.updateUserGroups.bind(organizationUserController) as never
   )
 }
