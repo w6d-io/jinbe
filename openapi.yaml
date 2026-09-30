@@ -13804,6 +13804,10 @@ paths:
                         type: integer
                       all_permissions:
                         type: boolean
+                      key_step_up_at:
+                        type: string
+                      key_step_up_actions:
+                        type: boolean
         "401":
           description: Default Response
           content:
