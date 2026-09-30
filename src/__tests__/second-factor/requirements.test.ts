@@ -62,9 +62,9 @@ describe('groups', () => {
 
 describe('permissions', () => {
   it('a step-up permission says how recent, whether a personal key may stand in, and four-eyes', () => {
-    expect(stepUpRule('groups:write')).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, fourEyes: 'prod' })
-    expect(stepUpRule('users:delete')).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: null, fourEyes: false })
-    expect(stepUpRule('sites:read')).toEqual({ required: false, maxAgeMin: null, viaPersonalKey: null, fourEyes: false })
+    expect(stepUpRule('groups:write')).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, viaOAuthGrant: { maxAgeHours: 12, setting: 'mcp.oauth.protectedActionsHours', requiresConsentOptIn: true }, fourEyes: 'prod' })
+    expect(stepUpRule('users:delete')).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: null, viaOAuthGrant: null, fourEyes: false })
+    expect(stepUpRule('sites:read')).toEqual({ required: false, maxAgeMin: null, viaPersonalKey: null, viaOAuthGrant: null, fourEyes: false })
     expect(stepUpRule('not:real')).toBeNull()
   })
 
@@ -158,7 +158,7 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
       { name: 'staff_ops', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true } },
       { name: 'super_admins', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true } },
     ])
-    expect(body.permissions.find((p: { name: string }) => p.name === 'sites:apply').stepUpRule).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, fourEyes: 'prod' })
+    expect(body.permissions.find((p: { name: string }) => p.name === 'sites:apply').stepUpRule).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, viaOAuthGrant: { maxAgeHours: 12, setting: 'mcp.oauth.protectedActionsHours', requiresConsentOptIn: true }, fourEyes: 'prod' })
     expect(body.roles.find((r: { name: string }) => r.name === 'ops').stepUpPermissions).toContain('gateway:apply')
     expect(body.sites).toEqual([
       expect.objectContaining({ name: 'payroll', applied: true, secondFactor: expect.objectContaining({ scope: 'writes', minAal: 'aal2' }) }),
@@ -197,7 +197,7 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
 
   it('/api/catalog carries each permission\'s rule and each role\'s step-up permissions', async () => {
     const body = (await app.inject({ url: '/api/catalog' })).json()
-    expect(body.permissions.find((p: { name: string }) => p.name === 'groups:write')).toMatchObject({ stepUp: true, stepUpRule: { required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 } } })
+    expect(body.permissions.find((p: { name: string }) => p.name === 'groups:write')).toMatchObject({ stepUp: true, stepUpRule: { required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, viaOAuthGrant: { maxAgeHours: 12, setting: 'mcp.oauth.protectedActionsHours', requiresConsentOptIn: true } } })
     expect(body.roles.find((r: { name: string }) => r.name === 'viewer').stepUpPermissions).toEqual([])
   })
 

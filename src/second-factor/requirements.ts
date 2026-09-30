@@ -24,7 +24,9 @@ import type { GroupFlag } from './settings.js'
  *   site_login           a site's own bar (login.twoFactor): all / writes / routes / none
  *   personal_key         a personal MCP key stands in for the step-up of a few permissions with the
  *                        factor proven at its creation, for 30 days
- *   oauth_grant          planned: an OAuth grant standing in the same way for 12 hours
+ *   oauth_grant          an OAuth grant stands in the same way, for the same permissions, with the
+ *                        factor proven at consent, when the user allowed protected actions there —
+ *                        for the MCP setting oauth.protectedActionsHours (default 12), capped at the grant end
  * No organisation-level rule exists: an organisation cannot ask its members for a second factor.
  */
 
@@ -32,8 +34,12 @@ export type SecondFactorRule = 'group_sign_in' | 'step_up' | 'enrol_before_joini
 
 export const STEP_UP_MAX_AGE_MIN = STEP_UP_MAX_AGE_MS / 60_000
 export const PERSONAL_KEY_MAX_AGE_DAYS = KEY_STEP_UP_MAX_AGE_MS / 86_400_000
-/** Not enforced yet (the OAuth work lands separately); shown as planned. */
+/**
+ * The default of the MCP setting `oauth.protectedActionsHours` (src/mcp/settings.ts on the OAuth branch).
+ * A local copy until that branch merges; then read it from getMcpSettings() so a changed window shows.
+ */
 export const OAUTH_GRANT_MAX_AGE_HOURS = 12
+export const OAUTH_GRANT_SETTING = 'mcp.oauth.protectedActionsHours'
 
 export const RULES: ReadonlyArray<{ id: SecondFactorRule; label: string; status: 'enforced' | 'planned' }> = [
   { id: 'group_sign_in', label: "A group's \"Members must use 2FA\" switch: its members must use two-step sign-in (aal2) on every permission-carrying route", status: 'enforced' },
@@ -41,7 +47,7 @@ export const RULES: ReadonlyArray<{ id: SecondFactorRule; label: string; status:
   { id: 'enrol_before_joining', label: 'The same switch: nobody is added to such a group before they have enrolled a second factor', status: 'enforced' },
   { id: 'site_login', label: "A site's own two-step sign-in bar: every request, changes only, chosen routes, or none", status: 'enforced' },
   { id: 'personal_key', label: `A personal AI key stands in for the step-up of a few permissions with the second factor proven when it was created, for ${PERSONAL_KEY_MAX_AGE_DAYS} days`, status: 'enforced' },
-  { id: 'oauth_grant', label: `An OAuth grant stands in the same way for ${OAUTH_GRANT_MAX_AGE_HOURS} hours`, status: 'planned' },
+  { id: 'oauth_grant', label: `An OAuth grant stands in the same way, with the second factor proven at consent when the user allowed protected actions, for ${OAUTH_GRANT_MAX_AGE_HOURS} hours by default (MCP setting)`, status: 'enforced' },
 ]
 
 // ── groups ────────────────────────────────────────────────────
@@ -70,6 +76,8 @@ export interface StepUpRule {
   maxAgeMin: number | null
   /** A personal key may stand in, with the factor proven at its creation (personal_key); null when it may not. */
   viaPersonalKey: { maxAgeDays: number } | null
+  /** An OAuth grant may stand in, with the factor proven at consent, when the user opted in there; null when it may not. */
+  viaOAuthGrant: { maxAgeHours: number; setting: string; requiresConsentOptIn: true } | null
   /** A second person in prod (change request). */
   fourEyes: 'prod' | false
 }
@@ -82,6 +90,8 @@ export function stepUpRule(permission: string): StepUpRule | null {
     required: spec.stepUp,
     maxAgeMin: spec.stepUp ? STEP_UP_MAX_AGE_MIN : null,
     viaPersonalKey: keyStandsIn ? { maxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS } : null,
+    // Same permissions as a personal key (delegatedStepUpVerdict on the OAuth branch).
+    viaOAuthGrant: keyStandsIn ? { maxAgeHours: OAUTH_GRANT_MAX_AGE_HOURS, setting: OAUTH_GRANT_SETTING, requiresConsentOptIn: true } : null,
     fourEyes: spec.fourEyes,
   }
 }

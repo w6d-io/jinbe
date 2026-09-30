@@ -54,11 +54,17 @@ export const stepUpRuleJsonSchema = {
   type: 'object',
   description:
     'required: a second factor proven within maxAgeMin minutes; viaPersonalKey: a personal key may stand in with the factor ' +
-    'proven at its creation, up to maxAgeDays (null: it may not); fourEyes: a second person in prod.',
+    'proven at its creation, up to maxAgeDays (null: it may not); viaOAuthGrant: an OAuth grant may stand in with the factor proven ' +
+    'at consent when the user allowed protected actions, for maxAgeHours (the MCP setting named); fourEyes: a second person in prod.',
   properties: {
     required: { type: 'boolean' },
     maxAgeMin: { type: 'integer', nullable: true },
     viaPersonalKey: { type: 'object', nullable: true, properties: { maxAgeDays: { type: 'integer' } } },
+    viaOAuthGrant: {
+      type: 'object',
+      nullable: true,
+      properties: { maxAgeHours: { type: 'integer' }, setting: { type: 'string' }, requiresConsentOptIn: { type: 'boolean' } },
+    },
     fourEyes: { type: ['string', 'boolean'] },
   },
 }
