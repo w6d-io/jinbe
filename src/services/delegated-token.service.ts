@@ -55,6 +55,9 @@ export interface DelegatedPrincipal {
   aud: string[]
   /** Personal keys: the key's own expiry (ms since epoch). */
   keyExpiresAt?: number
+  /** Personal key: when its creator proved a second factor (ISO), and whether step-up actions are allowed. */
+  keyStepUpAt?: string
+  keyStepUpActions?: boolean
 }
 
 export type DelegatedResult = { principal: DelegatedPrincipal } | { error: string }
@@ -185,7 +188,7 @@ export class DelegatedTokenService {
         expiresAt: Math.min(intro.exp * 1000, bound.expiresAt ?? Infinity),
         tokenScope: intro.scope ?? '',
         aud: intro.aud,
-        ...(bound.kind === 'personal' ? { keyExpiresAt: bound.expiresAt } : {}),
+        ...(bound.kind === 'personal' ? { keyExpiresAt: bound.expiresAt, keyStepUpAt: bound.keyStepUpAt, keyStepUpActions: bound.keyStepUpActions } : {}),
       },
     }
   }
@@ -209,12 +212,13 @@ export class DelegatedTokenService {
     if (typeof subject !== 'string' || !subject) return { error: 'client_incomplete' }
     // Mandatory expiry: a personal key without one is refused, not treated as eternal.
     if (!(expiresAt > now)) return { error: 'key_expired' }
-    return { subject, kind: 'personal', expiresAt, allPermissions: allPermissionsKey(meta) }
+    const stepUpAt = typeof meta.step_up_at === 'string' ? meta.step_up_at : undefined
+    return { subject, kind: 'personal', expiresAt, allPermissions: allPermissionsKey(meta), ...(stepUpAt ? { keyStepUpAt: stepUpAt } : {}), keyStepUpActions: meta.step_up_actions !== false }
   }
 }
 
 type Bound =
-  | { subject: string; kind: 'oauth' | 'personal'; org?: string; expiresAt?: number; allPermissions?: boolean }
+  | { subject: string; kind: 'oauth' | 'personal'; org?: string; expiresAt?: number; allPermissions?: boolean; keyStepUpAt?: string; keyStepUpActions?: boolean }
   | { error: string }
 
 /** A personal key carrying all its holder's permissions (`scope_mode: all`) rather than a stored subset. */

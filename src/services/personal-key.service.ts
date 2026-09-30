@@ -96,7 +96,7 @@ export class PersonalKeyService {
   }
 
   /** `scopes` absent: "all my permissions". Present: a non-empty subset of what the caller holds. */
-  async create(caller: { id: string; email: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
+  async create(caller: { id: string; email: string; secondFactorAt?: string }, body: PersonalKeyCreateBody): Promise<PersonalKeySecretView> {
     const settings = await assertMcpOn()
     await assertGroupAllowed(settings, caller.email)
     const days = body.expires_in_days ?? settings.personalKeys.maxDays
@@ -120,7 +120,9 @@ export class PersonalKeyService {
       scopes: [...scopes, MCP_SCOPE],
       createdBy: caller.id,
       expiresAt: expiryFrom(days),
-      personal: { subject: caller.id, allPermissions: all },
+      // The route demands a fresh second factor (requireRecentMfa): that proof, dated, is what a
+      // delegated call may later stand on for the few step-up actions a key may do (delegated-step-up.ts).
+      personal: { subject: caller.id, allPermissions: all, stepUpAt: caller.secondFactorAt ?? new Date().toISOString(), stepUpActions: body.allow_step_up_actions !== false },
       // The delegated path only takes a token for its own audience.
       ...(env.DELEGATED_TOKEN_AUDIENCE ? { audience: [env.DELEGATED_TOKEN_AUDIENCE] } : {}),
     })

@@ -19,8 +19,10 @@ describe('the catalogue', () => {
     expect(never).toEqual([
       // the access model itself
       'groups:write', 'org.admins:write', 'policy.bundle:write',
-      // key and client creation (and revocation, a deletion)
-      'org.keys:revoke', 'org.keys:write',
+      // key and client creation (revoking a key is allowed: owner decision 2026-09-29, (d))
+      'org.keys:write',
+      // removing people from groups counts as a deletion (owner, 2026-09-30)
+      'groups.members:revoke',
       // deletions
       'org:delete', 'recert:delete', 'sites:delete', 'users:delete', 'zones:delete',
       // approvals (a campaign close applies its revokes)

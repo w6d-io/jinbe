@@ -50,6 +50,9 @@ export interface Delegation {
   kind: 'oauth' | 'personal'
   /** The in-cluster service that presented the token (its ServiceAccount name, e.g. auth-mcp). */
   via: string
+  /** Personal key: when its creator proved a second factor, and whether the key may use that proof. */
+  keyStepUpAt?: string
+  keyStepUpActions?: boolean
 }
 
 declare module 'fastify' {
@@ -215,7 +218,7 @@ async function secondFactorFromSession(request: FastifyRequest, subject: string)
         id: p.subject,
         name: p.name,
         authVia: 'delegated',
-        delegation: { clientId: p.clientId, scopes: p.scopes, kind: p.kind, via: actor, ...(p.org ? { org: p.org } : {}) },
+        delegation: { clientId: p.clientId, scopes: p.scopes, kind: p.kind, via: actor, ...(p.org ? { org: p.org } : {}), ...(p.keyStepUpAt ? { keyStepUpAt: p.keyStepUpAt } : {}), ...(p.keyStepUpActions !== undefined ? { keyStepUpActions: p.keyStepUpActions } : {}) },
       }
       request.log.debug(
         { subject: p.subject, clientId: p.clientId, org: p.org, kind: p.kind, via: actor, path: request.url },
