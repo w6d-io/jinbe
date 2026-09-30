@@ -4,6 +4,7 @@ import { auditEventService } from '../services/audit-event.service.js'
 import { delegatedTokenService } from '../services/delegated-token.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { rights } from '../authz/opa.js'
+import { oauthIssuer } from '../oauth/issuer.js'
 import { defaultMcpSettings, deploymentServerUrl, effectiveServerUrl, getMcpSettings, groupAllowed, mcpCeiling, mcpGate, setMcpSettings, validateMcpSettings } from './settings.js'
 
 const problemSchema = {
@@ -22,6 +23,17 @@ const settingsSchema = {
     serverUrl: { type: ['string', 'null'] },
     personalKeys: { type: 'object', properties: { maxDays: { type: 'integer' } } },
     allowedGroups: { anyOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string' } }] },
+    oauth: {
+      type: 'object',
+      additionalProperties: false,
+      description: 'Browser sign-in (OAuth) for MCP clients: on by default whenever MCP is on',
+      properties: {
+        enabled: { type: 'boolean' },
+        maxDays: { type: 'integer', description: 'Absolute life of one sign-in, 1–30 days' },
+        protectedActions: { type: 'string', enum: ['off', 'window'] },
+        protectedActionsHours: { type: 'integer', description: 'Hours after the consent-time second factor during which protected actions are allowed, 1–720' },
+      },
+    },
   },
 }
 
@@ -131,6 +143,7 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
             off: { type: ['string', 'null'], enum: ['deployment', 'administrator', null] },
             personalKeys: { type: ['object', 'null'], properties: { maxDays: { type: 'integer' } } },
             allowed: { type: ['boolean', 'null'], description: 'Whether your groups may use MCP (allowedGroups); null when MCP is off or it cannot be told' },
+            oauth: { type: 'object', properties: { enabled: { type: 'boolean', description: 'Browser sign-in (OAuth) is offered: MCP on, the OAuth switch on, and an authorization server configured' } } },
           },
         },
         401: problemSchema,
@@ -143,7 +156,7 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
     reply.header('cache-control', 'private, max-age=5')
     const gate = await mcpGate()
     if (gate.off === 'unavailable') return reply.status(503).send({ error: 'settings_unavailable', message: 'The AI assistant settings cannot be read right now.' })
-    if (gate.off === 'deployment') return { enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null }
+    if (gate.off === 'deployment') return { enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null, oauth: { enabled: false } }
     let allowed: boolean | null = null
     if (gate.on) {
       try {
@@ -158,6 +171,7 @@ export async function mcpStatusRoutes(fastify: FastifyInstance) {
       off: gate.on ? null : 'administrator',
       personalKeys: gate.settings!.personalKeys,
       allowed,
+      oauth: { enabled: gate.on && gate.settings.oauth.enabled && oauthIssuer() !== null },
     }
   })
 }

@@ -115,6 +115,16 @@ export const AUDIT_EVENTS = {
   // Whether members may mint personal keys acting in the org.
   'apikey.policy_changed': ['secret', 'update', 'warn'],
 
+  // Browser sign-in for MCP clients (src/oauth/): a client registered itself (DCR), a sign-in was
+  // refused, consent given or denied, a sign-in revoked (one, all of a user's) or past its absolute life.
+  'mcp.oauth.client_registered': ['secret', 'create'],
+  'mcp.oauth.login_refused': ['auth', 'login', 'warn'],
+  'mcp.oauth.consent_granted': ['secret', 'create', 'high'],
+  'mcp.oauth.consent_denied': ['auth', 'login'],
+  'mcp.oauth.revoked': ['secret', 'delete'],
+  'mcp.oauth.revoked_all': ['secret', 'delete', 'warn'],
+  'mcp.oauth.grant_expired': ['secret', 'delete'],
+
   'infra.cluster.created': ['infra', 'create'],
   'infra.cluster.updated': ['infra', 'update'],
   'infra.cluster.deleted': ['infra', 'delete', 'warn'],

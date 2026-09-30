@@ -18,6 +18,8 @@ import { declaredGroups } from '../services/group-catalogue.js'
 import { rightsForDisplay } from '../authz/opa.js'
 import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import { componentLogger } from '../telemetry/logger.js'
+import { revokeAllConnectionsQuietly } from '../oauth/connections.js'
+import { oauthAudit } from '../oauth/audit.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -702,6 +704,11 @@ export class AdminController {
       actor: auditActor(request), targetType: 'user', targetId: id,
       source: 'jinbe-api',
     }).catch(() => {})
+    // Sign out everywhere includes the AI apps signed in with a browser (their consent and tokens).
+    const clients = await revokeAllConnectionsQuietly(id)
+    if (clients.length > 0) {
+      oauthAudit('mcp.oauth.revoked_all', { actor: auditActor(request), targetId: id, targetType: 'user', details: { subject: id, clients: clients.length, via: 'sessions_revoked' } })
+    }
     return reply.status(204).send()
   }
 

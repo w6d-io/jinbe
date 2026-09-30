@@ -214,6 +214,112 @@ paths:
       responses:
         "200":
           description: Default Response
+  /.well-known/oauth-authorization-server:
+    get:
+      tags:
+        - oauth
+      description: RFC 8414 authorization-server metadata for MCP clients, on the
+        Hydra host only (MCP_OAUTH_ISSUER). The issuer is Hydra's verbatim; PKCE
+        S256 only, public clients, registration at <issuer>/oauth2/register.
+      responses:
+        "200":
+          description: Default Response
+  /oauth2/register:
+    post:
+      tags:
+        - oauth
+      description: Register an MCP client (RFC 7591 subset), on the Hydra host only.
+        Loopback http redirect URIs with an explicit port (localhost, 127.0.0.1,
+        [::1]), a public client (none), authorization_code + refresh_token. The
+        audience, lifetimes and metadata are forced; no secret and no
+        registration access token are issued. 403 access_denied when MCP or
+        browser sign-in is off; 429 over the per-network or daily limit; 503
+        when too many registrations await consent.
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id:
+                    type: string
+                  client_id_issued_at:
+                    type: integer
+                  client_name:
+                    type: string
+                  redirect_uris:
+                    type: array
+                    items:
+                      type: string
+                  grant_types:
+                    type: array
+                    items:
+                      type: string
+                  response_types:
+                    type: array
+                    items:
+                      type: string
+                  token_endpoint_auth_method:
+                    type: string
+                  scope:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "429":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
   /api/telemetry:
     get:
       tags:
@@ -1076,6 +1182,247 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+  /api/me/mcp/connections/:
+    get:
+      tags:
+        - oauth
+      description: "Your signed-in AI apps (MCP browser sign-ins): name (unverified),
+        permissions mode, protected actions, dates, last use."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        client_id:
+                          type: string
+                        client_name:
+                          type: string
+                        redirect_host:
+                          type:
+                            - "null"
+                            - string
+                        granted_at:
+                          type:
+                            - "null"
+                            - string
+                        grant_expires_at:
+                          type:
+                            - "null"
+                            - string
+                        scope_mode:
+                          type: string
+                          enum:
+                            - all
+                            - chosen
+                        scopes:
+                          type: array
+                          items:
+                            type: string
+                        step_up_actions:
+                          type: boolean
+                        step_up_until:
+                          type:
+                            - "null"
+                            - string
+                        last_used_at:
+                          type:
+                            - "null"
+                            - string
+                  total:
+                    type: integer
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/me/mcp/connections/{clientId}:
+    delete:
+      tags:
+        - oauth
+      description: "Disconnect one of your signed-in AI apps: its tokens stop within
+        30 seconds and its registration is deleted."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          in: path
+          name: clientId
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/users:
@@ -3119,6 +3466,98 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/mcp-connections:
+    delete:
+      tags:
+        - oauth
+      description: Disconnect every AI app a person signed in with a browser (MCP).
+        Also done by revoking all their sessions. Needs sessions:revoke.
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          in: path
+          name: id
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/bulk/sites.routes.upsert/plan:
@@ -11005,6 +11444,26 @@ paths:
                           - type: array
                             items:
                               type: string
+                      oauth:
+                        type: object
+                        additionalProperties: false
+                        description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                          MCP is on"
+                        properties:
+                          enabled:
+                            type: boolean
+                          maxDays:
+                            type: integer
+                            description: Absolute life of one sign-in, 1–30 days
+                          protectedActions:
+                            type: string
+                            enum:
+                              - off
+                              - window
+                          protectedActionsHours:
+                            type: integer
+                            description: Hours after the consent-time second factor during which protected
+                              actions are allowed, 1–720
                   defaults:
                     type: object
                     properties:
@@ -11027,6 +11486,26 @@ paths:
                           - type: array
                             items:
                               type: string
+                      oauth:
+                        type: object
+                        additionalProperties: false
+                        description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                          MCP is on"
+                        properties:
+                          enabled:
+                            type: boolean
+                          maxDays:
+                            type: integer
+                            description: Absolute life of one sign-in, 1–30 days
+                          protectedActions:
+                            type: string
+                            enum:
+                              - off
+                              - window
+                          protectedActionsHours:
+                            type: integer
+                            description: Hours after the consent-time second factor during which protected
+                              actions are allowed, 1–720
                   ceiling:
                     type: object
                     properties:
@@ -11077,6 +11556,26 @@ paths:
                     - type: array
                       items:
                         type: string
+                oauth:
+                  type: object
+                  additionalProperties: false
+                  description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                    MCP is on"
+                  properties:
+                    enabled:
+                      type: boolean
+                    maxDays:
+                      type: integer
+                      description: Absolute life of one sign-in, 1–30 days
+                    protectedActions:
+                      type: string
+                      enum:
+                        - off
+                        - window
+                    protectedActionsHours:
+                      type: integer
+                      description: Hours after the consent-time second factor during which protected
+                        actions are allowed, 1–720
       responses:
         "400":
           description: Default Response
@@ -15634,6 +16133,21 @@ paths:
                         type: string
                       key_step_up_actions:
                         type: boolean
+                      scope_mode:
+                        type: string
+                        enum:
+                          - all
+                          - chosen
+                      client_name:
+                        type: string
+                      grant_expires_at:
+                        type: integer
+                      step_up_actions:
+                        type: boolean
+                      step_up_at:
+                        type: string
+                      step_up_until:
+                        type: string
         "401":
           description: Default Response
           content:
@@ -16026,6 +16540,13 @@ paths:
                       - boolean
                     description: Whether your groups may use MCP (allowedGroups); null when MCP is
                       off or it cannot be told
+                  oauth:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        description: "Browser sign-in (OAuth) is offered: MCP on, the OAuth switch on,
+                          and an authorization server configured"
         "401":
           description: Default Response
           content:
@@ -16140,6 +16661,347 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/public/oauth2/login:
+    get:
+      tags:
+        - oauth
+      description: "Hydra login provider for MCP clients, for login-ui (the visitor's
+        Kratos cookies). {action:'redirect', to}: Kratos login, aal2, aal2
+        refresh, 2FA enrolment, or Hydra after accepting; {action:'refused',
+        reason, to}: show why, then follow `to` (Hydra reject). 404
+        challenge_unknown when expired or used."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          in: query
+          name: login_challenge
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - redirect
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/public/oauth2/consent:
+    get:
+      tags:
+        - oauth
+      description: "The consent screen for an MCP client, for login-ui (the visitor's
+        Kratos cookies): the unverified client, the account, the permissions
+        asked that you hold (labels, sensitivity), whether protected actions are
+        offered and until when, and the sign-in's absolute end. Or
+        {action:'refused', reason, to}. 401 without a session, 403
+        wrong_account."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          in: query
+          name: consent_challenge
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - show
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+                  client:
+                    type: object
+                    properties:
+                      client_id:
+                        type: string
+                      name:
+                        type: string
+                      name_verified:
+                        type: boolean
+                      redirect_host:
+                        type:
+                          - "null"
+                          - string
+                      registered_at:
+                        type:
+                          - "null"
+                          - string
+                  account:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                      subject:
+                        type: string
+                  requested:
+                    type: array
+                    items:
+                      type: string
+                  offline_access:
+                    type: boolean
+                  catalog:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope:
+                          type: string
+                        group:
+                          type: string
+                        label:
+                          type: string
+                        sensitivity:
+                          type: string
+                        protected:
+                          type: boolean
+                  protectedActions:
+                    type: object
+                    properties:
+                      offered:
+                        type: boolean
+                      until:
+                        type:
+                          - "null"
+                          - string
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                  grantExpiresAt:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+    post:
+      tags:
+        - oauth
+      description: Allow or deny an MCP client, for login-ui's server action (the
+        visitor's Kratos cookies, Origin = the auth host). mode 'all' follows
+        your permissions at each call; 'chosen' is the ticked subset of what you
+        hold. protected_actions only when offered. {action:'redirect', to} or
+        {action:'refused', reason, to}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - consent_challenge
+                - decision
+              additionalProperties: false
+              properties:
+                consent_challenge:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                decision:
+                  type: string
+                  enum:
+                    - allow
+                    - deny
+                mode:
+                  type: string
+                  enum:
+                    - all
+                    - chosen
+                scopes:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: string
+                    maxLength: 128
+                protected_actions:
+                  type: boolean
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - redirect
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/public/sign-in-protection/:
     get:
       tags:

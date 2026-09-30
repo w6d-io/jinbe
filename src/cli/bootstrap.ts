@@ -138,6 +138,7 @@ async function main(): Promise<number> {
         },
         signInGate: env.SIGN_IN_GATE_ENABLED,
         mcp: env.MCP_PUBLIC_URL && env.MCP_UPSTREAM_URL ? { publicUrl: env.MCP_PUBLIC_URL, upstream: env.MCP_UPSTREAM_URL } : null,
+        mcpOAuthIssuer: env.MCP_OAUTH_ISSUER || null,
         admin:
           adminEmail && adminPassword
             ? { email: adminEmail, password: adminPassword, name: adminName }

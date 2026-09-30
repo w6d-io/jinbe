@@ -49,13 +49,13 @@ beforeEach(() => {
 
 describe('settings', () => {
   it('unset is OFF until an administrator opts in; no URL, 30 days, every group', () => {
-    expect(parseMcpSettings(undefined)).toEqual({ enabled: false, serverUrl: null, personalKeys: { maxDays: 30 }, allowedGroups: 'all' })
+    expect(parseMcpSettings(undefined)).toEqual({ enabled: false, serverUrl: null, personalKeys: { maxDays: 30 }, allowedGroups: 'all', oauth: { enabled: true, maxDays: 30, protectedActions: 'window', protectedActionsHours: 12 } })
     expect(parseMcpSettings('not json')).toEqual(defaultMcpSettings())
   })
 
   it('accepts a clean document and canonicalises the group list', () => {
     const r = validateMcpSettings({ enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['support', ' ops ', 'support'] })
-    expect(r).toEqual({ ok: true, value: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['ops', 'support'] } })
+    expect(r).toEqual({ ok: true, value: { enabled: false, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['ops', 'support'], oauth: { enabled: true, maxDays: 30, protectedActions: 'window', protectedActionsHours: 12 } } })
     expect(validateMcpSettings({ enabled: true, serverUrl: '' })).toMatchObject({ ok: true, value: { serverUrl: null } })
   })
 
@@ -101,6 +101,50 @@ describe('settings', () => {
 })
 
 
+describe('oauth (browser sign-in)', () => {
+  it('is ON by default whenever MCP is on (owner D5), 30 days, protected actions for 12 h', () => {
+    expect(defaultMcpSettings().oauth).toEqual({ enabled: true, maxDays: 30, protectedActions: 'window', protectedActionsHours: 12 })
+    expect(parseMcpSettings(JSON.stringify({ enabled: true })).oauth.enabled).toBe(true)
+  })
+
+  it('takes a partial document, keeping the defaults for the rest', () => {
+    const r = validateMcpSettings({ enabled: true, oauth: { enabled: false, protectedActionsHours: 2 } })
+    expect(r).toMatchObject({ ok: true, value: { oauth: { enabled: false, maxDays: 30, protectedActions: 'window', protectedActionsHours: 2 } } })
+  })
+
+  it.each([
+    [{ enabled: 'yes' }, 'oauth.enabled'],
+    [{ maxDays: 31 }, 'oauth.maxDays'],
+    [{ maxDays: 0 }, 'oauth.maxDays'],
+    [{ protectedActions: 'always' }, 'oauth.protectedActions'],
+    [{ protectedActionsHours: 721 }, 'oauth.protectedActionsHours'],
+    [{ protectedActionsHours: 1.5 }, 'oauth.protectedActionsHours'],
+  ])('refuses oauth %j', (oauth, field) => {
+    const r = validateMcpSettings({ enabled: true, oauth })
+    expect(r.ok).toBe(false)
+    expect((r as { problems: { field: string }[] }).problems.map((p) => p.field)).toEqual([field])
+  })
+
+  it('refuses an oauth that is not an object', () => {
+    expect(validateMcpSettings({ enabled: true, oauth: [] }).ok).toBe(false)
+  })
+
+  it('status offers browser sign-in only with an issuer configured and the switch on', async () => {
+    const app = Fastify()
+    installRouteAccess(app)
+    app.addHook('onRequest', async (req: FastifyRequest) => { req.userContext = { email: 'ann@acme.io', id: 'u1', name: 'Ann' } })
+    await app.register(mcpStatusRoutes, { prefix: '/api/mcp' })
+    store({ enabled: true })
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/status' })).json().oauth).toEqual({ enabled: false })
+    h.env.MCP_OAUTH_ISSUER = 'https://hydra.example.com/'
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/status' })).json().oauth).toEqual({ enabled: true })
+    store({ enabled: true, oauth: { enabled: false } })
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/status' })).json().oauth).toEqual({ enabled: false })
+    delete h.env.MCP_OAUTH_ISSUER
+    await app.close()
+  })
+})
+
 describe('allowedGroups', () => {
   it('lets in a holder of any listed group, or anybody with all', () => {
     const on = (allowedGroups: 'all' | string[]) => ({ ...defaultMcpSettings(), enabled: true, allowedGroups })
@@ -112,7 +156,7 @@ describe('allowedGroups', () => {
   it('migrates a document saved before groups, once: all stays all, an org list becomes no group (closed)', async () => {
     store({ enabled: true, personalKeys: { maxDays: 7 }, allowedOrgs: 'all' })
     expect((await getMcpSettings()).allowedGroups).toBe('all')
-    expect(JSON.parse(h.config[MCP_SETTINGS_KEY])).toEqual({ enabled: true, serverUrl: null, personalKeys: { maxDays: 7 }, allowedGroups: 'all' })
+    expect(JSON.parse(h.config[MCP_SETTINGS_KEY])).toEqual({ enabled: true, serverUrl: null, personalKeys: { maxDays: 7 }, allowedGroups: 'all', oauth: { enabled: true, maxDays: 30, protectedActions: 'window', protectedActionsHours: 12 } })
     store({ enabled: true, allowedOrgs: ['11111111-1111-1111-1111-111111111111'] })
     expect((await getMcpSettings()).allowedGroups).toEqual([])
     expect(JSON.parse(h.config[MCP_SETTINGS_KEY]).allowedOrgs).toBeUndefined()
@@ -189,14 +233,14 @@ describe('routes', () => {
     expect((await status({ 'x-anon': '1' })).statusCode).toBe(401)
     expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' }) // nothing saved yet
     store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } })
-    expect((await status()).json()).toEqual({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', off: null, personalKeys: { maxDays: 7 }, allowed: true })
+    expect((await status()).json()).toEqual({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', off: null, personalKeys: { maxDays: 7 }, allowed: true, oauth: { enabled: false } })
     store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 }, allowedGroups: ['support'] })
     expect((await status()).json()).toMatchObject({ enabled: true, allowed: false })
     store({ enabled: true, serverUrl: 'https://mcp.example.com/mcp', personalKeys: { maxDays: 7 } })
     store({ enabled: false, serverUrl: 'https://mcp.example.com/mcp' })
     expect((await status()).json()).toMatchObject({ enabled: false, off: 'administrator' })
     h.env.DELEGATED_TOKENS_ENABLED = false
-    expect((await status()).json()).toEqual({ enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null })
+    expect((await status()).json()).toEqual({ enabled: false, serverUrl: null, off: 'deployment', personalKeys: null, allowed: null, oauth: { enabled: false } })
   })
 
   it('the deployment address (MCP_PUBLIC_URL) is shown until an administrator saves another; saving it unchanged stores none', async () => {

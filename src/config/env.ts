@@ -272,6 +272,13 @@ export const envSchema = z.object({
   // auth-mcp inside the cluster (e.g. http://auth-mcp:3100). With MCP_PUBLIC_URL, bootstrap routes the
   // MCP host through Oathkeeper to it (rule `mcp`, tokens checked by auth-mcp itself).
   MCP_UPSTREAM_URL: z.string().default(''),
+  // The OAuth authorization server MCP clients sign in with: Hydra's issuer, BYTE-FOR-BYTE as Hydra
+  // publishes it (urls.self.issuer, trailing slash included) — auth-mcp's PRM names the same string.
+  // Set: jinbe serves RFC 8414 metadata and the locked-down client registration on that host
+  // (src/oauth/), and bootstrap routes both through Oathkeeper (rule `mcp-oauth-as`). Empty: neither.
+  MCP_OAUTH_ISSUER: z.string().default(''),
+  // Client registration brake: `<n>/h/ip` (per IPv4 /24 or IPv6 /48) and `<m>/d` (everyone).
+  MCP_OAUTH_DCR_RATE: z.string().default('10/h/ip,200/d'),
   // How long an introspection answer is reused (ms), capped by the token's own exp. Bounds how long a
   // revoked token still works here.
   DELEGATED_TOKEN_CACHE_MS: z
