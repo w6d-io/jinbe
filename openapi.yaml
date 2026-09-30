@@ -1313,6 +1313,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1405,6 +1411,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1506,6 +1518,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3746,6 +3764,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
