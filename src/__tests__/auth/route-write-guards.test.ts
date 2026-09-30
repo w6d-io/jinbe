@@ -24,6 +24,7 @@ const EXCEPTIONS: Record<string, string> = {
   'POST /api/admin/sites/zones/suggest': 'computes a suggested zone for a host; writes nothing',
   'POST /api/admin/sites/match': 'which gateway rule and route a request would hit (gatekit); writes nothing',
   'POST /api/admin/sites/render': 'renders a header/claims template as Oathkeeper would (gatekit); writes nothing',
+  'POST /api/admin/sites/:name/verify': 'reads the rollout, asks the policy and sends anonymous GET/HEAD probes to the public URL; writes nothing (1 per site per 30 s)',
   'POST /api/admin/gateway/preview': 'validates a proposed gateway configuration; writes nothing',
 
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────

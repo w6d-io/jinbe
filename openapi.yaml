@@ -8129,6 +8129,24 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/verify:
+    post:
+      tags: *a3
+      description: "After publishing: rollout state (version, Site Ready, gateway
+        rules, HTTPRoute, DNS, TLS, WAF), one anonymous request per route to the
+        public URL (at most 50, within 25 s; the rest in probe.notProbed), the
+        access matrix per group and role from the policy, one WAF check when
+        {waf: true}, and curl commands per route. Once per site per 30 s (429
+        verify_rate_limited, Retry-After)"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/drift:
     get:
       tags: *a3

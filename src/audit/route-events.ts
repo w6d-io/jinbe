@@ -131,6 +131,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/zones/suggest': exempt('proposes the zone a host would need and probes its DNS; writes nothing'),
   'POST /api/admin/sites/match': exempt('asks which rule a request would hit; writes nothing'),
   'POST /api/admin/sites/render': exempt('renders a header template as the gateway would; writes nothing'),
+  'POST /api/admin/sites/:name/verify': exempt('reads the rollout and sends anonymous GET/HEAD probes to the public URL; writes nothing (1 per site per 30 s)'),
   'POST /api/admin/sites/:name/drift/accept': route('site.drift_accepted', 'site'),
   'POST /api/admin/sites/:name/restore': route('site.restored', 'site'),
   'POST /api/admin/sites/:name/requests': route('site.apply_requested', 'site'),

@@ -48,6 +48,9 @@ export function setDnsLookup(l: DnsLookup | null): void {
   lookup = l ?? new NodeDnsLookup()
 }
 
+/** The addresses a host resolves to here ([] when it does not). */
+export const resolveHost = (host: string): Promise<string[]> => lookup.addresses(host)
+
 /** The ingress load balancer as addresses: IPs kept, hostnames (an AWS ELB) resolved. */
 async function expectedAddresses(ingress: string[]): Promise<string[]> {
   const out = await Promise.all(ingress.map((a) => (IP.test(a) ? Promise.resolve([a]) : lookup.addresses(a))))
