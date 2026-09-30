@@ -7,7 +7,8 @@ import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, liveRules, pin
 import { addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 import { kubeSites } from './kube-sites.js'
 import { publishPermissions, unpublishPermissions } from './publish.js'
-import { getRecord, save } from './sites.service.js'
+import { findingsFor, getRecord, save } from './sites.service.js'
+import { assertPublishable } from './findings.js'
 import { auditSite, type Actor } from './audit.js'
 import { setStage, saveApply, startApply, watchApply, withVersion } from './applies.js'
 import { siteLoginStore } from './login-store.js'
@@ -29,17 +30,27 @@ import { assertApplyAllowed } from './migration/migration.service.js'
  * cut-over, no new site is applied at all (migration/).
  */
 
-export async function apply(name: string, version: number, actor: Actor) {
+export async function apply(name: string, version: number, actor: Actor, acknowledge: readonly string[] = []) {
   assertNotSystem(name)
   const record = await getRecord(name)
   if (version !== record.version) {
     throw siteError(409, 'version_mismatch', `Version ${record.version} is the saved one; apply that, or roll back to ${version}`)
   }
+  await assertAcknowledged(record, acknowledge)
   await assertNoApprovalNeeded(record)
-  return applyRecord(record, actor, 'applied')
+  return applyRecord(record, actor, 'applied', acknowledge.length > 0 ? { acknowledged: [...new Set(acknowledge)] } : {})
 }
 
-export async function applyRecord(record: SiteRecord, actor: Actor, verb: string) {
+/**
+ * The publish gate on security findings (findings.ts): refused (422 unconfirmed_findings) while one is
+ * an error or a confirm finding is not acknowledged. Apply and the apply request pass through it; a
+ * rollback does not — it puts back a version that was published already.
+ */
+export async function assertAcknowledged(record: SiteRecord, acknowledge: readonly string[]): Promise<void> {
+  assertPublishable(await findingsFor(record.site, render(record.site, await loadPlatform())), acknowledge)
+}
+
+export async function applyRecord(record: SiteRecord, actor: Actor, verb: string, details: Record<string, unknown> = {}) {
   const { site, version } = record
   await assertApplyAllowed()
   const records = await sitesRepository.list()
@@ -87,7 +98,7 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
   timeline.generation = await kube.get(site.name).then((cr) => cr?.metadata.generation).catch(() => undefined)
   await saveApply(timeline)
   await sitesRepository.markApplied(site.name, { version, by: actor.email ?? 'unknown', rules: rendered.rules })
-  auditSite('apply', site.name, actor, `${verb} version ${version}`, { version, rules: rendered.rules.map((r) => r.id), applyId: timeline.id }, 'applied')
+  auditSite('apply', site.name, actor, `${verb} version ${version}`, { version, rules: rendered.rules.map((r) => r.id), applyId: timeline.id, ...details }, 'applied')
   if (before && !sameAddress(before.address, site.address)) {
     auditSite('address_change', site.name, actor, `address ${addressUrl(before.address)} → ${addressUrl(site.address)} (version ${version})`, {
       version, fromVersion: record.applied!.version, applyId: timeline.id, address: { from: before.address, to: site.address },

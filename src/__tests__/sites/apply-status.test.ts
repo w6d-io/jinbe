@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { payrollSite } from './fixtures.js'
+import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 import { fakeCluster } from './harness.js'
 
@@ -81,7 +81,7 @@ async function saveAndApply(site: Site = payrollSite()) {
   const headers = cur.statusCode === 200 ? { ...W, 'if-match': cur.headers.etag as string } : W
   const put = await app.inject({ method: 'PUT', url: `/sites/${site.name}`, headers, payload: { site } })
   expect(put.statusCode).toBe(200)
-  const res = await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: put.json().version } })
+  const res = await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: put.json().version, acknowledge: ACK } })
   expect(res.statusCode).toBe(200)
   return res.json() as { applyId: string; version: number }
 }

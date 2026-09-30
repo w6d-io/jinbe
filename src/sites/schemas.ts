@@ -178,7 +178,9 @@ export const draftBodySchema = z.object({ site: z.unknown(), baseVersion: z.numb
 export const previewBodySchema = z.object({ site: siteSchema, baseVersion: z.number().int().min(0).optional() }).strict()
 export const diffBodySchema = z.object({ site: siteSchema.optional() }).strict()
 export const saveBodySchema = z.object({ site: siteSchema, note: z.string().max(280).optional() }).strict()
-export const applyBodySchema = z.object({ version: z.number().int().min(1) }).strict()
+/** Codes of the security findings (findings.ts) a person confirms by publishing: `confirm` findings only. */
+export const acknowledgeSchema = z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'a finding code')).max(32)
+export const applyBodySchema = z.object({ version: z.number().int().min(1), acknowledge: acknowledgeSchema.optional() }).strict()
 export const rollbackBodySchema = z.object({ toVersion: z.number().int().min(1), note: z.string().max(280).optional() }).strict()
 export const checkHostBodySchema = z.object({ host, pathPrefix: z.string().max(512).optional(), site: name.optional() }).strict()
 export const matchBodySchema = z

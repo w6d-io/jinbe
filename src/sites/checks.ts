@@ -26,6 +26,24 @@ export function assertNotSystem(name: string): void {
 
 export const errorsOf = (checks: Check[]) => checks.filter((c) => c.level === 'error')
 
+/**
+ * Every write of a site — a draft (however incomplete), a save, a bulk mapping — refuses a gate that
+ * lets nobody in: 422 `gate_without_authenticator`. Read from the raw body, before the intent's own
+ * validation, so an autosaved draft is held to it too.
+ */
+export function assertGatesAuthenticated(site: unknown): void {
+  const gates = site && typeof site === 'object' ? (site as { gates?: unknown }).gates : undefined
+  if (!Array.isArray(gates)) return
+  const checks: Check[] = gates.flatMap((g, i) => {
+    if (!g || typeof g !== 'object') return []
+    const authenticators = (g as { authenticators?: unknown }).authenticators
+    if (Array.isArray(authenticators) && authenticators.length > 0) return []
+    const id = typeof (g as { id?: unknown }).id === 'string' ? `'${(g as { id: string }).id}'` : `#${i + 1}`
+    return [{ level: 'error' as const, code: 'gate_without_authenticator', message: `gate ${id} has no authenticator: say who may come in (a preset such as cookie_session, or oauth2_introspection for API tokens)`, path: `gates.${i}.authenticators` }]
+  })
+  if (checks.length > 0) throw siteError(422, 'gate_without_authenticator', checks.map((c) => c.message).join('; '), checks)
+}
+
 /** Every rule the gateway serves today: the legacy/system rules and each applied site's rules. */
 export async function liveRules(except?: string, records?: SiteRecord[]): Promise<OathkeeperRule[]> {
   const legacy = await redisRbacRepository.getAccessRules()

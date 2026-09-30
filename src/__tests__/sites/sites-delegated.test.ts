@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
-import { payrollSite } from './fixtures.js'
+import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 
 // The site lifecycle through an MCP key (a delegated caller acting as its holder): draft, diff,
@@ -158,7 +158,7 @@ describe('drafting with sites:write', () => {
 describe('publishing with sites:apply and the key\'s step-up', () => {
   it('applies, pauses and resumes on a personal key carrying its creation-time second factor', async () => {
     await inject('PUT', '/payroll', WRITE, { site: payrollSite() })
-    const applied = await inject('POST', '/payroll/apply', PUBLISH(), { version: 1 })
+    const applied = await inject('POST', '/payroll/apply', PUBLISH(), { version: 1, acknowledge: ACK })
     expect(applied.statusCode).toBe(200)
     expect(h.kube.apply).toHaveBeenCalled()
     expect((await inject('POST', '/payroll/pause', PUBLISH())).statusCode).toBe(200)
@@ -173,7 +173,7 @@ describe('publishing with sites:apply and the key\'s step-up', () => {
       key('sites:read sites:write sites:apply', { 'x-key-step-up': old }),
       key('sites:read sites:write sites:apply', { 'x-key-step-up': FRESH(), 'x-kind': 'oauth' }),
     ]) {
-      const res = await inject('POST', '/payroll/apply', headers, { version: 1 })
+      const res = await inject('POST', '/payroll/apply', headers, { version: 1, acknowledge: ACK })
       expect(res.statusCode).toBe(422)
       expect(res.json().error).toBe('step_up_unavailable')
     }
@@ -182,7 +182,7 @@ describe('publishing with sites:apply and the key\'s step-up', () => {
 
   it('a key without sites:apply publishes nothing', async () => {
     await inject('PUT', '/payroll', WRITE, { site: payrollSite() })
-    const res = await inject('POST', '/payroll/apply', key('sites:read sites:write', { 'x-key-step-up': FRESH() }), { version: 1 })
+    const res = await inject('POST', '/payroll/apply', key('sites:read sites:write', { 'x-key-step-up': FRESH() }), { version: 1, acknowledge: ACK })
     expect(res.statusCode).toBe(403)
     expect(res.json().reason).toBe('scope_missing:sites:apply')
   })
@@ -191,7 +191,7 @@ describe('publishing with sites:apply and the key\'s step-up', () => {
     await inject('PUT', '/payroll', WRITE, { site: payrollSite() })
     process.env.SITES_PRODUCTION = 'true'
     resetSitesConfig()
-    const res = await inject('POST', '/payroll/apply', PUBLISH(), { version: 1 })
+    const res = await inject('POST', '/payroll/apply', PUBLISH(), { version: 1, acknowledge: ACK })
     expect(res.statusCode).toBe(403)
     expect(res.json().reason).toBe('delegation_refused:use_apply_request')
     expect((await inject('POST', '/payroll/requests', WRITE, {})).statusCode).not.toBe(403)
