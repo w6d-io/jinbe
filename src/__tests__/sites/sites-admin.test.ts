@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { payrollSite } from './fixtures.js'
+import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 import { fakeCluster } from './harness.js'
 
@@ -107,7 +107,7 @@ describe('permissions: admin:write edits and asks, sites:apply applies', () => {
 
   it('an admin:write caller saves and requests, but cannot apply, even with MFA', async () => {
     const v = await saveAs(ADMIN)
-    expect((await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: ADMIN, payload: { version: v } })).statusCode).toBe(201)
+    expect((await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: ADMIN, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(201)
     const withMfa = { ...ADMIN, 'x-test-mfa': '1' }
     for (const [method, url, payload] of [
       ['POST', '/sites/payroll/apply', { version: v }], ['POST', '/sites/payroll/pause', {}], ['DELETE', '/sites/payroll', undefined],
@@ -121,8 +121,8 @@ describe('permissions: admin:write edits and asks, sites:apply applies', () => {
   it('a super admin applies with MFA, and not without', async () => {
     const v = await saveAs(ADMIN)
     const noMfa = { 'x-test-perms': SUPER['x-test-perms'] }
-    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: noMfa, payload: { version: v } })).statusCode).toBe(422)
-    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: SUPER, payload: { version: v } })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: noMfa, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(422)
+    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: SUPER, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(200)
   })
 })
 
@@ -194,7 +194,7 @@ describe('static reads', () => {
 describe('deleted sites and restore', () => {
   it('a deleted site is listed with who and when, and restore brings its record and history back (not applied)', async () => {
     const v = await saveAs(ADMIN)
-    await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: SUPER, payload: { version: v } })
+    await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: SUPER, payload: { version: v, acknowledge: ACK } })
     expect((await app.inject({ method: 'DELETE', url: '/sites/payroll', headers: SUPER })).statusCode).toBe(200)
     const deleted = (await app.inject({ method: 'GET', url: '/sites/deleted' })).json()
     expect(deleted).toEqual([expect.objectContaining({ name: 'payroll', displayName: 'Payroll', host: 'payroll.dev.example.com', version: 1, deletedBy: 'sam@x.test', deletedAt: expect.any(String), expiresAt: expect.any(String) })])

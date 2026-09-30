@@ -92,3 +92,6 @@ export function oathkeeperRegex(pattern: string): RegExp {
   out += chunk.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
   return new RegExp(`^${out}$`)
 }
+
+/** The confirm findings (sites/findings.ts) a person acknowledges to publish payrollSite and its variants. */
+export const ACK = ['public_route', 'public_write_route', 'public_catch_all', 'signed_in_route', 'signed_in_catch_all', 'wildcard_role', 'gate_not_preset', 'bare_bearer_token']

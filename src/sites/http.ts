@@ -24,12 +24,12 @@ export function actorOf(request: FastifyRequest): Actor {
 export const parse = <S extends ZodTypeAny>(schema: S, value: unknown): z.output<S> => schema.parse(value)
 export const nameOf = (request: FastifyRequest) => parse(nameParamsSchema, request.params).name
 
-/** One error shape for the whole module: `{error: <code>, message, checks?, issues?, sites?}`. */
+/** One error shape for the whole module: `{error: <code>, message, checks?, findings?, issues?, sites?}`. */
 export function fail(reply: FastifyReply, request: FastifyRequest, err: unknown) {
   if (err instanceof ZodError) {
     return reply.status(400).send({ error: 'invalid_request', message: 'The request is not valid', issues: err.issues })
   }
-  const e = err as { statusCode?: number; code?: string; message?: string; checks?: unknown; ties?: unknown; sites?: unknown; retryAfterSec?: number }
+  const e = err as { statusCode?: number; code?: string; message?: string; checks?: unknown; findings?: unknown; ties?: unknown; sites?: unknown; retryAfterSec?: number }
   const status = typeof e.statusCode === 'number' && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 500
   if (status >= 500 && status !== 503) request.log.error({ err }, '[sites] request failed')
   // A throttled upstream (KubeThrottled): the client may retry, and when.
@@ -38,6 +38,7 @@ export function fail(reply: FastifyReply, request: FastifyRequest, err: unknown)
     error: e.code ?? (status === 409 ? 'conflict' : status === 500 ? 'internal_error' : 'error'),
     message: status === 500 ? 'Internal error' : e.message,
     ...(e.checks ? { checks: e.checks } : {}),
+    ...(e.findings ? { findings: e.findings } : {}),
     ...(e.ties ? { ties: e.ties } : {}),
     ...(e.sites ? { sites: e.sites } : {}),
   })

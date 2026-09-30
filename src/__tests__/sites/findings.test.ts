@@ -1,0 +1,146 @@
+import { describe, it, expect } from 'vitest'
+import { assertPublishable, publishState, securityFindings, unresolved, type Finding } from '../../sites/findings.js'
+import { SESSION_TOKEN, WHO, isBareBearer, whoOf } from '../../sites/presets.js'
+import { expandRoles } from '../../sites/render.js'
+import type { Gate, Site } from '../../sites/schemas.js'
+import type { ProtectionStatus } from '../../sites/protection.js'
+import { payrollSite } from './fixtures.js'
+
+// Security findings on a site (sites/findings.ts): what the check endpoint reports and what the
+// publish gate refuses until fixed (error) or acknowledged (confirm).
+
+const WAF: ProtectionStatus = { state: 'waf', reason: 'gateway', gateway: 'edge/eg', waf: 'edge/coraza', ipReputation: null, message: 'WAF in force' }
+const run = (site: Site, groups = {}, protection: ProtectionStatus | null = WAF) => securityFindings(site, { roles: expandRoles(site) }, { groups, protection })
+const codes = (f: Finding[]) => f.map((x) => x.code)
+const gate = (over: Partial<Gate>): Gate => ({ id: 'api', label: 'API', authenticators: WHO['signed-in'], authorizer: 'policy', mutators: [{ handler: 'header' }], errors: 'api', ...over })
+
+/** payroll with every route behind a permission, a deny catch-all, and no wildcard role: no finding at all. */
+function tidy(over: Partial<Site> = {}): Site {
+  const base = payrollSite()
+  return {
+    ...base,
+    gates: [base.gates[0]],
+    routes: { items: base.routes.items.filter((r) => r.access.kind === 'permission'), catchAll: { gate: 'web', access: { kind: 'deny' } } },
+    roles: { editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'] },
+    groups: { platform: { 'payroll-staff': ['viewer'] }, orgGrantable: { 'payroll-editors': { label: 'Editors', roles: ['editor'] } } },
+    ...over,
+  }
+}
+
+describe('presets (a copy of kuma src/lib/sites/presets.ts)', () => {
+  it('reads a gate back to its preset, custom otherwise', () => {
+    expect(whoOf({ authenticators: WHO['signed-in-or-tokens'] })).toBe('signed-in-or-tokens')
+    expect(whoOf({ authenticators: [{ handler: 'cookie_session' }, { handler: 'bearer_token' }] })).toBe('custom')
+  })
+
+  it('a bearer_token is bare when it reads Authorization (no token_from, or header Authorization)', () => {
+    expect(isBareBearer({ handler: 'bearer_token' })).toBe(true)
+    expect(isBareBearer({ handler: 'bearer_token', config: { token_from: { header: 'authorization' } } })).toBe(true)
+    expect(isBareBearer(SESSION_TOKEN)).toBe(false)
+    expect(isBareBearer({ handler: 'bearer_token', config: { token_from: { cookie: 'sid' } } })).toBe(false)
+    expect(isBareBearer({ handler: 'cookie_session' })).toBe(false)
+  })
+})
+
+describe('securityFindings', () => {
+  it('a tidy site has none', () => {
+    expect(run(tidy())).toEqual([])
+  })
+
+  it('the simulation-api gate [cookie_session, bare bearer_token]: not a preset, and API tokens refused', () => {
+    const f = run(tidy({ gates: [gate({ id: 'web', authenticators: [{ handler: 'cookie_session' }, { handler: 'bearer_token' }] })] }))
+    expect(f).toEqual([
+      expect.objectContaining({ code: 'gate_not_preset', level: 'confirm', path: 'gates.0.authenticators' }),
+      expect.objectContaining({ code: 'bare_bearer_token', level: 'confirm', message: expect.stringContaining('API (OAuth2) tokens are refused') }),
+    ])
+    expect(f.every((x) => x.fix.length > 0)).toBe(true)
+  })
+
+  it('a bare bearer_token before oauth2_introspection is an error; after the session-token preset it is fine', () => {
+    const shadow = run(tidy({ gates: [gate({ id: 'web', authenticators: [{ handler: 'bearer_token' }, { handler: 'oauth2_introspection' }] })] }))
+    expect(shadow.find((x) => x.code === 'bearer_before_oauth2')?.level).toBe('error')
+    expect(run(tidy({ gates: [gate({ id: 'web', authenticators: WHO['signed-in-or-tokens'] })] }))).toEqual([])
+  })
+
+  it('noop with the policy: first is an error (nobody identified), later a warning', () => {
+    expect(run(tidy({ gates: [gate({ id: 'web', authenticators: [{ handler: 'noop' }] })] })).find((x) => x.code === 'noop_with_policy')?.level).toBe('error')
+    const later = run(tidy({ gates: [gate({ id: 'web', authenticators: [{ handler: 'cookie_session' }, { handler: 'noop' }] })] }))
+    expect(later.find((x) => x.code === 'noop_before_policy')?.level).toBe('warn')
+    // A public gate (noop + allow) is not a policy gate.
+    expect(codes(run(tidy({ gates: [...tidy().gates, gate({ id: 'pub', authenticators: WHO.anyone, authorizer: { handler: 'allow' } })] })))).toEqual([])
+  })
+
+  it('public and signed-in routes and catch-alls ask for confirmation, a public write under its own code', () => {
+    const f = run(payrollSite({
+      routes: {
+        items: [
+          ...payrollSite().routes.items,
+          { id: 'signup', methods: ['POST'], path: '/signup', gate: 'public', access: { kind: 'public' }, source: 'manual' },
+          { id: 'me', methods: ['GET'], path: '/me', gate: 'web', access: { kind: 'signed-in' }, source: 'manual' },
+        ],
+        catchAll: { gate: 'web', access: { kind: 'signed-in' } },
+      },
+    }))
+    expect(f.filter((x) => x.level === 'confirm').map((x) => [x.code, x.path])).toEqual([
+      ['public_route', 'routes.items.0'],
+      ['public_write_route', 'routes.items.3'],
+      ['signed_in_route', 'routes.items.4'],
+      ['signed_in_catch_all', 'routes.catchAll'],
+      ['wildcard_role', 'roles'],
+    ])
+    const open = run(payrollSite({ routes: { ...payrollSite().routes, catchAll: { gate: 'public', access: { kind: 'public' } } } }))
+    expect(codes(open)).toContain('public_catch_all')
+  })
+
+  it('a role no group holds, and a permission no held role grants, are warned', () => {
+    const f = run(tidy({ groups: { platform: {}, orgGrantable: { 'payroll-editors': { label: 'Editors', roles: ['editor'] } } }, roles: { editor: ['payslips:create'], viewer: ['payslips:read'] } }))
+    expect(f.map((x) => [x.code, x.level])).toEqual([
+      ['permission_unreachable', 'warn'],
+      ['role_unheld', 'warn'],
+    ])
+    expect(f[0].message).toContain('payslips:read')
+  })
+
+  it('a group outside the site holding its role counts (the platform now)', () => {
+    const site = tidy({ groups: { platform: {}, orgGrantable: { 'payroll-editors': { label: 'Editors', roles: ['editor'] } } } })
+    expect(codes(run(site, { auditors: { payroll: ['viewer'] } }))).toEqual([])
+  })
+
+  it('a held wildcard role — * or resource:* — asks for confirmation; an unheld one is only unheld', () => {
+    expect(codes(run(tidy({ roles: { editor: ['payslips:*'], viewer: ['payslips:read'] } })))).toEqual(['wildcard_role'])
+    expect(codes(run(tidy({ roles: { editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'], admin: ['*'] } })))).toEqual(['role_unheld'])
+  })
+
+  it('the WAF: off is warned with the reason, unknown is warned as unknown', () => {
+    const off: ProtectionStatus = { ...WAF, state: 'none', reason: 'no_gateway', message: 'Served by the nginx Ingress: no WAF, no IP bans' }
+    expect(run(tidy(), {}, off)).toEqual([expect.objectContaining({ code: 'waf_off', level: 'warn', message: expect.stringContaining('nginx Ingress') })])
+    expect(codes(run(tidy(), {}, null))).toEqual(['waf_unknown'])
+  })
+})
+
+describe('the publish gate', () => {
+  const f: Finding[] = [
+    { code: 'public_route', level: 'confirm', message: 'm', fix: 'f' },
+    { code: 'public_route', level: 'confirm', message: 'm2', fix: 'f' },
+    { code: 'waf_off', level: 'warn', message: 'm', fix: 'f' },
+  ]
+
+  it('an acknowledged code covers every finding with it; warnings never block', () => {
+    expect(unresolved(f)).toHaveLength(2)
+    expect(unresolved(f, ['public_route'])).toEqual([])
+    expect(publishState(f)).toEqual({ blocked: false, acknowledge: ['public_route'] })
+  })
+
+  it('an error blocks whatever is acknowledged', () => {
+    const withError = [...f, { code: 'bearer_before_oauth2', level: 'error' as const, message: 'm', fix: 'f' }]
+    expect(publishState(withError).blocked).toBe(true)
+    expect(() => assertPublishable(withError, ['public_route', 'bearer_before_oauth2'])).toThrow(expect.objectContaining({
+      statusCode: 422, code: 'unconfirmed_findings', findings: [expect.objectContaining({ code: 'bearer_before_oauth2' })],
+    }))
+  })
+
+  it('422 unconfirmed_findings names the codes to acknowledge', () => {
+    expect(() => assertPublishable(f)).toThrow(/acknowledge: \["public_route"\]/)
+    expect(() => assertPublishable(f, ['public_route'])).not.toThrow()
+  })
+})

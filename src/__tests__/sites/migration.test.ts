@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { oathkeeperRegex, payrollSite } from './fixtures.js'
+import { oathkeeperRegex, payrollSite, ACK } from './fixtures.js'
 import { fakeCluster } from './harness.js'
 import { buildBuiltInRules } from '../../bootstrap/build-rules.js'
 import type { OathkeeperRule } from '../../services/redis-rbac.repository.js'
@@ -214,7 +214,7 @@ describe('cut-over and rollback', () => {
   const applyNewSite = async () => {
     const site = payrollSite({ groups: { platform: {}, orgGrantable: {} } })
     const put = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: W, payload: { site } })
-    return app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version: put.json().version } })
+    return app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version: put.json().version, acknowledge: ACK } })
   }
 
   it('no new site is applied before the cut-over', async () => {

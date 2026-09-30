@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { payrollSite } from './fixtures.js'
+import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 import { fakeCluster } from './harness.js'
 
@@ -94,7 +94,7 @@ const put = async (site: Site = payrollSite()) => {
   return res.json().version as number
 }
 const request = (version: number, who = 'sam') =>
-  app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: { ...W, 'x-test-user': who }, payload: { version, note: 'please' } })
+  app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: { ...W, 'x-test-user': who }, payload: { version, note: 'please', acknowledge: ACK } })
 const decide = (id: string, verb: 'approve' | 'reject', who: string, payload: object = {}) =>
   app.inject({ method: 'POST', url: `/sites/requests/${id}/${verb}`, headers: { ...W, 'x-test-user': who }, payload })
 
@@ -116,7 +116,7 @@ describe('apply requests and four-eyes', () => {
     process.env.SITES_FOUR_EYES = 'high-risk'
     resetSitesConfig()
     const v = await put() // a new site whose platform group gets "*": high risk
-    const direct = await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: v } })
+    const direct = await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: v, acknowledge: ACK } })
     expect(direct.statusCode).toBe(409)
     expect(direct.json().error).toBe('approval_required')
     expect(cluster.crs.has('payroll')).toBe(false)
@@ -135,7 +135,7 @@ describe('apply requests and four-eyes', () => {
     const site = payrollSite({ groups: { platform: {}, orgGrantable: {} } })
     site.routes.items = site.routes.items.filter((r) => r.access.kind !== 'public') // a new public route is high risk
     const v = await put(site)
-    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: v } })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(200)
   })
 
   it('reject closes the request with a reason; a decided or stale request cannot be approved', async () => {
@@ -161,7 +161,7 @@ describe('sync loop', () => {
   async function applied(name = 'payroll', host = 'payroll.dev.example.com') {
     const site = payrollSite({ name, address: { host }, groups: { platform: {}, orgGrantable: {} } })
     const v = await put(site)
-    const res = await app.inject({ method: 'POST', url: `/sites/${name}/apply`, headers: W, payload: { version: v } })
+    const res = await app.inject({ method: 'POST', url: `/sites/${name}/apply`, headers: W, payload: { version: v, acknowledge: ACK } })
     expect(res.statusCode).toBe(200)
     cluster.operator(name)
     await import('../../sites/applies.js').then((m) => m.stepApply(name, res.json().applyId))

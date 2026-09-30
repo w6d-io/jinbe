@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { ACME, payrollSite } from './fixtures.js'
+import { ACME, payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 
 // S-2: /api/admin/sites. Writes need admin:write (super_admin); apply, rollback, pause/resume and
@@ -123,7 +123,7 @@ describe('guards', () => {
 
   it('apply without a recent second factor is refused and writes nothing', async () => {
     await save()
-    const res = await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: 1 } })
+    const res = await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: 1, acknowledge: ACK } })
     expect(res.statusCode).toBe(422)
     expect(store.s.log).toEqual([])
   })
@@ -142,7 +142,7 @@ describe('guards', () => {
     expect(put.statusCode).toBe(403)
     expect((await app.inject({ method: 'PUT', url: `/sites/${name}/draft`, headers: W, payload: { site: {} } })).statusCode).toBe(403)
     expect((await app.inject({ method: 'DELETE', url: `/sites/${name}`, headers: WM })).statusCode).toBe(403)
-    expect((await app.inject({ method: 'POST', url: `/sites/${name}/apply`, headers: WM, payload: { version: 1 } })).statusCode).toBe(403)
+    expect((await app.inject({ method: 'POST', url: `/sites/${name}/apply`, headers: WM, payload: { version: 1, acknowledge: ACK } })).statusCode).toBe(403)
   })
 })
 
@@ -263,7 +263,7 @@ describe('preview', () => {
 })
 
 describe('apply', () => {
-  const apply = (version = 1) => app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version } })
+  const apply = (version = 1) => app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version, acknowledge: ACK } })
 
   it('publishes permissions first, then writes the Site CR', async () => {
     await save()
@@ -339,7 +339,7 @@ describe('apply', () => {
 })
 
 describe('rollback, pause, delete, blast radius', () => {
-  const applyV = (v: number) => app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version: v } })
+  const applyV = (v: number) => app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: WM, payload: { version: v, acknowledge: ACK } })
 
   it('rollback saves the old version as a new one and applies it', async () => {
     const first = await save()

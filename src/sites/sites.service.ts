@@ -6,7 +6,8 @@ import { render, type Rendered } from './render.js'
 import { DELETED_TTL_SECONDS, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
-import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
+import { assertGatesAuthenticated, assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
+import { publishState, securityFindings, type Finding } from './findings.js'
 import { diffArtefacts, riskOf } from './diff.js'
 import { gatekit, type RenderSample } from './gatekit.client.js'
 import { placeHost, zonesView, type Zone } from './host.js'
@@ -164,6 +165,7 @@ export async function putDraft(name: string, body: { site?: unknown; baseVersion
   const site = body.site as { name?: unknown } | null
   if (!site || typeof site !== 'object' || Array.isArray(site)) throw siteError(400, 'invalid_draft', 'draft.site must be an object')
   if (site.name !== undefined && site.name !== name) throw siteError(400, 'name_mismatch', `draft names '${String(site.name)}', not '${name}'`)
+  assertGatesAuthenticated(site)
   if (JSON.stringify(site).length > draftMaxBytes()) throw siteError(413, 'draft_too_large', `draft exceeds ${Math.round(draftMaxBytes() / 1024)} KiB`)
   const current = await sitesRepository.get(name)
   const draft: SiteDraft = { site, baseVersion: body.baseVersion ?? current?.version ?? 0, updatedBy: actor.email ?? 'unknown' }
@@ -193,6 +195,12 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
   return { site: v.site, rendered: render(v.site, await loadPlatform()) }
 }
 
+/** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
+export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>): Promise<Finding[]> {
+  const [groups, protectionOf] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup()])
+  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host) })
+}
+
 export async function preview(site: Site) {
   assertNotSystem(site.name)
   const records = await sitesRepository.list()
@@ -214,8 +222,11 @@ export async function preview(site: Site) {
   const ingresses = await clusterIngresses()
   const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
+  const findings = await findingsFor(site, rendered)
   return {
     artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...routes, ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
+    // Security findings: what publishing it needs fixed (error) or acknowledged (confirm).
+    findings, publish: publishState(findings),
     // Outside every zone: the zone the wizard can offer to create.
     ...(suggested.covered ? {} : { suggestedZone: suggested }),
   }
@@ -240,6 +251,7 @@ export async function diff(name: string, candidate?: Site) {
 export async function save(name: string, site: Site, opts: { note?: string; ifMatch?: string; actor: Actor; kind?: 'save' | 'rollback' }): Promise<SiteRecord> {
   assertNotSystem(name)
   if (site.name !== name) throw siteError(400, 'name_mismatch', `body names '${site.name}', not '${name}'`)
+  assertGatesAuthenticated(site)
   const rendered = render(site, await loadPlatform())
   const errors = errorsOf(rendered.checks)
   if (errors.length > 0) throw siteError(422, 'invalid_site', 'This version cannot be saved as it is', rendered.checks)

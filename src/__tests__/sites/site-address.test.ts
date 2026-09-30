@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { payrollSite } from './fixtures.js'
+import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 import type { Site } from '../../sites/schemas.js'
 
@@ -115,7 +115,7 @@ async function saveSite(site: Site, etag?: string) {
 /** echo, saved and applied at version 1 on echo-sandbox.dev.example.com. */
 async function live(site = echo()) {
   const saved = await saveSite(site)
-  expect((await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: 1 } })).statusCode).toBe(200)
+  expect((await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: 1, acknowledge: ACK } })).statusCode).toBe(200)
   return saved.headers.etag as string
 }
 const preview = async (site: Site) => app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site } })
@@ -265,7 +265,7 @@ describe('apply of a moved address', () => {
     expect((await publicLoginByHost('echo-sandbox.dev.example.com')).name).toBe('echo')
     await expect(publicLoginByHost('something-else.dev.example.com')).rejects.toMatchObject({ statusCode: 404 })
 
-    const res = await app.inject({ method: 'POST', url: '/sites/echo/apply', headers: W, payload: { version: 2 } })
+    const res = await app.inject({ method: 'POST', url: '/sites/echo/apply', headers: W, payload: { version: 2, acknowledge: ACK } })
     expect(res.statusCode).toBe(200)
     expect(cluster.applied.at(-1)!.spec.hosts).toEqual(['something-else.dev.example.com'])
     await settle()
@@ -290,7 +290,7 @@ describe('apply of a moved address', () => {
       return { overlaps: [{ a: old.find((id) => gateOfRule('echo', id) === 'public')!, b: now.id, method: 'GET', exampleUrl: 'https://x/' }] }
     }
     const before = cluster.applied.length
-    const res = await app.inject({ method: 'POST', url: '/sites/echo/apply', headers: W, payload: { version: 2 } })
+    const res = await app.inject({ method: 'POST', url: '/sites/echo/apply', headers: W, payload: { version: 2, acknowledge: ACK } })
     expect(res.statusCode).toBe(409)
     expect(cluster.applied.length).toBe(before)
   })

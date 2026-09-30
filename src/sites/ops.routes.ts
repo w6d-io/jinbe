@@ -6,6 +6,8 @@ import { requireApply, terminal, type ApplyRecord } from './applies.js'
 import { acceptDrift, drift, siteStatus } from './status.js'
 import { approveRequest, createRequest, listRequests, rejectRequest } from './requests.js'
 import { deleteLogo, LOGO_MAX_BYTES, LOGO_TYPES, putLogo } from './login.js'
+import { acknowledgeSchema } from './schemas.js'
+import { verifySite } from './verify.js'
 
 /**
  * Day-2 routes under /api/admin/sites (S-3, S-4): apply timeline (+SSE), status, drift, apply
@@ -16,7 +18,9 @@ const TAGS = ['sites']
 const doc = (permission: Permission, description: string) => ({ config: { permission }, schema: { description, tags: TAGS } })
 
 const applyParams = z.object({ id: z.string().min(1).max(64) })
-const requestBody = z.object({ version: z.number().int().min(1), note: z.string().max(280).optional() }).strict()
+const requestBody = z.object({ version: z.number().int().min(1), note: z.string().max(280).optional(), acknowledge: acknowledgeSchema.optional() }).strict()
+const verifyBody = z.object({ waf: z.boolean().optional() }).strict()
+const approveBody = z.object({ acknowledge: acknowledgeSchema.optional() }).strict()
 const rejectBody = z.object({ reason: z.string().max(280).optional() }).strict()
 const requestsQuery = z.object({ state: z.enum(['pending', 'applied', 'rejected']).optional(), site: z.string().max(40).optional() })
 const SSE_POLL_MS = 500
@@ -65,13 +69,16 @@ export async function siteOpsRoutes(fastify: FastifyInstance) {
   fastify.get('/:name/status', doc('sites:read', 'The Site CR as the operator reports it: generation, conditions, children'),
     handle(async (request) => siteStatus(nameOf(request))))
 
+  fastify.post('/:name/verify', doc('sites:read', 'After publishing: rollout state (version, Site Ready, gateway rules, HTTPRoute, DNS, TLS, WAF), one anonymous request per route to the public URL (at most 50, within 25 s; the rest in probe.notProbed), the access matrix per group and role from the policy, one WAF check when {waf: true}, and curl commands per route. Once per site per 30 s (429 verify_rate_limited, Retry-After)'),
+    handle(async (request) => verifySite(nameOf(request), parse(verifyBody, request.body ?? {}))))
+
   fastify.get('/:name/drift', doc('sites:read', 'What differs from what kuma applied: Site CR spec and conditions, route map, roles, groups, org map'),
     handle(async (request) => drift(nameOf(request))))
 
   fastify.post('/:name/drift/accept', { ...doc('sites:apply', 'Fold the live values the intent can hold into a draft for review') },
     handle(async (request) => acceptDrift(nameOf(request), actorOf(request))))
 
-  fastify.post('/:name/requests', { ...doc('sites:write', 'Ask for the saved version to be applied (four-eyes: approved by another super admin when required)') },
+  fastify.post('/:name/requests', { ...doc('sites:write', 'Ask for the saved version to be applied (four-eyes: approved by another super admin when required). Body {version, note?, acknowledge?}: 422 unconfirmed_findings while a security finding is an error or a confirm finding is not acknowledged') },
     handle(async (request, reply) => {
       const out = await createRequest(nameOf(request), parse(requestBody, request.body), actorOf(request))
       return reply.status(201).send(out)
@@ -79,8 +86,8 @@ export async function siteOpsRoutes(fastify: FastifyInstance) {
 
   fastify.get('/requests', doc('sites:read', 'Apply requests, newest first'), handle(async (request) => listRequests(parse(requestsQuery, request.query ?? {}))))
 
-  fastify.post('/requests/:id/approve', { ...doc('sites.requests:approve', 'Approve a request: applies the version, as the approver') },
-    handle(async (request) => approveRequest(parse(applyParams, request.params).id, actorOf(request))))
+  fastify.post('/requests/:id/approve', { ...doc('sites.requests:approve', 'Approve a request: applies the version, as the approver. The findings are checked again with the request\'s acknowledgements plus the optional body {acknowledge}') },
+    handle(async (request) => approveRequest(parse(applyParams, request.params).id, actorOf(request), parse(approveBody, request.body ?? {}).acknowledge)))
 
   fastify.post('/requests/:id/reject', { ...doc('sites.requests:approve', 'Reject a request, with an optional reason') },
     handle(async (request) => rejectRequest(parse(applyParams, request.params).id, actorOf(request), parse(rejectBody, request.body ?? {}).reason)))

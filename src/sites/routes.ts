@@ -11,6 +11,7 @@ import * as gateways from './gateways.service.js'
 import * as sites from './sites.service.js'
 import * as ops from './apply.service.js'
 import { actorOf, handle, nameOf, parse } from './http.js'
+import { assertGatesAuthenticated } from './checks.js'
 import { siteOpsRoutes } from './ops.routes.js'
 import { migrationRoutes } from './migration/routes.js'
 import { siteImportRoutes } from './openapi/routes.js'
@@ -100,6 +101,8 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   fastify.put('/:name', { ...docNamed('sites:write', 'Save the intent as a new version (If-Match: the etag you edited; absent only for a new site)', saveBodySchema) },
     handle(async (request, reply) => {
       const name = nameOf(request)
+      // A gate that lets nobody in is 422 (like a draft), not a schema 400.
+      assertGatesAuthenticated((request.body as { site?: unknown } | null)?.site)
       const body = parse(saveBodySchema, request.body)
       const record = await sites.save(name, body.site, { note: body.note, ifMatch: request.headers['if-match'] as string | undefined, actor: actorOf(request) })
       reply.header('etag', `"${record.etag}"`)
@@ -125,8 +128,11 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   fastify.post('/:name/diff', { ...docNamed('sites:write', 'What would change against the applied version, per artefact, with risk flags', diffBodySchema) },
     handle(async (request) => sites.diff(nameOf(request), parse(diffBodySchema, request.body ?? {}).site)))
 
-  fastify.post('/:name/apply', { ...docNamed('sites:apply', 'Apply the saved version: permissions first, then the Site CR. 503 and nothing written when gatekit or Kubernetes cannot answer', applyBodySchema) },
-    handle(async (request) => ops.apply(nameOf(request), parse(applyBodySchema, request.body).version, actorOf(request))))
+  fastify.post('/:name/apply', { ...docNamed('sites:apply', 'Apply the saved version: permissions first, then the Site CR. 503 and nothing written when gatekit or Kubernetes cannot answer. 422 unconfirmed_findings (with `findings`) while a security finding is an error, or a confirm finding\'s code is not in `acknowledge`', applyBodySchema) },
+    handle(async (request) => {
+      const body = parse(applyBodySchema, request.body)
+      return ops.apply(nameOf(request), body.version, actorOf(request), body.acknowledge)
+    }))
 
   fastify.get('/:name/versions', docNamed('sites:read', 'Version history (append-only)'), handle(async (request) => sites.versions(nameOf(request))))
 

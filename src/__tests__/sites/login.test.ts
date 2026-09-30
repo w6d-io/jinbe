@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
-import { payrollSite, platform } from './fixtures.js'
+import { payrollSite, platform, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 
 // S-4a / S-4: per-site login. Route-map rows carry the route id; data.site_login[<site>] is
@@ -112,7 +112,7 @@ beforeEach(() => {
 async function saveAndApply(site: Site) {
   const put = await app.inject({ method: 'PUT', url: `/sites/${site.name}`, headers: W, payload: { site } })
   expect(put.statusCode, put.body).toBe(200)
-  const res = await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: put.json().version } })
+  const res = await app.inject({ method: 'POST', url: `/sites/${site.name}/apply`, headers: W, payload: { version: put.json().version, acknowledge: ACK } })
   expect(res.statusCode).toBe(200)
 }
 
@@ -140,7 +140,7 @@ describe('S-4a — route ids and data.site_login', () => {
     expect(JSON.parse(redis.hashes.get('rbac:sites:login')!.get('payroll')!)).toMatchObject({ min_aal: 'aal2', scope: 'all' })
     const etag = (await app.inject({ method: 'GET', url: '/sites/payroll' })).headers.etag as string
     const put = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: { ...W, 'if-match': etag }, payload: { site: payrollSite() } })
-    await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: put.json().version } })
+    await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: put.json().version, acknowledge: ACK } })
     expect(redis.hashes.get('rbac:sites:login')?.get('payroll')).toBeUndefined()
   })
 })

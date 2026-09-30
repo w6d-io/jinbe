@@ -3,7 +3,7 @@ import { getRedisClient } from '../services/redis-client.service.js'
 import { riskOf, type Risk } from './diff.js'
 import type { SiteRecord } from './repository.js'
 import { appliedRender, getRecord } from './sites.service.js'
-import { applyRecord } from './apply.service.js'
+import { applyRecord, assertAcknowledged } from './apply.service.js'
 import { assertNotSystem, siteError } from './checks.js'
 import { sitesConfig } from './config.js'
 import { auditSite, type Actor } from './audit.js'
@@ -29,6 +29,8 @@ export interface ApplyRequest {
   /** The etag of the version asked for: a newer save makes the request stale. */
   etag: string
   note?: string
+  /** Codes of the confirm findings the requester acknowledged (findings.ts); re-checked at approval. */
+  acknowledge?: string[]
   requestedBy: string
   requestedAt: string
   state: RequestState
@@ -67,10 +69,12 @@ async function load(id: string): Promise<ApplyRequest> {
 
 const store = (r: ApplyRequest) => getRedisClient().hset(KEY, r.id, JSON.stringify(r))
 
-export async function createRequest(name: string, body: { version: number; note?: string }, actor: Actor): Promise<ApplyRequest> {
+export async function createRequest(name: string, body: { version: number; note?: string; acknowledge?: string[] }, actor: Actor): Promise<ApplyRequest> {
   assertNotSystem(name)
   const record = await getRecord(name)
   if (body.version !== record.version) throw siteError(409, 'version_mismatch', `Version ${record.version} is the saved one; request that`)
+  // A request nobody could approve is refused now, not at approval.
+  await assertAcknowledged(record, body.acknowledge ?? [])
   const risk = await riskFor(record)
   const request: ApplyRequest = {
     id: randomUUID(),
@@ -78,6 +82,7 @@ export async function createRequest(name: string, body: { version: number; note?
     version: record.version,
     etag: record.etag,
     ...(body.note ? { note: body.note } : {}),
+    ...(body.acknowledge?.length ? { acknowledge: [...new Set(body.acknowledge)] } : {}),
     requestedBy: actor.email ?? 'unknown',
     requestedAt: new Date().toISOString(),
     state: 'pending',
@@ -85,7 +90,7 @@ export async function createRequest(name: string, body: { version: number; note?
     needsSecondApprover: fourEyesRequired(risk),
   }
   await store(request)
-  auditSite('request', name, actor, `asked to apply version ${record.version}`, { requestId: request.id, risk: risk.level })
+  auditSite('request', name, actor, `asked to apply version ${record.version}`, { requestId: request.id, risk: risk.level, ...(request.acknowledge ? { acknowledged: request.acknowledge } : {}) })
   return request
 }
 
@@ -96,7 +101,7 @@ export async function listRequests(filter: { state?: string; site?: string }): P
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
 }
 
-export async function approveRequest(id: string, actor: Actor): Promise<ApplyRequest> {
+export async function approveRequest(id: string, actor: Actor, acknowledge: readonly string[] = []): Promise<ApplyRequest> {
   const request = await load(id)
   if (request.state !== 'pending') throw siteError(409, 'request_decided', `This request is already ${request.state}`)
   const record = await getRecord(request.site)
@@ -108,7 +113,10 @@ export async function approveRequest(id: string, actor: Actor): Promise<ApplyReq
   if (needsSecond && actor.email === request.requestedBy) {
     throw siteError(403, 'second_approver_required', 'Four-eyes: another super admin must approve this request')
   }
-  const applied = await applyRecord(record, actor, `approved request ${id} and applied`)
+  // Findings again, now: the groups or the WAF may have changed. The approver may acknowledge more.
+  const acknowledged = [...new Set([...(request.acknowledge ?? []), ...acknowledge])]
+  await assertAcknowledged(record, acknowledged)
+  const applied = await applyRecord(record, actor, `approved request ${id} and applied`, acknowledged.length > 0 ? { acknowledged } : {})
   const done: ApplyRequest = { ...request, state: 'applied', decidedBy: actor.email ?? 'unknown', decidedAt: new Date().toISOString(), applyId: applied.applyId }
   await store(done)
   auditSite('approve', request.site, actor, `approved version ${request.version} requested by ${request.requestedBy}`, { requestId: id, applyId: applied.applyId })

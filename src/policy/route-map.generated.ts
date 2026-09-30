@@ -180,6 +180,8 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"POST","path":"/api/admin/sites/:name/rollback","permission":"sites:apply"},
   {"method":"GET","path":"/api/admin/sites/:name/status","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/sites/:name/status","permission":"admin:read"},
+  {"method":"POST","path":"/api/admin/sites/:name/verify","permission":"sites:read"},
+  {"method":"POST","path":"/api/admin/sites/:name/verify","permission":"admin:read"},
   {"method":"GET","path":"/api/admin/sites/:name/versions","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/sites/:name/versions","permission":"admin:read"},
   {"method":"GET","path":"/api/admin/sites/:name/versions/:v","permission":"sites:read"},

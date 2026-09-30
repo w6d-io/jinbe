@@ -5626,7 +5626,9 @@ paths:
     post:
       tags: *a2
       description: "Apply the saved version: permissions first, then the Site CR. 503
-        and nothing written when gatekit or Kubernetes cannot answer"
+        and nothing written when gatekit or Kubernetes cannot answer. 422
+        unconfirmed_findings (with `findings`) while a security finding is an
+        error, or a confirm finding's code is not in `acknowledge`"
       requestBody:
         required: true
         content:
@@ -5637,6 +5639,12 @@ paths:
                 version:
                   type: integer
                   minimum: 1
+                acknowledge:
+                  type: array
+                  items:
+                    type: string
+                    pattern: ^[a-z][a-z0-9_]{0,63}$
+                  maxItems: 32
               required:
                 - version
               additionalProperties: false
@@ -5809,6 +5817,24 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/verify:
+    post:
+      tags: *a3
+      description: "After publishing: rollout state (version, Site Ready, gateway
+        rules, HTTPRoute, DNS, TLS, WAF), one anonymous request per route to the
+        public URL (at most 50, within 25 s; the rest in probe.notProbed), the
+        access matrix per group and role from the policy, one WAF check when
+        {waf: true}, and curl commands per route. Once per site per 30 s (429
+        verify_rate_limited, Retry-After)"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/drift:
     get:
       tags: *a3
@@ -5840,7 +5866,9 @@ paths:
     post:
       tags: *a3
       description: "Ask for the saved version to be applied (four-eyes: approved by
-        another super admin when required)"
+        another super admin when required). Body {version, note?, acknowledge?}:
+        422 unconfirmed_findings while a security finding is an error or a
+        confirm finding is not acknowledged"
       parameters:
         - schema:
             type: string
@@ -5860,7 +5888,9 @@ paths:
   /api/admin/sites/requests/{id}/approve:
     post:
       tags: *a3
-      description: "Approve a request: applies the version, as the approver"
+      description: "Approve a request: applies the version, as the approver. The
+        findings are checked again with the request's acknowledgements plus the
+        optional body {acknowledge}"
       parameters:
         - schema:
             type: string
