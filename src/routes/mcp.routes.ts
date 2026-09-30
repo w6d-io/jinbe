@@ -76,6 +76,8 @@ const claimsSchema = {
         key_id: { type: 'string' },
         key_expires_at: { type: 'integer' },
         all_permissions: { type: 'boolean' },
+        key_step_up_at: { type: 'string' },
+        key_step_up_actions: { type: 'boolean' },
       },
     },
   },
@@ -117,7 +119,9 @@ export async function mcpRoutes(fastify: FastifyInstance) {
         email: p.email,
         kind: p.kind,
         ...(p.kind === 'personal'
-          ? { subject: p.subject, key_id: p.clientId, key_expires_at: sec(p.keyExpiresAt ?? p.expiresAt), all_permissions: p.allPermissions === true }
+          ? { subject: p.subject, key_id: p.clientId, key_expires_at: sec(p.keyExpiresAt ?? p.expiresAt), all_permissions: p.allPermissions === true,
+              // The key's creation-time second factor and its protected-actions switch (delegated-step-up.ts).
+              ...(p.keyStepUpAt ? { key_step_up_at: p.keyStepUpAt } : {}), key_step_up_actions: p.keyStepUpActions !== false }
           : {}),
       },
     })

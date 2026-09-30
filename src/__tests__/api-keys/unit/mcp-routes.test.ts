@@ -111,6 +111,16 @@ describe('/api/mcp', () => {
     // Bound to no org; the scope is the effective one (what the holder holds now).
     expect(body).toMatchObject({ sub: 'pk', client_id: 'pk', scope: 'users:read mcp', ext: { kind: 'personal', subject: 'user-1', key_id: 'pk', key_expires_at: 1_900_500_000, all_permissions: true } })
     expect(body.ext).not.toHaveProperty('org')
+    expect(body.ext).not.toHaveProperty('key_step_up_at')
+  })
+
+  it('token-info carries the key\'s creation-time second factor and protected-actions switch', async () => {
+    s.resolve.mockResolvedValue({ principal: {
+      subject: 'user-1', email: 'ann@acme.io', name: 'Ann', clientId: 'pk', scopes: ['users:read'], kind: 'personal',
+      expiresAt: 1_900_000_000_000, tokenScope: 'users:read mcp', aud: ['https://mcp.test'],
+      keyStepUpAt: '2026-09-30T12:00:00.000Z', keyStepUpActions: false,
+    } })
+    expect((await tokenInfo()).json().ext).toMatchObject({ key_step_up_at: '2026-09-30T12:00:00.000Z', key_step_up_actions: false })
   })
 
   it('token-info is 401 for a refused token, a key, or no token', async () => {
