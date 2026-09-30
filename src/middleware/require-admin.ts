@@ -57,7 +57,9 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
         error: 'step_up_unavailable',
         message:
           'This action requires a second factor proven in a browser session. The credential you presented cannot carry one.',
-        hint: keyReason ? KEY_HINTS[keyReason] ?? KEY_HINTS.default : 'Sign in to the console in a browser and retry there.',
+        hint: keyReason
+          ? ((request.userContext?.delegation?.kind === 'personal' ? KEY_HINTS : GRANT_HINTS)[keyReason] ?? KEY_HINTS.default)
+          : 'Sign in to the console in a browser and retry there.',
         ...secondFactorRefusal('step_up', { permission, keyReason }),
       })
     }
@@ -80,6 +82,17 @@ const KEY_HINTS: Record<string, string> = {
   key_step_up_expired: 'The second factor this key stands on is older than 30 days; create a new personal key, or do this in the console.',
   not_allowed_here: 'A key may not stand in for the second factor on this action; do this in the console in a browser.',
   default: 'Sign in to the console in a browser and retry there.',
+}
+
+/**
+ * The same reasons for an OAuth grant, which stands on the second factor proven at consent (the OAuth
+ * branch reuses the key reasons; its window is the MCP setting oauth.protectedActionsHours).
+ */
+const GRANT_HINTS: Record<string, string> = {
+  step_up_actions_off: 'Protected actions were not allowed when this assistant was connected; reconnect it and allow them, or do this in the console.',
+  no_key_step_up: 'This connection carries no second-factor proof; reconnect the assistant after signing in with your second factor.',
+  key_step_up_expired: 'The second factor proven when this assistant was connected is too old for protected actions; reconnect it, or do this in the console.',
+  not_allowed_here: KEY_HINTS.not_allowed_here,
 }
 
 /** What the route table says a super-admin-only route requires: the wildcard, which no scope covers. */

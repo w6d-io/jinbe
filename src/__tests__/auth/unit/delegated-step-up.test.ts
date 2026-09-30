@@ -78,6 +78,7 @@ describe('(c) a personal key stands on its creation-time second factor', () => {
       // Which rule, on which permission, and why the key could not stand in — for the MCP to say.
       expect(res.json()).toMatchObject({ permission: 'sites:apply', secondFactor: { rule: 'step_up', requiredAal: 'aal2', maxAgeMin: 15, keyReason } })
       expect(res.json().hint).toMatch(/key|console/i)
+      if (who.kind !== 'oauth') expect(res.json().hint).not.toMatch(/reconnect/)
     }
   })
 
