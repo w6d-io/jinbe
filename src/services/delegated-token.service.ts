@@ -8,6 +8,8 @@ import { touchApiKeyUse } from './api-key-last-used.js'
 import { groupAllowed, mcpGate, type McpSettings } from '../mcp/settings.js'
 import { rights } from '../authz/opa.js'
 import { platformScopes } from './platform-scopes.js'
+import { broadcastInvalidation, ensureBus, onInvalidate } from '../cache/swr.js'
+import { getStore } from '../cache/runtime.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -67,9 +69,16 @@ export const PERSONAL_KEY_PREFIX = 'stk_mcp_'
 
 const NEGATIVE_TTL_MS = 5_000
 const MAX_ENTRIES = 5_000
+/** The invalidation channel's namespace for revoked keys (cache/runtime.ts). */
+const REVOKED_NS = 'delegated.revoked'
 
 export class DelegatedTokenService {
   private cache = new Map<string, { result: DelegatedResult; until: number }>()
+
+  constructor() {
+    // A key revoked on any replica: its cached answers go here too (no key: drop everything).
+    onInvalidate(REVOKED_NS, (clientId) => (clientId ? this.dropClient(clientId) : this.cache.clear()))
+  }
 
   /** The deployment's ceiling only; the administrator's switch (mcp/settings.ts) is asked in resolve(). */
   get enabled(): boolean {
@@ -96,8 +105,10 @@ export class DelegatedTokenService {
     if (!gate.on) return { error: gate.off === 'unavailable' ? 'mcp_settings_unavailable' : 'mcp_disabled' }
 
     const key = createHash('sha256').update(token).digest('hex')
+    ensureBus()
     const hit = this.cache.get(key)
-    if (hit && now < hit.until) return this.used(await this.current(hit.result, gate.settings), now)
+    // Served from memory only while revocations from other replicas are reaching this one.
+    if (hit && now < hit.until && getStore().busHealthy()) return this.used(await this.current(hit.result, gate.settings), now)
     if (hit) this.cache.delete(key)
 
     const evaluated = await this.evaluate(token, now)
@@ -141,6 +152,20 @@ export class DelegatedTokenService {
 
   clearCache(): void {
     this.cache.clear()
+  }
+
+  /**
+   * A key was revoked: its cached tokens are asked again at once on every replica, not after the
+   * window — and Hydra, the client deleted, answers them inactive or unknown.
+   */
+  forgetClient(clientId: string): void {
+    broadcastInvalidation(REVOKED_NS, clientId)
+  }
+
+  private dropClient(clientId: string): void {
+    for (const [key, { result }] of this.cache) {
+      if ('principal' in result && result.principal.clientId === clientId) this.cache.delete(key)
+    }
   }
 
   private async evaluate(token: string, now: number): Promise<DelegatedResult> {

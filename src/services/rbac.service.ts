@@ -11,9 +11,10 @@ import { accessReviewService } from './access-review.service.js'
 import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { globalRoleDefinitions } from '../policy/roles.js'
+import { STAFF_ROLES, globalRoleDefinitions } from '../policy/roles.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
+import { assertValidBinding } from './group-bindings.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
@@ -380,7 +381,7 @@ export class RbacService {
       auditEventService.emit({
         type: eventType,
         target,
-        actor: { id: actor?.id, email: actor?.email, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        actor: { id: actor?.id, email: actor?.email, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId, ...(actor?.act ? { act: actor?.act } : {}) },
         requestId: actor?.requestId,
         changes,
         source: 'jinbe-api',
@@ -636,6 +637,7 @@ export class RbacService {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
     }
+    await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Block creating a group that grants the global super_admin role unless
     // the actor is themselves a super_admin.
@@ -658,6 +660,7 @@ export class RbacService {
     if (name === 'super_admins') {
       await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
+    await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Capture the pre-image for the before→after diff (A3).
     const before = await redisRbacRepository.getGroup(name)
@@ -685,7 +688,7 @@ export class RbacService {
         category: 'rbac', kind: 'change', verb: 'delete', target: `group:${name}`,
         result: 'denied', reason: 'system_resource_immutable', severity: 'warn',
         targetType: 'group', targetId: name,
-        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId, ...(actor?.act ? { act: actor?.act } : {}) },
         requestId: actor?.requestId, source: 'jinbe-api',
       }).catch(() => {})
       throw new SystemResourceImmutable('group', name)
@@ -833,7 +836,7 @@ export class RbacService {
         category: 'service', kind: 'change', verb: 'delete', target: `service:${name}`,
         result: 'denied', reason: 'system_resource_immutable', severity: 'warn',
         service: name, targetType: 'service', targetId: name,
-        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+        actor: { email: actor?.email ?? null, ip: actor?.ip, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId, ...(actor?.act ? { act: actor?.act } : {}) },
         requestId: actor?.requestId, source: 'jinbe-api',
       }).catch(() => {})
       throw new SystemResourceImmutable('service', name)
@@ -1000,6 +1003,13 @@ export class RbacService {
         .filter((r) => JSON.stringify(roles[r] ?? null) !== JSON.stringify(code[r]))
       if (edited.length > 0) {
         throw Object.assign(new Error(`Roles defined in code cannot be changed here: ${edited.join(', ')}`), { statusCode: 409 })
+      }
+    } else if (serviceName === 'jinbe') {
+      // The policy merges roles by name across scopes: a jinbe role named like a staff role would go to
+      // every holder of that staff role (bootstrap/seed-staff.ts unshadowStaffRoles).
+      const shadowing = STAFF_ROLES.filter((r) => roles[r] !== undefined)
+      if (shadowing.length > 0) {
+        throw Object.assign(new Error(`A jinbe role cannot be named like a staff role: ${shadowing.join(', ')}`), { statusCode: 409 })
       }
     }
     await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)

@@ -17,7 +17,7 @@ export function auditSite(verb: string, name: string, actor: Actor, summary: str
       targetId: name,
       service: name,
       result,
-      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null },
+      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId ?? null,
       changes: { resource: 'site', id: name, summary },
       ...(details ? { details } : {}),

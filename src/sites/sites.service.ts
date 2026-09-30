@@ -172,12 +172,15 @@ export async function putDraft(name: string, body: { site?: unknown; baseVersion
     await sitesRepository.deleteDraft(name)
     return { ...draft, updatedAt: new Date().toISOString() }
   }
-  return sitesRepository.putDraft(name, draft)
+  const saved = await sitesRepository.putDraft(name, draft)
+  auditSite('draft', name, actor, current ? `draft saved over version ${current.version}` : 'draft saved (new site)', { baseVersion: draft.baseVersion })
+  return saved
 }
 
-export async function deleteDraft(name: string): Promise<void> {
+export async function deleteDraft(name: string, actor: Actor): Promise<void> {
   assertNotSystem(name)
   await sitesRepository.deleteDraft(name)
+  auditSite('discard', name, actor, 'draft discarded')
 }
 
 // ── preview, diff, save ───────────────────────────────────────

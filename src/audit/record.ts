@@ -19,7 +19,7 @@ function send(event: AuditEvent): void {
 }
 
 function actorOf(actor: AuditActorInput) {
-  return { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null }
+  return { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null, ...(actor.act ? { act: actor.act } : {}) }
 }
 
 // ─── Sites ──────────────────────────────────────────────────────────────────

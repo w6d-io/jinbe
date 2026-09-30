@@ -110,7 +110,7 @@ class RecertService {
       category: 'access', kind: 'change', verb, target: `recert:${campaign.id}`,
       targetType: 'campaign', targetId: campaign.id,
       result: 'applied',
-      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId ?? null,
       changes: { resource: 'recert_campaign', id: campaign.id, summary: `${verb === 'create' ? 'created' : 'deleted'} campaign (${campaign.status})` },
       source: 'jinbe-api',
@@ -170,7 +170,7 @@ class RecertService {
       auditEventService.emit({
         category: 'access', kind: 'change', verb: 'activate', target: `recert:${id}`,
         result: 'applied',
-        actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+        actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
         requestId: actor.requestId,
         details: { campaign: campaign.name, items: items.length, reviewers: campaign.reviewers },
       }).catch(() => {})
@@ -292,7 +292,7 @@ class RecertService {
         target: `recert:${campaignId}:${itemId}`,
         result: 'applied',
         severity: decision === 'revoked' ? 'warn' : 'info',
-        actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+        actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
         requestId: actor.requestId,
         details: {
           campaign: campaign.name, subject: item.subject,

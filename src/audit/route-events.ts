@@ -207,7 +207,7 @@ export async function auditRouteWrite(request: FastifyRequest, reply: FastifyRep
       targetType: entry.target,
       ...(targetId ? { targetId } : {}),
       result: 'applied',
-      actor: { id: actor.id, email: actor.email, ip: actor.ip, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId,
       method: request.method,
       path: (request.url || '').split('?')[0],

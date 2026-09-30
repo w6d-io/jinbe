@@ -30,7 +30,7 @@ beforeAll(async () => {
     const scopes = (request.headers['x-scopes'] as string | undefined) ?? ''
     request.userContext = {
       email: 'ann@acme.io', id: 'ann-id', name: 'Ann', authVia: 'delegated',
-      delegation: { clientId: 'k1', scopes: scopes.split(' ').filter(Boolean), kind: 'personal', via: 'auth-mcp', keyStepUpAt: new Date(Date.now() - DAY).toISOString(), keyStepUpActions: true },
+      delegation: { clientId: 'k1', scopes: scopes.split(' ').filter(Boolean), kind: 'personal', via: 'auth-mcp', keyStepUpAt: new Date(Date.now() - DAY).toISOString(), keyStepUpActions: request.headers['x-step-up-off'] !== '1' },
     } as never
   })
   app.addHook('preHandler', delegationGate)
@@ -39,8 +39,8 @@ beforeAll(async () => {
 })
 afterAll(() => app.close())
 
-const put = (email: string, groups: string[], scopes = 'groups.members:write groups.members:revoke') =>
-  app.inject({ method: 'PUT', url: `/api/admin/users/${email}/groups`, headers: { 'x-scopes': scopes }, payload: { groups } })
+const put = (email: string, groups: string[], scopes = 'groups.members:write groups.members:revoke', extra: Record<string, string> = {}) =>
+  app.inject({ method: 'PUT', url: `/api/admin/users/${email}/groups`, headers: { 'x-scopes': scopes, ...extra }, payload: { groups } })
 
 describe('group membership through a key', () => {
   it('adds someone to a group', async () => {
@@ -60,6 +60,14 @@ describe('group membership through a key', () => {
     const res = await put('bob@acme.io', ['viewers', 'staff-support'], 'users:read')
     expect(res.statusCode).toBe(403)
     expect(res.json().reason).toBe('scope_missing:groups.members:write')
+  })
+
+  // e2e A4 reported an add through a key without protected actions: auth-mcp found the user already in
+  // the group and never called jinbe. Through jinbe, every addition needs the step-up.
+  it('refuses an addition through a key created without protected actions', async () => {
+    const res = await put('bob@acme.io', ['viewers', 'staff-support'], undefined, { 'x-step-up-off': '1' })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error).toBe('step_up_unavailable')
   })
 
   it('refuses a change to the caller themself', async () => {

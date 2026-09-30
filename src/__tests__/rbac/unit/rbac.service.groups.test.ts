@@ -66,6 +66,8 @@ describe('RbacService - Groups', () => {
     await redisMock.hset('rbac:groups', 'infra', JSON.stringify({ jinbe: ['operator'], kuma: ['operator'] }))
     await redisMock.hset('rbac:groups', 'devs', JSON.stringify({ jinbe: ['editor', 'viewer'], kuma: ['editor'] }))
     await redisMock.hset('rbac:groups', 'viewers', JSON.stringify({ jinbe: ['viewer'], kuma: ['viewer'] }))
+    // A binding may only name roles its service defines (group-bindings.ts).
+    await redisMock.set('rbac:roles:jinbe', JSON.stringify({ admin: ['*'], operator: ['read'], editor: ['read', 'write'], viewer: ['read'] }))
   })
 
   describe('getGroups', () => {
@@ -88,6 +90,13 @@ describe('RbacService - Groups', () => {
       expect(result.success).toBe(true)
       expect(result.message).toContain('test_group')
       expect(result.timestamp).toBeDefined()
+    })
+
+    it('refuses 422 a binding to super_admin outside global, and a role the service does not define', async () => {
+      await expect(service.createGroup('mine', { jinbe: ['super_admin'] })).rejects.toMatchObject({ statusCode: 422 })
+      await expect(service.createGroup('desk', { jinbe: ['support'] })).rejects.toMatchObject({ statusCode: 422 })
+      await expect(service.updateGroup('devs', { jinbe: ['super_admin'] })).rejects.toMatchObject({ statusCode: 422 })
+      expect(await redisMock.hget('rbac:groups', 'mine')).toBeNull()
     })
 
     it('should throw 409 when group already exists', async () => {

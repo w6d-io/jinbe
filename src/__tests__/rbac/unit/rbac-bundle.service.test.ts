@@ -121,6 +121,25 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     })
   })
 
+  describe('group bindings (group-bindings.ts)', () => {
+    it('rejects 422 a group binding super_admin outside global, or a role its service will not define — nothing written', async () => {
+      for (const groups of [{ alt: { jinbe: ['super_admin'] } }, { desk: { jinbe: ['support'] } }]) {
+        const err = await rbacBundleService.import(makeBundle({ groups })).catch((e) => e)
+        expect(err.statusCode).toBe(422)
+      }
+      expect(await redisRbacRepository.getServices()).toEqual([])
+      expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
+    })
+
+    it('reads a groups-only import against the roles already stored', async () => {
+      await redisRbacRepository.setRoles('jinbe', { admin: ['*'], viewer: ['read'] })
+      const ok = await rbacBundleService.import(makeBundle({ groups: { v: { jinbe: ['viewer'] } } }), undefined, ['groups']).catch((e) => e)
+      expect(ok.statusCode).toBeUndefined()
+      const err = await rbacBundleService.import(makeBundle({ groups: { v: { jinbe: ['editor'] } } }), undefined, ['groups']).catch((e) => e)
+      expect(err.statusCode).toBe(422)
+    })
+  })
+
   describe('route ties across services', () => {
     it('rejects a bundle where two services own one route at the same rank — nothing written', async () => {
       const bad = makeBundle({
