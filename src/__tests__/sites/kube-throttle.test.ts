@@ -5,7 +5,7 @@ import type * as k8s from '@kubernetes/client-node'
 // backoff, honouring Retry-After, and surfaces as a retryable `kubernetes_rate_limited`; the
 // cluster-wide lists every render/preview reads are one shared short-lived copy, not a list per request.
 
-import { ClientNodeKubeSites, KubeThrottled, KubeUnavailable, THROTTLE_BACKOFF_MS, retryThrottled, setThrottleSleep } from '../../sites/kube-sites.js'
+import { CLUSTER_LIST_TTL_MS, ClientNodeKubeSites, KubeThrottled, KubeUnavailable, STALE_ON_ERROR_MS, THROTTLE_BACKOFF_MS, resetClusterLists, retryThrottled, setThrottleSleep } from '../../sites/kube-sites.js'
 import { fail } from '../../sites/http.js'
 
 const tooMany = (retryAfter?: string) => Object.assign(new Error('HTTP-Code: 429'), { code: 429, body: { message: 'Too many requests' }, headers: retryAfter ? { 'retry-after': retryAfter } : {} })
@@ -15,6 +15,7 @@ let waits: number[]
 beforeEach(() => {
   waits = []
   setThrottleSleep(async (ms) => { waits.push(ms) })
+  resetClusterLists()
 })
 
 function client(custom: Record<string, unknown>) {
@@ -52,9 +53,23 @@ describe('retryThrottled', () => {
     expect(err).toMatchObject({ code: 'kubernetes_rate_limited', retryAfterSec: 20 })
   })
 
-  it('never retries anything but 429', async () => {
+  it('retries a 5xx with the same backoff, then rethrows it as it came', async () => {
+    const flaky = vi.fn().mockRejectedValueOnce(Object.assign(new Error('x'), { code: 503 })).mockResolvedValue('ok')
+    await expect(retryThrottled('list zones', flaky)).resolves.toBe('ok')
+    const down = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { code: 500 }))
+    await expect(retryThrottled('list zones', down)).rejects.toMatchObject({ code: 500 })
+    expect(down).toHaveBeenCalledTimes(THROTTLE_BACKOFF_MS.length + 1)
+  })
+
+  it('never retries a write that answered 5xx (it may have landed)', async () => {
     const fn = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { code: 500 }))
-    await expect(retryThrottled('list zones', fn)).rejects.toMatchObject({ code: 500 })
+    await expect(retryThrottled('create site', fn, { write: true })).rejects.toMatchObject({ code: 500 })
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('never retries a 4xx other than 429', async () => {
+    const fn = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { code: 403 }))
+    await expect(retryThrottled('list zones', fn)).rejects.toMatchObject({ code: 403 })
     expect(fn).toHaveBeenCalledTimes(1)
   })
 })
@@ -88,6 +103,43 @@ describe('ClientNodeKubeSites cluster lists', () => {
     await kube.createZone(zone('b') as never)
     await vi.waitFor(async () => expect(await kube.listZones()).toHaveLength(2))
     expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('the copy is kept 30 s, then listed again', async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-30T10:00:00Z'), toFake: ['Date'] })
+    try {
+      const list = vi.fn(async () => ({ items: [zone('a')] }))
+      const kube = client({ listClusterCustomObject: list })
+      await kube.listZones()
+      vi.setSystemTime(Date.now() + CLUSTER_LIST_TTL_MS - 1_000)
+      await kube.listZones()
+      expect(list).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(Date.now() + 2_000)
+      await kube.listZones()
+      expect(list).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stale while error: the API down after the retries serves the last list, up to STALE_ON_ERROR_MS', async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-30T10:00:00Z'), toFake: ['Date'] })
+    try {
+      let up = true
+      const list = vi.fn(async () => {
+        if (!up) throw Object.assign(new Error('x'), { code: 503 })
+        return { items: [zone('a')] }
+      })
+      const kube = client({ listClusterCustomObject: list })
+      expect(await kube.listZones()).toHaveLength(1)
+      up = false
+      vi.setSystemTime(Date.now() + CLUSTER_LIST_TTL_MS + 1_000)
+      expect(await kube.listZones()).toHaveLength(1)
+      vi.setSystemTime(Date.now() + STALE_ON_ERROR_MS)
+      await expect(kube.listZones()).rejects.toMatchObject({ code: 'kubernetes_unavailable' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('HTTPRoutes and ListenerSets are shared the same way, per kind', async () => {
