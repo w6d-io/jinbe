@@ -23,10 +23,8 @@ export const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   BASE_URL: z.string().url().optional(),
 
-  // Database
-  DATABASE_URL: z.string().optional(),
-
-  // Encryption (still needed for database credentials)
+  // The key the address-change audit hashes are keyed with when AUDIT_HMAC_KEY is unset
+  // (services/email-change.service.ts).
   ENCRYPTION_KEY: z.string().min(32, 'ENCRYPTION_KEY must be at least 32 characters'),
 
   // CORS
@@ -282,13 +280,6 @@ export const envSchema = z.object({
     .pipe(z.number().int().nonnegative().max(60_000))
     .default('30000'),
 
-  // The in-cluster callers (`namespace:serviceaccount`, TokenReview-verified) allowed on
-  // /api/internal/*. Empty refuses everyone — no session, no user token ever reaches those routes.
-  INTERNAL_API_ALLOWED_SUBJECTS: z
-    .string()
-    .default('')
-    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
-
   // ── Kubernetes ServiceAccount authentication (in-cluster M2M) ────────────
   // When enabled, a caller may authenticate with a PROJECTED ServiceAccount
   // token (`Authorization: Bearer <jwt>`) instead of a Kratos session cookie.
@@ -404,8 +395,8 @@ export const envSchema = z.object({
     .default('false'),
   AUDIT_OUTBOX_MAX_LEN: z.string().transform(Number).pipe(z.number().int().positive()).default('100000'),
 
-  // Observability backends read by /api/audit/* and /api/admin/observability/* (in-cluster, no
-  // auth). Unset: the audit reads answer 503 audit_store_unavailable, the ops endpoints 404.
+  // The log backend read by /api/audit/* (in-cluster, no auth). Unset: the audit reads answer 503
+  // audit_store_unavailable.
   LOKI_URL: z.string().url().optional(),
   LOKI_TIMEOUT_MS: z.string().transform(Number).pipe(z.number().int().positive()).default('30000'),
   // The namespace every query is pinned to — Loki is single-tenant, so this is the env boundary.
@@ -420,13 +411,10 @@ export const envSchema = z.object({
   // audit reads gateway decisions from (audit/gateway). `ACCESS_ROLLUP=off` stops the hourly summary.
   LOKI_GATEWAY_CONTAINER: z.string().regex(/^[a-z0-9-]{1,63}$/).default('oathkeeper'),
   ACCESS_ROLLUP: z.enum(['on', 'off']).default('on'),
-  TEMPO_URL: z.string().url().optional(),
   // Prometheus / Mimir, read by the Home (certificate expiry today). Unset: those tiles say
   // "not connected" (not_configured), never zero.
   PROMETHEUS_URL: z.string().url().optional(),
   GRAFANA_URL: z.string().url().optional(),
-  GRAFANA_LOKI_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('loki'),
-  GRAFANA_TEMPO_DATASOURCE_UID: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('tempo'),
   // Most rows one audit export job writes; beyond it the export is marked truncated.
   AUDIT_EXPORT_MAX_ROWS: z.string().transform(Number).pipe(z.number().int().positive().max(1_000_000)).default('100000'),
 
@@ -501,16 +489,6 @@ export const envSchema = z.object({
 
   // Sidecar notification service (jinbe-service)
   JINBE_SERVICE_URL: z.string().url().optional(),
-
-  // Backup tool images (deployer-private registry). Required if the
-  // /backups feature is used; left unset, attempts to render a backup
-  // job will fail with a clear "image not configured" error.
-  BACKUP_IMAGE_MONGO: z.string().optional(),
-  BACKUP_IMAGE_POSTGRES: z.string().optional(),
-
-  // GCP project ID injected into backup job env. Required for the GCS
-  // output of the backup tool.
-  BACKUP_GCP_PROJECT_ID: z.string().optional(),
 
   // ── RBAC-bundle backup (S3) ──────────────────────────────────────────────
   // Mirrors the chart `backup.*` values. When enabled, jinbe reads the S3

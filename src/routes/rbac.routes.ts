@@ -271,51 +271,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
-  fastify.post('/services/:name/routes/import/preview', {
-    ...needs('groups:write'),
-    // Writes nothing, but it is the first step of a route-map write and fetches a URL server-side.
-    preHandler: refuseWhenSourcedFromGit,
-    bodyLimit: 8 * 1024 * 1024, // OpenAPI specs can be large
-    schema: {
-      description:
-        'Dry-run: parse an OpenAPI/Swagger spec and preview the route rules + diff it would produce for a service. Does not mutate; apply is PUT /services/:name/routes.',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
-      body: {
-        type: 'object',
-        required: ['source'],
-        properties: {
-          source: {
-            type: 'object',
-            properties: {
-              url: { type: 'string' },
-              content: { type: 'string' },
-              format: { type: 'string', enum: ['json', 'yaml', 'auto'] },
-            },
-          },
-          options: {
-            type: 'object',
-            properties: {
-              resourceFrom: { type: 'string', enum: ['tag', 'path', 'operationId'] },
-              verbMap: { type: 'object', additionalProperties: { type: 'string' } },
-              listAsRead: { type: 'boolean' },
-              honorExtension: { type: 'boolean' },
-              scopeMap: { type: 'object', additionalProperties: { type: 'string' } },
-              basePath: { type: 'string', enum: ['prepend', 'strip', 'none'] },
-            },
-          },
-        },
-      },
-      // No 200 response schema: the preview payload is rich/nested — let Fastify
-      // serialize it as-is rather than risk fast-json-stringify stripping fields.
-      response: {
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.importRoutesPreview.bind(rbacController) as never)
-
   // ===========================================================================
   // Access Rules (Oathkeeper)
   // ===========================================================================
@@ -332,21 +287,6 @@ export async function rbacRoutes(fastify: FastifyInstance) {
       },
     },
   }, rbacController.getAccessRules.bind(rbacController))
-
-  fastify.get('/access-rules/:id', {
-    ...needs('sites:read'),
-    schema: {
-      description: 'Get a specific access rule.',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      response: {
-        200: { type: 'object', properties: { rule: oathkeeperRuleJsonSchema } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.getAccessRule.bind(rbacController))
 
   fastify.get('/oathkeeper/handlers', {
     ...needs('gateway:read'),

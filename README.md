@@ -504,20 +504,6 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 | `REDIS_DB` | `0` | Logical DB index. |
 | `REDIS_AUDIT_STREAM` | `auth:audit:events` | Stream key for audit events. |
 
-#### Database (optional — only for `/clusters`, `/databases`, `/backups` features)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_URL` | unset | MongoDB connection string. If unset, those features are inert. |
-
-#### Backup tool (optional — only if the `/backups` feature is exposed)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `BACKUP_IMAGE_MONGO` | unset | Private-registry image for the mongo backup container. |
-| `BACKUP_IMAGE_POSTGRES` | unset | Private-registry image for the postgres backup container. |
-| `BACKUP_GCP_PROJECT_ID` | unset | GCP project ID injected into the backup job env (for GCS output). |
-
 #### Sidecar notification
 
 | Variable | Default | Notes |
@@ -569,7 +555,6 @@ jinbe:
     ADMIN_EMAIL: admin@mycorp.com    # optional — bootstrap admin
     ADMIN_PASSWORD: ""               # ≥ 16 chars, no weak prefix (changeme/password/admin/123)
     ADMIN_NAME: Admin
-    DATABASE_URL: ""                 # optional — only for /clusters, /databases, /backups
     LOG_LEVEL: info
     ENABLE_SWAGGER: "false"
   extraEnv:

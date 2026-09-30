@@ -205,7 +205,6 @@ describe('S-4 — public branding', () => {
     })
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/dev.example.com' })).statusCode).toBe(404)
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/x.payroll.dev.example.com' })).statusCode).toBe(404)
-    expect((await app.inject({ method: 'GET', url: '/api/public/sites/payroll/login' })).json().name).toBe('payroll')
   })
 
   it('a saved but never applied site is unknown to the public', async () => {

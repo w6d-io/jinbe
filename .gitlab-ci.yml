@@ -11,10 +11,7 @@ include:
     ref: input-parameters
     file: '/pipelines/back-nodejs.yaml'
 
-# The shared script installs and tests in one go, with no room for a code generation step. The test
-# files import modules that import the Prisma client, which does not exist until it is generated.
 test:unit:npm:
   script:
     - npm ci --legacy-peer-deps
-    - npx prisma generate
     - npm run test:coverage

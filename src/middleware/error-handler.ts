@@ -1,14 +1,6 @@
 import { FastifyError, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
-import {
-  PrismaClientKnownRequestError,
-  PrismaClientValidationError,
-  PrismaClientInitializationError,
-  PrismaClientRustPanicError,
-  PrismaClientUnknownRequestError,
-} from '@prisma/client/runtime/library.js'
 import { KratosApiError } from '../services/kratos.service.js'
-import { KubeconfigVerificationError } from '../services/cluster.service.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { InvalidBindingError } from '../services/group-bindings.js'
 import {
@@ -20,101 +12,6 @@ import {
 } from '../services/organisation-store.js'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
-
-interface PrismaErrorResponse {
-  status: number
-  error: string
-  message: string
-}
-
-/**
- * Handle Prisma known request errors with specific error codes
- */
-function handlePrismaKnownError(
-  error: PrismaClientKnownRequestError
-): PrismaErrorResponse {
-  switch (error.code) {
-    // Unique constraint violation
-    case 'P2002':
-      return {
-        status: 409,
-        error: 'Conflict',
-        message: `A record with this ${(error.meta?.target as string[])?.join(', ') || 'value'} already exists`,
-      }
-
-    // Record not found
-    case 'P2025':
-      return {
-        status: 404,
-        error: 'Not Found',
-        message: 'The requested record was not found',
-      }
-
-    // Foreign key constraint failed
-    case 'P2003':
-      return {
-        status: 400,
-        error: 'Bad Request',
-        message: `Related ${error.meta?.field_name || 'record'} does not exist`,
-      }
-
-    // Required field missing
-    case 'P2012':
-      return {
-        status: 400,
-        error: 'Bad Request',
-        message: `Missing required field: ${error.meta?.path || 'unknown'}`,
-      }
-
-    // Invalid ID format
-    case 'P2023':
-      return {
-        status: 400,
-        error: 'Bad Request',
-        message: 'Invalid ID format provided',
-      }
-
-    // Record to update not found
-    case 'P2016':
-      return {
-        status: 404,
-        error: 'Not Found',
-        message: 'Record to update was not found',
-      }
-
-    // Record to delete not found
-    case 'P2017':
-      return {
-        status: 404,
-        error: 'Not Found',
-        message: 'Record to delete was not found',
-      }
-
-    // Related record not found (for connect operations)
-    case 'P2018':
-      return {
-        status: 400,
-        error: 'Bad Request',
-        message: 'Related record not found for connection',
-      }
-
-    // Input value too long
-    case 'P2000':
-      return {
-        status: 400,
-        error: 'Bad Request',
-        message: `Value too long for field: ${error.meta?.column_name || 'unknown'}`,
-      }
-
-    // Default for unhandled Prisma codes
-    default:
-      return {
-        status: 500,
-        error: 'Internal Server Error',
-        message: 'A database error occurred',
-      }
-  }
-}
 
 /**
  * Global error handler
@@ -149,52 +46,6 @@ export function errorHandler(
     })
   }
 
-  // Prisma validation errors (invalid data shape, missing fields, etc.)
-  if (error instanceof PrismaClientValidationError) {
-    return reply.status(400).send({
-      error: 'Bad Request',
-      message: 'Invalid data format or missing required fields',
-      ...(isDevelopment && { details: error.message }),
-    })
-  }
-
-  // Prisma initialization errors (connection issues, schema mismatch)
-  if (error instanceof PrismaClientInitializationError) {
-    return reply.status(503).send({
-      error: 'Service Unavailable',
-      message: 'Database connection failed',
-      ...(isDevelopment && { details: error.message }),
-    })
-  }
-
-  // Prisma rust panic errors (critical internal errors)
-  if (error instanceof PrismaClientRustPanicError) {
-    return reply.status(500).send({
-      error: 'Internal Server Error',
-      message: 'A critical database error occurred',
-      ...(isDevelopment && { details: error.message }),
-    })
-  }
-
-  // Prisma unknown request errors
-  if (error instanceof PrismaClientUnknownRequestError) {
-    return reply.status(500).send({
-      error: 'Internal Server Error',
-      message: 'An unexpected database error occurred',
-      ...(isDevelopment && { details: error.message }),
-    })
-  }
-
-  // Prisma known errors
-  if (error instanceof PrismaClientKnownRequestError) {
-    const prismaErrorResponse = handlePrismaKnownError(error)
-    return reply.status(prismaErrorResponse.status).send({
-      error: prismaErrorResponse.error,
-      message: prismaErrorResponse.message,
-      ...(isDevelopment && { code: error.code, meta: error.meta }),
-    })
-  }
-
   // Kratos API errors (external service)
   if (error instanceof KratosApiError) {
     // Map Kratos status codes to appropriate responses
@@ -215,15 +66,6 @@ export function errorHandler(
       error: errorMessage,
       message: error.message,
       ...(isDevelopment && { details: error.details }),
-    })
-  }
-
-  // Kubeconfig verification errors (400)
-  if (error instanceof KubeconfigVerificationError) {
-    return reply.status(400).send({
-      error: 'Kubeconfig Verification Failed',
-      message: error.message,
-      verification: error.verificationResult,
     })
   }
 

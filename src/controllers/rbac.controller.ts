@@ -1,15 +1,12 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { rbacService, SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
+import { rbacService } from '../services/rbac.service.js'
 import { faviconService } from '../services/favicon.service.js'
 import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
-import { previewImport } from '../services/openapi-import/importer.js'
 import {
   createGroupBodySchema,
   updateGroupBodySchema,
-  oathkeeperRuleSchema,
   type CreateGroupBody,
   type UpdateGroupBody,
-  type OathkeeperRule,
 } from '../schemas/rbac/index.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { z } from 'zod'
@@ -83,42 +80,6 @@ export class RbacController {
     return reply.send(result)
   }
 
-  async createService(
-    request: FastifyRequest<{ Body: { name: string; displayName?: string; upstreamUrl?: string; matchUrl?: string; matchMethods?: string[]; stripPath?: string } }>,
-    reply: FastifyReply
-  ) {
-    const options = z
-      .object({
-        name: z.string().min(1).regex(SERVICE_NAME_PATTERN, 'Service name must be lowercase alphanumeric with underscores or hyphens'),
-        displayName: z.string().optional(),
-        upstreamUrl: z.string().url().optional(),
-        matchUrl: z.string().optional(),
-        matchMethods: z.array(z.string()).optional(),
-        stripPath: z.string().optional(),
-        signIn: z.array(z.enum(['cookie', 'bearer', 'introspection'])).optional(),
-      })
-      .parse(request.body)
-
-    const result = await rbacService.createService(options, this.actor(request))
-    return reply.status(201).send(result)
-  }
-
-  async updateServiceConfig(
-    request: FastifyRequest<{ Params: { name: string }; Body: { upstreamUrl?: string; matchUrl?: string; matchMethods?: string[]; stripPath?: string | null } }>,
-    reply: FastifyReply
-  ) {
-    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
-    const options = z.object({
-      upstreamUrl: z.string().url().optional(),
-      matchUrl: z.string().optional(),
-      matchMethods: z.array(z.string()).optional(),
-      stripPath: z.string().nullable().optional(),
-      signIn: z.array(z.enum(['cookie', 'bearer', 'introspection'])).optional(),
-    }).parse(request.body)
-    const result = await rbacService.updateServiceConfig(name, options, this.actor(request))
-    return reply.send(result)
-  }
-
   async getServicePermissions(
     request: FastifyRequest<{ Params: { name: string } }>,
     reply: FastifyReply
@@ -150,15 +111,6 @@ export class RbacController {
       .header('Content-Type', favicon.contentType)
       .header('Cache-Control', `public, max-age=${7 * 24 * 60 * 60}`)
       .send(favicon.data)
-  }
-
-  async deleteService(
-    request: FastifyRequest<{ Params: { name: string } }>,
-    reply: FastifyReply
-  ) {
-    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
-    const result = await rbacService.deleteService(name, this.actor(request))
-    return reply.send(result)
   }
 
   async getServiceRoles(
@@ -205,89 +157,12 @@ export class RbacController {
     return reply.send(result)
   }
 
-  /**
-   * Dry-run: parse an OpenAPI/Swagger spec and preview the route rules + diff it
-   * would produce for a service. Never mutates — apply is the existing PUT.
-   */
-  async importRoutesPreview(
-    request: FastifyRequest<{ Params: { name: string } }>,
-    reply: FastifyReply
-  ) {
-    const { name } = z.object({ name: z.string().min(1) }).parse(request.params)
-    const { source, options } = z
-      .object({
-        source: z.object({
-          url: z.string().url().optional(),
-          content: z.string().optional(),
-          format: z.enum(['json', 'yaml', 'auto']).optional(),
-        }),
-        options: z
-          .object({
-            resourceFrom: z.enum(['tag', 'path', 'operationId']).optional(),
-            verbMap: z.record(z.string()).optional(),
-            listAsRead: z.boolean().optional(),
-            honorExtension: z.boolean().optional(),
-            scopeMap: z.record(z.string()).optional(),
-            basePath: z.enum(['prepend', 'strip', 'none']).optional(),
-          })
-          .optional(),
-      })
-      .parse(request.body)
-    const result = await previewImport(name, source, options ?? {})
-    return reply.send(result)
-  }
-
   // ===========================================================================
   // Access Rules (Oathkeeper)
   // ===========================================================================
 
   async getAccessRules(_request: FastifyRequest, reply: FastifyReply) {
     const result = await rbacService.getAccessRules()
-    return reply.send(result)
-  }
-
-  async getAccessRule(
-    request: FastifyRequest<{ Params: { id: string } }>,
-    reply: FastifyReply
-  ) {
-    const { id } = z.object({ id: z.string().min(1) }).parse(request.params)
-    const result = await rbacService.getAccessRule(id)
-    return reply.send(result)
-  }
-
-  async createAccessRule(
-    request: FastifyRequest<{ Body: OathkeeperRule }>,
-    reply: FastifyReply
-  ) {
-    const rule = oathkeeperRuleSchema.parse(request.body)
-    const result = await rbacService.createAccessRule(rule, this.actor(request))
-    return reply.status(201).send(result)
-  }
-
-  async updateAccessRule(
-    request: FastifyRequest<{ Params: { id: string }; Body: OathkeeperRule }>,
-    reply: FastifyReply
-  ) {
-    const { id } = z.object({ id: z.string().min(1) }).parse(request.params)
-    const rule = oathkeeperRuleSchema.parse(request.body)
-
-    if (rule.id !== id) {
-      return reply.status(400).send({
-        error: 'Bad Request',
-        message: `Rule ID in body (${rule.id}) does not match URL parameter (${id})`,
-      })
-    }
-
-    const result = await rbacService.updateAccessRule(id, rule, this.actor(request))
-    return reply.send(result)
-  }
-
-  async deleteAccessRule(
-    request: FastifyRequest<{ Params: { id: string } }>,
-    reply: FastifyReply
-  ) {
-    const { id } = z.object({ id: z.string().min(1) }).parse(request.params)
-    const result = await rbacService.deleteAccessRule(id, this.actor(request))
     return reply.send(result)
   }
 

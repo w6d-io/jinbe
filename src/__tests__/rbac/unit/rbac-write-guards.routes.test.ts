@@ -4,8 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 
 // The writes that sat behind the administration API's `admin:read` gate alone — an administrator who
 // may only READ could edit a group they were in, or give a role `admin:write`, and so promote
-// themselves. Each is driven over HTTP here: the permission, the fresh second factor, and the
-// legacy infrastructure API that asked for nothing but a session.
+// themselves. Each is driven over HTTP here: the permission and the fresh second factor.
 
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
@@ -22,9 +21,6 @@ const { handled, stubController } = vi.hoisted(() => {
   return { handled, stubController }
 })
 vi.mock('../../../controllers/rbac.controller.js', () => ({ rbacController: stubController('') }))
-vi.mock('../../../controllers/cluster.controller.js', () => ({ clusterController: stubController('cluster') }))
-vi.mock('../../../controllers/database.controller.js', () => ({ databaseController: stubController('database') }))
-vi.mock('../../../controllers/backup.controller.js', () => ({ backupController: stubController('backup') }))
 vi.mock('../../../services/recert.service.js', () => ({
   RecertError: class extends Error { statusCode = 400 },
   recertService: {
@@ -39,7 +35,6 @@ vi.mock('../../../services/recert.service.js', () => ({
 
 import { rbacRoutes } from '../../../routes/rbac.routes.js'
 import { recertRoutes } from '../../../routes/recert.routes.js'
-import { clusterRoutes } from '../../../routes/cluster.routes.js'
 import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 import { delegationRefusal, ineligibleWhy } from '../../../middleware/delegation-gate.js'
 import { declaredRoute } from '../../../policy/declared-routes.js'
@@ -67,7 +62,6 @@ beforeAll(async () => {
   })
   await app.register(rbacRoutes, { prefix: '/api/admin/rbac' })
   await app.register(recertRoutes, { prefix: '/api/admin/recert' })
-  await app.register(clusterRoutes, { prefix: '/api/clusters' })
   await app.ready()
 })
 afterAll(async () => { await app.close() })
@@ -119,13 +113,6 @@ describe('RBAC-changing writes', () => {
     expect(handled.calls).toHaveLength(1)
   })
 
-  it('the import preview (it fetches a URL server-side) needs groups:write and its step-up', async () => {
-    const body = { source: { content: '{}' } }
-    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'reader', { body })).statusCode).toBe(403)
-    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'writer', { body })).statusCode).toBe(422)
-    expect((await call('POST', '/api/admin/rbac/services/jinbe/routes/import/preview', 'writer', { fresh: true, body })).statusCode).toBe(200)
-  })
-
   it('reads stay open to admin:read', async () => {
     expect((await call('GET', '/api/admin/rbac/groups', 'reader')).statusCode).toBe(200)
     expect((await call('GET', '/api/admin/rbac/org-service-map', 'reader')).statusCode).toBe(200)
@@ -158,27 +145,6 @@ describe('recertification campaign writes', () => {
   })
 })
 
-describe('legacy infrastructure API', () => {
-  it.each([
-    ['GET', '/api/clusters', undefined],
-    ['POST', '/api/clusters/verify', { config: 'apiVersion: v1' }],
-    ['DELETE', '/api/clusters/0123456789abcdef01234567', undefined],
-  ])('%s %s refuses anyone short of a super admin, admin:write included', async (method, url, body) => {
-    expect((await call(method, url, 'reader', { body })).statusCode).toBe(403)
-    expect((await call(method, url, 'writer', { body })).statusCode).toBe(403)
-    expect(handled.calls).toEqual([])
-  })
-
-  it('lets a super admin through', async () => {
-    expect((await call('GET', '/api/clusters', 'root')).statusCode).toBe(200)
-  })
-
-  it('answers 503, not 403, when OPA cannot say who is a super admin', async () => {
-    opaWorld.down = true
-    expect((await call('GET', '/api/clusters', 'root')).statusCode).toBe(503)
-  })
-})
-
 describe('delegated callers never change the access model', () => {
   // A token carrying every catalogue permission as a scope: what is left refused is refused for all.
   const everyScope = PERMISSIONS as readonly string[]
@@ -197,7 +163,6 @@ describe('delegated callers never change the access model', () => {
     ['PUT', '/api/admin/rbac/groups/:name', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/roles', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/routes', 'groups:write'],
-    ['POST', '/api/admin/rbac/services/:name/routes/import/preview', 'groups:write'],
     ['PUT', '/api/admin/rbac/org-service-map', 'groups:write'],
   ])('%s %s (%s) passes the gate with a scope granting it', (method, path, permission) => {
     expect(declaredRoute(method, path)?.permission ?? permission).toBe(permission)
@@ -223,10 +188,10 @@ describe('delegated callers never change the access model', () => {
   })
 
   it.each([
-    ['GET', '/api/clusters'],
-    ['POST', '/api/clusters/:clusterId/jobs'],
-    ['GET', '/api/databases/:id'],
-    ['PUT', '/api/backup-items/:id'],
+    ['GET', '/scim/v2/Users'],
+    ['GET', '/api/admin/rbac/opal/groups'],
+    ['GET', '/api/oathkeeper/rules'],
+    ['POST', '/api/me/api-keys'],
   ])('%s %s is on the backstop list', (method, path) => {
     expect(ineligibleWhy(method, path)).not.toBeNull()
   })
@@ -237,7 +202,7 @@ describe('delegated callers never change the access model', () => {
   })
 
   it('no scope ever exercises the super-admin wildcard', () => {
-    expect(refusal('GET', '/api/clusters', '*')).not.toBeNull()
+    expect(refusal('GET', '/api/admin/rbac/groups', '*')).toBe('delegation_ineligible:*')
     expect(refusal('GET', '/api/admin/x', '*')).toBe('delegation_ineligible:*')
   })
 })

@@ -8,7 +8,6 @@ import { accessReviewService, type AccessReviewSummary } from '../services/acces
 import { recertService } from '../services/recert.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { kratosService } from '../services/kratos.service.js'
-import { policyBundle } from '../services/policy-bundle.service.js'
 import { buildOpalDatasourceEntries, opalEntryName } from '../services/opal-datasource.js'
 import { membersOf, organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
 import { sitesConfig } from '../sites/config.js'
@@ -21,7 +20,7 @@ import { kubeSites, type SiteCrObject } from '../sites/kube-sites.js'
 import { rollout } from '../gateway/service.js'
 import { HttpLokiClient, lokiClient, type LokiClient } from '../audit/query/loki.js'
 import { promClient, type PromClient } from '../telemetry/prom-query.js'
-import { ENGINES_KEY, OPAL_KEY, RULES_KEY, SERVING_KEY, auditFailuresKey } from './runtime.js'
+import { OPAL_KEY, RULES_KEY, auditFailuresKey } from './runtime.js'
 import { DEAD_LETTER_KEY } from '../services/notifications/notifier.js'
 import { adminAuthHeaders } from '../services/admin-auth.js'
 
@@ -69,37 +68,6 @@ export async function siteCrs(): Promise<SiteCrObject[] | null> {
 
 export const siteDrift = (name: string) => drift(name)
 
-export async function servingRevision(): Promise<string | null> {
-  try {
-    return (await policyBundle()).revision
-  } catch {
-    return null
-  }
-}
-
-/** When this revision was first seen being served (cluster-wide), to judge "behind for > 2 min". */
-export async function servingSince(revision: string, now = Date.now()): Promise<number> {
-  const redis = getRedisClient()
-  const raw = await redis.get(SERVING_KEY)
-  const seen = raw ? (JSON.parse(raw) as { revision: string; since: number }) : null
-  if (seen?.revision === revision) return seen.since
-  await redis.set(SERVING_KEY, JSON.stringify({ revision, since: now }), 'EX', 7 * 86_400)
-  return now
-}
-
-export interface EngineRecord { id: string; revision: string | null; activatedAt: string | null; heardAt: number }
-
-export async function engines(): Promise<EngineRecord[]> {
-  const raw = await getRedisClient().hgetall(ENGINES_KEY)
-  return Object.entries(raw ?? {}).flatMap(([id, v]) => {
-    try {
-      return [{ id, ...(JSON.parse(v) as Omit<EngineRecord, 'id'>) }]
-    } catch {
-      return []
-    }
-  })
-}
-
 /**
  * Last successful fetch per entry of the CURRENT manifest. Anything else in the hash — an entry a past
  * manifest listed (a per-service entry, a deleted service), which lingers for the hash's TTL — is not
@@ -123,8 +91,8 @@ export const outboxMaxLen = () => env.AUDIT_OUTBOX_MAX_LEN
 
 export const opaConfigured = () => !!env.OPA_URL
 /**
- * OPA's own liveness (`GET /health`, open without a token in system_authz.rego) — for an engine that
- * never reports to jinbe: the OPAL-managed OPA gets its policy from the OPAL server, not jinbe's bundle.
+ * OPA's own liveness (`GET /health`, open without a token in system_authz.rego). OPA gets its policy
+ * and data from the OPAL server, so this is the engine's health as the Home can see it.
  */
 export async function opaHealthy(timeoutMs: number): Promise<boolean> {
   if (!env.OPA_URL) return false

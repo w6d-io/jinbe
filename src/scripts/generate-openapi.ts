@@ -7,7 +7,7 @@
  *
  * Builds the server (registers every route + @fastify/swagger), awaits ready,
  * serializes the generated document, and exits WITHOUT listening. External
- * dependencies (Redis/Mongo/Kratos) are not contacted at registration time.
+ * dependencies (Redis/Kratos) are not contacted at registration time.
  */
 import { writeFile } from 'fs/promises'
 import { stringify } from 'yaml'

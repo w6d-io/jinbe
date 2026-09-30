@@ -7,8 +7,6 @@ COPY package*.json tsconfig.json ./
 RUN npm ci
 
 COPY src ./src
-COPY prisma ./prisma
-RUN npx prisma generate
 RUN npm run build
 
 # Production stage
@@ -18,10 +16,6 @@ WORKDIR /app
 
 COPY package*.json ./
 RUN npm ci --omit=dev
-
-# Copy Prisma generated client from builder (avoids re-generating without dev deps)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 COPY --from=builder /app/dist ./dist
 

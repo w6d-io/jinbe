@@ -172,12 +172,6 @@ describe('support is refused by jinbe itself, not only at the gateway', () => {
     })
   }
 
-  it('asking which groups it may assign answers none (a question about the caller, not a refusal)', async () => {
-    const res = await app.inject({ url: '/api/admin/assignable-groups', headers: as('support') })
-    expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ groups: [], mayAssign: false })
-  })
-
   it('an edit reaching outside the traits (state) needs users:disable', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('support'), payload: { state: 'inactive' } })
     expect(res.statusCode).toBe(403)

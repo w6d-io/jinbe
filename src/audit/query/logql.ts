@@ -70,8 +70,6 @@ export const auditStream = (): AuditStream => ({ mode: env.LOKI_AUDIT_SELECTOR, 
 
 // pino writes compact JSON, so the audit line carries this exact text; the `| json` stage confirms it.
 const AUDIT_LINE = quote('"log_type":"audit"')
-// The exclusion tolerates spacing: an audit line must never slip into the ops logs by formatting.
-const AUDIT_LINE_RE = quote('"log_type"\\s*:\\s*"audit"')
 
 export function auditSelector(namespace?: string, stream = auditStream()): string {
   if (stream.mode === 'json') {
@@ -123,30 +121,4 @@ export function countBy(query: string, field: string | null, rangeS: number, top
   const inner = `count_over_time(${query} [${Math.max(1, Math.round(rangeS))}s])`
   const sum = field ? `sum by (${field}) (${inner})` : `sum(${inner})`
   return topk ? `topk(${topk}, ${sum})` : sum
-}
-
-export interface OpsLogsFilter {
-  namespace: string
-  container?: string
-  requestId?: string
-  traceId?: string
-  subject?: string
-  logType?: string
-}
-
-/**
- * Operational logs: pinned to one namespace, and never the audit stream — that has its own scoped
- * API. `container` is a closed list checked at the route (`opal-*` arrives as a regex prefix).
- */
-export function opsLogsQuery(f: OpsLogsFilter, stream = auditStream()): string {
-  // Without the label, `log_type!="audit"` would match every stream: exclude on the raw line instead.
-  const labels = [`namespace=${quote(f.namespace)}`, ...(stream.mode === 'label' ? ['log_type!="audit"'] : [])]
-  if (f.container) labels.push(f.container.endsWith('*') ? `container=~${quote(`${escapeRegex(f.container.slice(0, -1))}.*`)}` : `container=${quote(f.container)}`)
-  const stages: string[] = stream.mode === 'json' ? [`!~ ${AUDIT_LINE_RE}`] : []
-  // Ids are searched as literals on the raw line: they appear there whatever the line's format.
-  if (f.requestId) stages.push(`|= ${quote(f.requestId)}`)
-  if (f.traceId) stages.push(`|= ${quote(f.traceId)}`)
-  if (f.subject) stages.push(`|= ${quote(f.subject)}`)
-  if (f.logType) stages.push(`| json | log_type=${quote(f.logType)}`)
-  return [`{${labels.join(', ')}}`, ...stages].join(' ')
 }

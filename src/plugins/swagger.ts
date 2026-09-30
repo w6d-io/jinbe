@@ -20,7 +20,7 @@ const swaggerPlugin: FastifyPluginAsync = fp(async (fastify) => {
       info: {
         title: 'Jinbe API',
         description:
-          'Jinbe API for Kubernetes cluster and database management.\n\n' +
+          'Jinbe API: identities, groups and permissions, sites and the gateway, audit.\n\n' +
           '## Authentication\n' +
           'Most endpoints require authentication via the `ory_kratos_session` cookie.\n' +
           'Use the **Authorize** button to set your session cookie value.\n\n' +
@@ -43,11 +43,6 @@ const swaggerPlugin: FastifyPluginAsync = fp(async (fastify) => {
         { name: 'admin', description: 'Admin user management (Kratos)' },
         { name: 'git-config', description: 'Git configuration file management (Admin only) - GitOps proxy for JSON config files' },
         { name: 'rbac', description: 'RBAC management (Admin only) - User bindings, groups, services, and Oathkeeper access rules' },
-        { name: 'clusters', description: 'Kubernetes cluster management' },
-        { name: 'databases', description: 'Database management' },
-        { name: 'database-apis', description: 'Database API management' },
-        { name: 'backups', description: 'Backup management' },
-        { name: 'backup-items', description: 'Backup item management' },
         { name: 'health', description: 'Health check endpoint' },
       ],
       components: {

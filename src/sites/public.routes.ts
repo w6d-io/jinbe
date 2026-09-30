@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { sitesConfig } from './config.js'
 import { handle, nameOf, parse } from './http.js'
-import { accessReason, getLogo, publicLoginByHost, publicLoginByName } from './login.js'
+import { accessReason, getLogo, publicLoginByHost } from './login.js'
 import { mySites } from './mine.js'
 
 /**
@@ -35,12 +35,6 @@ export async function publicSitesRoutes(fastify: FastifyInstance) {
       reply.header('cache-control', 'private, no-store')
       return out
     }))
-
-  fastify.get('/:name/login', doc('Login branding and 2FA bar of one site, by name'), handle(async (request, reply) => {
-    const out = await publicLoginByName(nameOf(request))
-    reply.header('cache-control', CACHE)
-    return out
-  }))
 
   fastify.get('/:name/logo', doc('The site login-page logo (PNG or WebP)'), handle(async (request, reply) => {
     const logo = await getLogo(nameOf(request))

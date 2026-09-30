@@ -5,7 +5,7 @@ import { zodMessage } from './params.js'
 import type { AuditScope } from './scope.js'
 import { clientIp } from '../../utils/client-ip.js'
 
-/** Shared plumbing of the /api/audit and /api/admin/observability plugins. */
+/** Shared plumbing of the /api/audit plugins. */
 
 /** 10 requests per second per user (§4.4), when the rate-limit plugin is registered. */
 export const perUserRate = {

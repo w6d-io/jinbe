@@ -2,8 +2,6 @@ import { FastifyReply, FastifyRequest } from 'fastify'
 import { apiKeyService, ApiKeyError } from '../services/api-key.service.js'
 import { HydraApiError, HydraUnavailableError } from '../services/hydra.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { recordApiKeyUse } from '../audit/record.js'
-import { touchApiKeyUse } from '../services/api-key-last-used.js'
 import { decorateKeyViews } from '../services/api-key-views.js'
 import { AuthzUnavailableError } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
@@ -108,34 +106,6 @@ export class ApiKeyController {
     try {
       const [view] = await decorateKeyViews(request, [await apiKeyService.get(organizationId, clientId)])
       return reply.send(view)
-    } catch (err) {
-      return handleError(err, reply)
-    }
-  }
-
-  /**
-   * Internal: resolve a client_id to its owning organization + scopes.
-   * GET /api/internal/oauth-clients/:clientId/organization
-   *
-   * For upstream services (Hydra spec §5.3 Option A) to map an injected
-   * X-Client-Id header to a tenant. Intended for the private network only —
-   * it is NOT behind requireServiceAdmin, so it must not be exposed publicly
-   * (Oathkeeper does not route /api/internal externally).
-   */
-  async resolveOrganization(
-    request: FastifyRequest<{ Params: { clientId: string } }>,
-    reply: FastifyReply
-  ) {
-    const { clientId } = request.params
-    try {
-      const resolved = await apiKeyService.resolveOrganization(clientId)
-      if (!resolved) {
-        return reply.status(404).send({ error: 'Not Found', message: 'Unknown client_id' })
-      }
-      // The introspection path: the first resolution per client per day is recorded (apikey.used).
-      void recordApiKeyUse(clientId, resolved.organization_id ?? null)
-      touchApiKeyUse(clientId)
-      return reply.send(resolved)
     } catch (err) {
       return handleError(err, reply)
     }
