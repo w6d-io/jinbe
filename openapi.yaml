@@ -571,6 +571,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -695,6 +721,36 @@ paths:
                   details:
                     type: object
                     additionalProperties: true
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "401":
           description: Default Response
           content:
@@ -726,6 +782,36 @@ paths:
                   details:
                     type: object
                     additionalProperties: true
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -792,6 +878,36 @@ paths:
                   details:
                     type: object
                     additionalProperties: true
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "401":
           description: Default Response
           content:
@@ -823,6 +939,36 @@ paths:
                   details:
                     type: object
                     additionalProperties: true
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -897,6 +1043,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -3376,6 +3548,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -3576,6 +3774,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -3650,6 +3874,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -3764,6 +4014,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -3914,6 +4190,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4088,6 +4390,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4146,6 +4474,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4206,6 +4560,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4290,6 +4670,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4368,6 +4774,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4464,6 +4896,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4530,6 +4988,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4588,6 +5072,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4646,6 +5156,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4750,6 +5286,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -4836,6 +5398,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -5186,6 +5774,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/organizations:
     get:
       tags:
@@ -5249,6 +5863,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -5352,6 +5992,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -5466,6 +6132,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -5553,6 +6245,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -5676,6 +6394,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -9372,6 +10116,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -9733,6 +10503,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "502":
           description: Default Response
           content:
@@ -9811,6 +10607,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/groups:
     get:
       tags:
@@ -9877,6 +10699,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
     post:
       tags:
         - rbac
@@ -9963,6 +10811,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "409":
           description: Default Response
           content:
@@ -10063,6 +10937,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10131,6 +11031,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10193,6 +11119,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/services/{name}/permissions:
     get:
       tags:
@@ -10253,6 +11205,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10324,6 +11302,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/services/{name}/roles:
     get:
       tags:
@@ -10382,6 +11386,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10465,6 +11495,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10532,6 +11588,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10645,6 +11727,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10764,6 +11872,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -10930,6 +12064,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/access-rules/{id}:
     get:
       tags:
@@ -11091,6 +12251,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -11348,6 +12534,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/org-service-map:
     get:
       tags:
@@ -11403,6 +12615,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
     put:
       tags:
         - rbac
@@ -11486,6 +12724,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/rbac/org-admin-map:
     get:
       tags:
@@ -11541,6 +12805,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
     put:
       tags:
         - rbac
@@ -11624,6 +12914,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "422":
           description: Default Response
           content:
@@ -11695,6 +13011,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -12771,6 +14113,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/audit/summary:
     get:
       tags:
@@ -12827,6 +14195,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/audit/export:
     get:
       tags:
@@ -12965,6 +14359,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/audit/events:
     get:
       responses:
@@ -14212,6 +15632,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "401":
           description: Default Response
           content:
@@ -14223,6 +15673,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "403":
           description: Default Response
           content:
@@ -14234,6 +15714,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -14245,6 +15755,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/home/{module}:
     get:
       tags: *a6
@@ -14358,6 +15898,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "401":
           description: Default Response
           content:
@@ -14369,6 +15939,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "403":
           description: Default Response
           content:
@@ -14443,6 +16043,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -14454,6 +16084,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/admin/recert/campaigns:
     post:
       tags:
@@ -15113,6 +16773,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
     post:
       tags:
         - organization-users
@@ -15276,6 +16962,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/organizations/{organizationId}/users/{id}:
     get:
       tags:
@@ -15425,6 +17137,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -15602,6 +17340,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -15670,6 +17434,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -15843,6 +17633,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -15942,6 +17758,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -16060,6 +17902,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -16132,6 +18000,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -16236,6 +18130,36 @@ paths:
                     type: string
                   message:
                     type: string
+                  code:
+                    type: string
+                  reason:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
                   refused:
                     type: array
                     items:
@@ -16350,6 +18274,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "502":
           description: Default Response
           content:
@@ -16517,6 +18467,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
     get:
       tags:
         - api-keys
@@ -16610,6 +18586,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/organizations/{organizationId}/api-keys/scopes:
     get:
       tags:
@@ -16683,6 +18685,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -16763,6 +18791,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -16852,6 +18906,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -16954,6 +19034,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -17020,6 +19126,32 @@ paths:
                   reason:
                     type: string
                     example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -17119,6 +19251,10 @@ paths:
                         type: integer
                       all_permissions:
                         type: boolean
+                      key_step_up_at:
+                        type: string
+                      key_step_up_actions:
+                        type: boolean
         "401":
           description: Default Response
           content:
@@ -17132,6 +19268,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "403":
           description: Default Response
           content:
@@ -17145,6 +19309,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -17158,6 +19350,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -17171,6 +19391,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/mcp/personal-keys/exchange:
     post:
       tags:
@@ -17207,6 +19455,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "403":
           description: Default Response
           content:
@@ -17220,6 +19496,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "404":
           description: Default Response
           content:
@@ -17233,6 +19537,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
         "503":
           description: Default Response
           content:
@@ -17246,6 +19578,34 @@ paths:
                     type: string
                   reason:
                     type: string
+                  code:
+                    type: string
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
   /api/mcp/status:
     get:
       tags:
