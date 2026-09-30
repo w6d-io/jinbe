@@ -232,29 +232,6 @@ export async function recertRoutes(fastify: FastifyInstance) {
     }
   )
 
-  // ── Reviewer inbox — any authenticated identity (email from the session context) ──
-  fastify.get(
-    '/inbox',
-    {
-      ...open('self'),
-      schema: {
-        description: "The caller's pending review items across active campaigns. No admin gate: reviewers are arbitrary identities.",
-        tags: ['recert'],
-        response: {
-          200: { type: 'object', properties: { items: { type: 'array', items: itemSchema } } },
-          401: unauthorizedResponseSchema,
-        },
-      },
-    },
-    async (request, reply) => {
-      const email = request.userContext?.email
-      if (!email || email === 'unknown') {
-        return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-      }
-      return { items: await recertService.getInbox(email) }
-    }
-  )
-
   // ── Decision — assigned reviewer or admin ──
   fastify.post(
     '/items/:campaignId/:itemId/decision',

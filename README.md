@@ -229,7 +229,7 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 | `GET` | `/api/organizations/:orgId/users` | List users in an org |
 | `POST` | `/api/organizations/:orgId/users` | Create user in an org |
 | `GET / PUT / DELETE` | `/api/organizations/:orgId/users/:id` | Per-user operations |
-| `GET / PUT` | `/api/organizations/:orgId/users/:id/groups` | Org-scoped group management. Caller's authorization is resolved via OPA against the target org — no global admin needed. |
+| `GET` | `/api/organizations/:orgId/users/:id/groups` | A member's groups in the org. Changes go through `PUT /api/organizations/:orgId/users/:id/grants`. |
 
 ### Groups
 | Method | Path | Description |
