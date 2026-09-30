@@ -62,8 +62,9 @@ describe('platformScopes — what a personal key may carry', () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
     expect(await platformScopes(ROOT)).toEqual([
       'access:check', 'access:read', 'audit:read', 'gateway:read',
-      'groups.members:revoke', 'groups:read', 'org.keys:read', 'org.members:read', 'org.members:write',
-      'org:read', 'org:write', 'recert:read', 'sessions:read', 'sessions:revoke',
+      'groups:read', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
+      // sessions:revoke is only asked by a DELETE, which no key may make (deletes are by hand)
+      'org:read', 'org:write', 'recert:read', 'sessions:read',
       'settings:read', 'sites:apply', 'sites:read', 'sites:write',
       'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
       'users:update', 'zones:read',
@@ -74,7 +75,7 @@ describe('platformScopes — what a personal key may carry', () => {
     const all = await platformScopes(ROOT)
     // The catalogue's `never` (deletions, 2FA reset, key creation, approvals, the access model) and
     // every legacy name: a scope is a catalogue leaf.
-    for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'org.keys:revoke', 'users:delete', 'users:reset_second_factor',
+    for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'groups.members:revoke', 'users:delete', 'users:reset_second_factor',
       'sites:delete', 'sites.requests:approve', 'zones:delete', 'groups:write', 'org.admins:write', 'policy.bundle:write',
       'recert:manage', 'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
       'admin:read', 'admin:write', 'admin:create']) {
@@ -100,7 +101,7 @@ describe('platformScopes — what a personal key may carry', () => {
     s.members['olga@x.io'] = [ORG, 'globex']
     s.roster['olga@x.io'] = [ORG]
     // org:manage_users / org:manage_api_keys, as their catalogue leaves; key creation and revocation never.
-    expect(await platformScopes('olga@x.io')).toEqual(['org.keys:read', 'org.members:read', 'org.members:write'])
+    expect(await platformScopes('olga@x.io')).toEqual(['org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write'])
     s.roster['olga@x.io'] = []
     expect(await platformScopes('olga@x.io')).toEqual([])
   })

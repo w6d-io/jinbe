@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { declaredRoute } from '../policy/declared-routes.js'
 import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
+import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
 
 /**
  * What a DELEGATED caller (a user acting through a client: an MCP server, a personal key) may reach.
@@ -39,8 +40,17 @@ const WRITES = ['POST', 'PUT', 'PATCH', 'DELETE'] as const
  * decided by its `delegable` flag instead — one list, not two.
  */
 export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
-  // The caller's own credentials: a token must not mint or list the keys that make tokens.
-  { pattern: /^\/api\/me\/api-keys/, why: 'api_keys' },
+  // Revoking a key (personal or org) is protective and allowed (owner decision 2026-09-29, (d)):
+  // listed first so the DELETE and credential rules below never refuse it.
+  // Nothing else is ever deleted through a delegated token (owner decision: deletes are made by hand,
+  // in the console): a site, a user, a group, a membership, a draft, a logo.
+  { pattern: /^\//, methods: ['DELETE'], why: 'delete' },
+  // Zones and the gateway configuration: what the platform exposes and how. Changed in the console.
+  { pattern: /^\/api\/admin\/sites\/zones(\/:name)?$/, methods: ['POST', 'PUT', 'PATCH'], why: 'infrastructure' },
+  { pattern: /^\/api\/admin\/gateway(\/rollback)?$/, methods: ['POST', 'PUT', 'PATCH'], why: 'infrastructure' },
+  // The caller's own credentials: a token must not mint or list the keys that make tokens (org keys
+  // are decided by the catalogue: org.keys:read direct, org.keys:write never).
+  { pattern: /^\/api\/me\/api-keys/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
   // SCIM, backups, databases, clusters (kubeconfigs), jobs — every method.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
   { pattern: /^\/api\/(backups|backup-items|databases|database-apis|clusters|jobs)(\/|$)/, why: 'infrastructure' },
@@ -58,8 +68,15 @@ const PERSON_WRITES = [
   /^\/api\/organizations\/:organizationId\/users\/:id(\/|$)/,
 ]
 
+// Key revocation: the one DELETE a token may make (a leaked key can be killed from the assistant).
+const KEY_REVOKE = [
+  /^\/api\/me\/api-keys\/:clientId$/,
+  /^\/api\/organizations\/:organizationId\/api-keys\/:clientId$/,
+]
+
 /** Why no delegated caller may reach this route pattern (rule 1), or null. */
 export function ineligibleWhy(method: string, pattern: string): string | null {
+  if (method === 'DELETE' && KEY_REVOKE.some((p) => p.test(pattern))) return null
   for (const rule of DELEGATION_INELIGIBLE) {
     if (rule.pattern.test(pattern) && (!rule.methods || rule.methods.includes(method))) return rule.why
   }
@@ -86,15 +103,18 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
   const method = request.method.toUpperCase()
   const pattern = request.routeOptions?.url ?? (request.url || '').split('?')[0]
 
+  const required = permission ?? declaredRoute(method, pattern)?.permission
+  // The catalogue's verdict first: it names the permission a token may never use.
+  if (required && (required === EVERYTHING || specOf(required)?.delegable === 'never')) return `delegation_ineligible:${required}`
   const why = ineligibleWhy(method, pattern)
   if (why) return `delegation_ineligible:${why}`
   if (targetsSelf(request, method, pattern)) return 'delegation_ineligible:self_change'
+  const redirect = productionRedirect(method, pattern)
+  if (redirect) return `delegation_refused:${redirect}`
 
-  const required = permission ?? declaredRoute(method, pattern)?.permission
-  if (required) {
-    if (required === EVERYTHING || specOf(required)?.delegable === 'never') return `delegation_ineligible:${required}`
-    return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
-  }
+  if (required) return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
+  // Revoking one of the holder's own keys needs no scope: it can only take power away (item d).
+  if (method === 'DELETE' && KEY_REVOKE[0].test(pattern)) return null
   const row = declaredRoute(method, pattern)
   if (row?.class === 'public') return null
   // No permission to cover: the route answers about the caller. Reading is fine; changing is not.
@@ -105,7 +125,17 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
 export async function delegationGate(request: FastifyRequest, reply: FastifyReply) {
   if (request.userContext?.authVia !== 'delegated') return
   const reason = delegationRefusal(request)
-  if (!reason) return
+  if (!reason) {
+    if (!(WRITES as readonly string[]).includes(request.method.toUpperCase())) return
+    const retryAfter = await delegatedWriteBudget(request)
+    if (retryAfter === null) return
+    denyAudit(request, 'delegated_write_rate_limited', { statusCode: 429, severity: 'warn' })
+    return reply.status(429).header('Retry-After', String(retryAfter)).send({
+      error: 'rate_limited',
+      message: 'Too many writes through this key. Use a bulk plan for many changes at once.',
+      retryAfter,
+    })
+  }
   denyAudit(request, reason)
   return reply.status(403).send({
     error: 'Forbidden',

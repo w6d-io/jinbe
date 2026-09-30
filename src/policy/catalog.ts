@@ -75,7 +75,7 @@ export const CATALOG = {
   'groups:read': p('access', 'View groups, roles and the permission catalogue', 'low'),
   'groups:write': p('access', 'Create, edit or delete groups and what they bind (the access model)', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
   'groups.members:write': p('access', 'Add people to platform groups', 'critical', { stepUp: true, fourEyes: 'prod' }),
-  'groups.members:revoke': p('access', 'Remove people from platform groups', 'high'),
+  'groups.members:revoke': p('access', 'Remove people from platform groups', 'high', { delegable: 'never' }),
 
   // ── Organisations ──────────────────────────────────────────────────────────────────────────────
   'org:read': p('organizations', 'List organisations and their admins', 'low'),
@@ -86,7 +86,7 @@ export const CATALOG = {
   'org.admins:write': p('organizations', 'Change who administers an organisation', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
   'org.keys:read': p('organizations', "See an organisation's API keys and key policy", 'medium'),
   'org.keys:write': p('organizations', 'Create API keys, change the key policy', 'critical', { stepUp: true, delegable: 'never' }),
-  'org.keys:revoke': p('organizations', 'Revoke an API key', 'high', { delegable: 'never' }),
+  'org.keys:revoke': p('organizations', 'Revoke an API key', 'high'),
 
   // ── Sites and the edge ─────────────────────────────────────────────────────────────────────────
   'sites:read': p('sites', 'View sites, versions, status, drift, requests; test a URL', 'low'),

@@ -43,6 +43,7 @@ export const personalKeyCreateBodySchema = z.object({
   label: z.string().min(1, 'label is required').max(200),
   /** Absent = "all my permissions": the key carries whatever its holder holds at each call. */
   scopes: z.array(z.string().min(1)).min(1, 'choose at least one permission, or leave scopes out for all of yours').optional(),
+  allow_step_up_actions: z.boolean().optional(),
   /** Absent = the longest allowed now (the administrator's maximum, mcp/settings.ts). */
   expires_in_days: z.number().int().min(1).max(PERSONAL_KEY_MAX_DAYS).optional(),
 })
@@ -97,6 +98,7 @@ export const personalKeyCreateBodyJsonSchema = {
   properties: {
     label: { type: 'string', minLength: 1, maxLength: 200 },
     scopes: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'A subset of the permissions you hold (GET /api/me/api-keys/scopes); absent = all of them, as they are at each call' },
+    allow_step_up_actions: { type: 'boolean', description: 'Default true: the second factor proven when creating the key stands in for step-up on publish, email change and group grants (30 days max). false: the key can never do step-up actions.' },
     expires_in_days: { type: 'integer', minimum: 1, maximum: PERSONAL_KEY_MAX_DAYS, description: 'At most the maximum an administrator set (30 days or less); absent = that maximum' },
   },
   additionalProperties: false,

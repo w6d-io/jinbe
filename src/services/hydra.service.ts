@@ -57,7 +57,7 @@ export interface CreateClientInput {
    * A personal key: owned by the user (`owner = user:<id>`), not listed with the org's keys, and
    * acting as that user. Absent = an org machine key.
    */
-  personal?: { subject: string; allPermissions?: boolean }
+  personal?: { subject: string; allPermissions?: boolean; stepUpAt?: string; stepUpActions?: boolean }
 }
 
 /** Hydra's introspection answer (RFC 7662 plus Hydra's `ext`), the fields jinbe reads. */
@@ -147,6 +147,8 @@ export class HydraService {
       metadata.subject = input.personal.subject
       // `all`: the key carries whatever its holder holds at each call; `selected`: the stored scopes.
       metadata.scope_mode = input.personal.allPermissions ? 'all' : 'selected'
+      if (input.personal.stepUpAt) metadata.step_up_at = input.personal.stepUpAt
+      metadata.step_up_actions = input.personal.stepUpActions !== false
     }
 
     const body = {

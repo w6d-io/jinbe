@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { mcpGate } from '../mcp/settings.js'
+import { requireRecentMfa } from '../middleware/require-admin.js'
 import { personalKeyService } from '../services/personal-key.service.js'
 import { handleError } from '../controllers/api-key.controller.js'
 import { decorateKeyViews } from '../services/api-key-views.js'
@@ -97,6 +98,9 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
 
   fastify.post('/', {
     ...open('self'),
+    // A key can act as you for 30 days: minting one needs a second factor proven in the last 15 minutes,
+    // and that proof is what the key may later stand on for publish / email change / group grants.
+    preHandler: requireRecentMfa,
     schema: {
       description:
         'Create a personal API key acting as you, bound to no organization. Without `scopes` it carries all your ' +
@@ -111,7 +115,7 @@ export async function personalKeyRoutes(fastify: FastifyInstance) {
     const body = personalKeyCreateBodySchema.parse(request.body)
     const uc = request.userContext!
     try {
-      const result = await personalKeyService.create({ id: uc.id, email: uc.email }, body)
+      const result = await personalKeyService.create({ id: uc.id, email: uc.email, ...(uc.secondFactorAt ? { secondFactorAt: new Date(uc.secondFactorAt).toISOString() } : {}) }, body)
       auditEventService
         .emit({
           type: 'api_key.created',

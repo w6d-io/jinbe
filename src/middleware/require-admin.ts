@@ -8,6 +8,7 @@ import type { UserRbacInfo } from '../services/authorization-resolution.js'
 import { denyAudit } from '../audit/deny.js'
 import { ROLES } from '../policy/roles.js'
 import { EVERYTHING } from '../policy/catalog.js'
+import { keyStepUpVerdict } from './delegated-step-up.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -38,6 +39,9 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
     secondFactorAt: request.userContext?.secondFactorAt,
     authVia: request.userContext?.authVia,
   }
+  // A personal MCP key may stand on the second factor proven when it was created, for the few step-up
+  // actions a key may do (owner decision 2026-09-29, item c; delegated-step-up.ts).
+  if (stepUp.authVia === 'delegated' && keyStepUpVerdict(request).ok) return
   if (!secondFactorIsFresh(stepUp)) {
     const unprovable = !canProveSecondFactor(stepUp)
     // Emit the currently-silent step-up denial (A2).
