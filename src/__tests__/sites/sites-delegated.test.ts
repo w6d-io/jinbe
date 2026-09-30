@@ -123,6 +123,22 @@ describe('drafting with sites:write', () => {
     expect(redis.strings.has('rbac:sites:draft:payroll')).toBe(true)
   })
 
+  // e2e AU-R-D1/D2/D5: the draft emitted nothing, and the import and save named the user without the key.
+  it('audits the draft, the import and the save, naming the key beside its holder', async () => {
+    h.emit.mockClear()
+    await inject('PUT', '/payroll/draft', WRITE, { site: { name: 'payroll' }, baseVersion: 0 })
+    await inject('PUT', '/payroll', WRITE, { site: payrollSite() })
+    const p = await inject('POST', '/payroll/import/preview', WRITE, { source: { content: SPEC } })
+    const { spec, base } = p.json()
+    await inject('POST', '/payroll/import/commit', WRITE, { specSha256: spec.sha256, baseEtag: base.etag, acceptDenied: true })
+    await new Promise((r) => setTimeout(r, 0))
+    const events = h.emit.mock.calls.map(([e]) => e as { verb: string; actor: { id: string; act?: unknown } })
+    expect(events.map((e) => e.verb)).toEqual(expect.arrayContaining(['draft', 'update', 'import']))
+    for (const e of events.filter((x) => ['draft', 'update', 'import'].includes(x.verb))) {
+      expect(e.actor).toMatchObject({ id: 'sam-id', act: { client_id: 'claude', via: 'auth-mcp', kind: 'personal' } })
+    }
+  })
+
   it('a key without sites:write drafts nothing, whatever its holder holds', async () => {
     const res = await inject('PUT', '/payroll/draft', key('sites:read'), { site: { name: 'payroll' } })
     expect(res.statusCode).toBe(403)

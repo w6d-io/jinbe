@@ -25,7 +25,7 @@ export function auditGateway(
       targetId: 'gateway',
       result: 'applied',
       severity: 'high',
-      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null },
+      actor: { id: actor.id ?? null, email: actor.email ?? null, ip: actor.ip ?? null, ua: actor.ua ?? null, sessionId: actor.sessionId ?? null, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId ?? null,
       changes: { resource: 'gateway', id: 'gateway', summary, changedKeys: details.changes.map((c) => `${c.kind}.${c.handler}`) },
       details: { ...details },

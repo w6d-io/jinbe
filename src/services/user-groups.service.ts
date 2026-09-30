@@ -2,6 +2,7 @@ import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
 import { assertMayAssignGroup } from './rbac-escalation-guard.js'
 import { auditEventService } from './audit-event.service.js'
+import type { AuditAct } from './audit-types.js'
 import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
@@ -22,6 +23,8 @@ export type GroupUpdateActor = {
   ua?: string | null
   sessionId?: string | null
   requestId?: string | null
+  /** A user acting through a client: named in the trail beside the user (auditActor). */
+  act?: AuditAct | null
   aal?: string
   authenticatedAt?: Date | string
   secondFactorAt?: Date | string | null
@@ -349,7 +352,7 @@ class UserGroupsService {
 
     auditEventService.emit({
       type: auditEventType,
-      actor: { id: actor.id, email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId,
       target: { type: 'user', id: identity.id },
       // Keep oldGroups/newGroups in details for back-compat; the structural
@@ -406,7 +409,7 @@ class UserGroupsService {
       result: 'denied',
       severity: 'warn',
       reason,
-      actor: { id: actor.id, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+      actor: { id: actor.id, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
       requestId: actor.requestId,
       targetId: identity.id,
       targetType: 'user',

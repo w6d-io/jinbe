@@ -14,6 +14,10 @@ export function actorOf(request: FastifyRequest): Actor {
     ua: (request.headers['user-agent'] as string | undefined)?.slice(0, 200) ?? null,
     sessionId: request.userContext?.sessionId ?? null,
     requestId: (request.headers['x-request-id'] as string | undefined) ?? null,
+    // A user acting through a client (an MCP key): the trail names the client beside the user.
+    ...(request.userContext?.authVia === 'delegated' && request.userContext.delegation
+      ? { act: { client_id: request.userContext.delegation.clientId, via: request.userContext.delegation.via, kind: request.userContext.delegation.kind } }
+      : {}),
   }
 }
 

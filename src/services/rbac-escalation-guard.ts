@@ -31,7 +31,7 @@ function refuse(reason: string, message: string, change: RbacChange, actor: Audi
   auditEventService.emit({
     category: 'rbac', kind: 'change', verb: 'update', target: targetOf(change),
     result: 'denied', reason, severity: 'warn',
-    actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId },
+    actor: { email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
     requestId: actor.requestId, source: 'jinbe-api',
   }).catch(() => {})
   throw Object.assign(new Error(message), { statusCode: 403, code: reason })

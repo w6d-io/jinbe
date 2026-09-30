@@ -75,6 +75,8 @@ const RECERT: Record<string, AuditEventType> = {
 
 /** The sites module's emits (`category: service`, target `site:<name>`), by verb. */
 const SITE: Record<string, AuditEventType> = {
+  draft: 'site.draft_saved',
+  discard: 'site.draft_discarded',
   update: 'site.saved',
   import: 'site.imported',
   apply: 'site.applied',

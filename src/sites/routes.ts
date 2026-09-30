@@ -118,7 +118,7 @@ export async function sitesRoutes(fastify: FastifyInstance) {
     handle(async (request) => sites.putDraft(nameOf(request), parse(draftBodySchema, request.body), actorOf(request))))
 
   fastify.delete('/:name/draft', { ...docNamed('sites:write', 'Discard the draft') }, handle(async (request, reply) => {
-    await sites.deleteDraft(nameOf(request))
+    await sites.deleteDraft(nameOf(request), actorOf(request))
     return reply.status(204).send()
   }))
 

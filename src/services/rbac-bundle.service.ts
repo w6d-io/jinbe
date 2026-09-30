@@ -216,7 +216,7 @@ class RbacBundleService {
       target:   'bundle',
       result:   'applied',
       severity: grantsSuper ? 'high' : 'warn',
-      actor:    { email: actor?.email ?? null, ip: actor?.ip ?? null, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId },
+      actor:    { email: actor?.email ?? null, ip: actor?.ip ?? null, name: actor?.name, ua: actor?.ua, sessionId: actor?.sessionId, ...(actor?.act ? { act: actor?.act } : {}) },
       requestId: actor?.requestId,
       reason:   `services=${services.length}`,
       changes: {
