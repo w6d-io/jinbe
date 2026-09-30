@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { groupSecondFactorJsonSchema } from '../second-factor.schema.js'
 
 /**
  * Groups file schema (groups.json)
@@ -91,6 +92,7 @@ export const groupJsonSchema = {
         items: { type: 'string' },
       },
     },
+    secondFactor: groupSecondFactorJsonSchema,
   },
   required: ['name', 'services'],
 }

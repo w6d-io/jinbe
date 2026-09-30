@@ -9,6 +9,7 @@ import { denyAudit } from '../audit/deny.js'
 import { ROLES } from '../policy/roles.js'
 import { EVERYTHING } from '../policy/catalog.js'
 import { keyStepUpVerdict } from './delegated-step-up.js'
+import { routePermissionOf, secondFactorRefusal } from '../second-factor/requirements.js'
 import { missingPermissionFields } from '../services/permission-refusal.js'
 
 declare module 'fastify' {
@@ -42,17 +43,22 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
   }
   // A personal MCP key may stand on the second factor proven when it was created, for the few step-up
   // actions a key may do (owner decision 2026-09-29, item c; delegated-step-up.ts).
-  if (stepUp.authVia === 'delegated' && keyStepUpVerdict(request).ok) return
+  const verdict = stepUp.authVia === 'delegated' ? keyStepUpVerdict(request) : null
+  if (verdict?.ok) return
   if (!secondFactorIsFresh(stepUp)) {
     const unprovable = !canProveSecondFactor(stepUp)
     // Emit the currently-silent step-up denial (A2).
     denyAudit(request, unprovable ? 'step_up_unavailable' : 'reauth_required', { statusCode: 422, severity: 'warn' })
+    // Which rule refused, and on which permission, so the console and the MCP can say so.
+    const permission = routePermissionOf(request)
     if (unprovable) {
+      const keyReason = verdict && !verdict.ok && verdict.reason !== 'not_delegated' ? verdict.reason : undefined
       return reply.status(422).send({
         error: 'step_up_unavailable',
         message:
           'This action requires a second factor proven in a browser session. The credential you presented cannot carry one.',
-        hint: 'Sign in to the console in a browser and retry there.',
+        hint: keyReason ? KEY_HINTS[keyReason] ?? KEY_HINTS.default : 'Sign in to the console in a browser and retry there.',
+        ...secondFactorRefusal('step_up', { permission, keyReason }),
       })
     }
     return reply.status(422).send({
@@ -61,8 +67,19 @@ export async function requireRecentMfa(request: FastifyRequest, reply: FastifyRe
         'This action requires a recent second factor. Re-verify two-factor authentication (TOTP) within the last 15 minutes and retry.',
       stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000 },
       hint: 'Re-verify at /login?aal=aal2&refresh=true, then retry.',
+      ...secondFactorRefusal('step_up', { permission }),
     })
   }
+}
+
+/** Why a personal key's creation-time second factor did not stand in (delegated-step-up.ts), for a person. */
+const KEY_HINTS: Record<string, string> = {
+  not_personal_key: 'Only a personal key can stand on a second factor; do this in the console in a browser.',
+  step_up_actions_off: 'This key was created with protected actions switched off; do this in the console, or create a key that allows them.',
+  no_key_step_up: 'This key carries no second-factor proof; create a new personal key after signing in with your second factor.',
+  key_step_up_expired: 'The second factor this key stands on is older than 30 days; create a new personal key, or do this in the console.',
+  not_allowed_here: 'A key may not stand in for the second factor on this action; do this in the console in a browser.',
+  default: 'Sign in to the console in a browser and retry there.',
 }
 
 /** What the route table says a super-admin-only route requires: the wildcard, which no scope covers. */

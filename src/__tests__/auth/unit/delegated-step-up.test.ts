@@ -66,15 +66,18 @@ describe('(c) a personal key stands on its creation-time second factor', () => {
 
   it('refuses when the proof is older than 30 days, absent, opted out, or the token is not a personal key', async () => {
     const old = new Date(Date.now() - KEY_STEP_UP_MAX_AGE_MS - DAY).toISOString()
-    for (const who of [
-      { at: old, scopes: 'sites:apply' },
-      { at: null, scopes: 'sites:apply' },
-      { at: fresh(), actions: false, scopes: 'sites:apply' },
-      { kind: 'oauth' as const, at: fresh(), scopes: 'sites:apply' },
-    ]) {
+    for (const [who, keyReason] of [
+      [{ at: old, scopes: 'sites:apply' }, 'key_step_up_expired'],
+      [{ at: null, scopes: 'sites:apply' }, 'no_key_step_up'],
+      [{ at: fresh(), actions: false, scopes: 'sites:apply' }, 'step_up_actions_off'],
+      [{ kind: 'oauth' as const, at: fresh(), scopes: 'sites:apply' }, 'not_personal_key'],
+    ] as const) {
       const res = await call('POST', '/api/admin/sites/x/apply', who)
       expect(res.statusCode).toBe(422)
       expect(res.json().error).toBe('step_up_unavailable')
+      // Which rule, on which permission, and why the key could not stand in — for the MCP to say.
+      expect(res.json()).toMatchObject({ permission: 'sites:apply', secondFactor: { rule: 'step_up', requiredAal: 'aal2', maxAgeMin: 15, keyReason } })
+      expect(res.json().hint).toMatch(/key|console/i)
     }
   })
 
@@ -87,6 +90,8 @@ describe('(c) a personal key stands on its creation-time second factor', () => {
     const res = await call('POST', '/api/admin/sites/x/apply', { session: true })
     expect(res.statusCode).toBe(422)
     expect(res.json().error).toBe('reauth_required')
+    expect(res.json()).toMatchObject({ permission: 'sites:apply', secondFactor: { rule: 'step_up', maxAgeMin: 15 } })
+    expect(res.json().secondFactor.keyReason).toBeUndefined()
   })
 
   it('names why it refuses', () => {

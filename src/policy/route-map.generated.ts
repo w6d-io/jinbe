@@ -92,6 +92,8 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"PUT","path":"/api/admin/rbac/org-service-map","permission":"admin:write"},
   {"method":"DELETE","path":"/api/admin/rbac/org-service-map/:organizationId","permission":"groups:write"},
   {"method":"DELETE","path":"/api/admin/rbac/org-service-map/:organizationId","permission":"admin:write"},
+  {"method":"GET","path":"/api/admin/rbac/second-factor-map","permission":"groups:read"},
+  {"method":"GET","path":"/api/admin/rbac/second-factor-map","permission":"admin:read"},
   {"method":"GET","path":"/api/admin/rbac/services","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/rbac/services","permission":"admin:read"},
   {"method":"GET","path":"/api/admin/rbac/services/:name/favicon","permission":"sites:read"},

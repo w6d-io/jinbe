@@ -429,6 +429,7 @@ describe('userGroupsService.applyGroupUpdate — super_admin_required policy', (
         error: 'mfa_required',
         targetEmail: 'target@example.com',
         targetGroups: ['super_admins'],
+        secondFactor: { rule: 'enrol_before_joining', requiredAal: 'aal2', groups: ['super_admins'] },
       }),
     })
   })

@@ -5,6 +5,10 @@ import { organisationStoreConfigured, organisationsById } from '../services/orga
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { needs } from '../policy/route-access.js'
+import { rights } from '../authz/opa.js'
+import { getSecondFactorSetting } from '../second-factor/settings.js'
+import { userSecondFactor, type UserSecondFactor } from '../second-factor/requirements.js'
+import { userSecondFactorJsonSchema } from '../schemas/second-factor.schema.js'
 import {
   notFoundResponseSchema,
   serviceUnavailableResponseSchema,
@@ -24,6 +28,21 @@ import {
 
 const stringList = { type: 'array', items: { type: 'string' } }
 
+/**
+ * Their second-factor picture: which of their groups require it, whether they enrolled, and which of
+ * their permissions need a recent one. Nothing about a session (they may have none, or several).
+ * Each part is best effort; the whole is null only when the setting itself cannot be read.
+ */
+async function secondFactorOf(id: string, email: string, groups: string[]): Promise<UserSecondFactor | null> {
+  const [setting, methods, held] = await Promise.all([
+    getSecondFactorSetting().catch(() => null),
+    (async () => kratosService.mfaMethodsOf(id))().catch(() => null),
+    (async () => (email ? rights(email) : null))().catch(() => null),
+  ])
+  if (!setting) return null
+  return userSecondFactor({ groups, permissions: held?.permissions ?? null, setting, methods, session: null })
+}
+
 async function namesFor(ids: readonly string[]): Promise<Record<string, string>> {
   if (!organisationStoreConfigured() || ids.length === 0) return {}
   try {
@@ -39,7 +58,7 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     schema: {
       description:
         "A user's site access (groups → roles per service) and org access (per org: admin flag and the " +
-        'groups granted there). Needs access:read.',
+        'groups granted there), and secondFactor (requiredBecause, enrolled, stepUpPermissions; session fields null). Needs access:read.',
       tags: ['admin'],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
       response: {
@@ -62,6 +81,7 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
                 },
               },
             },
+            secondFactor: userSecondFactorJsonSchema,
           },
         },
         401: unauthorizedResponseSchema,
@@ -116,6 +136,6 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       grants: grants[orgId]?.[email] ?? [],
     }))
 
-    return reply.send({ site: { groups, byService }, orgs })
+    return reply.send({ site: { groups, byService }, orgs, secondFactor: await secondFactorOf(id, email, groups) })
   })
 }

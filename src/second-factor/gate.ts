@@ -1,8 +1,10 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/index.js'
-import { decide, secondFactorRequired } from '../authz/opa.js'
+import { decide, rights, secondFactorRequired } from '../authz/opa.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { denyAudit } from '../audit/deny.js'
+import { getSecondFactorGroups } from './settings.js'
+import { routePermissionOf, secondFactorRefusal } from './requirements.js'
 
 /**
  * Server-side half of mandatory 2FA: a member of a group that must hold a second factor
@@ -57,16 +59,27 @@ export function secondFactorScope(path: string): SecondFactorScope {
   return { gated: false, reason: entry?.reason ?? null }
 }
 
-async function needsSecondFactor(email: string, method: string, path: string, aal: string): Promise<boolean> {
+/** Which rule asks this caller for a second factor on this request, or null. */
+async function needsSecondFactor(email: string, method: string, path: string, aal: string): Promise<'group_sign_in' | 'site_login' | null> {
   try {
-    if (aal !== 'aal2' && (await secondFactorRequired(email))) return true
+    if (aal !== 'aal2' && (await secondFactorRequired(email))) return 'group_sign_in'
   } catch {
     // Unanswerable (OPA down, or a policy that predates the rule): the route gate answers the outage.
   }
   try {
-    return (await decide({ email, method, path, aal, client: false })).reason === 'needs_2fa'
+    return (await decide({ email, method, path, aal, client: false })).reason === 'needs_2fa' ? 'site_login' : null
   } catch {
-    return false
+    return null
+  }
+}
+
+/** The caller's groups that the setting names: the explanation, never the decision (OPA made it). */
+async function groupsRequiring(email: string): Promise<string[]> {
+  try {
+    const [held, setting] = await Promise.all([rights(email), getSecondFactorGroups()])
+    return held.groups.filter((g) => setting.includes(g)).sort()
+  } catch {
+    return []
   }
 }
 
@@ -76,13 +89,19 @@ export async function requireSecondFactor(request: FastifyRequest, reply: Fastif
   if (env.NODE_ENV === 'development' && env.DEV_BYPASS_AUTH) return
   const path = (request.url || '').split('?')[0]
   if (!secondFactorScope(path).gated) return
-  if (!(await needsSecondFactor(ctx.email, request.method, path, ctx.aal ?? 'aal1'))) return
+  const rule = await needsSecondFactor(ctx.email, request.method, path, ctx.aal ?? 'aal1')
+  if (!rule) return
 
   denyAudit(request, SECOND_FACTOR_REQUIRED, { statusCode: 422, severity: 'warn' })
+  const requiredBecause = rule === 'group_sign_in' ? await groupsRequiring(ctx.email) : undefined
+  const permission = routePermissionOf(request)
   return reply.status(422).send({
     error: SECOND_FACTOR_REQUIRED,
-    message: 'Your account must use two-step sign-in. Set up or confirm your second factor, then retry.',
+    message: rule === 'group_sign_in'
+      ? `Your account must use two-step sign-in${requiredBecause?.length ? ` (member of ${requiredBecause.join(', ')})` : ''}. Set up or confirm your second factor, then retry.`
+      : 'This service asks for two-step sign-in here. Set up or confirm your second factor, then retry.',
     stepUp: { requiredAal: 'aal2' },
     hint: 'Complete two-step sign-in at /two-step on the sign-in site, then retry.',
+    ...secondFactorRefusal(rule, { permission, requiredBecause }),
   })
 }

@@ -3,6 +3,8 @@ import { ALIASES, CATALOG, PERMISSIONS } from '../policy/catalog.js'
 import { ROLES, STAFF_ROLES } from '../policy/roles.js'
 import { declaredRoutes } from '../policy/declared-routes.js'
 import { open } from '../policy/route-access.js'
+import { stepUpPermissionsOf, stepUpRule } from '../second-factor/requirements.js'
+import { stepUpRuleJsonSchema } from '../schemas/second-factor.schema.js'
 
 /**
  * GET /api/catalog — the permission catalogue, the staff roles and the legacy aliases, for kuma (nav
@@ -16,7 +18,7 @@ export async function catalogRoutes(fastify: FastifyInstance) {
   fastify.get('/catalog', {
     ...open('authenticated'),
     schema: {
-      description: 'The permission catalogue (labels, sensitivity, step-up, four-eyes, delegable, routes), the staff roles and the legacy aliases.',
+      description: 'The permission catalogue (labels, sensitivity, step-up and its rule, four-eyes, delegable, routes), the staff roles and the legacy aliases.',
       tags: ['auth'],
       response: {
         200: {
@@ -34,6 +36,7 @@ export async function catalogRoutes(fastify: FastifyInstance) {
                   stepUp: { type: 'boolean' },
                   fourEyes: { type: ['string', 'boolean'] },
                   delegable: { type: 'string', enum: ['direct', 'never'] },
+                  stepUpRule: stepUpRuleJsonSchema,
                   routes: {
                     type: 'array',
                     items: { type: 'object', properties: { method: { type: 'string' }, path: { type: 'string' } } },
@@ -50,6 +53,7 @@ export async function catalogRoutes(fastify: FastifyInstance) {
                   group: { type: 'string' },
                   label: { type: 'string' },
                   permissions: { type: 'array', items: { type: 'string' } },
+                  stepUpPermissions: { type: 'array', items: { type: 'string' }, description: 'Its permissions that need a recent second factor' },
                 },
               },
             },
@@ -65,8 +69,8 @@ export async function catalogRoutes(fastify: FastifyInstance) {
       routes.set(r.permission, [...(routes.get(r.permission) ?? []), { method: r.method, path: r.path }])
     }
     return reply.send({
-      permissions: PERMISSIONS.map((name) => ({ name, ...CATALOG[name], routes: routes.get(name) ?? [] })),
-      roles: STAFF_ROLES.map((name) => ({ name, ...ROLES[name], permissions: [...ROLES[name].permissions] })),
+      permissions: PERMISSIONS.map((name) => ({ name, ...CATALOG[name], stepUpRule: stepUpRule(name), routes: routes.get(name) ?? [] })),
+      roles: STAFF_ROLES.map((name) => ({ name, ...ROLES[name], permissions: [...ROLES[name].permissions], stepUpPermissions: stepUpPermissionsOf(ROLES[name].permissions) })),
       aliases: ALIASES,
     })
   })

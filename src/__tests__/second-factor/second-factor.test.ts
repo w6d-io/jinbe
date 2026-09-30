@@ -64,6 +64,7 @@ const sessionOf = (email: string, aal: string) => ({
 /** OPA stand-in: second_factor_required for root@, decision needs_2fa for root@ below aal2 on /api/admin/*. */
 function opaWorld(rule: string, input: Record<string, unknown>) {
   if (rule === 'rbac/second_factor_required') return input.email === 'root@x.io'
+  if (rule === 'rbac/user_info') return { groups: input.email === 'root@x.io' ? ['ops', 'super_admins'] : [], roles: [], permissions: [] }
   if (rule === 'rbac/decision') {
     const admin = String(input.object).startsWith('/api/admin/')
     if (!admin) return { allow: false, reason: 'not_found' }
@@ -251,6 +252,12 @@ describe('server-side enforcement (onRequest hook: the policy\'s second_factor_r
     expect(h.opa).toHaveBeenCalledWith('rbac/second_factor_required', { email: 'root@x.io' })
   })
 
+  it('the refusal names the rule and the groups that require it (the default: super_admins)', async () => {
+    const res = await call({ 'x-email': 'root@x.io', 'x-aal': 'aal1' })
+    expect(res.json()).toMatchObject({ secondFactor: { rule: 'group_sign_in', requiredAal: 'aal2', requiredBecause: ['super_admins'] } })
+    expect(res.json().message).toContain('super_admins')
+  })
+
   it('super admin at aal2 passes', async () => {
     expect((await call({ 'x-email': 'root@x.io', 'x-aal': 'aal2' })).statusCode).toBe(200)
   })
@@ -274,7 +281,9 @@ describe('server-side enforcement (onRequest hook: the policy\'s second_factor_r
   it('jinbe\'s own per-site 2FA (the gateway\'s needs_2fa) still applies to someone the group rule does not name', async () => {
     h.opa.mockImplementation(async (rule: string, input: Record<string, unknown>) =>
       rule === 'rbac/decision' && input.email === 'nina@x.io' ? { allow: false, reason: 'needs_2fa' } : opaWorld(rule, input))
-    expect((await call({ 'x-email': 'nina@x.io', 'x-aal': 'aal1' })).statusCode).toBe(422)
+    const res = await call({ 'x-email': 'nina@x.io', 'x-aal': 'aal1' })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().secondFactor).toEqual({ rule: 'site_login', requiredAal: 'aal2' })
   })
 
   it('a policy that predates the rule (no answer) falls back to the gateway decision, never a refusal of its own', async () => {

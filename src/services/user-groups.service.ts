@@ -7,6 +7,7 @@ import { diffUserGroups } from './audit-diff.js'
 import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
 import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
+import { secondFactorRefusal } from '../second-factor/requirements.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -311,6 +312,7 @@ class UserGroupsService {
             targetEmail: identity.email,
             targetGroups: platformGrants,
             hint: 'Have the user complete /settings → Authenticator app, then retry.',
+            ...secondFactorRefusal('enrol_before_joining', { groups: platformGrants }),
           },
         }
       }
@@ -468,6 +470,7 @@ class UserGroupsService {
         targetEmail,
         stepUp: { requiredAal: 'aal2', maxAgeMinutes: STEP_UP_MAX_AGE_MS / 60000, observed },
         hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
+        ...secondFactorRefusal('step_up', { permission: 'groups.members:write' }),
       },
     })
     const failure = actor.stepUpViaKey ? null : stepUpFailure(actor)
@@ -485,6 +488,7 @@ class UserGroupsService {
             'This change assigns privileged access, which requires a second factor proven in a browser session. The credential you presented cannot carry one.',
           targetEmail,
           hint: 'Sign in to the console in a browser and make the change there.',
+          ...secondFactorRefusal('step_up', { permission: 'groups.members:write' }),
         },
       }
     }

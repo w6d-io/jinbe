@@ -13,6 +13,41 @@ import {
   organisationStoreConfigured,
 } from '../services/organisation-store.js'
 import { open } from '../policy/route-access.js'
+import { getSecondFactorSetting } from '../second-factor/settings.js'
+import { userSecondFactor, type UserSecondFactor } from '../second-factor/requirements.js'
+import { userSecondFactorJsonSchema } from '../schemas/second-factor.schema.js'
+import type { MfaMethod } from '../services/kratos.service.js'
+
+/**
+ * The caller's own second-factor picture: which of their groups require it, whether they enrolled,
+ * their session's level and how old its second factor is, and which permissions need a recent one.
+ * Best effort — null when the setting cannot be read; the permissions answer never waits on it.
+ */
+async function ownSecondFactor(request: FastifyRequest, groups: string[], permissions: string[]): Promise<UserSecondFactor | null> {
+  const uc = request.userContext
+  let setting
+  try {
+    setting = await getSecondFactorSetting()
+  } catch {
+    return null
+  }
+  let methods: MfaMethod[] | null = null
+  // An aal2 session has a factor by definition; below it, ask Kratos (skipped in local dev).
+  if (uc?.aal !== 'aal2' && uc?.id && !(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
+    try {
+      methods = await kratosService.mfaMethodsOf(uc.id)
+    } catch {
+      methods = null
+    }
+  }
+  return userSecondFactor({
+    groups,
+    permissions,
+    setting,
+    methods,
+    session: { aal: uc?.aal, secondFactorAt: uc?.secondFactorAt, authVia: uc?.authVia },
+  })
+}
 
 /**
  * The full org universe a global super_admin administers. The union of three sources, because each
@@ -105,7 +140,9 @@ export async function meRoutes(fastify: FastifyInstance) {
     {
       ...open('self'),
       schema: {
-        description: "The caller's effective permissions across the platform, and which user-management actions they allow.",
+        description:
+          "The caller's effective permissions across the platform, which user-management actions they allow, and their " +
+          'second-factor picture (secondFactor: requiredBecause groups, enrolled, currentAal, factorAgeMin, stepUpFresh, stepUpPermissions).',
         tags: ['me'],
         response: {
           200: {
@@ -116,6 +153,7 @@ export async function meRoutes(fastify: FastifyInstance) {
               roles: { type: 'array', items: { type: 'string' } },
               permissions: { type: 'array', items: { type: 'string' } },
               actions: { type: 'object', additionalProperties: { type: 'boolean' } },
+              secondFactor: userSecondFactorJsonSchema,
               apps: {
                 type: 'object',
                 additionalProperties: {
@@ -154,6 +192,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         permissions: rights.permissions,
         actions: userActions(rights.permissions),
         apps: { jinbe: { roles: rights.roles, permissions: rights.permissions }, kuma },
+        secondFactor: await ownSecondFactor(request, rights.groups, rights.permissions),
       })
     },
   )

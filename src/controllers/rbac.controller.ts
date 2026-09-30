@@ -9,6 +9,8 @@ import {
   type UpdateGroupBody,
 } from '../schemas/rbac/index.js'
 import { auditActor } from '../utils/audit-actor.js'
+import { getSecondFactorSetting } from '../second-factor/settings.js'
+import { groupSecondFactor } from '../second-factor/requirements.js'
 import { z } from 'zod'
 
 // =============================================================================
@@ -38,9 +40,18 @@ export class RbacController {
   // Groups
   // ===========================================================================
 
-  async getGroups(_request: FastifyRequest, reply: FastifyReply) {
+  async getGroups(request: FastifyRequest, reply: FastifyReply) {
     const result = await rbacService.getGroups()
-    return reply.send(result)
+    // Each group says whether it asks its members for a second factor. The setting is best effort:
+    // a list without the badge beats no list.
+    let setting: Awaited<ReturnType<typeof getSecondFactorSetting>> | null = null
+    try {
+      setting = await getSecondFactorSetting()
+    } catch (err) {
+      request.log.warn({ err: (err as Error).message }, '[rbac] second-factor setting unreadable; groups listed without it')
+    }
+    if (!setting) return reply.send(result)
+    return reply.send({ groups: result.groups.map((g) => ({ ...g, secondFactor: groupSecondFactor(g.name, g.services, setting) })) })
   }
 
   async createGroup(

@@ -16,6 +16,7 @@ import { protectionFor, type ProtectionStatus } from './protection.js'
 import { auditSite, type Actor } from './audit.js'
 import { suggestFor } from './zones.service.js'
 import { clusterGatewayObjects, clusterIngresses, collisionChecks, routeCollisions } from './host-collisions.js'
+import { siteSecondFactor } from '../second-factor/requirements.js'
 import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 
 /**
@@ -67,6 +68,8 @@ export async function listSites() {
       appliedBy: r.applied?.by ?? null,
       orgs: r.site.orgs.length,
       protection: protectionOf(r.site.address.host),
+      // The saved version's two-step sign-in bar; `status: attention` says the applied one differs.
+      secondFactor: siteSecondFactor(r.site),
       ...(draft ? { draft: { by: draft.updatedBy, at: draft.updatedAt } } : {}),
     }
   })
@@ -127,7 +130,7 @@ export async function getRecord(name: string): Promise<SiteRecord> {
 
 export async function getSite(name: string) {
   const r = await getRecord(name)
-  return { site: r.site, version: r.version, etag: r.etag, status: statusOf(r), savedAt: r.savedAt, savedBy: r.savedBy, applied: r.applied ? { version: r.applied.version, at: r.applied.at, by: r.applied.by, rules: r.applied.rules.map((x) => x.id) } : null }
+  return { site: r.site, secondFactor: siteSecondFactor(r.site), version: r.version, etag: r.etag, status: statusOf(r), savedAt: r.savedAt, savedBy: r.savedBy, applied: r.applied ? { version: r.applied.version, at: r.applied.at, by: r.applied.by, rules: r.applied.rules.map((x) => x.id) } : null }
 }
 
 // ── drafts ────────────────────────────────────────────────────

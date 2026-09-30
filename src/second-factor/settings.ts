@@ -16,7 +16,7 @@ export const GROUP_NAME = /^[a-z_]+$/
 export const MAX_GROUPS = 50
 
 const TTL_MS = 5_000
-let cached: { at: number; groups: string[] } | null = null
+let cached: { at: number; groups: string[]; explicit: boolean } | null = null
 
 /** Test seam. */
 export function resetSecondFactorSettingsCache(): void {
@@ -37,17 +37,22 @@ export function parseGroups(raw: string | undefined): string[] | null {
 
 /** Throws when Redis cannot be read: the OPAL route answers 503 so OPA keeps what it holds. */
 export async function getSecondFactorGroups(): Promise<string[]> {
-  if (cached && Date.now() - cached.at < TTL_MS) return cached.groups
+  return (await getSecondFactorSetting()).groups
+}
+
+/** The list and whether an administrator set it (false: the default applies, the key is unset or malformed). */
+export async function getSecondFactorSetting(): Promise<{ groups: string[]; explicit: boolean }> {
+  if (cached && Date.now() - cached.at < TTL_MS) return { groups: cached.groups, explicit: cached.explicit }
   const config = await redisRbacRepository.getConfig()
-  const groups = parseGroups(config[SECOND_FACTOR_KEY]) ?? [...DEFAULT_SECOND_FACTOR_GROUPS]
-  cached = { at: Date.now(), groups }
-  return groups
+  const stored = parseGroups(config[SECOND_FACTOR_KEY])
+  cached = { at: Date.now(), groups: stored ?? [...DEFAULT_SECOND_FACTOR_GROUPS], explicit: stored !== null }
+  return { groups: cached.groups, explicit: cached.explicit }
 }
 
 export async function setSecondFactorGroups(groups: string[]): Promise<string[]> {
   const clean = [...new Set(groups)].sort()
   await redisRbacRepository.setConfig(SECOND_FACTOR_KEY, JSON.stringify(clean))
-  cached = { at: Date.now(), groups: clean }
+  cached = { at: Date.now(), groups: clean, explicit: true }
   opalPublisher.schedule('second_factor')
   return clean
 }

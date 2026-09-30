@@ -46,7 +46,7 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   // Documentation-only body schemas (see above): zod is the validator.
   fastify.setValidatorCompiler(() => (data) => ({ value: data }))
 
-  fastify.get('', doc('sites:read', 'List sites with their status'), handle(async () => sites.listSites()))
+  fastify.get('', doc('sites:read', 'List sites with their status and two-step sign-in bar (secondFactor: scope, routes, clients, minAal, summary — of the saved version)'), handle(async () => sites.listSites()))
 
   // Static paths before `/:name` ones (Fastify prefers static segments anyway).
   fastify.post('/preview', { ...doc('sites:write', 'Render an intent and run every check (gatekit compile + overlap against all live rules, ties, groups, host). Writes nothing; 503 when gatekit is unavailable', previewBodySchema) },
@@ -92,7 +92,7 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   fastify.post('/render', { ...doc('sites:read', 'Render a header/payload/claims template exactly as Oathkeeper would (gatekit)', renderTemplateBodySchema) },
     handle(async (request) => sites.renderTemplate(parse(renderTemplateBodySchema, request.body))))
 
-  fastify.get('/:name', docNamed('sites:read', 'A site: saved intent, version, etag, status'), handle(async (request, reply) => {
+  fastify.get('/:name', docNamed('sites:read', 'A site: saved intent, its two-step sign-in bar (secondFactor), version, etag, status'), handle(async (request, reply) => {
     const out = await sites.getSite(nameOf(request))
     reply.header('etag', `"${out.etag}"`)
     return out

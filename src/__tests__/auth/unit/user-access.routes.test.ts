@@ -13,6 +13,8 @@ const s = vi.hoisted(() => ({
   grants: {} as Record<string, Record<string, string[]>>,
   rosters: {} as Record<string, string[]>,
   grantsFail: false,
+  methods: ['totp'] as string[] | null,
+  config: {} as Record<string, string>,
 }))
 
 vi.mock('../../../services/kratos.service.js', () => ({
@@ -20,6 +22,10 @@ vi.mock('../../../services/kratos.service.js', () => ({
     getIdentity: vi.fn(async (id: string) => {
       if (!s.identity || s.identity.id !== id) throw Object.assign(new Error('Identity not found'), { statusCode: 404 })
       return s.identity
+    }),
+    mfaMethodsOf: vi.fn(async () => {
+      if (!s.methods) throw new Error('kratos down')
+      return s.methods
     }),
   },
   KratosApiError: class extends Error {},
@@ -47,7 +53,11 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
       super_admins: { global: ['super_admin'] },
     })),
     getOrgAdminMap: vi.fn(async () => s.rosters),
+    getConfig: vi.fn(async () => s.config),
   },
+}))
+vi.mock('../../../authz/opa.js', () => ({
+  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: ['sites:read', 'groups:write'] })),
 }))
 
 // Stand-in for the platform permission gate: refuses when the test marks the caller as lacking it,
@@ -63,6 +73,7 @@ vi.mock('../../../middleware/require-permission.js', () => ({
 }))
 
 import { userAccessRoutes } from '../../../routes/user-access.routes.js'
+import { resetSecondFactorSettingsCache } from '../../../second-factor/settings.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -83,6 +94,9 @@ beforeEach(() => {
   s.grants = { [ACME]: { 'bob@acme.test': ['fleet-viewers'] } }
   s.rosters = { [GLOBEX]: ['bob@acme.test'] }
   s.grantsFail = false
+  s.methods = ['totp']
+  s.config = {}
+  resetSecondFactorSettingsCache()
 })
 
 describe('GET /api/admin/users/:id/access', () => {
@@ -98,7 +112,32 @@ describe('GET /api/admin/users/:id/access', () => {
         { orgId: ACME, name: 'Acme', admin: false, grants: ['fleet-viewers'] },
         { orgId: GLOBEX, name: GLOBEX, admin: true, grants: [] },
       ],
+      secondFactor: {
+        required: false,
+        requiredBecause: [],
+        enrolled: true,
+        methods: ['totp'],
+        currentAal: null,
+        factorAgeMin: null,
+        stepUpFresh: null,
+        stepUpPermissions: ['groups:write'],
+      },
     })
+  })
+
+  it('names the groups that require two-step sign-in (the default: super_admins)', async () => {
+    s.identity = { ...s.identity!, metadata_admin: { groups: ['kuma-admins', 'super_admins'] } }
+    const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
+    expect(res.json().secondFactor).toMatchObject({ required: true, requiredBecause: ['super_admins'] })
+  })
+
+  it('a second-factor part that cannot be read is null, and the access view still answers', async () => {
+    s.methods = null
+    s.config = { second_factor_groups: JSON.stringify(['super_admins']) }
+    s.identity = { ...s.identity!, metadata_admin: { groups: ['super_admins'] } }
+    const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().secondFactor).toMatchObject({ required: true, enrolled: null, methods: null })
   })
 
   it('is gated on access:read in the app layer, not only at the gateway', async () => {
