@@ -62,7 +62,7 @@ describe('platformScopes — what a personal key may carry', () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
     expect(await platformScopes(ROOT)).toEqual([
       'access:check', 'access:read', 'audit:read', 'gateway:read',
-      'groups:read', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
+      'groups:read', 'groups:write', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
       // sessions:revoke is only asked by a DELETE, which no key may make (deletes are by hand)
       'org:read', 'org:write', 'recert:read', 'sessions:read',
       'settings:read', 'sites:apply', 'sites:read', 'sites:write',
@@ -76,7 +76,7 @@ describe('platformScopes — what a personal key may carry', () => {
     // The catalogue's `never` (deletions, 2FA reset, key creation, approvals, the access model) and
     // every legacy name: a scope is a catalogue leaf.
     for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'groups.members:revoke', 'users:delete', 'users:reset_second_factor',
-      'sites:delete', 'sites.requests:approve', 'zones:delete', 'groups:write', 'org.admins:write', 'policy.bundle:write',
+      'sites:delete', 'sites.requests:approve', 'zones:delete', 'org.admins:write', 'policy.bundle:write',
       'recert:manage', 'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
       'admin:read', 'admin:write', 'admin:create']) {
       expect(all).not.toContain(p)

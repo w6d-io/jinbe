@@ -17,8 +17,8 @@ describe('the catalogue', () => {
   it("what a token may never do is exactly the owner's list (2026-09-29)", () => {
     const never = PERMISSIONS.filter((p) => CATALOG[p].delegable === 'never').sort()
     expect(never).toEqual([
-      // the access model itself
-      'groups:write', 'org.admins:write', 'policy.bundle:write',
+      // the access model itself (group definitions are direct since 2026-09-30; not who administers)
+      'org.admins:write', 'policy.bundle:write',
       // key and client creation (revoking a key is allowed: owner decision 2026-09-29, (d))
       'org.keys:write',
       // removing people from groups counts as a deletion (owner, 2026-09-30)

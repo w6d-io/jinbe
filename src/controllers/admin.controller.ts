@@ -16,6 +16,7 @@ import {
 import { membershipRowsKept, membershipsForSubjects, setMemberships } from '../services/organisation-store.js'
 import { declaredGroups } from '../services/group-catalogue.js'
 import { rightsForDisplay } from '../authz/opa.js'
+import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import { componentLogger } from '../telemetry/logger.js'
 
 /**
@@ -325,7 +326,7 @@ export class AdminController {
           organizationId: ((identity as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: desiredGroups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
@@ -609,7 +610,7 @@ export class AdminController {
           organizationId: ((ident as Record<string, unknown>).organization_id as string | null) ?? null,
         },
         newGroups: groups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
         privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })

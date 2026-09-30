@@ -73,7 +73,9 @@ export const CATALOG = {
   'access:read': p('access', 'See who can reach what: one user\'s access, the access review', 'medium'),
   'access:check': p('access', 'Ask whether somebody may reach a route', 'medium'),
   'groups:read': p('access', 'View groups, roles and the permission catalogue', 'low'),
-  'groups:write': p('access', 'Create, edit or delete groups and what they bind (the access model)', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
+  // Direct through a key (owner decision 2026-09-30: managing groups and their permissions is normal
+  // work); deleting a group is still refused to keys (no DELETE), and the escalation guard applies.
+  'groups:write': p('access', 'Create, edit or delete groups and what they bind (the access model)', 'critical', { stepUp: true, fourEyes: 'prod' }),
   'groups.members:write': p('access', 'Add people to platform groups', 'critical', { stepUp: true, fourEyes: 'prod' }),
   'groups.members:revoke': p('access', 'Remove people from platform groups', 'high', { delegable: 'never' }),
 

@@ -12,7 +12,7 @@ import { specOf } from '../policy/catalog.js'
  * settings, the MCP switch, zones, the gateway, exports and anything `delegable: 'never'` stay with a
  * person in a browser.
  */
-export const KEY_STEP_UP_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply', 'users:update_email', 'groups.members:write'])
+export const KEY_STEP_UP_PERMISSIONS: ReadonlySet<string> = new Set(['sites:apply', 'users:update_email', 'groups.members:write', 'groups:write'])
 export const KEY_STEP_UP_MAX_AGE_MS = 30 * 24 * 3600 * 1000
 
 export type KeyStepUpVerdict =

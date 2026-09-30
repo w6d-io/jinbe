@@ -190,15 +190,28 @@ describe('delegated callers never change the access model', () => {
     userContext: { id: 'id-u', email: 'u@example.com', authVia: 'delegated', delegation: { scopes: [...everyScope], clientId: 'mcp' } },
   } as never, permission)
 
+  // Owner decision 2026-09-30: creating and editing groups, their roles and route maps is normal work
+  // through a key (the escalation guard and the key's step-up still apply); deleting stays by hand.
   it.each([
     ['POST', '/api/admin/rbac/groups', 'groups:write'],
     ['PUT', '/api/admin/rbac/groups/:name', 'groups:write'],
-    ['DELETE', '/api/admin/rbac/groups/:name', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/roles', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/routes', 'groups:write'],
     ['POST', '/api/admin/rbac/services/:name/routes/import/preview', 'groups:write'],
     ['PUT', '/api/admin/rbac/org-service-map', 'groups:write'],
-    ['DELETE', '/api/admin/rbac/org-service-map/:organizationId', 'groups:write'],
+  ])('%s %s (%s) passes the gate with a scope granting it', (method, path, permission) => {
+    expect(declaredRoute(method, path)?.permission ?? permission).toBe(permission)
+    expect(refusal(method, path, permission)).toBeNull()
+  })
+
+  it.each([
+    ['DELETE', '/api/admin/rbac/groups/:name'],
+    ['DELETE', '/api/admin/rbac/org-service-map/:organizationId'],
+  ])('%s %s is refused: nothing is deleted through a key', (method, path) => {
+    expect(refusal(method, path)).toBe('delegation_ineligible:delete')
+  })
+
+  it.each([
     ['POST', '/api/admin/rbac/bundle/import', 'policy.bundle:write'],
     ['POST', '/api/admin/rbac/bundle/backups/restore', 'policy.bundle:write'],
     ['POST', '/api/admin/rbac/bundle/history/:id/rollback', 'policy.bundle:write'],

@@ -4,6 +4,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { userGroupsService } from '../services/user-groups.service.js'
 import { auditActor } from '../utils/audit-actor.js'
+import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -157,7 +158,7 @@ export class OrganizationUserController {
       const grant = await userGroupsService.applyGroupUpdate({
         identity: { id: identity.id, email, organizationId },
         newGroups: desiredGroups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
+        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
         privilegePolicy: {
           kind: 'wildcard_in_org',
           orgId: organizationId,
@@ -297,7 +298,7 @@ export class OrganizationUserController {
     const result = await userGroupsService.applyGroupUpdate({
       identity: { id, email, organizationId },
       newGroups: groups,
-      actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia },
+      actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
       privilegePolicy: {
         kind: 'wildcard_in_org',
         orgId: organizationId,
