@@ -33,6 +33,13 @@ export const AUDIT_EVENTS = {
   'user.recovery_sent': ['directory', 'recover'],
   'user.login_link_sent': ['directory', 'recover', 'warn'],
   'user.second_factor_reset': ['auth', 'update', 'high'],
+  // An administrator changed the sign-in address (POST /admin/users/:id/email); both addresses as HMACs.
+  'user.email_changed': ['directory', 'update', 'high'],
+  'user.verification_sent': ['directory', 'verify'],
+  // The notice owed to the old address, recorded because jinbe cannot mail it (services/security-notice.ts).
+  'user.address_notice_pending': ['directory', 'notify', 'warn'],
+  // One bulk job (POST /admin/bulk/:op/execute); each item also has its own event.
+  'bulk.executed': ['directory', 'execute', 'warn'],
 
   'org.created': ['directory', 'create'],
   'org.updated': ['directory', 'update'],

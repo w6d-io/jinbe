@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import { getRedisClient } from '../services/redis-client.service.js'
 
 /**
@@ -121,7 +121,10 @@ export async function idempotencyOnSend(request: FastifyRequest, reply: FastifyR
 }
 
 /** Both hooks, on the instance whose routes they cover (server.ts: the root, so every route). */
-export function registerIdempotency(fastify: FastifyInstance): void {
+export function registerIdempotency(fastify: {
+  addHook(name: 'preHandler', fn: typeof idempotencyPreHandler): unknown
+  addHook(name: 'onSend', fn: typeof idempotencyOnSend): unknown
+}): void {
   fastify.addHook('preHandler', idempotencyPreHandler)
   fastify.addHook('onSend', idempotencyOnSend)
 }

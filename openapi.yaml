@@ -603,6 +603,12 @@ paths:
                   minItems: 1
                   description: A subset of the permissions you hold (GET /api/me/api-keys/scopes);
                     absent = all of them, as they are at each call
+                allow_step_up_actions:
+                  type: boolean
+                  description: "Default true: the second factor proven when creating the key
+                    stands in for step-up on publish, email change and group
+                    grants (30 days max). false: the key can never do step-up
+                    actions."
                 expires_in_days:
                   type: integer
                   minimum: 1
@@ -3878,9 +3884,10 @@ paths:
     put:
       tags:
         - admin
-      description: Update a user. Needs users:update for the traits,
-        users:update_email for the address, users:disable for the state,
-        users.metadata:write for the schema and metadata.
+      description: "Update a user. Needs users:update for the traits, users:disable
+        for the state, users.metadata:write for the schema and metadata. The
+        address is not changed here (422 use_email_endpoint): use POST
+        /admin/users/:id/email."
       requestBody:
         required: true
         content:
@@ -4552,6 +4559,419 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/admin/users/{id}/email:
+    post:
+      tags:
+        - admin
+      description: "Change a user's sign-in address. The new address starts unverified
+        and is sent a verification link (Kratos, method link); the old address
+        is owed a notice (recorded in the audit trail: jinbe has no mailer); a
+        hashed history of previous addresses is kept 30 days. Never your own
+        (use your account settings), never somebody holding administrative
+        rights you do not. A taken address answers 409 address_unavailable
+        without naming the account. Needs users:update_email and a second factor
+        proven within 15 minutes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                  verified:
+                    type: boolean
+                  verificationSent:
+                    type: boolean
+                  verificationError:
+                    type: string
+                  oldAddressNotice:
+                    type: object
+                    properties:
+                      delivered:
+                        type: boolean
+                      recorded:
+                        type: boolean
+                      channel:
+                        type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/verification:
+    post:
+      tags:
+        - admin
+      description: "Resend the verification link (Kratos, method link) for an
+        unverified address of the user: the one given, else the unverified
+        sign-in address. The link goes to the user and is never returned. 409
+        already_verified when there is nothing to verify; 3 links per user per
+        15 minutes and 30 per caller per hour (429 with Retry-After). Needs
+        users:verify."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - "null"
+              properties:
+                address:
+                  type: string
+                  format: email
+                  maxLength: 254
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      responses:
+        "202":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/admin/bulk/sites.routes.upsert/plan:
+    post:
+      tags: &a1
+        - bulk
+      description: "Map routes on a site DRAFT (create or replace by route id; access
+        and gate per route). params {site}. Never saves a version, never
+        applies. Dry run: each item judged against your rights now (ok | skip |
+        refused | not_found — not_found only with users:read). At most 200
+        items. Needs sites:write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                params:
+                  type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/sites.routes.upsert/execute:
+    post:
+      tags: *a1
+      description: "Execute a plan of sites.routes.upsert: planHash must be the
+        plan's, and planning again must give the same hash (409 plan_changed,
+        with the new plan). Each item is checked again by its own guards right
+        before it runs; per-item results in the job. Executing a plan again
+        answers its job (resumed if its runner stopped). Needs sites:write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - planId
+                - planHash
+              properties:
+                planId:
+                  type: string
+                  maxLength: 64
+                planHash:
+                  type: string
+                  maxLength: 64
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/users.invite/plan:
+    post:
+      tags: *a1
+      description: "Create users (no groups: use groups.members.add). Items {email,
+        name?}; params {sendInvite?} (needs users:recovery too). Dry run: each
+        item judged against your rights now (ok | skip | refused | not_found —
+        not_found only with users:read). At most 200 items. Needs users:create."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                params:
+                  type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/users.invite/execute:
+    post:
+      tags: *a1
+      description: "Execute a plan of users.invite: planHash must be the plan's, and
+        planning again must give the same hash (409 plan_changed, with the new
+        plan). Each item is checked again by its own guards right before it
+        runs; per-item results in the job. Executing a plan again answers its
+        job (resumed if its runner stopped). Needs users:create."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - planId
+                - planHash
+              properties:
+                planId:
+                  type: string
+                  maxLength: 64
+                planHash:
+                  type: string
+                  maxLength: 64
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/users.verification/plan:
+    post:
+      tags: *a1
+      description: "Resend the verification link for each user's unverified address.
+        Items {user: id or email}. 3 per user per 15 min, 30 per caller per
+        hour. Dry run: each item judged against your rights now (ok | skip |
+        refused | not_found — not_found only with users:read). At most 200
+        items. Needs users:verify."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                params:
+                  type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/users.verification/execute:
+    post:
+      tags: *a1
+      description: "Execute a plan of users.verification: planHash must be the plan's,
+        and planning again must give the same hash (409 plan_changed, with the
+        new plan). Each item is checked again by its own guards right before it
+        runs; per-item results in the job. Executing a plan again answers its
+        job (resumed if its runner stopped). Needs users:verify."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - planId
+                - planHash
+              properties:
+                planId:
+                  type: string
+                  maxLength: 64
+                planHash:
+                  type: string
+                  maxLength: 64
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/groups.members.add/plan:
+    post:
+      tags: *a1
+      description: "Add users to platform groups; never removes anything, never the
+        caller. Items {user: id or email, groups[]}. A key cannot hand out a
+        platform-wide group. Dry run: each item judged against your rights now
+        (ok | skip | refused | not_found — not_found only with users:read). At
+        most 200 items. Needs groups.members:write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                params:
+                  type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/groups.members.add/execute:
+    post:
+      tags: *a1
+      description: "Execute a plan of groups.members.add: planHash must be the plan's,
+        and planning again must give the same hash (409 plan_changed, with the
+        new plan). Each item is checked again by its own guards right before it
+        runs; per-item results in the job. Executing a plan again answers its
+        job (resumed if its runner stopped). Needs groups.members:write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - planId
+                - planHash
+              properties:
+                planId:
+                  type: string
+                  maxLength: 64
+                planHash:
+                  type: string
+                  maxLength: 64
+              additionalProperties: false
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/bulk/jobs/{id}:
+    get:
+      tags: *a1
+      description: "A bulk job you started: state, counts and each item's result.
+        Anybody else's job answers 404."
+      parameters:
+        - schema:
+            type: string
+            maxLength: 64
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/events:
     get:
       responses:
@@ -5137,7 +5557,7 @@ paths:
                     type: string
   /api/admin/sites:
     get:
-      tags: &a1
+      tags: &a2
         - sites
       description: List sites with their status
       responses:
@@ -5145,7 +5565,7 @@ paths:
           description: Default Response
   /api/admin/sites/preview:
     post:
-      tags: *a1
+      tags: *a2
       description: Render an intent and run every check (gatekit compile + overlap
         against all live rules, ties, groups, host). Writes nothing; 503 when
         gatekit is unavailable
@@ -5593,14 +6013,14 @@ paths:
           description: Default Response
   /api/admin/sites/zones:
     get:
-      tags: *a1
+      tags: *a2
       description: The admin-defined wildcard zones a site host can live under, with
         SSO (login cookie) coverage
       responses:
         "200":
           description: Default Response
     post:
-      tags: *a1
+      tags: *a2
       description: "Create a zone (Zone CR): domain under SITES_ZONE_ALLOWED_PARENTS,
         TLS default | issuer | secret. The operator makes the wildcard Ingress
         and certificate"
@@ -5672,7 +6092,7 @@ paths:
           description: Default Response
   /api/admin/sites/zones/{name}:
     get:
-      tags: *a1
+      tags: *a2
       description: "A zone: spec, operator status (IngressReady, CertificateReady,
         DomainTaken), the sites it serves"
       parameters:
@@ -5685,7 +6105,7 @@ paths:
         "200":
           description: Default Response
     patch:
-      tags: *a1
+      tags: *a2
       description: "Change a zone's exposure (never its domain): ingress wildcard |
         per-site | none, gateway (null detaches), TLS. ingress none is refused
         (409 dns_not_on_gateway, per-host checks) while a site host does not
@@ -5755,7 +6175,7 @@ paths:
         "200":
           description: Default Response
     delete:
-      tags: *a1
+      tags: *a2
       description: Delete a zone; refused (409, with the sites) while a saved site has
         a host under it
       parameters:
@@ -5769,7 +6189,7 @@ paths:
           description: Default Response
   /api/admin/sites/gateways:
     get:
-      tags: *a1
+      tags: *a2
       description: "The Gateway API Gateways a zone may be attached to
         (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP
         reputation policies are in force"
@@ -5778,7 +6198,7 @@ paths:
           description: Default Response
   /api/admin/sites/zones/suggest:
     post:
-      tags: *a1
+      tags: *a2
       description: "The zone to create for a host outside every zone: its parent
         domain, allow-list, wildcard DNS probe, TLS choices, SSO coverage.
         Writes nothing"
@@ -5803,7 +6223,7 @@ paths:
           description: Default Response
   /api/admin/sites/check-host:
     post:
-      tags: *a1
+      tags: *a2
       description: "Resolve a host against the zones: zone, SSO coverage, possible
         exposures (zone / vanity), owner"
       requestBody:
@@ -5833,7 +6253,7 @@ paths:
           description: Default Response
   /api/admin/sites/platform:
     get:
-      tags: *a1
+      tags: *a2
       description: "This environment: name, production flag, four-eyes mode, expected
         rule-load time, zones"
       responses:
@@ -5841,14 +6261,14 @@ paths:
           description: Default Response
   /api/admin/sites/deleted:
     get:
-      tags: *a1
+      tags: *a2
       description: Deleted sites whose snapshot is kept (30 days)
       responses:
         "200":
           description: Default Response
   /api/admin/sites/match:
     post:
-      tags: *a1
+      tags: *a2
       description: Which gateway rule and which route a request would hit, live or
         with a draft (gatekit)
       requestBody:
@@ -6305,7 +6725,7 @@ paths:
           description: Default Response
   /api/admin/sites/render:
     post:
-      tags: *a1
+      tags: *a2
       description: Render a header/payload/claims template exactly as Oathkeeper would
         (gatekit)
       requestBody:
@@ -6376,7 +6796,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}:
     get:
-      tags: *a1
+      tags: *a2
       description: "A site: saved intent, version, etag, status"
       parameters:
         - schema:
@@ -6389,7 +6809,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a1
+      tags: *a2
       description: "Save the intent as a new version (If-Match: the etag you edited;
         absent only for a new site)"
       requestBody:
@@ -6842,7 +7262,7 @@ paths:
         "200":
           description: Default Response
     delete:
-      tags: *a1
+      tags: *a2
       description: "Delete a site: rules first, then its permissions; a snapshot is
         kept 30 days"
       parameters:
@@ -6857,7 +7277,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/restore:
     post:
-      tags: *a1
+      tags: *a2
       description: Restore a deleted site from its snapshot, saved but not applied
       parameters:
         - schema:
@@ -6871,7 +7291,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/draft:
     get:
-      tags: *a1
+      tags: *a2
       description: The server-side draft
       parameters:
         - schema:
@@ -6884,7 +7304,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a1
+      tags: *a2
       description: Autosave the draft (may be incomplete)
       requestBody:
         required: true
@@ -6909,7 +7329,7 @@ paths:
         "200":
           description: Default Response
     delete:
-      tags: *a1
+      tags: *a2
       description: Discard the draft
       parameters:
         - schema:
@@ -6923,7 +7343,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/diff:
     post:
-      tags: *a1
+      tags: *a2
       description: What would change against the applied version, per artefact, with
         risk flags
       requestBody:
@@ -7372,7 +7792,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/apply:
     post:
-      tags: *a1
+      tags: *a2
       description: "Apply the saved version: permissions first, then the Site CR. 503
         and nothing written when gatekit or Kubernetes cannot answer"
       requestBody:
@@ -7400,7 +7820,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/versions:
     get:
-      tags: *a1
+      tags: *a2
       description: Version history (append-only)
       parameters:
         - schema:
@@ -7414,7 +7834,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/versions/{v}:
     get:
-      tags: *a1
+      tags: *a2
       description: One version, with its intent
       parameters:
         - schema:
@@ -7432,7 +7852,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/rollback:
     post:
-      tags: *a1
+      tags: *a2
       description: Save an older version as a new one and apply it
       requestBody:
         required: true
@@ -7462,7 +7882,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/pause:
     post:
-      tags: *a1
+      tags: *a2
       description: Stop serving the site (rules removed by the operator), keep
         everything else
       parameters:
@@ -7477,7 +7897,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/resume:
     post:
-      tags: *a1
+      tags: *a2
       description: Serve a paused site again
       parameters:
         - schema:
@@ -7491,7 +7911,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/blast-radius:
     get:
-      tags: *a1
+      tags: *a2
       description: What deleting the site would take with it
       parameters:
         - schema:
@@ -7505,7 +7925,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/applies/{id}:
     get:
-      tags: &a2
+      tags: &a3
         - sites
       description: "One apply: its stages (Saved → Permissions published → Site
         accepted → Rules synced → Rules loaded → Address/HTTPS for vanity sites
@@ -7526,7 +7946,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/applies/{id}/events:
     get:
-      tags: *a2
+      tags: *a3
       description: "Server-sent events: `apply` with the whole record on every change,
         `done` at the end"
       parameters:
@@ -7545,7 +7965,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/status:
     get:
-      tags: *a2
+      tags: *a3
       description: "The Site CR as the operator reports it: generation, conditions,
         children"
       parameters:
@@ -7559,7 +7979,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/drift:
     get:
-      tags: *a2
+      tags: *a3
       description: "What differs from what kuma applied: Site CR spec and conditions,
         route map, roles, groups, org map"
       parameters:
@@ -7573,7 +7993,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/drift/accept:
     post:
-      tags: *a2
+      tags: *a3
       description: Fold the live values the intent can hold into a draft for review
       parameters:
         - schema:
@@ -7586,7 +8006,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/requests:
     post:
-      tags: *a2
+      tags: *a3
       description: "Ask for the saved version to be applied (four-eyes: approved by
         another super admin when required)"
       parameters:
@@ -7600,14 +8020,14 @@ paths:
           description: Default Response
   /api/admin/sites/requests:
     get:
-      tags: *a2
+      tags: *a3
       description: Apply requests, newest first
       responses:
         "200":
           description: Default Response
   /api/admin/sites/requests/{id}/approve:
     post:
-      tags: *a2
+      tags: *a3
       description: "Approve a request: applies the version, as the approver"
       parameters:
         - schema:
@@ -7620,7 +8040,7 @@ paths:
           description: Default Response
   /api/admin/sites/requests/{id}/reject:
     post:
-      tags: *a2
+      tags: *a3
       description: Reject a request, with an optional reason
       parameters:
         - schema:
@@ -7633,7 +8053,7 @@ paths:
           description: Default Response
   /api/admin/sites/{name}/logo:
     put:
-      tags: *a2
+      tags: *a3
       description: "Upload the login-page logo: PNG or WebP bytes (Content-Type
         image/png|image/webp), at most 256 KB; SVG refused"
       parameters:
@@ -7646,7 +8066,7 @@ paths:
         "200":
           description: Default Response
     delete:
-      tags: *a2
+      tags: *a3
       description: Remove the login-page logo
       parameters:
         - schema:
@@ -7962,7 +8382,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration:
     get:
-      tags: &a3
+      tags: &a4
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
@@ -7971,7 +8391,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/preview:
     post:
-      tags: *a3
+      tags: *a4
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
       responses:
@@ -7979,7 +8399,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/parity:
     post:
-      tags: *a3
+      tags: *a4
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
       responses:
@@ -7987,20 +8407,20 @@ paths:
           description: Default Response
   /api/admin/sites/migration/dualrun:
     get:
-      tags: *a3
+      tags: *a4
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
       responses:
         "200":
           description: Default Response
     post:
-      tags: *a3
+      tags: *a4
       description: Start or stop the dual run
       responses:
         "200":
           description: Default Response
   /api/admin/sites/migration/cutover:
     post:
-      tags: *a3
+      tags: *a4
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
       responses:
@@ -8008,7 +8428,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/rollback:
     post:
-      tags: *a3
+      tags: *a4
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
       responses:
@@ -8016,7 +8436,7 @@ paths:
           description: Default Response
   /api/admin/gateway:
     get:
-      tags: &a4
+      tags: &a5
         - gateway
       description: "Every Oathkeeper handler: enabled, global config (secrets masked),
         defaults, the sites using it, form fields; plus rollout status.
@@ -8026,7 +8446,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a4
+      tags: *a5
       description: "Write the Gateway resource (If-Match: the etag you edited). The
         site-operator rolls the gateway pods"
       requestBody:
@@ -8078,7 +8498,7 @@ paths:
           description: Default Response
   /api/admin/gateway/preview:
     post:
-      tags: *a4
+      tags: *a5
       description: "Validate a proposed gateway configuration: handler schemas, in-use
         handlers, fallback, risk flags. Writes nothing"
       requestBody:
@@ -8130,21 +8550,21 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout:
     get:
-      tags: *a4
+      tags: *a5
       description: Rollout progress of the last gateway change (from the Gateway status)
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollout/events:
     get:
-      tags: *a4
+      tags: *a5
       description: Rollout progress as Server-Sent Events, until it settles
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollback:
     post:
-      tags: *a4
+      tags: *a5
       description: Restore the configuration before the last change, re-checked
         against the sites using each handler
       requestBody:
@@ -12349,7 +12769,7 @@ paths:
           description: Default Response
   /api/home:
     get:
-      tags: &a5
+      tags: &a6
         - home
       description: "The Home briefing: every module the caller may see, each with its
         own status, freshness and sources"
@@ -13509,7 +13929,7 @@ paths:
                     type: string
   /api/home/{module}:
     get:
-      tags: *a5
+      tags: *a6
       description: One Home module (retry after unavailable, or refresh a single
         tile). 403 with status "forbidden" for a module the caller may not see.
       parameters:

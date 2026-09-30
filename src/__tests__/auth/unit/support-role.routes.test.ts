@@ -3,7 +3,7 @@ import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
 // The support role, called DIRECTLY at jinbe (no gateway in front — NetworkPolicy is not enforced):
-// it edits a user's name and address, lists and revokes sessions, sends recovery and sign-in links —
+// it edits a user's name (the address has its own endpoint), lists and revokes sessions, sends recovery and sign-in links —
 // and is refused, by jinbe itself, everything else.
 
 const USER = '11111111-1111-1111-1111-111111111111'
@@ -134,10 +134,10 @@ describe('support can do the support desk\'s work', () => {
     expect((await app.inject({ url: `/api/admin/users/${USER}`, headers: as('support') })).statusCode).toBe(200)
   })
 
-  it('changes a user\'s address', async () => {
+  it('is sent to the address endpoint to change a user\'s address (PUT no longer changes it)', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('support'), payload: { traits: { email: 'bobby@example.com' } } })
-    expect(res.statusCode).toBe(200)
-    expect(res.json().traits.email).toBe('bobby@example.com')
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error).toBe('use_email_endpoint')
   })
 
   it('lists and revokes sessions', async () => {
@@ -185,10 +185,10 @@ describe('support is refused by jinbe itself, not only at the gateway', () => {
 })
 
 describe('an edit needs what it changes', () => {
-  it('a caller without users:update_email cannot change the address', async () => {
+  it('nobody changes the address through PUT: 422 use_email_endpoint, nothing written', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('nameonly'), payload: { traits: { name: 'Robert', email: 'rob@example.com' } } })
-    expect(res.statusCode).toBe(403)
-    expect(res.json().message).toContain('users:update_email')
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error).toBe('use_email_endpoint')
   })
 
   it('but may change the name, and resend the address unchanged (even re-cased)', async () => {
@@ -208,7 +208,7 @@ describe('an edit needs what it changes', () => {
 
 describe('administrators keep everything; a reader no longer writes', () => {
   it('admin:write edits, deletes (with a recent second factor) and creates', async () => {
-    expect((await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('admin'), payload: { traits: { email: 'x@example.com' }, state: 'inactive' } })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('admin'), payload: { traits: { name: 'X' }, state: 'inactive' } })).statusCode).toBe(200)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('admin') })).statusCode).toBe(422)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('admin'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })

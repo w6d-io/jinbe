@@ -62,12 +62,12 @@ describe('platformScopes — what a personal key may carry', () => {
     expect(declaredRoutes().length).toBeGreaterThan(150)
     expect(await platformScopes(ROOT)).toEqual([
       'access:check', 'access:read', 'audit:read', 'gateway:read',
-      'groups:read', 'groups:write', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
+      'groups.members:write', 'groups:read', 'groups:write', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
       // sessions:revoke is only asked by a DELETE, which no key may make (deletes are by hand)
       'org:read', 'org:write', 'recert:read', 'sessions:read',
       'settings:read', 'sites:apply', 'sites:read', 'sites:write',
       'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
-      'users:update', 'zones:read',
+      'users:update', 'users:update_email', 'users:verify', 'zones:read',
     ])
   })
 

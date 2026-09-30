@@ -16,9 +16,6 @@ import { JINBE_BUILT_IN_ROUTES } from '../../bootstrap/build-route-map.js'
  * input — each says where. An entry that a route starts declaring, or that stops existing, fails.
  */
 const CHECKED_INSIDE_A_GUARD: Record<string, string> = {
-  'users:update_email': 'PUT /api/admin/users/:id asks it when the address changes (requireEditPermissions)',
-  'groups.members:write': 'PUT /api/admin/users/:email/groups asks it when the diff adds anybody (require-membership-change.ts); POST /api/admin/users when groups are given',
-  'users:verify': 'POST /api/admin/users/:id/verification — the endpoint lands with the MCP write wave (mcp-write-wave.md §3)',
 }
 
 let app: FastifyInstance

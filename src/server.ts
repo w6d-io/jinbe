@@ -22,6 +22,8 @@ import { whoamiRoutes } from './routes/whoami.routes.js'
 import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { userManagementRoutes } from './routes/user-management.routes.js'
+import { userAddressRoutes } from './routes/user-address.routes.js'
+import { bulkRoutes } from './bulk/routes.js'
 import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgGrantsRoutes } from './routes/org-grants.routes.js'
@@ -48,6 +50,7 @@ import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { personalKeyRoutes } from './routes/personal-key.routes.js'
 import { mcpRoutes } from './routes/mcp.routes.js'
 import { delegationGate } from './middleware/delegation-gate.js'
+import { registerIdempotency } from './middleware/idempotency.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
@@ -116,6 +119,11 @@ export async function buildServer() {
   // organization, and never an ineligible route — before any route gate runs (middleware/delegation-gate.ts).
   fastify.addHook('preHandler', delegationGate)
 
+  // `Idempotency-Key` on POST/PUT/PATCH, for every caller that sends one: a retried write replays the
+  // first answer instead of doing the work twice (middleware/idempotency.ts). After the gate, so a
+  // refused caller never claims a key.
+  registerIdempotency(fastify)
+
   // Register other plugins
   await fastify.register(rateLimitPlugin)
   await fastify.register(swaggerPlugin)
@@ -173,6 +181,8 @@ export async function buildServer() {
       await api.register(backupItemRoutes, { prefix: '/backup-items' })
       await api.register(databaseAPIRoutes, { prefix: '/database-apis' })
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
+      await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification
+      await api.register(bulkRoutes, { prefix: '/admin/bulk' }) // plan / execute many changes of one kind; each op declares its permission
       await api.register(adminRoutes, { prefix: '/admin' })
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)
