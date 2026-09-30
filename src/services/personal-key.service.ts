@@ -1,6 +1,6 @@
 import { env } from '../config/index.js'
 import { hydraService, HydraApiError, type HydraOAuth2Client } from './hydra.service.js'
-import { PERSONAL_KEY_PREFIX, allPermissionsKey } from './delegated-token.service.js'
+import { PERSONAL_KEY_PREFIX, allPermissionsKey, delegatedTokenService } from './delegated-token.service.js'
 import { ApiKeyError, expiryFrom, isPersonal, toView } from './api-key.service.js'
 import { rights } from '../authz/opa.js'
 import { kratosService } from './kratos.service.js'
@@ -200,6 +200,7 @@ export class PersonalKeyService {
     if (!isPersonal(client) || subjectOf(client) !== subject) throw new ApiKeyError(404, 'API key not found')
     await hydraService.deleteClient(clientId)
     forgetApiKeyUse(clientId)
+    delegatedTokenService.forgetClient(clientId)
     return view(client)
   }
 }

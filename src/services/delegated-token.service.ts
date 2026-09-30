@@ -143,6 +143,13 @@ export class DelegatedTokenService {
     this.cache.clear()
   }
 
+  /** A key was revoked: its cached tokens are refused at once on this replica, not after the window. */
+  forgetClient(clientId: string): void {
+    for (const [key, { result }] of this.cache) {
+      if ('principal' in result && result.principal.clientId === clientId) this.cache.delete(key)
+    }
+  }
+
   private async evaluate(token: string, now: number): Promise<DelegatedResult> {
     let intro: HydraIntrospection
     try {

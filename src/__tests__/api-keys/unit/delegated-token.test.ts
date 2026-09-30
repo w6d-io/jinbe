@@ -114,6 +114,17 @@ describe('DelegatedTokenService.resolve', () => {
     expect(s.introspect).toHaveBeenCalledTimes(2)
   })
 
+  it('a revoked key is asked again at once, not after the cache window', async () => {
+    s.introspect.mockResolvedValue(oauth())
+    await svc.resolve('tok', NOW)
+    svc.forgetClient('another-client')
+    await svc.resolve('tok', NOW + 1000)
+    expect(s.introspect).toHaveBeenCalledTimes(1)
+    s.introspect.mockResolvedValue(oauth({ active: false }))
+    svc.forgetClient('claude-code')
+    expect(await svc.resolve('tok', NOW + 2000)).toEqual({ error: 'token_inactive' })
+  })
+
   it('an administrator switching MCP off refuses tokens already cached; switching it back on restores them', async () => {
     s.introspect.mockResolvedValue(oauth())
     expect(await svc.resolve('same', NOW)).toHaveProperty('principal')
