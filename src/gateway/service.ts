@@ -87,6 +87,14 @@ export async function currentSpec(): Promise<GatewaySpec> {
 }
 
 /**
+ * The handler defaults a site's gates are resolved against: `currentSpec`, or — with the cluster
+ * switched off (SITES_KUBE=off) — the handlers env enables, which carry no config.
+ */
+export async function handlerDefaults(): Promise<GatewaySpec> {
+  return sitesConfig().SITES_KUBE === 'off' ? specFromEnv() : currentSpec()
+}
+
+/**
  * Which sites and platform rules reference each handler: the Site CRs, plus the operator's
  * `status.inUse` (which also sees the platform's own rules, as `rule/<name>`). Before the operator
  * has reported, the handlers the platform is known to need stand in for its rules.

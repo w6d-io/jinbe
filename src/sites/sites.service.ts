@@ -17,6 +17,8 @@ import { auditSite, type Actor } from './audit.js'
 import { suggestFor } from './zones.service.js'
 import { clusterGatewayObjects, clusterIngresses, collisionChecks, routeCollisions } from './host-collisions.js'
 import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
+import { handlerDefaults } from '../gateway/service.js'
+import { resolveGates, type ResolvedGate } from './resolved-gates.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -127,7 +129,28 @@ export async function getRecord(name: string): Promise<SiteRecord> {
 
 export async function getSite(name: string) {
   const r = await getRecord(name)
-  return { site: r.site, version: r.version, etag: r.etag, status: statusOf(r), savedAt: r.savedAt, savedBy: r.savedBy, applied: r.applied ? { version: r.applied.version, at: r.applied.at, by: r.applied.by, rules: r.applied.rules.map((x) => x.id) } : null }
+  return {
+    site: r.site, version: r.version, etag: r.etag, status: statusOf(r), savedAt: r.savedAt, savedBy: r.savedBy,
+    applied: r.applied ? { version: r.applied.version, at: r.applied.at, by: r.applied.by, rules: r.applied.rules.map((x) => x.id) } : null,
+    resolvedGates: await resolvedGatesOf(r.site),
+  }
+}
+
+/**
+ * Each gate handler's effective config — the rule's over the platform's handler defaults, with
+ * explicit|default per field (resolved-gates.ts). Null when the platform or its gateway config
+ * cannot be read: the site itself is still answered.
+ */
+async function resolvedGatesOf(site: Site, rendered?: Rendered): Promise<ResolvedGate[] | null> {
+  try {
+    const [gates, spec] = await Promise.all([
+      rendered ? rendered.siteCr.spec.gates : loadPlatform().then((platform) => render(site, platform).siteCr.spec.gates),
+      handlerDefaults(),
+    ])
+    return resolveGates(gates, spec)
+  } catch {
+    return null
+  }
 }
 
 // ── drafts ────────────────────────────────────────────────────
@@ -223,7 +246,9 @@ export async function preview(site: Site) {
   const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
   const findings = await findingsFor(site, rendered)
+  const resolvedGates = await resolvedGatesOf(site, rendered)
   return {
+    resolvedGates,
     artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...routes, ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
     // Security findings: what publishing it needs fixed (error) or acknowledged (confirm).
     findings, publish: publishState(findings),
