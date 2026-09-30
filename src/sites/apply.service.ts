@@ -15,6 +15,7 @@ import { siteLoginStore } from './login-store.js'
 import { siteLoginOf } from './login.js'
 import { assertNoApprovalNeeded } from './requests.js'
 import { assertApplyAllowed } from './migration/migration.service.js'
+import { deletionStore, ephemeralStore } from './lifecycle-store.js'
 
 /**
  * Everything that reaches the gateway: apply, rollback, pause/resume, delete.
@@ -136,7 +137,7 @@ export async function setPaused(name: string, paused: boolean, actor: Actor) {
   return { name, state: updated.site.state }
 }
 
-export async function remove(name: string, actor: Actor) {
+export async function remove(name: string, actor: Actor, opts: { approvedRequest?: string } = {}) {
   assertNotSystem(name)
   const record = await getRecord(name)
   const kube = kubeSites()
@@ -145,7 +146,10 @@ export async function remove(name: string, actor: Actor) {
   if (record.applied) await unpublishPermissions(name, actor)
   await siteLoginStore.set(name, null)
   await sitesRepository.remove(name, actor.email ?? 'unknown')
-  auditSite('delete', name, actor, 'deleted', { version: record.version })
+  // Its expiry goes with it (a restored site is permanent), and so do requests to delete it.
+  await ephemeralStore.clear(name)
+  const cancelled = await deletionStore.cancelPending(name, actor.email ?? 'unknown', 'site deleted', opts.approvedRequest)
+  auditSite('delete', name, actor, 'deleted', { version: record.version, ...(opts.approvedRequest ? { deletionRequest: opts.approvedRequest } : {}), ...(cancelled.length ? { cancelledRequests: cancelled } : {}) })
   return { name, deleted: true }
 }
 

@@ -7,6 +7,7 @@ import { runningApply } from './applies.js'
 import { expectedOf, specDiff } from './status.js'
 import { sitesConfig } from './config.js'
 import { auditSite, type Actor } from './audit.js'
+import { expireDue } from './ephemeral.js'
 import { dualrunTick, migratedCrs, stepCutover } from './migration/migration.service.js'
 
 /**
@@ -67,10 +68,12 @@ export async function syncOnce(): Promise<SyncResult> {
   return out
 }
 
-/** One background tick: sync, then the migration's dual run and a cut-over in progress. */
+/** One background tick: expire ephemeral sites, sync, then the migration's dual run and a cut-over in progress. */
 export async function sitesTick(log?: FastifyBaseLogger): Promise<void> {
   try {
     await withRedisLock('sites:sync', async () => {
+      const e = await expireDue()
+      if (e.expired.length + e.errors.length > 0) log?.info({ ...e }, '[sites] ephemeral expiry')
       const r = await syncOnce()
       if (r.recreated.length + r.rewritten.length + r.errors.length > 0) log?.info({ ...r }, '[sites] sync')
       await dualrunTick()

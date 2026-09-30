@@ -170,6 +170,9 @@ describe('access check, API-key use, sites', () => {
     expect(legacyToV1(rich('request')).event).toBe('site.apply_requested')
     expect(legacyToV1(rich('approve')).event).toBe('site.request_approved')
     expect(legacyToV1(rich('reject')).event).toBe('site.request_rejected')
+    // Wave 19: ephemeral sites and deletion requests.
+    const lifecycle = { ephemeral: 'site.ephemeral_set', ephemeral_off: 'site.ephemeral_cleared', ttl_renew: 'site.ttl_renewed', expire: 'site.expired', deletion_request: 'site.deletion_requested', deletion_approve: 'site.deletion_approved', deletion_reject: 'site.deletion_rejected' }
+    for (const [verb, event] of Object.entries(lifecycle)) expect(legacyToV1(rich(verb)).event).toBe(event)
     for (const verb of ['migration_preview', 'migration_dualrun_start', 'migration_cutover', 'migration_rollback']) {
       expect(legacyToV1(rich(verb)).event).toBe('site.migration_changed')
     }

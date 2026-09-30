@@ -82,6 +82,16 @@ export const AUDIT_EVENTS = {
   'site.logo_removed': ['authz', 'delete'],
   'site.migration_changed': ['authz', 'apply', 'warn'],
   'site.address_changed': ['authz', 'update', 'warn'],
+  // Ephemeral sites (sites/ephemeral.ts): an expiry set, cleared or moved, and the automatic pause.
+  'site.ephemeral_set': ['authz', 'update'],
+  'site.ephemeral_cleared': ['authz', 'update'],
+  'site.ttl_renewed': ['authz', 'update'],
+  'site.expired': ['authz', 'update', 'warn'],
+  // Deletion requests (sites/deletion-requests.ts): asked (a key may), approved (the delete follows as
+  // site.deleted), rejected.
+  'site.deletion_requested': ['authz', 'create', 'warn'],
+  'site.deletion_approved': ['authz', 'delete', 'warn'],
+  'site.deletion_rejected': ['authz', 'update'],
   // The sync loop rewrote a Site CR that no longer matched the applied intent (sites/sync.ts).
   'site.synced': ['authz', 'restore'],
   'site.permissions_published': ['authz', 'update'],

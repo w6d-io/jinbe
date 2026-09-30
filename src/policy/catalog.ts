@@ -92,9 +92,10 @@ export const CATALOG = {
 
   // ── Sites and the edge ─────────────────────────────────────────────────────────────────────────
   'sites:read': p('sites', 'View sites, versions, status, drift, requests; test a URL', 'low'),
-  'sites:write': p('sites', 'Draft, import, save and request the publication of a site', 'medium'),
+  'sites:write': p('sites', 'Draft, import and save a site (ephemeral included, and extend its TTL); request its publication or deletion', 'medium'),
   'sites:apply': p('sites', 'Publish, roll back, pause, resume or restore a site', 'high', { stepUp: true, fourEyes: 'prod' }),
-  'sites:delete': p('sites', 'Delete a site', 'critical', { stepUp: true, delegable: 'never' }),
+  // Approving a deletion request is a deletion: never through a key, never the requester (deletion-requests.ts).
+  'sites:delete': p('sites', 'Delete a site; approve or reject a request to delete one', 'critical', { stepUp: true, delegable: 'never' }),
   'sites.requests:approve': p('sites', 'Approve or reject a publication request', 'high', { stepUp: true, delegable: 'never' }),
   'zones:read': p('sites', 'View zones', 'low'),
   'zones:write': p('sites', 'Create or change a zone', 'high', { stepUp: true, delegable: 'never' }),

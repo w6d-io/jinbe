@@ -110,7 +110,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/users/:id/second-factors/reset': by('user.second_factor_reset'),
 
   // Sites (src/sites calls auditSite — audit/record.ts)
-  'PUT /api/admin/sites/:name': by('site.saved'),
+  'PUT /api/admin/sites/:name': by(['site.saved', 'site.ephemeral_set', 'site.ephemeral_cleared']),
   'DELETE /api/admin/sites/:name': by('site.deleted'),
   'PUT /api/admin/sites/:name/draft': by('site.draft_saved'),
   'DELETE /api/admin/sites/:name/draft': by('site.draft_discarded'),
@@ -135,6 +135,10 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/:name/requests': route('site.apply_requested', 'site'),
   'POST /api/admin/sites/requests/:id/approve': route('site.request_approved', 'site'),
   'POST /api/admin/sites/requests/:id/reject': route('site.request_rejected', 'site'),
+  'POST /api/admin/sites/:name/ttl': by('site.ttl_renewed'),
+  'POST /api/admin/sites/:name/deletion-requests': by('site.deletion_requested'),
+  'POST /api/admin/sites/deletion-requests/:id/approve': by(['site.deletion_approved', 'site.deleted']),
+  'POST /api/admin/sites/deletion-requests/:id/reject': by('site.deletion_rejected'),
   'PUT /api/admin/sites/:name/logo': route('site.logo_changed', 'site'),
   'DELETE /api/admin/sites/:name/logo': route('site.logo_removed', 'site'),
   'POST /api/admin/sites/migration/preview': exempt('converts the live rules into proposed sites for review; writes nothing'),
