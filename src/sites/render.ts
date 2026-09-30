@@ -89,7 +89,7 @@ export const MATCH_URL_MAX = 4096
 const DENY_GATE = 'deny'
 const CATCH_ALL_ID = 'catch-all'
 // Static paths under /api/admin/sites and the migrated system sites: a site by that name would be shadowed.
-const RESERVED_NAMES = ['migration', 'requests', 'preview', 'zones', 'check-host', 'match', 'render', 'platform', 'sign-in']
+const RESERVED_NAMES = ['migration', 'requests', 'deletion-requests', 'preview', 'zones', 'check-host', 'match', 'render', 'platform', 'sign-in']
 // The services the operator and admission refuse as upstreams in any namespace (site-operator):
 // the identity admin API, the policy engine and its feeder, the data stores.
 const FORBIDDEN_SERVICE = /^(kratos-admin|opa|opal(-.*)?|redis(-.*)?|postgres(ql)?(-.*)?)$/

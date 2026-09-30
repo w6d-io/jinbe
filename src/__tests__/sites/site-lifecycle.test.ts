@@ -324,6 +324,12 @@ describe('deletion requests', () => {
     expect((await inject('POST', '/payroll/deletion-requests', person('sam'), {})).statusCode).toBe(201)
   })
 
+  it('no site may be named deletion-requests: GET /deletion-requests is the list', async () => {
+    const res = await inject('PUT', '/deletion-requests', person('sam'), { site: payrollSite({ name: 'deletion-requests' }) })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().checks).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'reserved_name' })]))
+  })
+
   it('a direct delete cancels the pending request', async () => {
     await save()
     const req = await requested()
