@@ -7,6 +7,7 @@ import { allows } from '../services/user-permissions.js'
 import type { Permission } from '../policy/catalog.js'
 import { devRights } from './require-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
+import { delegationRefusal } from './delegation-gate.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 
 /**
@@ -54,6 +55,23 @@ export async function demandPermissions(
   reply: FastifyReply,
   required: readonly Permission[],
 ): Promise<boolean> {
+  // A delegated caller's token must cover what the guard asks on top of the route's own permission
+  // (a group given on a create, an invite sent with it): the gate only saw the declared one.
+  if (request.userContext?.authVia === 'delegated') {
+    for (const permission of required) {
+      const reason = delegationRefusal(request, permission)
+      if (!reason) continue
+      denyAudit(request, reason)
+      reply.status(403).send({
+        error: 'Forbidden',
+        code: reason.startsWith('scope_missing') ? 'insufficient_scope' : 'delegation_refused',
+        message: 'This credential acts for a user through a client and may not do this.',
+        reason,
+      })
+      return false
+    }
+  }
+
   const rights = await callerRights(request, reply)
   if (!rights) return false
 
