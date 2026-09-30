@@ -15,13 +15,14 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     getRoles: vi.fn(async (svc: string) => store.roles.get(svc) ?? null),
     setRoles: vi.fn(async (svc: string, r: Record<string, string[]>) => { store.roles.set(svc, r) }),
     getGroup: vi.fn(async (n: string) => store.groups.get(n) ?? null),
+    getGroups: vi.fn(async () => Object.fromEntries(store.groups)),
     setGroup: vi.fn(async (n: string, g: Record<string, string[]>) => { store.groups.set(n, g) }),
     setGroupMetadata: vi.fn(async (n: string, m: Record<string, unknown>) => { store.groupMeta.set(n, m) }),
     invalidateBundleEtag: vi.fn(async () => { store.etagInvalidated++; return 'etag' }),
   },
 }))
 
-import { seedStaffRoles } from '../../bootstrap/seed-staff.js'
+import { seedStaffRoles, unshadowStaffRoles } from '../../bootstrap/seed-staff.js'
 import { ROLES } from '../../policy/roles.js'
 
 const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never
@@ -70,5 +71,36 @@ describe('seedStaffRoles', () => {
     expect(store.groups.get('staff-support')).toEqual({ jinbe: ['support'] })
     expect(out.conflicts).toEqual(['staff-support exists without global:support'])
     expect(store.groups.has('platform-admins')).toBe(true)
+  })
+})
+
+// The policy merges roles by name across scopes: jinbe.support (the old support seed, holding
+// users:update_email) went to every staff-support member (e2e R-S5).
+describe('unshadowStaffRoles', () => {
+  beforeEach(() => {
+    store.roles.set('jinbe', { admin: ['*'], support: ['users:read', 'users:update_email'], viewer: ['databases:read'] })
+    store.groups.set('support', { jinbe: ['support'] })
+    store.groups.set('jinbe-viewer', { jinbe: ['viewer'], kuma: ['viewer'] })
+  })
+
+  it('renames a jinbe role named like a staff role, and moves the groups binding it', async () => {
+    expect(await unshadowStaffRoles(logger)).toEqual({ support: 'legacy_support', viewer: 'legacy_viewer' })
+    expect(store.roles.get('jinbe')).toEqual({ admin: ['*'], legacy_support: ['users:read', 'users:update_email'], legacy_viewer: ['databases:read'] })
+    expect(store.groups.get('support')).toEqual({ jinbe: ['legacy_support'] })
+    // Another service's role of that name is not jinbe's to rename.
+    expect(store.groups.get('jinbe-viewer')).toEqual({ jinbe: ['legacy_viewer'], kuma: ['viewer'] })
+    expect(store.etagInvalidated).toBe(1)
+  })
+
+  it('runs on every staff seed, and a second run changes nothing', async () => {
+    await seedStaffRoles(logger)
+    expect(store.roles.get('jinbe')!.support).toBeUndefined()
+    expect(await unshadowStaffRoles(logger)).toEqual({})
+  })
+
+  it('never overwrites an existing legacy_ role', async () => {
+    store.roles.set('jinbe', { support: ['users:update_email'], legacy_support: ['users:read'] })
+    expect(await unshadowStaffRoles(logger)).toEqual({ support: 'legacy_support_2' })
+    expect(store.roles.get('jinbe')).toEqual({ legacy_support: ['users:read'], legacy_support_2: ['users:update_email'] })
   })
 })

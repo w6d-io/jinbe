@@ -11,7 +11,7 @@ import { accessReviewService } from './access-review.service.js'
 import { invalidateHome } from '../home/cache.js'
 import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
 import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { globalRoleDefinitions } from '../policy/roles.js'
+import { STAFF_ROLES, globalRoleDefinitions } from '../policy/roles.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
@@ -1000,6 +1000,13 @@ export class RbacService {
         .filter((r) => JSON.stringify(roles[r] ?? null) !== JSON.stringify(code[r]))
       if (edited.length > 0) {
         throw Object.assign(new Error(`Roles defined in code cannot be changed here: ${edited.join(', ')}`), { statusCode: 409 })
+      }
+    } else if (serviceName === 'jinbe') {
+      // The policy merges roles by name across scopes: a jinbe role named like a staff role would go to
+      // every holder of that staff role (bootstrap/seed-staff.ts unshadowStaffRoles).
+      const shadowing = STAFF_ROLES.filter((r) => roles[r] !== undefined)
+      if (shadowing.length > 0) {
+        throw Object.assign(new Error(`A jinbe role cannot be named like a staff role: ${shadowing.join(', ')}`), { statusCode: 409 })
       }
     }
     await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)

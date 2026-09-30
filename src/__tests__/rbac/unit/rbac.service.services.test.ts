@@ -148,6 +148,18 @@ describe('RbacService - Services', () => {
     })
   })
 
+  describe('updateServiceRoles — a jinbe role is never named like a staff role', () => {
+    // The policy merges roles by name across scopes: jinbe.support went to every staff-support member.
+    it('refuses one with 409', async () => {
+      await expect(service.updateServiceRoles('jinbe', { admin: ['*'], support: ['users:update_email'] }))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('support') })
+    })
+
+    it('leaves another service free to use the name', async () => {
+      await expect(service.updateServiceRoles('kuma', { viewer: ['read'], support: ['read'] })).resolves.toBeDefined()
+    })
+  })
+
   describe('updateServiceRoutes — refuse a route another service already owns at the same rank', () => {
     it('409s naming both services and the path, and writes nothing', async () => {
       await expect(

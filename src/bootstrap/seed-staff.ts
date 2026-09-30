@@ -17,6 +17,8 @@ export async function seedStaffRoles(logger: BootstrapLogger): Promise<{ roles: 
   const problems = roleProblems()
   if (problems.length > 0) throw new Error(`Staff roles refer to permissions outside the catalogue: ${problems.join('; ')}`)
 
+  await unshadowStaffRoles(logger)
+
   if (!(await redisRbacRepository.serviceExists('global'))) await redisRbacRepository.addService('global')
   const current = (await redisRbacRepository.getRoles('global')) ?? {}
   const wanted = globalRoleDefinitions()
@@ -43,4 +45,51 @@ export async function seedStaffRoles(logger: BootstrapLogger): Promise<{ roles: 
   }
   if (conflicts.length > 0) logger.warn({ conflicts }, '[seed-staff] a staff group name is taken by another binding — left as is')
   return { roles: changedRoles, groups: createdGroups, conflicts }
+}
+
+/** What a jinbe role named like a staff role is renamed to. */
+export const LEGACY_PREFIX = 'legacy_'
+
+/** The service whose roles decide jinbe's own API (authz/opa.ts JINBE_APP). */
+const JINBE_APP = 'jinbe'
+
+/**
+ * The policy resolves a person's roles by NAME across scopes (rbac.rego `user_permissions` reads
+ * `roles.global[name]` and `roles.jinbe[name]` for every name they hold): a jinbe role named like a
+ * staff role is handed to every holder of that staff role, and the staff role to every holder of the
+ * jinbe one. The old support seed made `jinbe.support` (with users:update_email), so staff-support
+ * could change sign-in addresses (e2e R-S5).
+ *
+ * Each such jinbe role is renamed `legacy_<name>`, same permissions, and the groups binding it under
+ * `jinbe` follow: who held it keeps exactly that, and nothing more. The new name is added before the
+ * groups move and the old one removed after, so no step leaves a binding pointing at nothing.
+ */
+export async function unshadowStaffRoles(logger: BootstrapLogger): Promise<Record<string, string>> {
+  const roles = await redisRbacRepository.getRoles(JINBE_APP)
+  const shadowing = STAFF_ROLES.filter((r) => roles?.[r] !== undefined)
+  if (!roles || shadowing.length === 0) return {}
+
+  const renamed: Record<string, string> = {}
+  for (const role of shadowing) {
+    let name = `${LEGACY_PREFIX}${role}`
+    for (let n = 2; roles[name] !== undefined || (STAFF_ROLES as string[]).includes(name); n++) name = `${LEGACY_PREFIX}${role}_${n}`
+    renamed[role] = name
+  }
+
+  const moved = Object.fromEntries(shadowing.map((r) => [renamed[r], roles[r]]))
+  await redisRbacRepository.setRoles(JINBE_APP, { ...roles, ...moved })
+  const groups = await redisRbacRepository.getGroups()
+  const rebound: string[] = []
+  for (const [group, def] of Object.entries(groups)) {
+    const held = def[JINBE_APP]
+    if (!held?.some((r) => renamed[r])) continue
+    await redisRbacRepository.setGroup(group, { ...def, [JINBE_APP]: held.map((r) => renamed[r] ?? r) })
+    rebound.push(group)
+  }
+  const kept = Object.fromEntries(Object.entries(roles).filter(([r]) => !renamed[r]))
+  await redisRbacRepository.setRoles(JINBE_APP, { ...kept, ...moved })
+
+  await redisRbacRepository.invalidateBundleEtag()
+  logger.warn({ renamed, groups: rebound }, '[seed-staff] jinbe roles named like staff roles renamed — the policy would have merged them')
+  return renamed
 }

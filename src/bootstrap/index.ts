@@ -9,7 +9,6 @@ import { JINBE_BUILT_IN_ROUTES } from './build-route-map.js'
 import { mergeJinbeRouteMap } from './merge-route-map.js'
 import { seedKumaService } from './seed-kuma.js'
 import { seedDelegation } from './seed-delegation.js'
-import { seedSupport } from './seed-support.js'
 import { seedStaffRoles } from './seed-staff.js'
 import { seedDefaultAdmin } from './seed-admin.js'
 import {
@@ -206,9 +205,6 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   // Delegated org-admin model (org_admin role + <svc>-org-admins/-viewers
   // groups). Idempotent + additive; runs on schema upgrade and builtins-drift.
   await seedDelegation(logger)
-  // Support desk role + group (jinbe user management only). Additive; an operator's own `support`
-  // role or group is never overwritten. Reached on first run, schema upgrade and built-ins drift.
-  await seedSupport(logger)
   // Staff roles (code) and their empty staff-* groups; membership is the owner's decision per person.
   await seedStaffRoles(logger)
 }
