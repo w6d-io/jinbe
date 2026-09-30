@@ -89,7 +89,7 @@ beforeAll(async () => {
     request.userContext = {
       id: String(request.headers['x-user'] ?? ME), email: 'me@x.test', name: 'Me',
       ...(scopes !== undefined
-        ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), kind: 'personal' as const, via: 'auth-mcp' } }
+        ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), kind: 'personal' as const, via: 'auth-mcp', ...(request.headers['x-key-step-up'] ? { keyStepUpAt: String(request.headers['x-key-step-up']) } : {}) } }
         : { authVia: 'session' as const }),
     } as never
     request.rbacInfo = { email: 'me@x.test', groups: [], roles: [], permissions: perms } as never
@@ -326,9 +326,18 @@ describe('through an MCP key (delegated)', () => {
     expect(job.state).toBe('done')
   })
 
-  it('refuses a platform-wide group for a key (the grant gate needs a browser second factor)', async () => {
+  it('refuses a platform-wide group for a key without its creation-time second factor', async () => {
     const res = await post('groups.members.add/plan', { items: [{ user: U1, groups: ['platform_ops'] }] }, { 'x-test-perms': 'groups.members:write', 'x-test-mfa': '1', 'x-scopes': 'groups.members:write' })
     expect(res.json().items[0].outcome).toEqual({ status: 'refused', reason: 'step_up_unavailable:platform_ops' })
+  })
+
+  it('adds a platform-wide group for a key carrying its creation-time second factor (stepUpViaKey, as the group controllers)', async () => {
+    // x-test-mfa: the route's step-up stand-in (the real guard's key proof is sites-delegated.test.ts).
+    const K = { 'x-test-perms': 'groups.members:write', 'x-test-mfa': '1', 'x-scopes': 'groups.members:write', 'x-key-step-up': new Date(Date.now() - 3600_000).toISOString() }
+    const { plan, job } = await planAndRun('groups.members.add', { items: [{ user: U1, groups: ['platform_ops'] }] }, K)
+    expect(plan.items[0].outcome.status).toBe('ok')
+    expect(job.items[0]).toMatchObject({ status: 'done' })
+    expect(h.grants[0]).toMatchObject({ addGroups: ['platform_ops'], actor: expect.objectContaining({ stepUpViaKey: true, authVia: 'delegated' }) })
   })
 
   it('does not report unknown users to a key whose scopes lack users:read, whatever the user holds', async () => {

@@ -68,7 +68,6 @@ beforeEach(() => {
   h.grants = []
   vi.mocked(denyAudit).mockClear()
 })
-// The route's 403 schema keeps only error and message: the reason is read off the refusal's audit.
 const refusedFor = () => vi.mocked(denyAudit).mock.calls.map((c) => c[1])
 
 const invite = (payload: object, scopes?: string) =>
@@ -119,6 +118,20 @@ describe('POST /api/admin/users through a key', () => {
     const res = await invite({ email: 'new@x.test', sendInvite: true }, 'users:create users:recovery')
     expect(res.statusCode).toBe(403)
     expect(h.created).toHaveLength(0)
+  })
+
+  it('keeps code and reason in the 403 body, so the client can say what is missing', async () => {
+    const gate = await invite({ email: 'new@x.test' }, 'users:read')
+    expect(gate.json()).toMatchObject({ error: 'Forbidden', code: 'insufficient_scope', reason: 'scope_missing:users:create' })
+    const guard = await invite({ email: 'new@x.test', sendInvite: true }, 'users:create')
+    expect(guard.json()).toMatchObject({ code: 'insufficient_scope', reason: 'scope_missing:users:recovery' })
+  })
+
+  it('a session refusal carries neither code nor reason', async () => {
+    h.held = ['users:create']
+    const res = await invite({ email: 'new@x.test', sendInvite: true })
+    expect(res.statusCode).toBe(403)
+    expect(Object.keys(res.json()).sort()).toEqual(['error', 'message'])
   })
 
   it('leaves a session caller as it was', async () => {

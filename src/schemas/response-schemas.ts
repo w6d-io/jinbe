@@ -52,6 +52,11 @@ export const forbiddenResponseSchema = {
     properties: {
         error: { type: 'string', example: 'Forbidden' },
         message: { type: 'string' },
+        // Only on a delegated caller's refusal (delegation gate, guard scope check): what the client
+        // can act on — `insufficient_scope` with `scope_missing:<permission>`, or `delegation_refused`
+        // with `delegation_ineligible:<why>`. A session refusal carries neither.
+        code: { type: 'string', example: 'insufficient_scope' },
+        reason: { type: 'string', example: 'scope_missing:users:recovery' },
     },
 }
 
