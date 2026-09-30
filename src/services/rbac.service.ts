@@ -14,6 +14,7 @@ import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
 import { STAFF_ROLES, globalRoleDefinitions } from '../policy/roles.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
+import { assertValidBinding } from './group-bindings.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
@@ -636,6 +637,7 @@ export class RbacService {
     if (await redisRbacRepository.groupExists(name)) {
       throw Object.assign(new Error(`Group already exists: ${name}`), { statusCode: 409 })
     }
+    await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Block creating a group that grants the global super_admin role unless
     // the actor is themselves a super_admin.
@@ -658,6 +660,7 @@ export class RbacService {
     if (name === 'super_admins') {
       await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
+    await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
     // Capture the pre-image for the before→after diff (A3).
     const before = await redisRbacRepository.getGroup(name)

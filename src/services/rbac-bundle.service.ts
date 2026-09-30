@@ -3,6 +3,7 @@ import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type Rout
 import { auditEventService, type AuditActorInput, type AuditFlag } from './audit-event.service.js'
 import { rbacService } from './rbac.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
+import { InvalidBindingError, bindingProblems } from './group-bindings.js'
 import { oathkeeperRuleSchema } from '../schemas/rbac/access-rules.schema.js'
 import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oathkeeper-handlers.js'
 import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
@@ -155,6 +156,20 @@ class RbacBundleService {
     if (ties.length > 0) throw routeTieConflict(ties)
   }
 
+  /** Rejects (422, before any write) a group binding naming a role its service will not define. */
+  private async validateBindings(bundle: AuthBundle, want: (s: BundleSection) => boolean, isFull: boolean): Promise<void> {
+    const { services, groups, roles } = bundle.rbac
+    const after = new Map<string, Record<string, string[]> | null>()
+    for (const svc of new Set(Object.values(groups).flatMap((def) => Object.keys(def)))) {
+      if (want('roles') && roles[svc]) after.set(svc, svc === 'global' ? roles[svc] : { ...defaultServiceRoles(svc), ...roles[svc] })
+      else if (want('services') && services.includes(svc) && !(svc in roles) && svc !== 'global') after.set(svc, defaultServiceRoles(svc))
+      else if (want('services') && isFull && svc !== 'global' && !services.includes(svc)) after.set(svc, null)
+      else after.set(svc, await redisRbacRepository.getRoles(svc))
+    }
+    const problems = Object.entries(groups).flatMap(([name, def]) => bindingProblems(name, def, (s) => after.get(s)))
+    if (problems.length > 0) throw new InvalidBindingError(problems)
+  }
+
   async import(bundle: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
     const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
     // `sections` (optional) restricts a selective import to the chosen parts.
@@ -173,6 +188,8 @@ class RbacBundleService {
       for (const [svc, rm] of Object.entries(routeMaps ?? {})) assertOrgParams(svc, rm?.rules ?? [])
     }
     if (want('routeMaps') || want('services')) await this.validateRouteTies(bundle, want, isFull)
+    // Every group binding names roles its service will define once applied (group-bindings.ts).
+    if (want('groups')) await this.validateBindings(bundle, want, isFull)
 
     // Pre-apply snapshot → rollback point. Taken AFTER validation so a rejected
     // import leaves no trace, but BEFORE any write so a partial failure (below)

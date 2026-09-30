@@ -10,6 +10,7 @@ import {
 import { KratosApiError } from '../services/kratos.service.js'
 import { KubeconfigVerificationError } from '../services/cluster.service.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { InvalidBindingError } from '../services/group-bindings.js'
 import {
   OrganisationInUseError,
   OrganisationNotFoundError,
@@ -256,6 +257,10 @@ export function errorHandler(
   }
   if (error instanceof OrganisationStoreUnavailableError) {
     return reply.status(503).send({ error: 'organisation_directory_unavailable', message: error.message })
+  }
+
+  if (error instanceof InvalidBindingError) {
+    return reply.status(422).send({ error: 'invalid_binding', message: error.message, problems: error.problems })
   }
 
   if (error.code === POLICY_UNAVAILABLE) {
