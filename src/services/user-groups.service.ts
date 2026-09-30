@@ -1,6 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
-import { assertMayAssignGroup } from './rbac-escalation-guard.js'
+import { assertGrantWithinOwn, assertMayAssignGroup } from './rbac-escalation-guard.js'
 import { auditEventService } from './audit-event.service.js'
 import type { AuditAct } from './audit-types.js'
 import { diffUserGroups } from './audit-diff.js'
@@ -275,8 +275,22 @@ class UserGroupsService {
       if (denial) {
         // Emit the currently-silent denied write (highest-signal audit event).
         // checkPrivilegeEscalation only ever returns the ok:false variant.
-        this.emitDenied('privilege_escalation_blocked', identity, actor, g, denial.ok ? 422 : denial.status)
+        this.emitDenied(denial.ok ? 'privilege_escalation_blocked' : String(denial.body.error ?? 'privilege_escalation_blocked'), identity, actor, g, denial.ok ? 422 : denial.status)
         return denial
+      }
+    }
+
+    // GRANT ONLY WHAT YOU HOLD, for the groups the gate above does not cover (bound to one app, not
+    // platform-wide): nothing the actor lacks, never a staff group (rbac-escalation-guard.ts). Only on
+    // the global endpoint — the org endpoint refuses every such grant already.
+    if (privilegePolicy.kind === 'super_admin_required') {
+      for (const g of newlyAdded) {
+        if (gated.some((x) => x.group === g) || (g === BASE_GROUP && factsFor(g).empty)) continue
+        const denial = await this.checkGrantWithinOwn(g, identity.email, actor)
+        if (denial) {
+          this.emitDenied(String(denial.body.error), identity, actor, g, denial.status)
+          return denial
+        }
       }
     }
 
@@ -491,6 +505,27 @@ class UserGroupsService {
     return null
   }
 
+  /** The subset and staff rules for one added group: a 403 refusal, or null. */
+  private async checkGrantWithinOwn(
+    groupName: string,
+    targetEmail: string,
+    actor: { id?: string | null; email?: string | null; ip?: string | null },
+  ): Promise<ApplyGroupUpdateResult & { ok: false } | null> {
+    try {
+      await assertGrantWithinOwn(groupName, { id: actor.id, email: actor.email, ip: actor.ip })
+      return null
+    } catch (e) {
+      const within = grantRefusal(e, groupName, targetEmail)
+      if (within) return within
+      const err = e as Error & { statusCode?: number }
+      return {
+        ok: false,
+        status: err.statusCode === 401 ? 401 : err.statusCode === 503 ? 503 : 422,
+        body: { error: 'privilege_escalation_blocked', message: err.message, targetEmail, blockingGroup: groupName },
+      }
+    }
+  }
+
   private async checkPrivilegeEscalation(
     groupName: string,
     targetEmail: string,
@@ -509,6 +544,8 @@ class UserGroupsService {
         if (op === 'add') await assertMayAssignGroup(groupName, targetEmail, { id: actor.id, email: actor.email, ip: actor.ip })
         return null
       } catch (e) {
+        const within = grantRefusal(e, groupName, targetEmail)
+        if (within) return within
         const err = e as Error & { statusCode?: number }
         return {
           ok: false,
@@ -519,6 +556,8 @@ class UserGroupsService {
             targetEmail,
             blockingGroup: groupName,
             hint: 'Only an existing super_admin can grant admin or super_admin groups.',
+            // A missing permission names it and who grants it (the hint above stays as it was).
+            ...refusalFacts(e),
           },
         }
       }
@@ -573,6 +612,30 @@ class UserGroupsService {
       },
     }
   }
+}
+
+/**
+ * The two refusals of "grant only what you hold" answer 403 under their own code, with what is
+ * missing and who grants it (rbac-escalation-guard.ts); every other refusal keeps its 422 above.
+ */
+const WITHIN_OWN = new Set(['grant_exceeds_own', 'staff_group_super_admin_only'])
+
+function grantRefusal(e: unknown, groupName: string, targetEmail: string): (ApplyGroupUpdateResult & { ok: false }) | null {
+  const err = e as Error & { code?: string; refusal?: Record<string, unknown> }
+  if (!err.code || !WITHIN_OWN.has(err.code)) return null
+  return {
+    ok: false,
+    status: 403,
+    body: { applied: false, ...err.refusal, error: err.code, code: err.code, message: err.message, targetEmail, blockingGroup: groupName },
+  }
+}
+
+/** The permission facts a guard's refusal carries, for a body that keeps its own error and hint. */
+function refusalFacts(e: unknown): Record<string, unknown> {
+  const r = (e as { refusal?: Record<string, unknown> }).refusal
+  if (!r) return {}
+  const { permission, missing, grantedBy } = r
+  return { ...(permission ? { permission } : {}), ...(missing ? { missing } : {}), ...(grantedBy ? { grantedBy } : {}) }
 }
 
 export const userGroupsService = new UserGroupsService()

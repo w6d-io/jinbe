@@ -3,6 +3,7 @@ import { declaredRoute } from '../policy/declared-routes.js'
 import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
 import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
+import { scopeRefusalFields } from '../services/permission-refusal.js'
 
 /**
  * What a DELEGATED caller (a user acting through a client: an MCP server, a personal key) may reach.
@@ -153,5 +154,6 @@ export async function delegationGate(request: FastifyRequest, reply: FastifyRepl
     code: reason.startsWith('scope_missing') ? 'insufficient_scope' : 'delegation_refused',
     message: 'This credential acts for a user through a client and may not use this route.',
     reason,
+    ...(await scopeRefusalFields(reason)),
   })
 }

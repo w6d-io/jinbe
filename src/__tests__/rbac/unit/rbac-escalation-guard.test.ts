@@ -56,9 +56,15 @@ describe('groups', () => {
     expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'self_escalation' }))
   })
 
-  it('allows a change to a group the actor is not in, when it grants no wildcard', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: { billing: ['viewer'] } }, ADMIN))).toBe(200)
+  it('allows a change to a group the actor is not in, when it grants nothing beyond what they hold', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'readers', after: { jinbe: ['viewer'] } }, ADMIN))).toBe(200)
     expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: null }, ADMIN))).toBe(200)
+  })
+
+  it('refuses a group granting what the actor does not hold, in that scope (grant_exceeds_own)', async () => {
+    // ADMIN holds admin:read/admin:write in jinbe and nothing in billing.
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: { billing: ['viewer'] } }, ADMIN))).toBe(403)
+    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'grant_exceeds_own' }))
   })
 
   it("refuses a group that grants '*' — a role carrying it, or the global super_admin role", async () => {
@@ -80,8 +86,13 @@ describe('service roles and route maps', () => {
   })
 
   it('allows them for a service none of their groups reaches', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'invoices:export'] } }, ADMIN))).toBe(200)
+    // A role no group binds grants nobody anything yet.
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'], exporter: ['invoices:export'] } }, ADMIN))).toBe(200)
     expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN))).toBe(200)
+  })
+
+  it('refuses widening a role a group binds with what the actor does not hold: that widens the group', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'invoices:export'] } }, ADMIN))).toBe(403)
   })
 
   it("refuses a role carrying '*', whatever the service", async () => {
@@ -131,8 +142,13 @@ describe('handing out a platform group (PUT /api/admin/users/:email/groups)', ()
     expect(await status(assertMayAssignGroup('billing', 'Admin@Example.com', ADMIN))).toBe(403)
   })
 
-  it('allows a group without a wildcard to somebody else', async () => {
-    expect(await status(assertMayAssignGroup('billing', 'someone@example.com', ADMIN))).toBe(200)
+  it('allows a group without a wildcard, within what the actor holds, to somebody else', async () => {
+    store.groups.readers = { jinbe: ['viewer'] }
+    expect(await status(assertMayAssignGroup('readers', 'someone@example.com', ADMIN))).toBe(200)
+  })
+
+  it('refuses a group granting what the actor does not hold', async () => {
+    expect(await status(assertMayAssignGroup('billing', 'someone@example.com', ADMIN))).toBe(403)
   })
 
   it('lets a super admin do both', async () => {

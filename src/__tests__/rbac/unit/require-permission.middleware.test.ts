@@ -282,9 +282,14 @@ describe("requirePermission('users:read')", () => {
       await requireAdmin(request, reply)
 
       expect(reply._statusCode).toBe(403)
+      // The model is not reachable here, so no group list: the hint says only who to ask for what.
       expect(reply._body).toEqual({
         error: 'Forbidden',
+        code: 'permission_required',
         message: 'This needs users:read.',
+        permission: 'users:read',
+        grantedBy: [],
+        hint: 'Ask an administrator for users:read.',
       })
     })
 

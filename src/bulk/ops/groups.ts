@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { groupFacts, type GroupFacts } from '../../services/group-catalogue.js'
 import { groupsForSubjects } from '../../services/organisation-store.js'
 import { userGroupsService } from '../../services/user-groups.service.js'
+import { assertMayAssignGroup } from '../../services/rbac-escalation-guard.js'
 import { isSelf, may, notFound, resolveUser, type BulkOp, type Outcome } from '../types.js'
 
 type Add = { user: string; groups: string[] }
@@ -13,7 +14,8 @@ const ORG_ADMIN_FLAG_GROUP = 'org_admins'
  * Add people to platform groups, like PUT /admin/users/:email/groups with the adds only: the route
  * carries groups.members:write and its step-up, and each item goes through the same grant gate
  * (userGroupsService.applyGroupUpdate: the model, the escalation guard, the target's second factor,
- * the actor's step-up) in add-only mode, so nothing is ever taken away. Never the caller themselves.
+ * the actor's step-up) in add-only mode, so nothing is ever taken away. Never the caller themselves,
+ * never a staff group or one granting what the caller does not hold (the plan says so up front).
  *
  * A key hands out a platform-wide group only on its creation-time second factor (a key created with
  * protected actions, less than 30 days ago); otherwise the plan refuses it (step_up_unavailable).
@@ -46,6 +48,17 @@ export const groupsMembersAdd: BulkOp<Add, Record<string, never>, Map<string, Gr
     // A key stands on its creation-time second factor for group grants (owner decision 2026-09-30);
     // without that proof (key created without protected actions, or too old) a platform-wide grant is refused.
     if (privileged && caller.delegated && !caller.groupActor.stepUpViaKey) return { status: 'refused', reason: `step_up_unavailable:${privileged}` }
+    // The escalation guard as the run will ask it: no `*`, no staff group, nothing the caller lacks.
+    const target = typeof identity.traits?.email === 'string' ? identity.traits.email : ''
+    for (const g of adds) {
+      try {
+        await assertMayAssignGroup(g, target, { id: caller.id, email: caller.audit.email ?? null, ip: caller.audit.ip ?? null })
+      } catch (e) {
+        const err = e as { statusCode?: number; code?: string }
+        if (err.statusCode === 401 || err.statusCode === 503) return { status: 'refused', reason: 'unavailable' }
+        return { status: 'refused', reason: `${err.code ?? 'privilege_escalation_blocked'}:${g}` }
+      }
+    }
     return { status: 'ok', action: `add:${adds.join(',')}` }
   },
 

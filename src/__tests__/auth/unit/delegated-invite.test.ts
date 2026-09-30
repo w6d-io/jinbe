@@ -127,11 +127,12 @@ describe('POST /api/admin/users through a key', () => {
     expect(guard.json()).toMatchObject({ code: 'insufficient_scope', reason: 'scope_missing:users:recovery' })
   })
 
-  it('a session refusal carries neither code nor reason', async () => {
+  it('a session refusal names the missing permission and who grants it, never a delegation reason', async () => {
     h.held = ['users:create']
     const res = await invite({ email: 'new@x.test', sendInvite: true })
     expect(res.statusCode).toBe(403)
-    expect(Object.keys(res.json()).sort()).toEqual(['error', 'message'])
+    expect(Object.keys(res.json()).sort()).toEqual(['code', 'error', 'grantedBy', 'hint', 'message', 'permission'])
+    expect(res.json()).toMatchObject({ error: 'Forbidden', code: 'permission_required', permission: 'users:recovery' })
   })
 
   it('leaves a session caller as it was', async () => {

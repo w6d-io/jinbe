@@ -9,6 +9,7 @@ import { denyAudit } from '../audit/deny.js'
 import { ROLES } from '../policy/roles.js'
 import { EVERYTHING } from '../policy/catalog.js'
 import { keyStepUpVerdict } from './delegated-step-up.js'
+import { missingPermissionFields } from '../services/permission-refusal.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -91,6 +92,6 @@ export const requireGlobalSuperAdmin = enforcing(async function (request: Fastif
   }
   if (!superAdmin) {
     denyAudit(request, 'not_super_admin')
-    return reply.status(403).send({ error: 'Forbidden', message: 'Super admin access required' })
+    return reply.status(403).send({ error: 'Forbidden', code: 'permission_required', message: 'Super admin access required', ...(await missingPermissionFields([EVERYTHING])) })
   }
 }, EVERYTHING)

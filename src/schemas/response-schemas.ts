@@ -45,16 +45,31 @@ export const badRequestResponseSchema = {
     },
 }
 
+/**
+ * What a 403 for a missing permission adds (services/permission-refusal.ts): the permission, or the
+ * ones missing from a grant, the groups whose roles give it, and who to ask. kuma and auth-mcp render
+ * `grantedBy` and `hint`. Group names only — never their members.
+ */
+export const permissionRefusalProperties = {
+    permission: { type: 'string', example: 'users:reset_second_factor' },
+    missing: { type: 'array', items: { type: 'string' }, example: ['users:reset_second_factor'] },
+    missingByScope: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+    grantedBy: { type: 'array', items: { type: 'string' }, example: ['staff-security', 'super_admins'] },
+    hint: { type: 'string', example: 'Ask an administrator to add you to one of: staff-security, super_admins.' },
+} as const
+
 export const forbiddenResponseSchema = {
     type: 'object',
     properties: {
         error: { type: 'string', example: 'Forbidden' },
         message: { type: 'string' },
-        // Only on a delegated caller's refusal (delegation gate, guard scope check): what the client
-        // can act on — `insufficient_scope` with `scope_missing:<permission>`, or `delegation_refused`
-        // with `delegation_ineligible:<why>`. A session refusal carries neither.
+        // What the client can act on. A delegated caller's refusal: `insufficient_scope` with
+        // `scope_missing:<permission>`, or `delegation_refused` with `delegation_ineligible:<why>`. A
+        // missing permission: `permission_required`; the escalation guard: `grant_exceeds_own`,
+        // `staff_group_super_admin_only`, `self_escalation`, `grants_everything`.
         code: { type: 'string', example: 'insufficient_scope' },
         reason: { type: 'string', example: 'scope_missing:users:recovery' },
+        ...permissionRefusalProperties,
     },
 }
 

@@ -4,6 +4,7 @@ import { open } from '../policy/route-access.js'
 import { requireHomeScope, viewFor, canSee, type HomeScope, type HomeView } from './scope.js'
 import { buildHome, buildModules, forbidden } from './service.js'
 import { HOME_MODULES, homeQuerySchema, homeResponseSchema, moduleEnvelopeSchema, type HomeModuleName } from './types.js'
+import { permissionRefusalProperties } from '../schemas/response-schemas.js'
 
 /**
  * /api/home — the console's briefing (home-data §3, §11).
@@ -17,7 +18,7 @@ import { HOME_MODULES, homeQuerySchema, homeResponseSchema, moduleEnvelopeSchema
 
 const TAGS = ['home']
 const json = (schema: Parameters<typeof zodToJsonSchema>[0]) => zodToJsonSchema(schema, { target: 'openApi3' })
-const error = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } }
+const error = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, code: { type: 'string' }, reason: { type: 'string' }, ...permissionRefusalProperties } }
 
 const CACHE_CONTROL = 'private, max-age=15'
 

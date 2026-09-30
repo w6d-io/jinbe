@@ -14,6 +14,7 @@ import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
 import { STAFF_ROLES, globalRoleDefinitions } from '../policy/roles.js'
 import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
+import { missingPermissionFields } from './permission-refusal.js'
 import { assertValidBinding } from './group-bindings.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
@@ -307,10 +308,11 @@ export class RbacService {
       )
     }
     if (!powerful) {
-      throw Object.assign(
-        new Error(`Only ${ASSIGN_MEMBERSHIP} may ${reason}`),
-        { statusCode: 403 },
-      )
+      const message = `Only ${ASSIGN_MEMBERSHIP} may ${reason}`
+      throw Object.assign(new Error(message), {
+        statusCode: 403,
+        refusal: { code: 'permission_required', message, ...(await missingPermissionFields([ASSIGN_MEMBERSHIP])) },
+      })
     }
   }
 

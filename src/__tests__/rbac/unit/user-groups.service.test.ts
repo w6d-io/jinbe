@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
 // The '*'-group / self-assignment check asks OPA; it has its own tests (rbac-escalation-guard.test.ts).
-vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}) }))
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}), assertGrantWithinOwn: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 
@@ -59,7 +59,7 @@ import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
-import { assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
+import { assertGrantWithinOwn, assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -925,5 +925,72 @@ describe('userGroupsService.applyGroupUpdate — a change lands whole or not at 
     expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
     // And it says so, rather than leaving the caller to infer it from a screen that did not change.
     if (!result.ok) expect(result.body).toMatchObject({ applied: false })
+  })
+})
+
+describe('userGroupsService.applyGroupUpdate — grant only what you hold', () => {
+  const exceeds = () => Object.assign(new Error("Group 'devs' grants what you do not hold: dev:deploy"), {
+    statusCode: 403,
+    code: 'grant_exceeds_own',
+    refusal: { code: 'grant_exceeds_own', missing: ['dev:deploy'], missingByScope: { 'org-1': ['dev:deploy'] }, grantedBy: ['super_admins'], hint: 'Ask an administrator to add you to one of: super_admins.' },
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetGroupCatalogue()
+    holds()
+  })
+
+  it('asks it of a group bound to one app too (not only platform-wide ones), and answers 403 with what is missing', async () => {
+    vi.mocked(assertGrantWithinOwn).mockRejectedValueOnce(exceeds())
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY, newGroups: ['devs'], actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+    })
+    expect(vi.mocked(assertGrantWithinOwn)).toHaveBeenCalledWith('devs', expect.objectContaining({ email: 'actor@example.com' }))
+    expect(result).toMatchObject({
+      ok: false,
+      status: 403,
+      body: {
+        error: 'grant_exceeds_own', code: 'grant_exceeds_own', missing: ['dev:deploy'],
+        grantedBy: ['super_admins'], hint: 'Ask an administrator to add you to one of: super_admins.',
+        targetEmail: 'target@example.com', blockingGroup: 'devs',
+      },
+    })
+    expect(allGranted()).toEqual([])
+    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'grant_exceeds_own' }))
+  })
+
+  it('answers 403 staff_group_super_admin_only for a staff group through the platform gate', async () => {
+    groupCatalogue.groups['staff-security'] = { global: ['security'] }
+    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(Object.assign(new Error("Only a super admin may assign 'staff-security'"), {
+      statusCode: 403, code: 'staff_group_super_admin_only', refusal: { code: 'staff_group_super_admin_only', permission: '*', grantedBy: ['super_admins'], hint: 'x' },
+    }))
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY, newGroups: ['staff-security'], actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+    })
+    expect(result).toMatchObject({ ok: false, status: 403, body: { error: 'staff_group_super_admin_only', permission: '*', grantedBy: ['super_admins'], blockingGroup: 'staff-security' } })
+    // The platform gate already asked it: not asked twice.
+    expect(vi.mocked(assertGrantWithinOwn)).not.toHaveBeenCalled()
+    expect(allGranted()).toEqual([])
+  })
+
+  it('keeps every other refusal as it was (422 privilege_escalation_blocked), and 503 when it could not tell', async () => {
+    vi.mocked(assertGrantWithinOwn).mockRejectedValueOnce(Object.assign(new Error('OPA down'), { statusCode: 503 }))
+    const result = await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY, newGroups: ['devs'], actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+    })
+    expect(result).toMatchObject({ ok: false, status: 503, body: { error: 'privilege_escalation_blocked' } })
+    expect(allGranted()).toEqual([])
+  })
+
+  it('does not ask it of the base group, which confers nothing', async () => {
+    await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY, newGroups: ['users'], actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+    })
+    expect(vi.mocked(assertGrantWithinOwn)).not.toHaveBeenCalled()
   })
 })
