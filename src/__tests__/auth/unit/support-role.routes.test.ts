@@ -143,6 +143,8 @@ describe('support can do the support desk\'s work', () => {
   it('lists and revokes sessions', async () => {
     expect((await app.inject({ url: `/api/admin/users/${USER}/sessions`, headers: as('support') })).statusCode).toBe(200)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}/sessions`, headers: as('support') })).statusCode).toBe(204)
+    // Sign out everywhere also asks Hydra for the person's MCP browser sign-ins, to revoke them.
+    expect(s.fetches.some((f) => f.url.includes(`/admin/oauth2/auth/sessions/consent?subject=${USER}`))).toBe(true)
     expect((await app.inject({ method: 'DELETE', url: '/api/admin/sessions/sess-1', headers: as('support') })).statusCode).toBe(204)
   })
 

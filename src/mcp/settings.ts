@@ -11,6 +11,10 @@ import { PERSONAL_KEY_MAX_DAYS } from '../schemas/api-key.schema.js'
  *   personalKeys.maxDays the longest a new personal key may live (≤ 30, the owner's ceiling)
  *   allowedGroups        'all', or the groups whose members may use it (staff rights come from groups;
  *                        a personal key is bound to no organization)
+ *   oauth                browser sign-in for MCP clients (src/oauth/): `enabled` (ON by default whenever
+ *                        MCP is on — owner decision D5, 2026-09-30), `maxDays` the absolute life of one
+ *                        sign-in (≤ 30), and protected actions: 'window' allows them for
+ *                        `protectedActionsHours` after the consent-time second factor (12 h, D1), 'off' never
  *
  * DELEGATED_TOKENS_ENABLED is the deployment's hard ceiling: false and nothing here turns MCP on.
  * Unset: OFF — MCP stays off until an administrator opts in (owner decision) — no URL, 30 days, every
@@ -27,13 +31,27 @@ export interface McpSettings {
   serverUrl: string | null
   personalKeys: { maxDays: number }
   allowedGroups: 'all' | string[]
+  oauth: OAuthSettings
 }
+
+export interface OAuthSettings {
+  enabled: boolean
+  maxDays: number
+  protectedActions: 'off' | 'window'
+  protectedActionsHours: number
+}
+
+export const OAUTH_MAX_DAYS = 30
+export const OAUTH_MAX_PROTECTED_HOURS = 720
 
 export const MAX_GROUPS = 500
 const GROUP_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/
 
 export function defaultMcpSettings(): McpSettings {
-  return { enabled: false, serverUrl: null, personalKeys: { maxDays: PERSONAL_KEY_MAX_DAYS }, allowedGroups: 'all' }
+  return {
+    enabled: false, serverUrl: null, personalKeys: { maxDays: PERSONAL_KEY_MAX_DAYS }, allowedGroups: 'all',
+    oauth: { enabled: true, maxDays: OAUTH_MAX_DAYS, protectedActions: 'window', protectedActionsHours: 12 },
+  }
 }
 
 export type SettingsProblem = { field: string; message: string }
@@ -103,7 +121,35 @@ export function validateMcpSettings(input: unknown, opts: { forSave?: boolean } 
       value.allowedGroups = list
     }
   }
+  if (o.oauth !== undefined) {
+    if (o.oauth === null || typeof o.oauth !== 'object' || Array.isArray(o.oauth)) problems.push({ field: 'oauth', message: 'must be an object' })
+    else validateOAuth(o.oauth as Record<string, unknown>, value.oauth, problems)
+  }
   return problems.length ? { ok: false, problems } : { ok: true, value }
+}
+
+function wholeIn(v: unknown, min: number, max: number): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
+}
+
+function validateOAuth(o: Record<string, unknown>, value: OAuthSettings, problems: SettingsProblem[]): void {
+  if (o.enabled !== undefined) {
+    if (typeof o.enabled !== 'boolean') problems.push({ field: 'oauth.enabled', message: 'must be true or false' })
+    else value.enabled = o.enabled
+  }
+  if (o.maxDays !== undefined) {
+    if (!wholeIn(o.maxDays, 1, OAUTH_MAX_DAYS)) problems.push({ field: 'oauth.maxDays', message: `must be a whole number of days from 1 to ${OAUTH_MAX_DAYS}` })
+    else value.maxDays = o.maxDays
+  }
+  if (o.protectedActions !== undefined) {
+    if (o.protectedActions !== 'off' && o.protectedActions !== 'window') problems.push({ field: 'oauth.protectedActions', message: "must be 'off' or 'window'" })
+    else value.protectedActions = o.protectedActions
+  }
+  if (o.protectedActionsHours !== undefined) {
+    if (!wholeIn(o.protectedActionsHours, 1, OAUTH_MAX_PROTECTED_HOURS)) {
+      problems.push({ field: 'oauth.protectedActionsHours', message: `must be a whole number of hours from 1 to ${OAUTH_MAX_PROTECTED_HOURS}` })
+    } else value.protectedActionsHours = o.protectedActionsHours
+  }
 }
 
 /** A stored value as a clean document; a missing or unreadable one is the default. */

@@ -14,6 +14,8 @@ const s = vi.hoisted(() => ({
   groups: ['staff'] as string[],
   held: ['admin:read', 'users:read'] as string[],
   heldFails: false,
+  revokeConsent: vi.fn(async () => undefined),
+  audit: vi.fn(),
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
@@ -29,6 +31,8 @@ vi.mock('../../../services/platform-scopes.js', () => ({
   }),
 }))
 vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
+vi.mock('../../../services/hydra-flows.service.js', () => ({ hydraFlows: { revokeConsentSessions: s.revokeConsent } }))
+vi.mock('../../../oauth/audit.js', () => ({ oauthAudit: s.audit }))
 
 import { DelegatedTokenService } from '../../../services/delegated-token.service.js'
 import { resetMcpSettingsCache } from '../../../mcp/settings.js'
@@ -36,10 +40,13 @@ import { resetMcpSettingsCache } from '../../../mcp/settings.js'
 const NOW = Date.parse('2026-09-28T12:00:00Z')
 const exp = NOW / 1000 + 600
 
+const GRANT_END = '2026-10-28T12:00:00.000Z'
+const oauthExt = (over: Record<string, unknown> = {}) => ({ org: 'acme', kind: 'oauth', scope_mode: 'chosen', step_up_actions: false, grant_expires_at: GRANT_END, ...over })
 const oauth = (over: Record<string, unknown> = {}) => ({
-  active: true, sub: 'user-1', client_id: 'claude-code', scope: 'mcp offline_access payroll:read * sites:*',
-  aud: ['https://mcp.test'], exp, token_use: 'access_token', ext: { org: 'acme' }, ...over,
+  active: true, sub: 'user-1', client_id: 'claude-code', scope: 'mcp offline_access users:read payroll:read * sites:*',
+  aud: ['https://mcp.test'], exp, token_use: 'access_token', ext: oauthExt(), ...over,
 })
+const mcpClient = (meta: Record<string, unknown> = {}) => ({ client_id: 'claude-code', client_name: 'Claude Code', metadata: { kind: 'mcp_oauth', bound_subject: 'user-1', ...meta } })
 
 let svc: DelegatedTokenService
 beforeEach(() => {
@@ -48,7 +55,9 @@ beforeEach(() => {
   s.env.DELEGATED_TOKENS_ENABLED = true
   s.env.DELEGATED_TOKEN_AUDIENCE = 'https://mcp.test'
   s.introspect.mockReset()
-  s.getClient.mockReset()
+  s.getClient.mockReset().mockResolvedValue(mcpClient())
+  s.revokeConsent.mockReset().mockResolvedValue(undefined)
+  s.audit.mockReset()
   s.getIdentity.mockReset().mockResolvedValue({ id: 'user-1', state: 'active', traits: { email: 'ann@acme.io', name: { first: 'Ann', last: 'Lee' } } })
   s.groups = ['staff']
   s.held = ['admin:read', 'users:read']
@@ -58,15 +67,80 @@ beforeEach(() => {
 })
 
 describe('DelegatedTokenService.resolve', () => {
-  it('maps an OAuth token to its user, grantable scopes only, and its consent org for information', async () => {
+  it('maps an OAuth token to its user, the granted scopes still held, and its consent org for information', async () => {
     s.introspect.mockResolvedValue(oauth())
     const r = await svc.resolve('ory_at_abc', NOW)
     expect(r).toEqual({
       principal: {
         subject: 'user-1', email: 'ann@acme.io', name: 'Ann Lee', clientId: 'claude-code',
-        scopes: ['payroll:read'], org: 'acme', kind: 'oauth', expiresAt: exp * 1000,
-        tokenScope: 'mcp offline_access payroll:read * sites:*', aud: ['https://mcp.test'],
+        scopes: ['users:read'], org: 'acme', kind: 'oauth', expiresAt: exp * 1000,
+        tokenScope: 'users:read mcp offline_access * sites:*', aud: ['https://mcp.test'],
+        scopeMode: 'chosen', stepUpActions: false, grantExpiresAt: Date.parse(GRANT_END), clientName: 'Claude Code',
       },
+    })
+  })
+
+  describe('OAuth sign-ins (authorization code, src/oauth/)', () => {
+    it("'all' follows what the holder holds now; 'chosen' is the grant still held", async () => {
+      s.introspect.mockResolvedValue(oauth({ scope: 'mcp offline_access', ext: oauthExt({ scope_mode: 'all' }) }))
+      expect(await svc.resolve('a', NOW)).toMatchObject({ principal: { scopes: ['admin:read', 'users:read'], tokenScope: 'admin:read users:read mcp offline_access', scopeMode: 'all' } })
+      s.held = ['users:read']
+      expect(await svc.resolve('a', NOW + 1000)).toMatchObject({ principal: { scopes: ['users:read'] } })
+      s.introspect.mockResolvedValue(oauth({ scope: 'mcp users:read admin:read' }))
+      s.held = ['admin:read']
+      expect(await svc.resolve('c', NOW)).toMatchObject({ principal: { scopes: ['admin:read'], scopeMode: 'chosen' } })
+    })
+
+    it('refuses a token of a client that is not an MCP registration, or bound to someone else', async () => {
+      s.introspect.mockResolvedValue(oauth())
+      s.getClient.mockResolvedValue({ client_id: 'claude-code', metadata: { organization_id: 'acme' } })
+      expect(await svc.resolve('x1', NOW)).toEqual({ error: 'not_an_mcp_client' })
+      s.getClient.mockResolvedValue(mcpClient({ bound_subject: 'user-2' }))
+      expect(await svc.resolve('x2', NOW)).toEqual({ error: 'client_bound_elsewhere' })
+      s.getClient.mockRejectedValue(new Error('404'))
+      expect(await svc.resolve('x3', NOW)).toEqual({ error: 'client_unknown' })
+    })
+
+    it('refuses a sign-in past its absolute end (or without one) and revokes it at Hydra, once', async () => {
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ grant_expires_at: '2026-09-28T11:00:00Z' }) }))
+      expect(await svc.resolve('e1', NOW)).toEqual({ error: 'grant_expired' })
+      expect(await svc.resolve('e2', NOW)).toEqual({ error: 'grant_expired' })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(s.revokeConsent).toHaveBeenCalledTimes(1)
+      expect(s.revokeConsent).toHaveBeenCalledWith('user-1', 'claude-code')
+      expect(s.audit).toHaveBeenCalledWith('mcp.oauth.grant_expired', expect.objectContaining({ targetId: 'claude-code' }))
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ grant_expires_at: undefined }) }))
+      expect(await svc.resolve('e3', NOW)).toEqual({ error: 'grant_expired' })
+    })
+
+    it('never outlives the sign-in: expiresAt is the earlier of the token and the grant', async () => {
+      const soon = new Date(NOW + 60_000).toISOString()
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ grant_expires_at: soon }) }))
+      expect(await svc.resolve('s', NOW)).toMatchObject({ principal: { expiresAt: NOW + 60_000 } })
+    })
+
+    it('protected actions: allowed at consent, for the settings window after the consent-time factor, never past the grant', async () => {
+      const at = new Date(NOW - 3600_000).toISOString()
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: true, second_factor_at: at }) }))
+      expect(await svc.resolve('p1', NOW)).toMatchObject({ principal: { stepUpActions: true, stepUpAt: at, stepUpUntil: new Date(NOW + 11 * 3600_000).toISOString() } })
+      s.mcpConfig = { mcp: JSON.stringify({ enabled: true, oauth: { protectedActions: 'off' } }) }
+      resetMcpSettingsCache()
+      expect((await svc.resolve('p1', NOW + 1000) as { principal: Record<string, unknown> }).principal.stepUpUntil).toBeUndefined()
+      s.mcpConfig = { mcp: JSON.stringify({ enabled: true, oauth: { protectedActionsHours: 720 } }) }
+      resetMcpSettingsCache()
+      const end = new Date(NOW + 2 * 3600_000).toISOString()
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: true, second_factor_at: at, grant_expires_at: end }) }))
+      expect(await svc.resolve('p3', NOW)).toMatchObject({ principal: { stepUpUntil: end } })
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: false, second_factor_at: at }) }))
+      expect((await svc.resolve('p2', NOW) as { principal: Record<string, unknown> }).principal.stepUpUntil).toBeUndefined()
+    })
+
+    it('an administrator turning browser sign-in off refuses OAuth tokens at once (keys keep working)', async () => {
+      s.introspect.mockResolvedValue(oauth())
+      expect(await svc.resolve('o', NOW)).toHaveProperty('principal')
+      s.mcpConfig = { mcp: JSON.stringify({ enabled: true, oauth: { enabled: false } }) }
+      resetMcpSettingsCache()
+      expect(await svc.resolve('o', NOW + 1000)).toEqual({ error: 'oauth_disabled' })
     })
   })
 
@@ -147,7 +221,7 @@ describe('DelegatedTokenService.resolve', () => {
   })
 
   it('accepts a token that names no org', async () => {
-    s.introspect.mockResolvedValue(oauth({ ext: {} }))
+    s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ org: undefined }) }))
     const r = await svc.resolve('t', NOW)
     expect(r).toHaveProperty('principal')
     expect((r as { principal: Record<string, unknown> }).principal).not.toHaveProperty('org')
@@ -193,7 +267,7 @@ describe('DelegatedTokenService.resolve', () => {
       expect(await svc.resolve('k', NOW)).toEqual({ error: 'authz_unavailable' })
     })
 
-    it("marks the key used on every accepted token, cached or not, and never an OAuth client's", async () => {
+    it('marks the key used on every accepted token, cached or not — an OAuth sign-in too', async () => {
       s.introspect.mockResolvedValue(cc)
       s.getClient.mockResolvedValue({ client_id: 'pk-1', metadata: meta })
       await svc.resolve('k', NOW)
@@ -201,9 +275,10 @@ describe('DelegatedTokenService.resolve', () => {
       expect(s.introspect).toHaveBeenCalledTimes(1)
       expect(s.touch.mock.calls).toEqual([['pk-1', NOW], ['pk-1', NOW + 1000]])
       s.touch.mockReset()
+      s.getClient.mockResolvedValue(mcpClient())
       s.introspect.mockResolvedValue(oauth())
       await svc.resolve('o', NOW)
-      expect(s.touch).not.toHaveBeenCalled()
+      expect(s.touch.mock.calls).toEqual([['claude-code', NOW]])
     })
 
     it('refuses an org MACHINE key: it is not a person', async () => {

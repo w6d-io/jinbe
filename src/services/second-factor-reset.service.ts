@@ -1,4 +1,5 @@
 import { KratosApiError, kratosService, type MfaMethod } from './kratos.service.js'
+import { revokeAllConnectionsQuietly } from '../oauth/connections.js'
 
 /**
  * Removing somebody's two-step sign-in — for the user who lost their authenticator app or key.
@@ -62,6 +63,8 @@ export async function resetSecondFactors(
     } catch (err) {
       throw new SecondFactorResetError('The factors were removed, but the sessions could not be ended', removed, err)
     }
+    // The AI apps signed in with a browser stood on the factors just removed: they go with the sessions.
+    await revokeAllConnectionsQuietly(identityId)
   }
   return { removed, sessionsRevoked: revokeSessions }
 }

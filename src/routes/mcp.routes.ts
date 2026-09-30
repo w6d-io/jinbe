@@ -16,7 +16,9 @@ import { permissionRefusalProperties } from '../schemas/response-schemas.js'
  *
  * POST /api/mcp/token-info               Authorization: Bearer <opaque token>   X-Actor-Token: <SA token>
  *   200 → introspection claims {active, scope, client_id, sub, exp, aud, token_use, ext{org?, email, kind,
- *         subject, key_id, key_expires_at, all_permissions}}; 401 → not active, or refused by jinbe's rules.
+ *         subject, key_id, key_expires_at, all_permissions, key_step_up_*}} — for a browser sign-in (kind
+ *         'oauth') ext{scope_mode, client_name, grant_expires_at, step_up_actions, step_up_at?,
+ *         step_up_until?}; 401 → not active, or refused by jinbe's rules.
  *         `scope` is the EFFECTIVE one: for a personal key, what its holder holds now (plus `mcp`).
  * POST /api/mcp/personal-keys/exchange   Authorization: Bearer stk_mcp_<client_id>.<secret>   X-Actor-Token
  *   200 → {access_token, expires_in}; 401 → unknown, wrong secret, expired, revoked, holder gone.
@@ -29,6 +31,7 @@ import { permissionRefusalProperties } from '../schemas/response-schemas.js'
  */
 
 const MCP_OFF_MESSAGE = 'MCP access is turned off by an administrator.'
+const MCP_OAUTH_OFF_MESSAGE = 'Signing in to AI assistants with a browser is turned off by an administrator. A personal key still works.'
 const MCP_GROUP_MESSAGE = 'MCP access is not enabled for your groups by an administrator.'
 
 async function actorOnly(request: FastifyRequest, reply: FastifyReply) {
@@ -45,6 +48,7 @@ async function actorOnly(request: FastifyRequest, reply: FastifyReply) {
 /** A refusal reason that means "turned off", not "bad credential": 403 mcp_disabled rather than 401. */
 function mcpOff(reply: FastifyReply, reason: string): FastifyReply | null {
   if (reason === 'mcp_disabled') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_OFF_MESSAGE, reason: 'disabled' })
+  if (reason === 'oauth_disabled') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_OAUTH_OFF_MESSAGE, reason: 'oauth_disabled' })
   if (reason === 'mcp_group_not_allowed') return reply.status(403).send({ error: 'mcp_disabled', message: MCP_GROUP_MESSAGE, reason: 'group_not_allowed' })
   if (reason === 'mcp_settings_unavailable' || reason === 'authz_unavailable') return reply.status(503).send({ error: 'unavailable', message: 'Please try again later.' })
   return null
@@ -79,6 +83,13 @@ const claimsSchema = {
         all_permissions: { type: 'boolean' },
         key_step_up_at: { type: 'string' },
         key_step_up_actions: { type: 'boolean' },
+        // OAuth sign-ins (kind 'oauth', src/oauth/): read by auth-mcp for tools and protected actions.
+        scope_mode: { type: 'string', enum: ['all', 'chosen'] },
+        client_name: { type: 'string' },
+        grant_expires_at: { type: 'integer' },
+        step_up_actions: { type: 'boolean' },
+        step_up_at: { type: 'string' },
+        step_up_until: { type: 'string' },
       },
     },
   },
@@ -123,7 +134,16 @@ export async function mcpRoutes(fastify: FastifyInstance) {
           ? { subject: p.subject, key_id: p.clientId, key_expires_at: sec(p.keyExpiresAt ?? p.expiresAt), all_permissions: p.allPermissions === true,
               // The key's creation-time second factor and its protected-actions switch (delegated-step-up.ts).
               ...(p.keyStepUpAt ? { key_step_up_at: p.keyStepUpAt } : {}), key_step_up_actions: p.keyStepUpActions !== false }
-          : {}),
+          : {
+              scope_mode: p.scopeMode ?? 'all',
+              client_name: p.clientName ?? 'MCP client',
+              grant_expires_at: sec(p.grantExpiresAt ?? p.expiresAt),
+              step_up_actions: p.stepUpActions === true,
+              // The consent-time second factor, and until when it allows protected actions — computed
+              // here from the administrator's window, so auth-mcp never keeps a clock of its own.
+              ...(p.stepUpAt ? { step_up_at: p.stepUpAt } : {}),
+              ...(p.stepUpUntil ? { step_up_until: p.stepUpUntil } : {}),
+            }),
       },
     })
   })

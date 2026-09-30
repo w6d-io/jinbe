@@ -11,6 +11,7 @@ import {
   buildJinbePublicRule,
   buildJinbeApiRule,
   buildMcpRule,
+  buildMcpOAuthAsRule,
   OPTIONAL_BUILT_IN_RULE_IDS,
 } from '../../bootstrap/build-rules.js'
 
@@ -41,7 +42,7 @@ describe('bootstrap/build-rules', () => {
         new RegExp(`^${u.split(/(<[^>]*>)/).map((part) => (part.startsWith('<') ? part.slice(1, -1) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
       const re = toRegex(buildSelfserviceUiRule('auth.example.com', URLS.loginUi).match.url)
       // kratos-login-ui src/app: every page and route handler (a missing one is a gateway 404).
-      for (const path of ['/login', '/register', '/settings', '/logout', '/recovery', '/verification', '/error', '/access', '/two-step', '/welcome',
+      for (const path of ['/login', '/register', '/settings', '/logout', '/recovery', '/verification', '/error', '/access', '/two-step', '/welcome', '/oauth2/login', '/oauth2/consent', '/oauth2/refused',
         '/api/access-reason', '/api/branding', '/api/branding/logo', '/api/config', '/api/health', '/api/landing', '/api/ready', '/api/second-factor', '/api/sites/mine']) {
         expect(re.test(`https://auth.example.com${path}`), path).toBe(true)
       }
@@ -229,6 +230,37 @@ describe('bootstrap/build-rules', () => {
       expect(buildMcpRule({ ...MCP, upstream: 'auth-mcp' })).toBeNull()
       // Without MCP the built-ins (and their hash) are what they were.
       expect(buildBuiltInRules({ domains: DOMAINS, urls: URLS })).toEqual(buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcp: null }))
+    })
+  })
+
+  describe('mcp-oauth-as (RFC 8414 + MCP client registration on the Hydra host)', () => {
+    const toRegex = (u: string) =>
+      new RegExp(`^${u.split(/(<[^>]*>)/).map((part) => (part.startsWith('<') ? part.slice(1, -1) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
+    const DOMAINS = { auth: 'auth.example.com', app: 'kuma.example.com', api: 'api.example.com' }
+    const ISSUER = 'https://hydra.example.com/'
+
+    it('sends the two paths to jinbe with the Host preserved, and nothing else of Hydra', () => {
+      const r = buildMcpOAuthAsRule(ISSUER, 'http://jinbe:8080/')!
+      expect(r).toMatchObject({ id: 'mcp-oauth-as', upstream: { url: 'http://jinbe:8080', preserve_host: true }, authenticators: [{ handler: 'noop' }], authorizer: { handler: 'allow' }, mutators: [{ handler: 'noop' }] })
+      expect(r.match.methods).toEqual(['GET', 'POST'])
+      const re = toRegex(r.match.url)
+      for (const path of ['/.well-known/oauth-authorization-server', '/oauth2/register']) expect(re.test(`https://hydra.example.com${path}`), path).toBe(true)
+      for (const path of ['/oauth2/auth', '/oauth2/token', '/.well-known/openid-configuration', '/oauth2/registerx', '/xoauth2/register', '/.well-known/oauth-authorization-serverx']) {
+        expect(re.test(`https://hydra.example.com${path}`), path).toBe(false)
+      }
+    })
+
+    it('is emitted only with an https issuer on a host of its own, and is optional', () => {
+      expect(OPTIONAL_BUILT_IN_RULE_IDS).toContain('mcp-oauth-as')
+      const ids = (mcpOAuthIssuer: string | null, mcp: { publicUrl: string; upstream: string } | null = null) =>
+        buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcp, mcpOAuthIssuer }).map((r) => r.id)
+      expect(ids(ISSUER)).toContain('mcp-oauth-as')
+      expect(ids(null)).not.toContain('mcp-oauth-as')
+      expect(ids('https://auth.example.com/')).not.toContain('mcp-oauth-as')
+      expect(ids('https://mcp.example.com/', { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' })).not.toContain('mcp-oauth-as')
+      expect(buildMcpOAuthAsRule('http://hydra.example.com/', URLS.jinbeInternal)).toBeNull()
+      expect(buildMcpOAuthAsRule('not a url', URLS.jinbeInternal)).toBeNull()
+      expect(buildBuiltInRules({ domains: DOMAINS, urls: URLS })).toEqual(buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcpOAuthIssuer: null }))
     })
   })
 })

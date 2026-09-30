@@ -78,6 +78,8 @@ export interface ValidatedSession {
   aal: string // authenticator_assurance_level: "aal1" | "aal2"
   authenticatedAt: Date // FIRST-factor time; not moved by an aal2 step-up
   secondFactorAt: Date | null // when aal2 was last proven; null when never
+  /** The methods this session was proven with (password, totp, webauthn…), for an OAuth login's `amr`. */
+  methods?: string[]
 }
 
 /**
@@ -254,6 +256,7 @@ export class KratosSessionService {
           aal: session.authenticator_assurance_level,
           authenticatedAt: new Date(session.authenticated_at),
           secondFactorAt: secondFactorProvenAt(session),
+          methods: [...new Set((session.authentication_methods ?? []).map((m) => m.method).filter((m): m is string => typeof m === 'string' && m !== ''))],
         },
       }
     } catch (error) {

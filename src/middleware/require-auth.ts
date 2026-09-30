@@ -38,6 +38,13 @@ const PUBLIC_ROUTES = [
   '/api/public/sites',
   // The visitor's own 2FA status for login-ui; reads their Kratos cookie itself (second-factor/routes.ts).
   '/api/public/second-factor',
+  // The Hydra login/consent provider for MCP clients: login-ui asks with the visitor's own Kratos
+  // cookie, which the handlers validate themselves (oauth/routes.ts) — a bearer is refused there.
+  '/api/public/oauth2',
+  // On the Hydra host (Host-checked by the handler): RFC 8414 metadata and the locked-down client
+  // registration MCP clients call before anyone has signed in (oauth/register.ts: brakes, loopback only).
+  '/.well-known/oauth-authorization-server',
+  '/oauth2/register',
   // login-ui's sign-in page settings (bot-check site key, sign-up mode) and the gateway's bot check for
   // recovery/verification — both answer without a session by design (sign-in-protection/routes.ts).
   '/api/public/sign-in-protection',

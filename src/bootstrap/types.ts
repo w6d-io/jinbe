@@ -44,6 +44,8 @@ export interface BootstrapConfig {
   signInGate?: boolean
   /** Route auth-mcp's host through Oathkeeper (rule `mcp`). */
   mcp?: BootstrapMcp | null
+  /** Browser sign-in for MCP clients: Hydra's issuer (MCP_OAUTH_ISSUER) — rule `mcp-oauth-as` on its host. */
+  mcpOAuthIssuer?: string | null
   admin: BootstrapAdmin | null
 }
 

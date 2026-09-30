@@ -53,6 +53,11 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
   // The caller's own credentials: a token must not mint or list the keys that make tokens (org keys
   // are decided by the catalogue: org.keys:read direct, org.keys:write never).
   { pattern: /^\/api\/me\/api-keys/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
+  // The caller's browser sign-ins (MCP OAuth): listed and granted by a person — a token may only
+  // disconnect one (KEY_REVOKE). The login/consent provider takes the visitor's session alone.
+  { pattern: /^\/api\/me\/mcp\/connections/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
+  { pattern: /^\/api\/public\/oauth2\//, why: 'api_keys' },
+  { pattern: /^\/(oauth2\/register|\.well-known\/oauth-authorization-server)$/, why: 'api_keys' },
   // SCIM — every method.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
   // The policy engine's and the gateway's machine feeds.
@@ -72,6 +77,7 @@ const PERSON_WRITES = [
 // Key revocation: the one DELETE a token may make (a leaked key can be killed from the assistant).
 const KEY_REVOKE = [
   /^\/api\/me\/api-keys\/:clientId$/,
+  /^\/api\/me\/mcp\/connections\/:clientId$/,
   /^\/api\/organizations\/:organizationId\/api-keys\/:clientId$/,
 ]
 
@@ -132,7 +138,7 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
 
   if (required) return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
   // Revoking one of the holder's own keys needs no scope: it can only take power away (item d).
-  if (method === 'DELETE' && KEY_REVOKE[0].test(pattern)) return null
+  if (method === 'DELETE' && (KEY_REVOKE[0].test(pattern) || KEY_REVOKE[1].test(pattern))) return null
   const row = declaredRoute(method, pattern)
   if (row?.class === 'public') return null
   // No permission to cover: the route answers about the caller. Reading is fine; changing is not.

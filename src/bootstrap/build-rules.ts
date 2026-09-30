@@ -29,12 +29,18 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } fr
  *   - mcp — the MCP endpoint and its protected-resource metadata, passed through untouched. auth-mcp
  *           checks every token itself (with jinbe) and answers 401 with resource_metadata, which an
  *           Oathkeeper authenticator in front would replace with a login redirect.
+ *
+ * With browser sign-in for MCP clients (`mcpOAuthIssuer`: MCP_OAUTH_ISSUER, Hydra's issuer), one more
+ * rule on the Hydra host:
+ *   - mcp-oauth-as — RFC 8414 metadata and the locked-down client registration, to jinbe with the Host
+ *                    preserved (jinbe answers them for that Host only). Everything else on the host is
+ *                    Hydra's, routed to it directly by the gateway.
  */
 
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
-export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp']
+export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as']
 
-export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null }): OathkeeperRule[] {
+export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null }): OathkeeperRule[] {
   const { domains, urls } = input
   const rules: OathkeeperRule[] = []
 
@@ -71,9 +77,43 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
 
   const mcp = input.mcp ? buildMcpRule(input.mcp) : null
   // A host another rule already serves would make Oathkeeper refuse both ("found multiple").
-  if (mcp && ![domains.auth, domains.app, domains.api].includes(new URL(input.mcp!.publicUrl).host)) rules.push(mcp)
+  const served = [domains.auth, domains.app, domains.api]
+  if (mcp && !served.includes(new URL(input.mcp!.publicUrl).host)) rules.push(mcp)
+
+  const as = input.mcpOAuthIssuer ? buildMcpOAuthAsRule(input.mcpOAuthIssuer, urls.jinbeInternal) : null
+  if (as) {
+    const host = new URL(input.mcpOAuthIssuer!).host
+    const mcpHost = mcp ? new URL(input.mcp!.publicUrl).host : null
+    if (!served.includes(host) && host !== mcpHost) rules.push(as)
+  }
 
   return rules
+}
+
+/**
+ * The Hydra host's two jinbe paths: the RFC 8414 document and the MCP client registration
+ * (src/oauth/). No authenticator: MCP clients call both before anyone has signed in; jinbe brakes and
+ * validates registration itself. Null when the issuer is not an https URL.
+ */
+export function buildMcpOAuthAsRule(issuer: string, jinbeInternalUrl: string): OathkeeperRule | null {
+  let u: URL
+  try {
+    u = new URL(issuer)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' || u.search || u.hash) return null
+  return {
+    id: 'mcp-oauth-as',
+    upstream: { url: jinbeInternalUrl.replace(/\/+$/, ''), preserve_host: true },
+    match: {
+      url: `http<(s?)>://${u.host}/<(\\.well-known/oauth-authorization-server|oauth2/register)>`,
+      methods: ['GET', 'POST'],
+    },
+    authenticators: [{ handler: 'noop' }],
+    authorizer: { handler: 'allow' },
+    mutators: [{ handler: 'noop' }],
+  }
 }
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -114,7 +154,7 @@ export function buildSelfserviceUiRule(authDomain: string, loginUiUrl: string): 
     id: 'selfservice-ui',
     upstream: { url: loginUiUrl, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|logout|_next|static|assets|logos|login|recovery|verify|verification|access|two-step|welcome|api|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
+      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|logout|_next|static|assets|logos|login|recovery|verify|verification|access|two-step|welcome|oauth2|api|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
       methods: ['GET', 'POST', 'OPTIONS'],
     },
     authenticators: [{ handler: 'noop' }],

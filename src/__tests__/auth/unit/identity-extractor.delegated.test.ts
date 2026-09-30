@@ -60,7 +60,7 @@ describe('extractIdentity — delegated tokens', () => {
     await extractIdentity(request, {} as FastifyReply)
     expect(request.userContext).toEqual({
       email: 'ann@acme.io', id: 'user-1', name: 'Ann', authVia: 'delegated',
-      delegation: { clientId: 'claude', scopes: ['sites:read'], org: 'acme', kind: 'oauth', via: 'auth-mcp' },
+      delegation: { clientId: 'claude', scopes: ['sites:read'], org: 'acme', kind: 'oauth', stepUpActions: false, via: 'auth-mcp' },
     })
     // No aal, no second-factor time: a delegated token can never pass a step-up.
     expect(request.userContext?.aal).toBeUndefined()
