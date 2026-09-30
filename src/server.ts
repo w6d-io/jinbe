@@ -13,18 +13,12 @@ import rateLimitPlugin from './plugins/rate-limit.js'
 import swaggerPlugin from './plugins/swagger.js'
 
 // Routes
-import { backupRoutes } from './routes/backup.routes.js'
-import { clusterRoutes } from './routes/cluster.routes.js'
-import { databaseRoutes } from './routes/database.routes.js'
-import { backupItemRoutes } from './routes/backup-item.routes.js'
-import { databaseAPIRoutes } from './routes/database-api.routes.js'
 import { whoamiRoutes } from './routes/whoami.routes.js'
 import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { userManagementRoutes } from './routes/user-management.routes.js'
 import { userAddressRoutes } from './routes/user-address.routes.js'
 import { bulkRoutes } from './bulk/routes.js'
-import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgGrantsRoutes } from './routes/org-grants.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
@@ -36,24 +30,19 @@ import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
-import { auditRoutes } from './routes/audit.routes.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
-import { observabilityRoutes } from './routes/observability.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
 import { signInGateRoutes } from './sign-in-protection/gate-routes.js'
 import { mcpSettingsRoutes, mcpStatusRoutes } from './mcp/routes.js'
 import { organizationUserRoutes } from './routes/organization-user.routes.js'
-import { directoryRoutes } from './routes/directory.routes.js'
-import { opaPolicyBundleRoutes } from './routes/opa-bundle-policy.routes.js'
-import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
+import { apiKeyRoutes } from './routes/api-key.routes.js'
 import { personalKeyRoutes } from './routes/personal-key.routes.js'
 import { mcpRoutes } from './routes/mcp.routes.js'
 import { delegationGate } from './middleware/delegation-gate.js'
 import { registerIdempotency } from './middleware/idempotency.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
-import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
 import { waitForBootstrap, BootstrapTimeoutError } from './bootstrap/wait-for-bootstrap.js'
 import { MarkerCorruptError } from './bootstrap/marker.js'
 import { NotificationService, HttpNotifier } from './services/notifications/index.js'
@@ -175,11 +164,6 @@ export async function buildServer() {
       await api.register(catalogRoutes) // the permission catalogue and roles, for kuma and auth-mcp
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless MCP is on (env ceiling + admin switch)
-      await api.register(clusterRoutes, { prefix: '/clusters' })
-      await api.register(databaseRoutes, { prefix: '/databases' })
-      await api.register(backupRoutes, { prefix: '/backups' })
-      await api.register(backupItemRoutes, { prefix: '/backup-items' })
-      await api.register(databaseAPIRoutes, { prefix: '/database-apis' })
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
       await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification
       await api.register(bulkRoutes, { prefix: '/admin/bulk' }) // plan / execute many changes of one kind; each op declares its permission
@@ -191,30 +175,20 @@ export async function buildServer() {
       await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
       await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' }) // bot check + sign-up policy
       await api.register(mcpSettingsRoutes, { prefix: '/admin/settings' }) // AI assistants (MCP) switch, under the env ceiling
-      await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
-      await api.register(observabilityRoutes, { prefix: '/admin/observability' }) // ops logs / trace / links (OBS-4.1)
       await api.register(homeRoutes, { prefix: '/home' }) // briefing, own scope guard — NOT under /admin (requireAdmin would lock out support and org admins)
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
-      // Answers about a named subject rather than about its caller, so it takes a machine
-      // credential and nothing else — its own hook, registered inside the plugin.
-      await api.register(directoryRoutes, { prefix: '/directory' })
-      await api.register(opaPolicyBundleRoutes, { prefix: '/opa' })
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
-      await api.register(apiKeyInternalRoutes, { prefix: '/internal' }) // allowed in-cluster ServiceAccounts only
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
-      // GET /opa/bundle is gone: an UNAUTHENTICATED tarball of every address's groups, roles and route
-      // maps (Model A), with no consumer anywhere. The engine pulls /opa/policy, behind a machine token.
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
       await api.register(signInProtectionPublicRoutes, { prefix: '/public/sign-in-protection' }) // login-ui: widget + sign-up mode; gateway bot check
       await api.register(signInGateRoutes, { prefix: '/public/sign-in-protection/gate' }) // the gateway: self-service submits judged before Kratos
-      await api.register(jobRoutes)
     },
     { prefix: '/api' }
   )
@@ -230,13 +204,6 @@ export async function buildServer() {
  */
 async function start() {
   try {
-    if (env.DATABASE_URL) {
-      await testDatabaseConnection()
-      await applyMongoValidation()
-    } else {
-      componentLogger('startup').info('DATABASE_URL not set — MongoDB features disabled (clusters, backups)')
-    }
-
     const fastify = await buildServer()
 
     // Listen first so startupProbe can hit /api/health (which returns 503 until ready).

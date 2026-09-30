@@ -10,13 +10,11 @@ import { CONNECT, HOUR, MINUTE, ago, iso, ok, probe, src, type ModuleDef } from 
  */
 
 const PROBE_MS = 250
-const ENGINE_PRESENCE_MS = 2 * MINUTE
 
 export interface PlatformFacts {
   now: number
   gateway: { kind: 'off' } | { kind: 'down' } | { kind: 'unmanaged' } | { kind: 'ok'; settled: boolean; phase: string; since: string | null; message: string | null }
-  engines: { serving: string | null; since: number | null; reporting: number; current: number; silent: number }
-  /** OPA's /health, asked only when OPA_URL is set; read when no engine has ever reported. */
+  /** OPA's /health, asked only when OPA_URL is set. */
   opaDirect: 'ok' | 'down' | null
   opal: { entries: number; oldestMs: number | null }
   rules: { at: number; count: number; compileErrors: number } | null
@@ -31,10 +29,8 @@ export interface PlatformFacts {
 export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
   const sourcesOut: Record<string, SourceDetail> = {}
   const kubeOff = sources.kubeMode() === 'off'
-  const [rollout, serving, engineList, opal, rules, outbox, failures, certJob, dead, opaUp] = await Promise.all([
+  const [rollout, opal, rules, outbox, failures, certJob, dead, opaUp] = await Promise.all([
     kubeOff ? Promise.resolve(null) : probe(() => sources.gatewayRollout(), PROBE_MS),
-    probe(() => sources.servingRevision(), PROBE_MS),
-    probe(() => sources.engines(), PROBE_MS),
     probe(() => sources.opalLastSuccess(), PROBE_MS),
     probe(() => sources.rulesServed(), PROBE_MS),
     sources.auditSink() === 'legacy' ? Promise.resolve(null) : probe(() => sources.outbox(), PROBE_MS),
@@ -59,19 +55,6 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
       : { kind: 'unmanaged' }
   }
 
-  const servingRev = serving.ok ? serving.value : null
-  const all = engineList.ok ? engineList.value : []
-  const present = all.filter((e) => now - e.heardAt <= ENGINE_PRESENCE_MS)
-  let since: number | null = null
-  if (servingRev) since = await sources.servingSince(servingRev, now).catch(() => null)
-  const engines = {
-    serving: servingRev,
-    since,
-    reporting: present.length,
-    current: servingRev ? present.filter((e) => e.revision === servingRev).length : 0,
-    silent: all.length - present.length,
-  }
-
   const opalValues = opal.ok ? Object.values(opal.value) : []
   let certs: PlatformFacts['certs']
   if (certJob === null) certs = { state: 'not_configured' }
@@ -84,7 +67,6 @@ export async function platformFacts(now = Date.now()): Promise<PlatformFacts> {
   return {
     now,
     gateway,
-    engines,
     opaDirect: opaUp === null ? null : opaUp ? 'ok' : 'down',
     opal: { entries: opalValues.length, oldestMs: opalValues.length ? Math.min(...opalValues) : null },
     rules: rules.ok ? rules.value : null,
@@ -123,19 +105,10 @@ export function rulesComponent(f: PlatformFacts): HealthComponent {
 
 export function opaComponent(f: PlatformFacts): HealthComponent {
   const link = { page: 'gateway', anchor: 'engines' }
-  const e = f.engines
-  if (e.reporting === 0) {
-    if (e.silent > 0) return component('opa', 'down', 'no engine reporting', { link })
-    // No engine ever reported: OPA is not pulling jinbe's bundle (OPAL feeds it). Ask OPA itself.
-    if (f.opaDirect === 'ok') return component('opa', 'ok', 'reachable (OPAL-managed)', { link })
-    if (f.opaDirect === 'down') return component('opa', 'down', 'OPA did not answer', { link })
-    return component('opa', 'unknown', 'no engine has reported', { link })
-  }
-  if (!e.serving) return component('opa', 'unknown', `${e.reporting} reporting, revision unknown`, { link })
-  const summary = `${e.current}/${e.reporting} engines on ${e.serving.slice(0, 8)}`
-  if (e.current === e.reporting) return component('opa', 'ok', summary, { link })
-  const behindFor = e.since === null ? 0 : f.now - e.since
-  return component('opa', behindFor > 2 * MINUTE ? 'degraded' : 'ok', summary, { link, ...(e.since ? { since: iso(e.since) } : {}) })
+  // OPAL feeds OPA its policy and data; whether it is alive is asked of OPA itself.
+  if (f.opaDirect === 'ok') return component('opa', 'ok', 'reachable (OPAL-managed)', { link })
+  if (f.opaDirect === 'down') return component('opa', 'down', 'OPA did not answer', { link })
+  return component('opa', 'unknown', 'not connected', { link })
 }
 
 export function opalComponent(f: PlatformFacts): HealthComponent {

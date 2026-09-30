@@ -124,14 +124,13 @@ describe('requireAuth middleware', () => {
       expect(reply.send).not.toHaveBeenCalled()
     })
 
-    it('should skip auth for /api/opa routes (machine token checked by their own hook)', async () => {
+    it('no longer skips auth under /api/opa (the machine feeds there are gone)', async () => {
       const request = createMockRequest({ url: '/api/opa/policy' })
       const reply = createMockReply()
 
       await requireAuth(request, reply)
 
-      expect(reply.status).not.toHaveBeenCalled()
-      expect(reply.send).not.toHaveBeenCalled()
+      expect(reply.status).toHaveBeenCalledWith(401)
     })
 
     it('should skip auth for /api/oathkeeper routes', async () => {
@@ -388,19 +387,9 @@ describe('requireAuth middleware', () => {
   })
 
   // ===========================================================================
-  // New public routes: /api/opa, /api/oathkeeper, /api/webhooks
+  // New public routes: /api/oathkeeper, /api/webhooks
   // ===========================================================================
   describe('new public routes', () => {
-    it('should skip auth for /api/opa/policy (its own machine-token hook guards it)', async () => {
-      const request = createMockRequest({ url: '/api/opa/policy' })
-      const reply = createMockReply()
-
-      await requireAuth(request, reply)
-
-      expect(reply.status).not.toHaveBeenCalled()
-      expect(reply.send).not.toHaveBeenCalled()
-    })
-
     it('should skip auth for /api/oathkeeper/rules', async () => {
       const request = createMockRequest({ url: '/api/oathkeeper/rules' })
       const reply = createMockReply()

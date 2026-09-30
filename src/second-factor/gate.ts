@@ -39,8 +39,6 @@ export const SECOND_FACTOR_EXEMPT: ReadonlyArray<{ prefix: string; reason: strin
   { prefix: '/api/telemetry', reason: 'where the browser reports, needed before and during sign-in; holds nothing private' },
   { prefix: '/api/public', reason: "login-ui and the console before sign-in completes: site branding, access-reason and the caller's own second-factor status — how a person learns they must enrol" },
   { prefix: '/api/webhooks/kratos', reason: 'Kratos after-hooks, authenticated by a shared secret, not a session' },
-  { prefix: '/api/directory', reason: 'machine callers with a hashed directory token, not a session' },
-  { prefix: '/api/opa', reason: 'the policy engine fetching bundles with its machine token, not a session' },
   { prefix: '/api/mcp', reason: 'auth-mcp introspecting tokens and exchanging keys with its ServiceAccount token, not a session' },
   { prefix: '/api/oathkeeper/rules', reason: 'the gateway fetching its rules; no session' },
   { prefix: '/api/admin/rbac/opal', reason: 'OPAL data sources, guarded by the OPAL client token, not a session' },

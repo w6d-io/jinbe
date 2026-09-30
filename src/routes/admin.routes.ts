@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { adminController } from '../controllers/admin.controller.js'
 import { requireMembershipChange } from '../middleware/require-membership-change.js'
-import { needs, open } from '../policy/route-access.js'
+import { needs } from '../policy/route-access.js'
 import { realtimeService } from '../services/realtime.service.js'
 import { accessReviewService } from '../services/access-review.service.js'
 import {
@@ -20,9 +20,6 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
-import { ASSIGN_MEMBERSHIP, declaredGroups } from '../services/group-catalogue.js'
-import { holdsInJinbe } from '../authz/opa.js'
-import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
 import { userAccessRoutes } from './user-access.routes.js'
@@ -198,58 +195,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
   // Plug a site: intent, drafts, preview, apply (its own plugin, so its zod-only validation stays local).
   await fastify.register(sitesRoutes, { prefix: '/sites' })
   await fastify.register(gatewayRoutes, { prefix: '/gateway' })
-
-  /**
-   * The groups this caller may hand out: whether they may is OPA's answer, and the groups are the
-   * ones OPA knows (the catalogue jinbe publishes), so the screen offers exactly what the mutation
-   * would accept.
-   */
-  fastify.get(
-    '/assignable-groups',
-    {
-      // About the caller: every declared group when they may add members, else none.
-      ...open('self'),
-      schema: {
-        description: 'The groups the caller may assign, and whether they may assign at all.',
-        tags: ['admin'],
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              groups: { type: 'array', items: { type: 'string' } },
-              mayAssign: { type: 'boolean' },
-            },
-          },
-          401: unauthorizedResponseSchema,
-          503: {
-            type: 'object',
-            properties: { error: { type: 'string' }, message: { type: 'string' } },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const subject = request.userContext?.id
-      const email = request.userContext?.email
-      if (!subject || subject === 'unknown' || !email || email === 'unknown') {
-        return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-      }
-      try {
-        // Everything OPA knows, or nothing: holding groups.members:write across the platform is
-        // the only authority over site-wide assignment, so there is no middle set to compute.
-        const groups = (await holdsInJinbe(email, ASSIGN_MEMBERSHIP)) ? await declaredGroups() : []
-        return reply.send({ groups, mayAssign: groups.length > 0 })
-      } catch (err) {
-        // An empty list reads as "you may assign nothing", which is a legitimate answer. "I could
-        // not tell" is not, and must not look like one.
-        request.log.error({ err }, 'Could not tell which groups the caller may assign')
-        return reply.status(503).send({
-          error: POLICY_UNAVAILABLE,
-          message: 'Unable to verify authorization. Please try again later.',
-        })
-      }
-    },
-  )
 
   // Patch user metadata (merge into metadata_public / metadata_admin)
   fastify.patch(

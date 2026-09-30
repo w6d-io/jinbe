@@ -12,7 +12,7 @@ import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
  *   1. never a permission the catalogue marks `delegable: 'never'` (policy/catalog.ts) — deletions,
  *      second-factor resets, key and client creation, approvals, the access model itself — nor `*`;
  *      the same for every org and every user, super admin included (owner decision 2026-09-29);
- *   2. never a route on the backstop list below: the machine feeds, SCIM, infrastructure and the
+ *   2. never a route on the backstop list below: the machine feeds, SCIM, zones, the gateway and the
  *      caller's own credentials, which carry no catalogue permission to decide on;
  *   3. never a change to the caller's own groups or account (no self-grant);
  *   4. a route that requires a permission needs a SCOPE granting it (`scopeGrants`: exact, or a
@@ -51,9 +51,8 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
   // The caller's own credentials: a token must not mint or list the keys that make tokens (org keys
   // are decided by the catalogue: org.keys:read direct, org.keys:write never).
   { pattern: /^\/api\/me\/api-keys/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
-  // SCIM, backups, databases, clusters (kubeconfigs), jobs — every method.
+  // SCIM — every method.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
-  { pattern: /^\/api\/(backups|backup-items|databases|database-apis|clusters|jobs)(\/|$)/, why: 'infrastructure' },
   // The policy engine's and the gateway's machine feeds.
   { pattern: /^\/api\/(opa|oathkeeper|internal)(\/|$)/, why: 'policy_data' },
   { pattern: /^\/api\/admin\/rbac\/(opal|bindings)/, why: 'policy_data' },

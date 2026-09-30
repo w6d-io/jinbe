@@ -46,7 +46,7 @@ ln -s "$REPO/node_modules" "$WORK/base/node_modules"
 
 export NODE_ENV=development DEV_BYPASS_AUTH=true DEV_USER_EMAIL=dev@localhost.dev ADMIN_EMAIL=dev@localhost.dev
 export KRATOS_ADMIN_URL=http://localhost:14435 KRATOS_PUBLIC_URL=http://localhost:14433
-export REDIS_URL=redis://localhost:16379 DATABASE_URL=mongodb://localhost:27017/jinbe_bench
+export REDIS_URL=redis://localhost:16379
 export ENCRYPTION_KEY=bench-encryption-key-32-chars-long! OPA_URL=http://localhost:18182 OPA_TOKEN=local-dev-opa-token-0123456789abcdef
 export OPAL_CLIENT_TOKEN=bench-opal-client-token-0123456789abcdef0123
 export RATE_LIMIT_MAX=1000000 LOG_LEVEL=warn ENABLE_SWAGGER=false METRICS_PORT=0 AUDIT_SINK=legacy

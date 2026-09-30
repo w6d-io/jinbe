@@ -142,29 +142,6 @@ export class ApiKeyService {
     forgetApiKeyUse(clientId)
     apiClientsChanged('api_key.revoked')
   }
-
-  /**
-   * Resolve the owning organization for a client_id. Used by upstream services
-   * (Hydra spec §5.3 Option A) to map an X-Client-Id header to a tenant.
-   * Returns null when unknown.
-   */
-  async resolveOrganization(
-    clientId: string
-  ): Promise<{ organization_id: string; scopes: string[] } | null> {
-    let client: HydraOAuth2Client
-    try {
-      client = await hydraService.getClient(clientId)
-    } catch (err) {
-      if (err instanceof HydraApiError && err.statusCode === 404) return null
-      throw err
-    }
-    const organization_id = orgOf(client)
-    if (!organization_id) return null
-    return {
-      organization_id,
-      scopes: client.scope ? client.scope.split(' ').filter(Boolean) : [],
-    }
-  }
 }
 
 export const apiKeyService = new ApiKeyService()

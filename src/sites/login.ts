@@ -72,7 +72,6 @@ async function publicView(site: Site | null): Promise<PublicSiteLogin> {
 }
 
 export const publicLoginByHost = async (host: string) => publicView(await liveSiteByHost(host))
-export const publicLoginByName = async (name: string) => publicView(await liveSite(name))
 
 // ── logo ──────────────────────────────────────────────────────
 

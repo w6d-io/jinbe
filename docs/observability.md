@@ -12,7 +12,6 @@ when telemetry is off.
 | Traces | OpenTelemetry, OTLP, opt-in twice (see below) |
 | Log ↔ trace correlation | flat `trace_id` / `span_id` on every line, always on, costs nothing |
 | Metrics | Prometheus on `/metrics`, unchanged |
-| Bundle propagation | which revision each authorization engine has actually activated |
 
 ## Traces
 
@@ -61,54 +60,17 @@ This half is always on. It needs no endpoint and no SDK — `trace.getActiveSpan
 nothing when no provider is registered. A format that only appears once telemetry is configured is a
 format nobody has looked at when it matters.
 
-## Bundle propagation
+## Audit reads from Loki
 
-The policy bundle is **pulled**, which is what lets this service be down while decisions carry on —
-and what made propagation unobservable. A change was committed when the write returned and enforced
-at some unknown point inside the engine's polling window.
-
-Point the engine's status plugin at this service and the window becomes a fact:
-
-```
---set=status.service=<the same service already used for bundles>
-```
-
-It reports after every activation, with the credential it already fetches the bundle with, so there
-is no second secret. Then:
-
-```
-GET /api/opa/propagation
-{
-  "serving": "d592a18625498518",
-  "engines": [{ "id": "…", "revision": "d592a18625498518", "activatedAt": "…", "current": true }],
-  "inSync": { "current": 2, "reporting": 2 },
-  "settled": true
-}
-```
-
-`settled` is true only when at least one engine reports **and** every one of them holds the served
-revision. No engine reporting is *not known*, never *settled*: the two must not look alike.
-
-Presence is judged on having reported recently, not on asking Kubernetes how many replicas there
-should be — this service holds no permission to read pods, and a count derived from a reporter that
-has gone quiet would claim a coverage nobody can observe.
-
-**Measured cost**, OPA 1.19: each report is ~59 KB and arrives every few seconds per engine, because
-OPA embeds its whole Prometheus registry in it. `status.prometheus=false` does **not** remove it.
-The route accepts it and drops everything but the revision — refusing it would only make the engine
-log an upload failure forever over a field nobody reads.
-
-## Audit and ops-log reads from Loki
-
-`/api/audit/*`, the Home's activity and changes tiles, and `/api/admin/observability/logs` read
+`/api/audit/*` and the Home's activity and changes tiles read
 Loki (`LOKI_URL`, pinned to `LOKI_NAMESPACE`). Every audit/v1 event is one JSON line on jinbe's
 stdout with `"log_type":"audit"`; whether the collector turns that field into a Loki **label** is up
 to the cluster, so how the reads find the audit stream is a setting:
 
-| `LOKI_AUDIT_SELECTOR` | audit reads | ops logs exclude audit by |
-|---|---|---|
-| `json` (default) | `{namespace="…", container="jinbe"} \|= "\"log_type\":\"audit\"" \| json \| log_type="audit" …` | a raw-line filter, `!~ "\"log_type\"\\s*:\\s*\"audit\""` |
-| `label` | `{log_type="audit", namespace="…"} \| json …` | the selector, `log_type!="audit"` |
+| `LOKI_AUDIT_SELECTOR` | audit reads |
+|---|---|
+| `json` (default) | `{namespace="…", container="jinbe"} \|= "\"log_type\":\"audit\"" \| json \| log_type="audit" …` |
+| `label` | `{log_type="audit", namespace="…"} \| json …` |
 
 `json` works on any Loki: it reads only jinbe's container (`LOKI_AUDIT_CONTAINER`, default
 `jinbe`), drops other lines on the raw text before parsing, and the parsed `log_type` field decides.

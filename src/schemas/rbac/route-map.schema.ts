@@ -21,15 +21,15 @@ export const routeSchema = z.object({
  *   "service": "jinbe",
  *   "routes": [
  *     {
- *       "path": "/api/clusters",
+ *       "path": "/api/admin/sites",
  *       "method": "GET",
- *       "requiredPermissions": ["clusters:read"],
+ *       "requiredPermissions": ["sites:read"],
  *       "public": false
  *     },
  *     {
- *       "path": "/api/clusters",
+ *       "path": "/api/admin/sites/preview",
  *       "method": "POST",
- *       "requiredPermissions": ["clusters:write"],
+ *       "requiredPermissions": ["sites:write"],
  *       "public": false
  *     }
  *   ]

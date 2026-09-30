@@ -8,7 +8,7 @@ import './metrics.js'
 /**
  * Prometheus exposition on a port of its own.
  *
- * The app port is what Oathkeeper fronts; `/metrics` used to sit on it (under /api/admin/audit),
+ * The app port is what Oathkeeper fronts; `/metrics` used to sit on it (under the retired /api/admin/audit),
  * reachable by any signed-in caller through the gateway. A separate port is reachable only by what
  * the network lets reach the pod — the ServiceMonitor — and a scrape token can be required on top.
  */

@@ -8,8 +8,8 @@ import { auditActor } from '../utils/audit-actor.js'
  *
  *   - `emit: 'handler'` — the handler or the service behind it emits, with the diff it alone knows.
  *   - `emit: 'route'`   — nothing downstream emits, so the onSend hook below does, once, from THIS
- *     table, after a 2xx. The infrastructure CRUD had no audit at all; writing the event from the
- *     same row the static check reads means the declaration and the emission cannot drift apart.
+ *     table, after a 2xx. Writing the event from the same row the static check reads means the
+ *     declaration and the emission cannot drift apart.
  *   - `exempt` — writes nothing that is audited (a preview, a dry run, a personal preference). The
  *     reason is part of the record: an exemption nobody can justify is a missing event.
  *
@@ -89,7 +89,6 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/rbac/bundle/backups/now': by('config.bundle.backed_up'),
   'POST /api/admin/rbac/bundle/backups/restore': by('config.bundle.restored'),
   'POST /api/admin/rbac/bundle/history/:id/rollback': by('config.bundle.rolled_back'),
-  'POST /api/admin/rbac/services/:name/routes/import/preview': exempt('computes the routes an OpenAPI document would produce; stores nothing'),
 
   // Recertification
   'POST /api/admin/recert/campaigns': by('recert.campaign.created'),
@@ -144,43 +143,10 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/migration/cutover': route('site.migration_changed', 'site'),
   'POST /api/admin/sites/migration/rollback': route('site.migration_changed', 'site'),
 
-  // Infrastructure — no emit downstream, written from this table
-  'POST /api/clusters': route('infra.cluster.created', 'cluster'),
-  'PUT /api/clusters/:id': route('infra.cluster.updated', 'cluster'),
-  'DELETE /api/clusters/:id': route('infra.cluster.deleted', 'cluster'),
-  'POST /api/clusters/:id/verify': route('infra.cluster.verified', 'cluster'),
-  'POST /api/clusters/verify': exempt('checks a kubeconfig that is not stored; nothing is saved or changed'),
-  'POST /api/clusters/:id/databases': route('infra.database.created', 'database'),
-  'POST /api/clusters/:id/backups': route('infra.backup.created', 'backup'),
-  'POST /api/clusters/:clusterId/jobs': route('infra.job.started', 'job'),
-  'PUT /api/databases/:id': route('infra.database.updated', 'database'),
-  'DELETE /api/databases/:id': route('infra.database.deleted', 'database'),
-  'POST /api/databases/:id/api': route('infra.database_api.created', 'database_api'),
-  'PUT /api/database-apis/:id': route('infra.database_api.updated', 'database_api'),
-  'DELETE /api/database-apis/:id': route('infra.database_api.deleted', 'database_api'),
-  'DELETE /api/backups/:id': route('infra.backup.deleted', 'backup'),
-  'POST /api/backups/:id/items': route('infra.backup_item.created', 'backup_item'),
-  'PUT /api/backup-items/:id': route('infra.backup_item.updated', 'backup_item'),
-  'DELETE /api/backup-items/:id': route('infra.backup_item.deleted', 'backup_item'),
-
-  // Machines and the audit API itself
-  'POST /api/opa/status': exempt('OPA status report from the engine (machine, no business change)'),
+  // The audit API itself
   'POST /api/audit/exports': by('audit.exported'),
   'POST /api/audit/saved-queries': exempt('a saved filter is a view preference, not a change to anything audited'),
   'DELETE /api/audit/saved-queries/:id': exempt('a saved filter is a view preference, not a change to anything audited'),
-}
-
-/** The id a create answered with (`{id}`, `{data: {id}}`, a job's name), or null. */
-function createdId(payload: unknown): string | null {
-  if (typeof payload !== 'string' || !payload.startsWith('{')) return null
-  try {
-    const body = JSON.parse(payload) as Record<string, unknown>
-    const inner = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, unknown>
-    const id = inner.id ?? inner._id ?? inner.jobName ?? inner.name
-    return typeof id === 'string' ? id : null
-  } catch {
-    return null
-  }
 }
 
 /**
@@ -194,10 +160,7 @@ export async function auditRouteWrite(request: FastifyRequest, reply: FastifyRep
 
   const actor = auditActor(request)
   const params = (request.params ?? {}) as Record<string, string | undefined>
-  // A create acts on what it made (the path id is its parent); anything else on the path's id.
-  const creates = /\.(created|started)$/.test(entry.event)
-  const targetId = creates ? createdId(payload) : params.id ?? null
-  const parentId = creates ? params.id ?? params.clusterId : undefined
+  const targetId = params.id ?? null
   try {
     auditEventService.emit({
       category: 'service',
@@ -212,8 +175,6 @@ export async function auditRouteWrite(request: FastifyRequest, reply: FastifyRep
       method: request.method,
       path: (request.url || '').split('?')[0],
       statusCode: reply.statusCode,
-      // The parent a child was created under (a database under a cluster) — ids only.
-      ...(parentId ? { details: { parentId } } : {}),
       source: 'jinbe-api',
       v1Event: entry.event,
     }).catch(() => {})

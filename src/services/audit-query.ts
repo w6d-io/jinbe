@@ -2,7 +2,8 @@ import type { Redis } from 'ioredis'
 import { foldCategory, type AuditActor, type AuditCategory, type AuditChanges, type AuditKind, type AuditResult, type AuditSeverity } from './audit-event.service.js'
 
 /**
- * Read side of the legacy Redis audit stream: the paged event list and the windowed summary.
+ * Read side of the legacy Redis audit stream: the paged event list (the Home change tile, the access
+ * review trail).
  *
  * Retired with the stream itself (AUD-14); the v1 reads come from Loki (AUD-9).
  */
@@ -146,99 +147,6 @@ function toFrontend(id: string, fields: string[], f: RowFilter): FrontendAuditEv
   }
 }
 
-/**
- * Windowed summary derived from the SHARED Redis stream (P1-2) — not
- * Prometheus (per-replica + resets on redeploy). Scans bounded by the window,
- * computing the start ID from `windowMs`.
- */
-export async function summarizeStream(redis: Redis, streamKey: string, windowMs: number): Promise<AuditSummary> {
-  const now = Date.now()
-  const prevStartId = `${now - 2 * windowMs}-0`
-  // Scan the window (bounded by time, not the global cap).
-  const rows = await redis.xrevrange(streamKey, '+', prevStartId, 'COUNT', '20000')
-
-  const byKind: Record<string, number> = {}
-  const byCategory: Record<string, { total: number; failed: number }> = {}
-  const byResult: Record<string, number> = {}
-  const topDeniedMap: Record<string, number> = {}
-  const topActorsMap: Record<string, number> = {}
-  const activeActors = new Set<string>()
-  const seriesBuckets = new Map<number, number>()
-  const bucketMs = Math.max(Math.floor(windowMs / 24), 60_000)
-
-  let total = 0
-  let prevTotal = 0
-  let failed = 0
-
-  for (const [id, fields] of rows) {
-    const ms = Number(id.split('-')[0])
-    const inCurrent = ms >= now - windowMs
-    if (!inCurrent) { prevTotal++; continue }
-    total++
-
-    const raw: Record<string, string> = {}
-    for (let i = 0; i < fields.length; i += 2) raw[fields[i]] = fields[i + 1]
-
-    const cat  = foldCategory(raw.category || 'system')
-    // Derive kind from category when absent (legacy/access-log events have no
-    // `kind`) — defaulting to 'change' misclassified every admin-GET access.allow
-    // as a config mutation, inflating "changes" and contradicting the client.
-    const kind = raw.kind || (cat === 'access' ? 'access' : cat === 'auth' ? 'auth' : cat === 'system' ? 'system' : 'change')
-    const result = raw.result || 'ok'
-    const isFail = result === 'denied' || result === 'error' || result === 'failed'
-
-    byKind[kind] = (byKind[kind] ?? 0) + 1
-    byResult[result] = (byResult[result] ?? 0) + 1
-    if (!byCategory[cat]) byCategory[cat] = { total: 0, failed: 0 }
-    byCategory[cat].total++
-    if (isFail) { byCategory[cat].failed++; failed++ }
-
-    if (result === 'denied') {
-      const key = raw.target || '—'
-      topDeniedMap[key] = (topDeniedMap[key] ?? 0) + 1
-    }
-
-    try {
-      const a = JSON.parse(raw.actor || '{}') as AuditActor
-      if (a.email) {
-        activeActors.add(a.email)
-        // Top actors = who is making real changes (not the UI's own reads).
-        if ((kind === 'change' || kind === 'auth') && a.email !== 'system') {
-          topActorsMap[a.email] = (topActorsMap[a.email] ?? 0) + 1
-        }
-      }
-    } catch { /* ignore */ }
-
-    const bucket = Math.floor(ms / bucketMs) * bucketMs
-    seriesBuckets.set(bucket, (seriesBuckets.get(bucket) ?? 0) + 1)
-  }
-
-  const series = [...seriesBuckets.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([t, count]) => ({ t: new Date(t).toISOString(), count }))
-  const topDenied = Object.entries(topDeniedMap)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([target, count]) => ({ target, count }))
-  const topActors = Object.entries(topActorsMap)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([actor, count]) => ({ actor, count }))
-
-  return {
-    total,
-    prevTotal,
-    byKind,
-    byCategory,
-    byResult,
-    failureRate: total > 0 ? failed / total : 0,
-    activeActors: activeActors.size,
-    series,
-    topDenied,
-    topActors,
-  }
-}
-
 // ─── Frontend event shape ─────────────────────────────────────────────────────
 
 export interface FrontendAuditEvent {
@@ -268,19 +176,6 @@ export interface FrontendAuditEvent {
   mfa?:           string
   changes?:       AuditChanges
   details?:       Record<string, unknown>
-}
-
-export interface AuditSummary {
-  total:        number
-  prevTotal:    number
-  byKind:       Record<string, number>
-  byCategory:   Record<string, { total: number; failed: number }>
-  byResult:     Record<string, number>
-  failureRate:  number
-  activeActors: number
-  series:       Array<{ t: string; count: number }>
-  topDenied:    Array<{ target: string; count: number }>
-  topActors:    Array<{ actor: string; count: number }>
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

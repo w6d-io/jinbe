@@ -23,8 +23,6 @@ import { actorDirectory, userActorIds } from '../audit/query/actors.js'
  * UI never implies completeness. Loki unreachable → 503 `audit_store_unavailable`, never `[]`.
  * Pages that name people carry `actors` beside the events — who each user id is, resolved at read
  * time for a caller holding users:read (audit/query/actors.ts); the events themselves hold no PII.
- *
- * Replaces /api/admin/audit/* (Redis) once AUDIT_READ switches; both live side by side until AUD-14.
  */
 export async function auditApiRoutes(fastify: FastifyInstance) {
   const read = requireAuditScope('audit:read')

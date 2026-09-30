@@ -46,7 +46,7 @@ export const healthSchema = z.object({
   components: z.array(z.object({
     id: componentIdSchema,
     state: componentStateSchema,
-    /** Short, no PII: "2/2 engines on d592a186", "rollout settled", "3 certs, soonest 77 d". */
+    /** Short, no PII: "reachable (OPAL-managed)", "rollout settled", "3 certs, soonest 77 d". */
     summary: z.string(),
     since: z.string().optional(),
     link: linkSchema.optional(),
@@ -62,7 +62,7 @@ export type ComponentState = z.infer<typeof componentStateSchema>
 
 export const attentionKindSchema = z.enum([
   'site_request_pending', 'site_unapplied', 'site_draft_stale', 'site_condition', 'site_drift',
-  'gateway_rollout', 'engines_out_of_sync', 'opal_data_stale', 'rule_compile_errors', 'cert_expiring',
+  'gateway_rollout', 'opal_data_stale', 'rule_compile_errors', 'cert_expiring',
   'privileged_no_mfa', 'privileged_self_granted', 'privileged_dormant',
   'recert_overdue', 'recert_inbox', 'audit_archive_lag', 'audit_outbox_near_cap', 'audit_emit_failures', 'notifications_dead_letter',
   'migration_regressions', 'login_failure_spike', 'deny_spike', 'unassigned_users',

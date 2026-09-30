@@ -11,7 +11,6 @@ export * from './roles.schema.js'
 export * from './access-rules.schema.js'
 export * from './route-map.schema.js'
 export * from './deploy.schema.js'
-export * from './history.schema.js'
 
 /**
  * File paths for RBAC config files

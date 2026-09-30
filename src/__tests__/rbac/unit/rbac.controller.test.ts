@@ -33,7 +33,6 @@ vi.mock('../../../services/rbac.service.js', () => ({
       service: 'jinbe',
       roles: [{ name: 'admin', permissions: ['*'] }, { name: 'viewer', permissions: ['read'] }],
     }),
-    getAccessRules: vi.fn().mockResolvedValue({ rules: [] }),
     getAccessRule: vi.fn().mockResolvedValue({ rule: { id: 'rule-1', match: {} } }),
     createAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     updateAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
@@ -225,51 +224,6 @@ describe('RbacController', () => {
     })
   })
 
-  describe('createService', () => {
-    it('should create service and return 201', async () => {
-      const request = createMockRequest({
-        body: {
-          name: 'new_service',
-          displayName: 'New Service',
-          upstreamUrl: 'http://localhost:8080',
-        },
-      })
-      const reply = createMockReply()
-
-      await controller.createService(
-        request as FastifyRequest<{
-          Body: { name: string; displayName?: string; upstreamUrl?: string }
-        }>,
-        reply
-      )
-
-      expect(reply._statusCode).toBe(201)
-      expect(rbacService.createService).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'new_service' }),
-        expect.objectContaining({ email: 'admin@example.com' }),
-      )
-    })
-  })
-
-  describe('deleteService', () => {
-    it('should delete service', async () => {
-      const request = createMockRequest({
-        params: { name: 'old_service' },
-      })
-      const reply = createMockReply()
-
-      await controller.deleteService(
-        request as FastifyRequest<{ Params: { name: string } }>,
-        reply
-      )
-
-      expect(rbacService.deleteService).toHaveBeenCalledWith(
-        'old_service',
-        expect.objectContaining({ email: 'admin@example.com' }),
-      )
-    })
-  })
-
   describe('getServiceRoles', () => {
     it('should return service roles', async () => {
       const request = createMockRequest({
@@ -283,139 +237,6 @@ describe('RbacController', () => {
       )
 
       expect(rbacService.getServiceRoles).toHaveBeenCalledWith('jinbe')
-    })
-  })
-
-  // ===========================================================================
-  // Access Rules
-  // ===========================================================================
-  describe('getAccessRules', () => {
-    it('should return all access rules', async () => {
-      const request = createMockRequest({})
-      const reply = createMockReply()
-
-      await controller.getAccessRules(request, reply)
-
-      expect(rbacService.getAccessRules).toHaveBeenCalled()
-    })
-  })
-
-  describe('getAccessRule', () => {
-    it('should return specific access rule', async () => {
-      const request = createMockRequest({
-        params: { id: 'rule-1' },
-      })
-      const reply = createMockReply()
-
-      await controller.getAccessRule(
-        request as FastifyRequest<{ Params: { id: string } }>,
-        reply
-      )
-
-      expect(rbacService.getAccessRule).toHaveBeenCalledWith('rule-1')
-    })
-  })
-
-  describe('createAccessRule', () => {
-    it('should create access rule and return 201', async () => {
-      const rule = {
-        id: 'new-rule',
-        upstream: { url: 'http://api-service:8080' },
-        match: { url: '<http|https>://api.example.com/<.*>', methods: ['GET'] },
-        authenticators: [{ handler: 'cookie_session' }],
-        authorizer: { handler: 'remote_json' },
-        mutators: [{ handler: 'noop' }],
-      }
-      const request = createMockRequest({
-        body: rule,
-      })
-      const reply = createMockReply()
-
-      await controller.createAccessRule(
-        request as FastifyRequest<{ Body: typeof rule }>,
-        reply
-      )
-
-      expect(reply._statusCode).toBe(201)
-      expect(rbacService.createAccessRule).toHaveBeenCalled()
-    })
-  })
-
-  describe('updateAccessRule', () => {
-    it('should update access rule', async () => {
-      const rule = {
-        id: 'rule-1',
-        upstream: { url: 'http://api-service:8080' },
-        match: { url: '<http|https>://api.example.com/<.*>', methods: ['GET', 'POST'] },
-        authenticators: [{ handler: 'cookie_session' }],
-        authorizer: { handler: 'remote_json' },
-        mutators: [{ handler: 'noop' }],
-      }
-      const request = createMockRequest({
-        params: { id: 'rule-1' },
-        body: rule,
-      })
-      const reply = createMockReply()
-
-      await controller.updateAccessRule(
-        request as FastifyRequest<{
-          Params: { id: string }
-          Body: typeof rule
-        }>,
-        reply
-      )
-
-      expect(rbacService.updateAccessRule).toHaveBeenCalledWith(
-        'rule-1',
-        expect.any(Object),
-        expect.objectContaining({ email: 'admin@example.com' }),
-      )
-    })
-
-    it('should return 400 when rule ID mismatch', async () => {
-      const rule = {
-        id: 'different-rule',
-        upstream: { url: 'http://api-service:8080' },
-        match: { url: '<http|https>://api.example.com/<.*>', methods: ['GET'] },
-        authenticators: [{ handler: 'cookie_session' }],
-        authorizer: { handler: 'remote_json' },
-        mutators: [{ handler: 'noop' }],
-      }
-      const request = createMockRequest({
-        params: { id: 'rule-1' },
-        body: rule,
-      })
-      const reply = createMockReply()
-
-      await controller.updateAccessRule(
-        request as FastifyRequest<{
-          Params: { id: string }
-          Body: typeof rule
-        }>,
-        reply
-      )
-
-      expect(reply._statusCode).toBe(400)
-      expect((reply._body as { error: string }).error).toBe('Bad Request')
-    })
-  })
-
-  describe('deleteAccessRule', () => {
-    it('should delete access rule', async () => {
-      const request = createMockRequest({
-        params: { id: 'rule-1' },
-      })
-      const reply = createMockReply()
-
-      await controller.deleteAccessRule(
-        request as FastifyRequest<{ Params: { id: string } }>,
-        reply
-      )
-
-      expect(rbacService.deleteAccessRule).toHaveBeenCalledWith(
-        'rule-1',
-        expect.objectContaining({ email: 'admin@example.com' }),
-      )
     })
   })
 

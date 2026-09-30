@@ -46,7 +46,7 @@ beforeAll(async () => {
   app.get('/api/organizations/:organizationId/api-keys', { preHandler: guard('org.keys:read') }, ok)
   app.post('/api/me/api-keys', ok)
   app.put('/api/admin/settings/second-factor', { preHandler: guard('settings.signin:write') }, ok)
-  app.get('/api/backups', { preHandler: guard('backups:list') }, ok)
+  app.get('/scim/v2/Users', ok)
   app.put('/api/admin/rbac/org-admin-map', { preHandler: guard('org.admins:write') }, ok)
   app.delete('/api/admin/users/:id', { preHandler: guard('users:delete') }, ok)
   app.get('/api/admin/legacy', { preHandler: guard('*') }, ok)
@@ -88,7 +88,7 @@ describe('delegation gate', () => {
     ['GET', '/api/admin/legacy', 'admin:read', 'delegation_ineligible:*'],
     // The backstop list: routes with no catalogue permission to decide on.
     ['POST', '/api/me/api-keys', '', 'delegation_ineligible:api_keys'],
-    ['GET', '/api/backups', 'backups:list', 'delegation_ineligible:infrastructure'],
+    ['GET', '/scim/v2/Users', 'users:read', 'delegation_ineligible:scim'],
   ] as const)('refuses ineligible %s %s even with a matching scope', async (method, url, scopes, reason) => {
     const res = await call(method, url, scopes)
     expect(res.statusCode).toBe(403)

@@ -26,15 +26,9 @@ export async function seedRbacDefaults(logger: BootstrapLogger): Promise<{ seede
   await redisRbacRepository.setGroup('users', {})
 
   await redisRbacRepository.setRoles('global', { super_admin: ['*'], admin: ['*'] })
-  await redisRbacRepository.setRoles('jinbe', {
-    admin: ['*'],
-    operator: [
-      'clusters:list', 'clusters:read', 'clusters:create', 'clusters:update', 'clusters:delete',
-      'databases:list', 'databases:read', 'databases:create', 'databases:update', 'databases:delete',
-    ],
-    editor: ['databases:list', 'databases:read', 'databases:create', 'databases:update', 'databases:delete'],
-    viewer: ['databases:list', 'databases:read'],
-  })
+  // jinbe's own routes are decided by the catalogue (policy/catalog.ts) and the staff roles
+  // (policy/roles.ts), not by per-service roles.
+  await redisRbacRepository.setRoles('jinbe', { admin: ['*'] })
 
   await redisRbacRepository.addService('jinbe')
   await redisRbacRepository.addService('global')

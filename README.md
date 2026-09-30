@@ -240,23 +240,19 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 ### Services
 | Method | Path | Description |
 |---|---|---|
-| `GET / POST` | `/api/admin/rbac/services` | List / register a service (creates default roles + Oathkeeper rule) |
-| `DELETE` | `/api/admin/rbac/services/:name` | Delete service + all associated data |
+| `GET` | `/api/admin/rbac/services` | List services |
 | `GET / PUT` | `/api/admin/rbac/services/:name/roles` | Read / replace service role-permission map |
 | `GET / PUT` | `/api/admin/rbac/services/:name/routes` | Read / replace route-permission map |
 
 ### Access rules
 | Method | Path | Description |
 |---|---|---|
-| `GET / POST` | `/api/admin/rbac/access-rules` | List / create Oathkeeper access rules |
-| `PUT / DELETE` | `/api/admin/rbac/access-rules/:id` | Update / delete an access rule |
 | `GET` | `/api/oathkeeper/rules` | **Feed Oathkeeper points its `repositories` at this URL.** |
 
 ### Audit
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/admin/audit/events` | Audit event stream |
-| `GET` | `/api/admin/rbac/history` | Mutation history |
+| `GET` | `/api/audit/events` | Audit trail (audit/v1, read from Loki) |
 
 ### Bundle
 | Method | Path | Description |
@@ -267,7 +263,6 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 ### OPA / OPAL
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/opa/bundle` | OPA policy bundle (tar.gz) |
 | `GET` | `/api/admin/rbac/opal-datasource` | OPAL external data source config |
 
 ---
@@ -504,20 +499,6 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 | `REDIS_DB` | `0` | Logical DB index. |
 | `REDIS_AUDIT_STREAM` | `auth:audit:events` | Stream key for audit events. |
 
-#### Database (optional — only for `/clusters`, `/databases`, `/backups` features)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_URL` | unset | MongoDB connection string. If unset, those features are inert. |
-
-#### Backup tool (optional — only if the `/backups` feature is exposed)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `BACKUP_IMAGE_MONGO` | unset | Private-registry image for the mongo backup container. |
-| `BACKUP_IMAGE_POSTGRES` | unset | Private-registry image for the postgres backup container. |
-| `BACKUP_GCP_PROJECT_ID` | unset | GCP project ID injected into the backup job env (for GCS output). |
-
 #### Sidecar notification
 
 | Variable | Default | Notes |
@@ -569,7 +550,6 @@ jinbe:
     ADMIN_EMAIL: admin@mycorp.com    # optional — bootstrap admin
     ADMIN_PASSWORD: ""               # ≥ 16 chars, no weak prefix (changeme/password/admin/123)
     ADMIN_NAME: Admin
-    DATABASE_URL: ""                 # optional — only for /clusters, /databases, /backups
     LOG_LEVEL: info
     ENABLE_SWAGGER: "false"
   extraEnv:

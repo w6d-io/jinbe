@@ -173,19 +173,4 @@ describe('ApiKeyService', () => {
       expect(mockState.forget).toHaveBeenCalledWith('client-abc')
     })
   })
-
-  describe('resolveOrganization', () => {
-    it('returns null for an unknown client (Hydra 404)', async () => {
-      mockState.hydra.getClient.mockRejectedValue(new HydraApiError(404, 'gone'))
-      expect(await svc.resolveOrganization('client-abc')).toBeNull()
-    })
-
-    it('returns org + scopes from metadata', async () => {
-      mockState.hydra.getClient.mockResolvedValue(client({ scope: 'api:read api:write' }))
-      expect(await svc.resolveOrganization('client-abc')).toEqual({
-        organization_id: ORG,
-        scopes: ['api:read', 'api:write'],
-      })
-    })
-  })
 })

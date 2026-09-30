@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { quote, auditQuery, auditSelector, opsLogsQuery, regexAlternation, type AuditStream } from '../../../audit/query/logql.js'
+import { quote, auditQuery, auditSelector, regexAlternation, type AuditStream } from '../../../audit/query/logql.js'
 
 // AUD-9 / AU-12: the client never sends LogQL, and nothing it sends can change the shape of the
 // query jinbe builds. Every value lands inside one double-quoted literal, and reading that literal
@@ -153,33 +153,5 @@ describe.each([['label', LABEL], ['json', JSON_]] as const)('auditQuery() — %s
 
   it('subject matches the user as actor OR target', () => {
     expect(auditQuery({ subject: 'u-1' }, undefined, stream)).toContain('| actor_id="u-1" or target_id="u-1"')
-  })
-})
-
-describe('opsLogsQuery()', () => {
-  it('label: pins the namespace and excludes the audit stream by its label', () => {
-    const q = opsLogsQuery({ namespace: 'auth' }, LABEL)
-    expect(q).toBe('{namespace="auth", log_type!="audit"}')
-  })
-
-  it('json: pins the namespace and excludes audit lines on the raw line, whatever their spacing', () => {
-    const q = opsLogsQuery({ namespace: 'auth', container: 'jinbe' }, JSON_)
-    expect(q).toBe('{namespace="auth", container="jinbe"} !~ "\\"log_type\\"\\\\s*:\\\\s*\\"audit\\""')
-    // RE2 and JS agree on this pattern: test it as Loki would run it.
-    const re = new RegExp(unquote(tokens(q).literals[2]))
-    expect(re.test('{"level":30,"log_type":"audit","event":"x"}')).toBe(true)
-    expect(re.test('{"log_type" : "audit"}')).toBe(true)
-    expect(re.test('{"log_type":"app","msg":"saw \\"log_type\\":\\"audit\\""}')).toBe(false)
-    expect(re.test('{"log_type":"request"}')).toBe(false)
-  })
-
-  it.each([['label', LABEL], ['json', JSON_]] as const)('%s: escapes the namespace and the ids too', (_mode, stream) => {
-    const q = opsLogsQuery({ namespace: 'a"b', requestId: 'x"} |= "', container: 'jinbe' }, stream)
-    const t = tokens(q)
-    expect(t.skeleton).toBe(tokens(opsLogsQuery({ namespace: 'n', requestId: 'r', container: 'c' }, stream)).skeleton)
-  })
-
-  it('the default comes from the environment (json)', () => {
-    expect(opsLogsQuery({ namespace: 'auth' })).toBe(opsLogsQuery({ namespace: 'auth' }, JSON_))
   })
 })

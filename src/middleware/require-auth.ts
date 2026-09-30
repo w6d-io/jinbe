@@ -33,14 +33,7 @@ const PUBLIC_ROUTES = [
   // sub-path public) to the EXACT Kratos webhook path. The handler still
   // self-authenticates via a shared secret; this only lifts the session gate.
   '/api/webhooks/kratos',
-  // Its own credential, checked by its own hook: a machine token, hashed at rest. Listed here for
-  // the same reason the SCIM prefix is — the session gate would refuse it before that hook runs.
-  '/api/directory',
-  // Same arrangement, and the same trap: the policy engine presents a machine token, which this
-  // gate refuses before the route's own hook is ever reached. Listing it here does not make it
-  // public — it makes it guarded by the credential it actually takes.
-  '/api/opa',
-  // Site login branding for login-ui before sign-in (exact host / name, rate limited), the logo,
+  // Site login branding for login-ui before sign-in (exact host, rate limited), the logo,
   // and access-reason, which checks the visitor's own Kratos cookie itself (src/sites/public.routes.ts).
   '/api/public/sites',
   // The visitor's own 2FA status for login-ui; reads their Kratos cookie itself (second-factor/routes.ts).

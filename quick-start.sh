@@ -28,7 +28,7 @@ if [ ! -f .env ]; then
     echo "📝 Creating .env file from .env.example..."
     cp .env.example .env
     echo "⚠️  IMPORTANT: Edit .env and set your configuration values!"
-    echo "   Required: DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY, COOKIE_SECRET"
+    echo "   Required: ENCRYPTION_KEY"
     echo ""
     read -p "Press Enter after editing .env, or Ctrl+C to exit..."
 fi
@@ -43,12 +43,6 @@ else
     echo "✅ Dependencies already installed"
     echo ""
 fi
-
-# Generate Prisma Client
-echo "🔧 Generating Prisma Client..."
-npm run prisma:generate
-echo "✅ Prisma Client generated"
-echo ""
 
 # Build TypeScript (optional for dev mode)
 echo "🏗️  Building TypeScript..."

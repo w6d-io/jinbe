@@ -1,8 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { apiKeyController } from '../controllers/api-key.controller.js'
 import { requireOrgPermission } from '../middleware/require-org-permission.js'
-import { needs, open } from '../policy/route-access.js'
-import { requireInternalCaller } from '../middleware/require-internal-caller.js'
+import { needs } from '../policy/route-access.js'
 import { apiKeyScopesController } from '../controllers/api-key-scopes.controller.js'
 import {
   organizationIdParamJsonSchema,
@@ -184,44 +183,5 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
       },
     },
     apiKeyController.revoke.bind(apiKeyController)
-  )
-}
-
-/**
- * Internal API-key routes for cluster-internal callers.
- *
- * Mounted under /api/internal — Oathkeeper does NOT route this prefix from the public internet, and
- * that is not relied on: every route takes an allowed in-cluster ServiceAccount token and nothing
- * else (requireInternalCaller). Upstream services use it to resolve an injected X-Client-Id header to
- * its owning organization (Hydra spec §5.3 Option A).
- */
-export async function apiKeyInternalRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', requireInternalCaller)
-
-  fastify.get(
-    '/oauth-clients/:clientId/organization',
-    {
-      ...open('machine'),
-      schema: {
-        description: 'Resolve a client_id to its owning organization and scopes (internal only).',
-        tags: ['api-keys-internal'],
-        params: {
-          type: 'object',
-          required: ['clientId'],
-          properties: { clientId: { type: 'string' } },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              organization_id: { type: 'string' },
-              scopes: { type: 'array', items: { type: 'string' } },
-            },
-          },
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    apiKeyController.resolveOrganization.bind(apiKeyController)
   )
 }

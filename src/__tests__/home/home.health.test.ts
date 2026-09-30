@@ -13,7 +13,6 @@ function facts(over: Partial<PlatformFacts> = {}): PlatformFacts {
   return {
     now: NOW,
     gateway: { kind: 'off' },
-    engines: { serving: null, since: null, reporting: 0, current: 0, silent: 0 },
     opaDirect: null,
     opal: { entries: 0, oldestMs: null },
     rules: null,
@@ -46,30 +45,19 @@ describe('policy sync (opal_data)', () => {
 })
 
 describe('policy engine (opa)', () => {
-  it('no engine ever reported and OPA answers /health → ok, reachable (OPAL-managed)', () => {
+  it('OPA answers /health → ok, reachable (OPAL-managed)', () => {
     expect(opaComponent(facts({ opaDirect: 'ok' }))).toMatchObject({ state: 'ok', summary: 'reachable (OPAL-managed)' })
   })
 
-  it('no engine ever reported and OPA does not answer → down', () => {
+  it('OPA does not answer → down', () => {
     expect(opaComponent(facts({ opaDirect: 'down' }))).toMatchObject({ state: 'down', summary: 'OPA did not answer' })
   })
 
-  it('no engine ever reported and no OPA_URL → unknown, as before', () => {
-    expect(opaComponent(facts())).toMatchObject({ state: 'unknown', summary: 'no engine has reported' })
-  })
-
-  it('engines that reported and went silent stay down whatever /health says', () => {
-    expect(opaComponent(facts({ opaDirect: 'ok', engines: { serving: 'rev', since: null, reporting: 0, current: 0, silent: 2 } })).state).toBe('down')
-  })
-
-  it('bundle mode keeps the revision logic', () => {
-    const e = { serving: 'rev-abcdef12', since: NOW - 5 * MIN, reporting: 2, current: 1, silent: 0 }
-    expect(opaComponent(facts({ opaDirect: 'ok', engines: e }))).toMatchObject({ state: 'degraded', summary: '1/2 engines on rev-abcd' })
-    expect(opaComponent(facts({ engines: { ...e, current: 2 } })).state).toBe('ok')
+  it('no OPA_URL → unknown', () => {
+    expect(opaComponent(facts())).toMatchObject({ state: 'unknown', summary: 'not connected' })
   })
 
   it('platformFacts asks OPA /health only when OPA_URL is set', async () => {
-    world.engines = []
     expect((await platformFacts()).opaDirect).toBeNull()
     expect(world.calls.opaHealthy).toBeUndefined()
     world.opaConfigured = true

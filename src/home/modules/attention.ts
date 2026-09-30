@@ -50,16 +50,6 @@ function platformBroken(f: PlatformFacts): Staged[] {
       }))
     }
   }
-  const e = f.engines
-  if (e.reporting > 0 && e.serving && e.current < e.reporting && e.since !== null && f.now - e.since > 2 * MINUTE) {
-    out.push(item({
-      id: 'engines_out_of_sync:opa', kind: 'engines_out_of_sync', severity: 'critical',
-      title: `Policy engines out of sync — ${e.reporting - e.current} of ${e.reporting} behind`,
-      detail: `serving ${e.serving.slice(0, 8)} for ${ago(f.now - e.since)}`,
-      subject: { type: 'component', id: 'opa', label: 'Policy engine' },
-      since: iso(e.since), target: { page: 'gateway', params: {}, anchor: 'engines' },
-    }))
-  }
   if (f.opal.oldestMs !== null && f.now - f.opal.oldestMs >= 10 * MINUTE) {
     out.push(item({
       id: 'opal_data_stale:opal', kind: 'opal_data_stale', severity: 'critical',

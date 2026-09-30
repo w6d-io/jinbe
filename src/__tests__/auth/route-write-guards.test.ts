@@ -39,7 +39,6 @@ const EXCEPTIONS: Record<string, string> = {
   // ── Machine callers with their own credential (no session) ─────────────────────────────────────
   'POST /api/mcp/token-info': 'auth-mcp only: allowed ServiceAccount actor token; answers about a token',
   'POST /api/mcp/personal-keys/exchange': 'auth-mcp only: actor token + the personal key secret itself',
-  'POST /api/opa/status': 'OPA engines, with the bundle machine credential; records which revision is active',
   'POST /api/webhooks/kratos': 'Kratos after-hooks, authenticated by the shared webhook secret',
   'POST /api/webhooks/kratos/guard': 'Kratos before-hooks, authenticated by the shared webhook secret',
   'POST /api/public/sign-in-protection/gate/self-service/:flow': 'the gateway judging an anonymous sign-in submit; by design pre-auth',

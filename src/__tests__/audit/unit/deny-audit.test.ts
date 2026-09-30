@@ -86,17 +86,14 @@ describe('the guards use it', () => {
 
   it('requireAuth refuses an anonymous caller through the same helper', async () => {
     const r = reply()
-    await requireAuth(request({ userContext: undefined, url: '/api/clusters' }), r)
+    await requireAuth(request({ userContext: undefined, url: '/api/admin/users' }), r)
     expect(r.code).toBe(401)
     expect((h.emit.mock.calls[0] as unknown as [Record<string, any>])[0]).toMatchObject({ v1Event: 'access.denied', reason: 'unauthenticated' })
   })
 
   it('no guard builds its own deny event any more (static)', () => {
     const root = join(__dirname, '../../..')
-    const files = [
-      ...readdirSync(join(root, 'middleware')).map((f) => join(root, 'middleware', f)),
-      join(root, 'routes/directory.routes.ts'),
-    ]
+    const files = readdirSync(join(root, 'middleware')).map((f) => join(root, 'middleware', f))
     const offenders = files.filter((f) => /verb:\s*'deny'/.test(readFileSync(f, 'utf8')))
     expect(offenders).toEqual([])
   })

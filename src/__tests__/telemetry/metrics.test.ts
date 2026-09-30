@@ -20,7 +20,6 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
 }))
 
 import { register } from 'prom-client'
-import { auditRoutes } from '../../routes/audit.routes.js'
 import { rbacOpalRoutes } from '../../routes/rbac-opal.routes.js'
 import { oathkeeperRoutes } from '../../routes/oathkeeper.routes.js'
 import { createMetricsServer } from '../../telemetry/metrics-server.js'
@@ -33,17 +32,6 @@ async function value(name: string, labels: Record<string, string> = {}): Promise
     ?.find((v) => Object.entries(labels).every(([k, want]) => v.labels[k] === want))
   return hit?.value
 }
-
-describe('/metrics is not on the app router (OBS-3.2)', () => {
-  it('GET /api/admin/audit/metrics is 404 — the app port no longer serves Prometheus', async () => {
-    const app = Fastify()
-    await app.register(auditRoutes, { prefix: '/api/admin/audit' })
-    await app.ready()
-    const res = await app.inject({ method: 'GET', url: '/api/admin/audit/metrics' })
-    expect(res.statusCode).toBe(404)
-    expect(app.hasRoute({ method: 'GET', url: '/api/admin/audit/metrics' })).toBe(false)
-  })
-})
 
 describe('metrics server on its own port (OBS-3.2)', () => {
   let server: Server | undefined
