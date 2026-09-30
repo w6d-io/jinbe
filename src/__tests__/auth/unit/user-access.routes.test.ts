@@ -13,6 +13,23 @@ const s = vi.hoisted(() => ({
   grants: {} as Record<string, Record<string, string[]>>,
   rosters: {} as Record<string, string[]>,
   grantsFail: false,
+  // OPA's answers, keyed on the address as the bindings key it.
+  manageable: {} as Record<string, string[]>,
+  members: {} as Record<string, string[]>,
+  opaDown: false,
+  asked: [] as string[],
+}))
+
+vi.mock('../../../authz/opa.js', () => ({
+  manageableOrgs: vi.fn(async (email: string) => {
+    s.asked.push(email)
+    if (s.opaDown) throw new Error('OPA unreachable')
+    return s.manageable[email] ?? []
+  }),
+  memberOrgs: vi.fn(async (email: string) => {
+    if (s.opaDown) throw new Error('OPA unreachable')
+    return s.members[email] ?? []
+  }),
 }))
 
 vi.mock('../../../services/kratos.service.js', () => ({
@@ -83,6 +100,10 @@ beforeEach(() => {
   s.grants = { [ACME]: { 'bob@acme.test': ['fleet-viewers'] } }
   s.rosters = { [GLOBEX]: ['bob@acme.test'] }
   s.grantsFail = false
+  s.manageable = { 'Bob@acme.test': [GLOBEX] }
+  s.members = { 'Bob@acme.test': [ACME, GLOBEX] }
+  s.opaDown = false
+  s.asked = []
 })
 
 describe('GET /api/admin/users/:id/access', () => {
@@ -95,10 +116,44 @@ describe('GET /api/admin/users/:id/access', () => {
         byService: { kuma: ['admin', 'reader'], fleet: ['viewer'] },
       },
       orgs: [
-        { orgId: ACME, name: 'Acme', admin: false, grants: ['fleet-viewers'] },
-        { orgId: GLOBEX, name: GLOBEX, admin: true, grants: [] },
+        { orgId: ACME, name: 'Acme', admin: false, rostered: false, grants: ['fleet-viewers'] },
+        { orgId: GLOBEX, name: GLOBEX, admin: true, rostered: true, grants: [] },
       ],
     })
+    // OPA is asked with the address as the bindings key it (as typed), not a lowercased copy.
+    expect(s.asked).toEqual(['Bob@acme.test'])
+  })
+
+  it('admin is what the guard decides (manageable_orgs), not the roster', async () => {
+    // Rostered, but OPA does not list the org: the org routes refuse, so admin is false.
+    s.manageable = { 'Bob@acme.test': [] }
+    s.members = { 'Bob@acme.test': [ACME] }
+    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
+    expect(orgs[1]).toEqual({ orgId: GLOBEX, name: GLOBEX, admin: false, rostered: true, why: 'not_a_member_per_policy', grants: [] })
+    // Not rostered at all, but OPA lists the org (a roster OPAL has not yet caught up with): admin.
+    s.rosters = {}
+    s.manageable = { 'Bob@acme.test': [ACME] }
+    const again = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
+    expect(again[0]).toMatchObject({ orgId: ACME, admin: true, rostered: false })
+  })
+
+  it('says why a rostered member is not admin: policy not loaded yet', async () => {
+    s.rosters = { [GLOBEX]: ['Bob@acme.test'] }
+    s.manageable = { 'Bob@acme.test': [] }
+    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
+    expect(orgs[1]).toMatchObject({ admin: false, rostered: true, why: 'policy_not_yet_loaded' })
+  })
+
+  it('a roster entry differing only in case counts as rostered', async () => {
+    s.rosters = { [GLOBEX]: ['BOB@ACME.TEST'] }
+    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
+    expect(orgs[1]).toMatchObject({ admin: true, rostered: true })
+    expect(orgs[1].why).toBeUndefined()
+  })
+
+  it('503 when OPA cannot be asked — never an admin flag it could not decide', async () => {
+    s.opaDown = true
+    expect((await app.inject({ url: '/api/admin/users/id-bob/access' })).statusCode).toBe(503)
   })
 
   it('is gated on access:read in the app layer, not only at the gateway', async () => {

@@ -3,6 +3,7 @@ import { enforcedBy, recordRoute } from './declared-routes.js'
 import { requirePermission } from '../middleware/require-permission.js'
 import { requireGlobalSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
+import { recordRouteContext } from './route-guards.js'
 
 /**
  * Every route says what it needs, in its own options, and ONE hook turns that into the gate.
@@ -128,6 +129,10 @@ export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) 
  * Installs the hook on an instance, BEFORE any route is registered: on the root in server.ts, and on
  * the throwaway app of a test that mounts one plugin.
  */
-export function installRouteAccess(fastify: { addHook(name: 'onRoute', fn: (route: RouteOptions) => void): unknown }): void {
-  fastify.addHook('onRoute', (route) => attachRouteAccess(route, isPublicRoute))
+export function installRouteAccess(fastify: { addHook(name: 'onRoute', fn: (this: unknown, route: RouteOptions) => void): unknown }): void {
+  fastify.addHook('onRoute', function (this: unknown, route) {
+    attachRouteAccess(route, isPublicRoute)
+    // `this` is the instance the route is registered on: whose hooks Fastify runs before it.
+    recordRouteContext(this, route)
+  })
 }

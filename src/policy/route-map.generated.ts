@@ -70,6 +70,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"POST","path":"/api/admin/rbac/bundle/history/:id/rollback","permission":"admin:write"},
   {"method":"POST","path":"/api/admin/rbac/bundle/import","permission":"policy.bundle:write"},
   {"method":"POST","path":"/api/admin/rbac/bundle/import","permission":"admin:write"},
+  {"method":"POST","path":"/api/admin/rbac/explain-route"},
   {"method":"GET","path":"/api/admin/rbac/groups","permission":"groups:read"},
   {"method":"GET","path":"/api/admin/rbac/groups","permission":"admin:read"},
   {"method":"POST","path":"/api/admin/rbac/groups","permission":"groups:write"},

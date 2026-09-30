@@ -72,7 +72,7 @@ export { EVERYTHING }
  * A global role carrying `*` (OPA `rbac.super_admin`) — for what nobody short of a super admin may
  * touch (`config.permission: '*'`). Fail-closed: OPA unreachable answers 503, never an allow.
  */
-export const requireGlobalSuperAdmin = enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
+export const requireGlobalSuperAdmin = enforcing(async function requireGlobalSuperAdmin(request: FastifyRequest, reply: FastifyReply) {
   const email = request.userContext?.email
   const subject = request.userContext?.id
   if (!email || email === 'unknown' || !subject || subject === 'unknown') {

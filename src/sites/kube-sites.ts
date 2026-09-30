@@ -206,22 +206,30 @@ function retryAfterOf(err: unknown): number | undefined {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 30) : undefined
 }
 
-/** Waits between attempts on a 429 when the answer names no Retry-After. */
+/** Waits between attempts on a 429 (when the answer names no Retry-After) or a 5xx. */
 export const THROTTLE_BACKOFF_MS = [250, 750, 1500]
 /** Longest single wait: a request is not held for a Retry-After beyond this, it fails as throttled. */
 const THROTTLE_MAX_WAIT_MS = 2_000
 let sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
- * One API call, retried on 429 only (THROTTLE_BACKOFF_MS, or the server's Retry-After when shorter
- * than THROTTLE_MAX_WAIT_MS). Every other failure is the caller's to classify, at once.
+ * One API call, retried on 429 (THROTTLE_BACKOFF_MS, or the server's Retry-After when shorter than
+ * THROTTLE_MAX_WAIT_MS) and, for a read, on a 5xx (an API server restarting or its etcd slow:
+ * THROTTLE_BACKOFF_MS) — a write that answered 5xx may have landed, so it is not sent twice. A 5xx that
+ * persists is rethrown as it came; every other failure is the caller's to classify, at once.
  */
-export async function retryThrottled<T>(what: string, fn: () => Promise<T>): Promise<T> {
+export async function retryThrottled<T>(what: string, fn: () => Promise<T>, opts: { write?: boolean } = {}): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn()
     } catch (err) {
-      if (statusOf(err) !== 429) throw err
+      const status = statusOf(err)
+      if (!opts.write && status !== undefined && status >= 500 && status < 600) {
+        if (attempt >= THROTTLE_BACKOFF_MS.length) throw err
+        await sleep(THROTTLE_BACKOFF_MS[attempt])
+        continue
+      }
+      if (status !== 429) throw err
       const after = retryAfterOf(err)
       if (attempt >= THROTTLE_BACKOFF_MS.length || (after !== undefined && after * 1000 > THROTTLE_MAX_WAIT_MS)) {
         throw new KubeThrottled(`${what}: 429`, Math.max(1, Math.ceil(after ?? 1)))
@@ -237,11 +245,25 @@ export function setThrottleSleep(fn: (ms: number) => Promise<void>): void {
 }
 
 /**
- * The cluster-wide lists every render, preview and platform read needs (Zones, and the HTTPRoutes and
- * ListenerSets of the host-collision check): one shared, short-lived copy instead of a list per
- * request. Zone writes through jinbe drop them at once; a change made elsewhere shows within freshMs.
+ * The cluster-wide lists every render, preview and platform read needs (Zones — GET /sites/platform,
+ * the zones listing — and the HTTPRoutes and ListenerSets of the host-collision check): one shared
+ * copy for 30 s instead of a list per request. Zone writes through jinbe drop them at once; a change
+ * made elsewhere shows within 30 s.
+ *
+ * Stale while error: when the API server cannot answer (after the retries), the last list read in
+ * this process is served for up to STALE_ON_ERROR_MS rather than a 503 — a zone list a few minutes
+ * old is right far more often than an error page. Never across a write through jinbe (dropped with it).
  */
-const clusterLists = new SwrCache<unknown[]>({ namespace: 'kube.lists', freshMs: 5_000, staleMs: 30_000, l1Max: 8 })
+export const CLUSTER_LIST_TTL_MS = 30_000
+export const STALE_ON_ERROR_MS = 10 * 60_000
+const clusterLists = new SwrCache<unknown[]>({ namespace: 'kube.lists', freshMs: CLUSTER_LIST_TTL_MS, staleMs: CLUSTER_LIST_TTL_MS, l1Max: 8 })
+const lastGoodLists = new Map<string, { at: number; value: unknown[] }>()
+
+/** Test seam. */
+export function resetClusterLists(): void {
+  lastGoodLists.clear()
+  clusterLists.resetLocal()
+}
 
 /** The `message` of a Kubernetes Status body, bounded. */
 function apiMessage(err: unknown): string {
@@ -354,9 +376,9 @@ export class ClientNodeKubeSites implements KubeSites {
     return { group: SITE_GROUP, version: SITE_VERSION, namespace: this.namespace, plural: SITE_PLURAL }
   }
 
-  private async call<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  private async call<T>(what: string, fn: () => Promise<T>, opts: { write?: boolean } = {}): Promise<T> {
     try {
-      return await retryThrottled(what, fn)
+      return await retryThrottled(what, fn, opts)
     } catch (err) {
       if (err instanceof KubeThrottled) throw err
       throw new KubeUnavailable(`${what}: ${statusOf(err) ?? (err instanceof Error ? err.message : 'error')}`)
@@ -377,11 +399,23 @@ export class ClientNodeKubeSites implements KubeSites {
 
   /** A cluster-wide list, mapped to what jinbe reads of it, from the shared copy (see clusterLists). */
   private async cachedList<T>(plural: string, fn: () => Promise<unknown>, map: (raw: Raw) => T): Promise<T[]> {
-    return (await clusterLists.get(plural, async () => items(await this.call(`list ${plural}`, fn)).map(map))) as T[]
+    try {
+      return (await clusterLists.get(plural, async () => {
+        const value = items(await this.call(`list ${plural}`, fn)).map(map)
+        lastGoodLists.set(plural, { at: Date.now(), value })
+        return value
+      })) as T[]
+    } catch (err) {
+      const kept = lastGoodLists.get(plural)
+      if (err instanceof KubeUnavailable && kept && Date.now() - kept.at <= STALE_ON_ERROR_MS) return kept.value as T[]
+      throw err
+    }
   }
 
   /** After a Zone write: the Zone list, and the ListenerSets the operator derives from Zones. */
   private dropZoneLists(): void {
+    lastGoodLists.delete('zones')
+    lastGoodLists.delete('listenersets')
     void clusterLists.invalidate('zones')
     void clusterLists.invalidate('listenersets')
   }
@@ -441,11 +475,11 @@ export class ClientNodeKubeSites implements KubeSites {
   async apply(cr: SiteCr): Promise<void> {
     const existing = await this.get(cr.metadata.name)
     if (!existing) {
-      await this.call('create site', () => this.api.createNamespacedCustomObject({ ...this.base(), body: cr }))
+      await this.call('create site', () => this.api.createNamespacedCustomObject({ ...this.base(), body: cr }), { write: true })
       return
     }
     const body = { ...cr, metadata: { ...cr.metadata, resourceVersion: existing.metadata.resourceVersion } }
-    await this.call('replace site', () => this.api.replaceNamespacedCustomObject({ ...this.base(), name: cr.metadata.name, body }))
+    await this.call('replace site', () => this.api.replaceNamespacedCustomObject({ ...this.base(), name: cr.metadata.name, body }), { write: true })
   }
 
   async delete(name: string): Promise<void> {

@@ -4,6 +4,7 @@ import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
 import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
 import { scopeRefusalFields } from '../services/permission-refusal.js'
+import { isDryRun } from '../authz/dry-run.js'
 
 /**
  * What a DELEGATED caller (a user acting through a client: an MCP server, a personal key) may reach.
@@ -77,8 +78,13 @@ const KEY_REVOKE = [
 // Routes whose permission depends on the request, decided by their own guard with delegationRefusal
 // (e.g. a membership change: adding is groups.members:write, removing is a deletion). The global gate
 // still refuses them for the backstop and self-change rules.
+// POST only because the question is a body: it changes nothing, so it spends no write budget.
+const EXPLAIN_ROUTE = /^\/api\/admin\/rbac\/explain-route$/
+
 const GUARD_DECIDED: readonly { method: string; pattern: RegExp }[] = [
   { method: 'PUT', pattern: /^\/api\/admin\/users\/:email\/groups$/ },
+  // A question, not a change: about the caller needs nothing, about somebody else access:check.
+  { method: 'POST', pattern: EXPLAIN_ROUTE },
 ]
 
 /** Why no delegated caller may reach this route pattern (rule 1), or null. */
@@ -138,7 +144,8 @@ export async function delegationGate(request: FastifyRequest, reply: FastifyRepl
   if (request.userContext?.authVia !== 'delegated') return
   const reason = delegationRefusal(request)
   if (!reason) {
-    if (!(WRITES as readonly string[]).includes(request.method.toUpperCase())) return
+    if (!(WRITES as readonly string[]).includes(request.method.toUpperCase()) || isDryRun(request)) return
+    if (EXPLAIN_ROUTE.test(request.routeOptions?.url ?? '')) return
     const retryAfter = await delegatedWriteBudget(request)
     if (retryAfter === null) return
     denyAudit(request, 'delegated_write_rate_limited', { statusCode: 429, severity: 'warn' })

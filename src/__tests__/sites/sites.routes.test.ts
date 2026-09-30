@@ -157,6 +157,10 @@ describe('save, list, get, versions', () => {
     const one = await app.inject({ method: 'GET', url: '/sites/payroll' })
     expect(one.json()).toMatchObject({ site: { name: 'payroll' }, version: 1, status: 'draft' })
     expect(one.headers.etag).toBe(res.headers.etag)
+    // Each gate handler with its effective config and where each field comes from.
+    const gates = one.json().resolvedGates as Array<{ gate: string; handlers: Array<{ kind: string; handler: string; fields: Record<string, string> }> }>
+    expect(gates.length).toBeGreaterThan(0)
+    expect(gates[0].handlers.map((x) => x.kind)).toEqual(expect.arrayContaining(['authenticator', 'authorizer', 'mutator']))
   })
 
   it('refuses a missing or stale If-Match on an existing site', async () => {
@@ -222,6 +226,7 @@ describe('preview', () => {
     expect(body.artefacts.routeMap.length).toBeGreaterThan(0)
     expect(body.artefacts.siteCr.kind).toBe('Site')
     expect(body.risk.level).toBeDefined()
+    expect(body.resolvedGates.map((g: { gate: string }) => g.gate)).toEqual(body.artefacts.siteCr.spec.gates.map((g: { name: string }) => g.name))
     const overlap = h.gatekit.calls.find((c) => c.path === '/overlap')!
     expect((overlap.body.rules as Array<{ id: string }>).map((r) => r.id)).toContain('kuma-api')
     expect((overlap.body.probes as unknown[]).length).toBeGreaterThan(0)

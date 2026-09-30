@@ -5,6 +5,8 @@ import { organisationStoreConfigured, organisationsById } from '../services/orga
 import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { needs } from '../policy/route-access.js'
+import { manageableOrgs, memberOrgs } from '../authz/opa.js'
+import { orgAdminView } from '../services/org-admin.js'
 import {
   notFoundResponseSchema,
   serviceUnavailableResponseSchema,
@@ -17,6 +19,11 @@ import {
  *
  *   site: the groups they hold and the roles those give per service (org membership never touches it)
  *   orgs: each org they belong to, whether they administer it, and the groups granted to them there
+ *
+ * `admin` is the authoritative guard's answer — OPA `manageable_orgs` (on the roster AND a member),
+ * the query requireOrgAdmin asks — never the roster store read beside it: the two disagreed on case,
+ * on membership and on OPAL lag, and `admin: true` was shown for somebody the org routes refused.
+ * `rostered` is the store's view; `why` says what keeps a rostered person from administering.
  *
  * Needs access:read (enforced here: nothing stops a pod from calling jinbe directly). A store that cannot be read
  * answers 503: an empty `grants` would read as "nothing granted".
@@ -38,8 +45,9 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     ...needs('access:read'),
     schema: {
       description:
-        "A user's site access (groups → roles per service) and org access (per org: admin flag and the " +
-        'groups granted there). Needs access:read.',
+        "A user's site access (groups → roles per service) and org access (per org: `admin` as OPA decides it " +
+        "(manageable_orgs), `rostered` as jinbe's roster store says, `why` when they differ, and the groups " +
+        'granted there). Needs access:read.',
       tags: ['admin'],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
       response: {
@@ -57,7 +65,13 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
                 properties: {
                   orgId: { type: 'string' },
                   name: { type: 'string' },
-                  admin: { type: 'boolean' },
+                  admin: { type: 'boolean', description: "OPA would let them manage this org's people (manageable_orgs)" },
+                  rostered: { type: 'boolean', description: "On the org's admin roster in jinbe's store" },
+                  why: {
+                    type: 'string',
+                    enum: ['not_a_member_per_policy', 'email_case_mismatch', 'policy_not_yet_loaded'],
+                    description: 'Only when rostered but not admin: what keeps them from administering',
+                  },
                   grants: stringList,
                 },
               },
@@ -81,20 +95,24 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       }
       throw err
     }
-    const email = String(identity.traits?.email ?? '').toLowerCase()
+    // As the RBAC bindings key it (OPA is asked with this), and lowercased for the stores.
+    const address = String(identity.traits?.email ?? '')
+    const email = address.toLowerCase()
     const metadata = identity.metadata_admin as { groups?: unknown } | null | undefined
     // Same default the bindings apply to an identity carrying no groups.
     const groups = Array.isArray(metadata?.groups)
       ? metadata.groups.filter((g): g is string => typeof g === 'string')
       : ['users']
 
-    let orgIds: string[], definitions, grants, rosters
+    let orgIds: string[], definitions, grants, rosters, manageable: string[], members: string[]
     try {
-      ;[orgIds, definitions, grants, rosters] = await Promise.all([
+      ;[orgIds, definitions, grants, rosters, manageable, members] = await Promise.all([
         organisationsOf(identity),
         redisRbacRepository.getGroups(),
         orgGrantsRepository.getAll(),
         redisRbacRepository.getOrgAdminMap(),
+        address ? manageableOrgs(address) : Promise.resolve([]),
+        address ? memberOrgs(address) : Promise.resolve([]),
       ])
     } catch (err) {
       request.log.warn({ err, id }, '[user-access] a store could not be read')
@@ -112,8 +130,8 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     const orgs = orgIds.map((orgId) => ({
       orgId,
       name: names[orgId] ?? orgId,
-      admin: (rosters[orgId] ?? []).some((e) => e.toLowerCase() === email),
-      grants: grants[orgId]?.[email] ?? [],
+      ...orgAdminView(address, orgId, { manageable, memberOrgs: members, roster: rosters[orgId] ?? [] }),
+      grants: grants[orgId]?.[address] ?? grants[orgId]?.[email] ?? [],
     }))
 
     return reply.send({ site: { groups, byService }, orgs })

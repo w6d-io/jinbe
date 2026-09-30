@@ -136,6 +136,15 @@ export interface Decision {
  * rule, the same data, the same input.
  */
 export function decide(q: RouteQuestion): Promise<Decision> {
+  return ask('rbac/decision', decisionInput(q), (r) => {
+    const d = r as { allow?: unknown; reason?: unknown } | undefined
+    if (!d || typeof d.allow !== 'boolean') return undefined
+    return { allow: d.allow, reason: typeof d.reason === 'string' ? d.reason : d.allow ? 'ok' : 'forbidden' }
+  })
+}
+
+/** The exact input `decide` sends OPA for a question (the explainer shows it and asks `rbac.explain` with it). */
+export function decisionInput(q: RouteQuestion): Record<string, unknown> {
   const input: Record<string, unknown> = {
     email: q.email,
     object: q.path,
@@ -150,11 +159,7 @@ export function decide(q: RouteQuestion): Promise<Decision> {
     if (q.delegation.org) input.org = q.delegation.org
     input.client_id = q.delegation.client_id
   }
-  return ask('rbac/decision', input, (r) => {
-    const d = r as { allow?: unknown; reason?: unknown } | undefined
-    if (!d || typeof d.allow !== 'boolean') return undefined
-    return { allow: d.allow, reason: typeof d.reason === 'string' ? d.reason : d.allow ? 'ok' : 'forbidden' }
-  })
+  return input
 }
 
 /** The organisations this address administers: on that org's roster AND a member of it. */

@@ -84,6 +84,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'PUT /api/admin/rbac/org-service-map': by('org.services.changed'),
   'DELETE /api/admin/rbac/org-service-map/:organizationId': by('org.services.changed'),
   'POST /api/admin/rbac/access-check': by('access.checked'),
+  'POST /api/admin/rbac/explain-route': by('access.checked'),
   'POST /api/admin/rbac/bundle/import': by('config.bundle.imported'),
   'POST /api/admin/rbac/bundle/backups/now': by('config.bundle.backed_up'),
   'POST /api/admin/rbac/bundle/backups/restore': by('config.bundle.restored'),
