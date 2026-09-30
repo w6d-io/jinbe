@@ -9,6 +9,8 @@ import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oa
 import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
 import { assertOrgParams } from '../policy/route-org-param.js'
 import { componentLogger } from '../telemetry/logger.js'
+import { assertBundleWithinOwn } from './rbac-escalation-guard.js'
+import { groupGrants, loadRoles, type PermissionsByScope, type RolesByScope } from './grant-subset.js'
 
 export interface AuthBundle {
   version: '1'
@@ -170,6 +172,33 @@ class RbacBundleService {
     if (problems.length > 0) throw new InvalidBindingError(problems)
   }
 
+  /**
+   * The groups whose grants this import changes, with what each grants afterwards: the groups it
+   * leaves (the bundle's, over the current ones unless a full restore), resolved against the roles it
+   * leaves (validateBindings' reading of the roles section, services and defaults).
+   */
+  private async changedGroupGrants(
+    bundle: AuthBundle, want: (s: BundleSection) => boolean, isFull: boolean,
+  ): Promise<Array<{ name: string; after: PermissionsByScope }>> {
+    const { services, groups, roles } = bundle.rbac
+    const current = await redisRbacRepository.getGroups()
+    const afterGroups = want('groups') ? (isFull ? groups : { ...current, ...groups }) : current
+    const scopes = new Set([...Object.values(current), ...Object.values(afterGroups)].flatMap((d) => Object.keys(d ?? {})))
+    const before = await loadRoles(scopes)
+    const after: RolesByScope = {}
+    for (const svc of scopes) {
+      if (want('roles') && roles[svc]) after[svc] = svc === 'global' ? roles[svc] : { ...defaultServiceRoles(svc), ...roles[svc] }
+      else if (want('roles') && want('services') && services.includes(svc) && svc !== 'global') after[svc] = defaultServiceRoles(svc)
+      else if (want('services') && isFull && svc !== 'global' && !services.includes(svc)) after[svc] = null
+      else after[svc] = before[svc]
+    }
+    const same = (a: PermissionsByScope, b: PermissionsByScope) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
+    return Object.entries(afterGroups)
+      .map(([name, def]) => ({ name, after: groupGrants(def, after), before: groupGrants(current[name], before) }))
+      .filter((g) => !same(g.after, g.before))
+      .map(({ name, after: grants }) => ({ name, after: grants }))
+  }
+
   async import(bundle: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
     const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
     // `sections` (optional) restricts a selective import to the chosen parts.
@@ -190,6 +219,9 @@ class RbacBundleService {
     if (want('routeMaps') || want('services')) await this.validateRouteTies(bundle, want, isFull)
     // Every group binding names roles its service will define once applied (group-bindings.ts).
     if (want('groups')) await this.validateBindings(bundle, want, isFull)
+    // Grant only what you hold: a non-super-admin's import changes no group beyond what they hold
+    // (rbac-escalation-guard.ts). The bootstrap's own restore names no actor and is not a person.
+    if (actor) await assertBundleWithinOwn(await this.changedGroupGrants(bundle, want, isFull), actor)
 
     // Pre-apply snapshot → rollback point. Taken AFTER validation so a rejected
     // import leaves no trace, but BEFORE any write so a partial failure (below)

@@ -9,6 +9,7 @@ import { devRights } from './require-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { delegationRefusal } from './delegation-gate.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
+import { missingPermissionFields, scopeRefusalFields } from '../services/permission-refusal.js'
 
 /**
  * What the caller holds in jinbe (global roles included), attached to the request; or null with a
@@ -67,6 +68,7 @@ export async function demandPermissions(
         code: reason.startsWith('scope_missing') ? 'insufficient_scope' : 'delegation_refused',
         message: 'This credential acts for a user through a client and may not do this.',
         reason,
+        ...(await scopeRefusalFields(reason)),
       })
       return false
     }
@@ -80,7 +82,13 @@ export async function demandPermissions(
 
   request.log.warn({ subject: request.userContext?.id, missing }, 'Access denied — missing a catalogue permission')
   denyAudit(request, `missing:${missing.join(',')}`, { statusCode: 403 })
-  reply.status(403).send({ error: 'Forbidden', message: `This needs ${missing.join(' and ')}.` })
+  // What to do about it rides along: the permission, the groups granting it, who to ask.
+  reply.status(403).send({
+    error: 'Forbidden',
+    code: 'permission_required',
+    message: `This needs ${missing.join(' and ')}.`,
+    ...(await missingPermissionFields(missing)),
+  })
   return false
 }
 

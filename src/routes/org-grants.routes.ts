@@ -10,6 +10,7 @@ import {
   badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
+  permissionRefusalProperties,
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
@@ -74,6 +75,9 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
           properties: {
             error: { type: 'string' },
             message: { type: 'string' },
+            code: { type: 'string' },
+            reason: { type: 'string' },
+            ...permissionRefusalProperties,
             refused: {
               type: 'array',
               items: { type: 'object', properties: { group: { type: 'string' }, reason: { type: 'string' } } },

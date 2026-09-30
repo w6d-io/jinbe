@@ -45,9 +45,14 @@ vi.mock('../../../services/rbac.service.js', () => ({
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn().mockResolvedValue(undefined) },
 }))
+// A person's import clears the escalation guard (grant only what you hold), which asks OPA.
+vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 
 import { rbacBundleService, BundleValidationError, type AuthBundle } from '../../../services/rbac-bundle.service.js'
 import { redisRbacRepository, type OathkeeperRule } from '../../../services/redis-rbac.repository.js'
+import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
+
+const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
 
 function makeBundle(overrides: Partial<AuthBundle['rbac']> = {}): AuthBundle {
   return {
@@ -69,6 +74,8 @@ describe('RbacBundleService — import validation, history, rollback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     redisMock.clear()
+    resetOpaWorld()
+    opaWorld.superAdmins.add(ADMIN.email)
   })
 
   // Fail-closed: with the default enabled sets (cookie_session,noop /
@@ -188,7 +195,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
   describe('import history (rbac:import:history)', () => {
     it('pushes a pre-import snapshot on every import, newest first, with actor + reason', async () => {
-      await rbacBundleService.import(makeBundle(), { email: 'admin@example.com' })
+      await rbacBundleService.import(makeBundle(), ADMIN)
       await rbacBundleService.import(makeBundle({ services: ['jinbe', 'kuma'] }))
 
       const history = await redisRbacRepository.getImportHistory()
@@ -239,7 +246,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
       // head of history = snapshot taken before B was applied → state A
       const [preB] = await rbacBundleService.listImportHistory()
-      const { entry, result } = await rbacBundleService.rollback(preB.id, { email: 'admin@example.com' })
+      const { entry, result } = await rbacBundleService.rollback(preB.id, ADMIN)
       expect(entry.id).toBe(preB.id)
       expect(result.rbac.services).toBe(1)
 
@@ -275,6 +282,69 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       expect(await redisRbacRepository.getServices()).toEqual(['jinbe'])
       expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { jinbe: ['admin'] } })
       spy.mockRestore()
+    })
+  })
+
+  // Grant only what you hold: a non-super-admin's import changes no group beyond what they hold.
+  describe('an import by somebody short of a super admin', () => {
+    const OPS = { id: 'id-ops', email: 'ops@example.com' }
+    const seed = async () => {
+      await rbacBundleService.import({
+        ...makeBundle(),
+        rbac: {
+          ...makeBundle().rbac,
+          groups: { 'staff-ops': { global: ['ops'] }, 'staff-security': { global: ['security'] }, readers: { jinbe: ['viewer'] } },
+          roles: { global: { ops: ['zones:write', 'sites:read'], security: ['users:reset_second_factor'] }, jinbe: { admin: ['*'], viewer: ['sites:read'] } },
+        },
+      }, ADMIN)
+      opaWorld.groups[OPS.email] = ['staff-ops']
+    }
+    const bundleWith = async (groups: Record<string, Record<string, string[]>>) => {
+      const current = await rbacBundleService.export()
+      return { ...current, rbac: { ...current.rbac, groups: { ...current.rbac.groups, ...groups } } }
+    }
+    const refusal = async (p: Promise<unknown>) => p.then(() => null, (e) => e as { statusCode?: number; code?: string; refusal?: Record<string, unknown> })
+
+    it('refuses a group granting what they do not hold — nothing written', async () => {
+      await seed()
+      const err = await refusal(rbacBundleService.import(await bundleWith({ helpdesk: { global: ['security'] } }), OPS))
+      expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+      expect(err?.refusal).toMatchObject({ missing: ['users:reset_second_factor'] })
+      expect(await redisRbacRepository.getGroup('helpdesk')).toBeNull()
+    })
+
+    it('refuses a change to a staff group, even within what they hold', async () => {
+      await seed()
+      const err = await refusal(rbacBundleService.import(await bundleWith({ 'staff-security': { global: ['ops'] } }), OPS))
+      expect(err).toMatchObject({ statusCode: 403, code: 'staff_group_super_admin_only' })
+    })
+
+    it("refuses a group granting '*'", async () => {
+      await seed()
+      const err = await refusal(rbacBundleService.import(await bundleWith({ roots: { jinbe: ['admin'] } }), OPS))
+      expect(err).toMatchObject({ statusCode: 403, code: 'grants_everything' })
+    })
+
+    it('lets through an import that changes nothing beyond what they hold', async () => {
+      await seed()
+      await rbacBundleService.import(await bundleWith({ edge: { global: ['ops'] } }), OPS)
+      expect(await redisRbacRepository.getGroup('edge')).toEqual({ global: ['ops'] })
+    })
+
+    it('reads what a group grants off the roles the import leaves: widening a bound role is widening the group', async () => {
+      await seed()
+      const current = await rbacBundleService.export()
+      const bundle = { ...current, rbac: { ...current.rbac, roles: { ...current.rbac.roles, jinbe: { ...current.rbac.roles.jinbe, viewer: ['sites:read', 'users:delete'] } } } }
+      const err = await refusal(rbacBundleService.import(bundle, OPS))
+      expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+      expect(err?.refusal).toMatchObject({ missing: ['users:delete'] })
+    })
+
+    it('fails closed when OPA cannot be asked', async () => {
+      await seed()
+      opaWorld.down = true
+      const err = await refusal(rbacBundleService.import(await bundleWith({ edge: { global: ['ops'] } }), OPS))
+      expect(err?.statusCode).toBe(503)
     })
   })
 })

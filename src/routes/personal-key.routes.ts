@@ -16,6 +16,7 @@ import {
 import {
   forbiddenResponseSchema,
   notFoundResponseSchema,
+  permissionRefusalProperties,
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
@@ -52,7 +53,7 @@ async function personOnly(request: FastifyRequest, reply: FastifyReply) {
   }
 }
 
-const bodyWithDetails = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, details: { type: 'object', additionalProperties: true } } }
+const bodyWithDetails = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, details: { type: 'object', additionalProperties: true }, code: { type: 'string' }, reason: { type: 'string' }, ...permissionRefusalProperties } }
 
 export async function personalKeyRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', personOnly)

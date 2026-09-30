@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   drafts: [] as Array<{ name: string; site: Record<string, unknown> }>,
   site: null as Record<string, unknown> | null,
   emits: [] as Array<Record<string, unknown>>,
+  /** group → the escalation guard's refusal code for it (grant only what you hold). */
+  guard: {} as Record<string, string>,
 }))
 
 vi.mock('../../services/redis-client.service.js', () => ({
@@ -61,6 +63,11 @@ vi.mock('../../services/user-groups.service.js', () => ({
   userGroupsService: { applyGroupUpdate: vi.fn(async (input: Record<string, unknown>) => { h.grants.push(input); return { ok: true, response: {} } }) },
 }))
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateDirectoryStats: vi.fn(async () => {}) } }))
+vi.mock('../../services/rbac-escalation-guard.js', () => ({
+  assertMayAssignGroup: vi.fn(async (group: string) => {
+    if (h.guard[group]) throw Object.assign(new Error('refused'), { statusCode: 403, code: h.guard[group] })
+  }),
+}))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async (e: Record<string, unknown>) => { h.emits.push(e); return '1-0' }) } }))
 vi.mock('../../audit/deny.js', () => ({ denyAudit: vi.fn() }))
 vi.mock('../../sites/repository.js', () => ({
@@ -115,6 +122,7 @@ beforeEach(() => {
   h.sends = []
   h.drafts = []
   h.emits = []
+  h.guard = {}
   h.site = {
     name: 'payroll',
     gates: [{ id: 'web' }, { id: 'api' }],
@@ -277,6 +285,17 @@ describe('groups.members.add', () => {
     expect(job.items[0]).toMatchObject({ status: 'done' })
     expect(h.grants).toHaveLength(1)
     expect(h.grants[0]).toMatchObject({ addGroups: ['billing'], newGroups: [], privilegePolicy: { kind: 'super_admin_required' }, auditExtraDetails: { bulk: job.id } })
+  })
+
+  it('refuses up front what the escalation guard would refuse at run time: a staff group, a grant beyond the caller', async () => {
+    h.facts['staff-security'] = { declared: true, everyOrganisation: true, empty: false }
+    h.facts.edge = { declared: true, everyOrganisation: true, empty: false }
+    h.guard = { 'staff-security': 'staff_group_super_admin_only', edge: 'grant_exceeds_own' }
+    const res = await post('groups.members.add/plan', { items: [{ user: U1, groups: ['staff-security'] }, { user: U2, groups: ['edge'] }] }, G)
+    expect(res.json().items.map((i: { outcome: { reason?: string } }) => i.outcome.reason)).toEqual([
+      'staff_group_super_admin_only:staff-security', 'grant_exceeds_own:edge',
+    ])
+    expect(h.grants).toEqual([])
   })
 
   it('needs a recent second factor (the catalogue step-up on groups.members:write)', async () => {

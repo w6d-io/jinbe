@@ -8,6 +8,7 @@ import { HydraUnavailableError } from '../services/hydra.service.js'
 import { denyAudit } from '../audit/deny.js'
 import { mcpGate } from '../mcp/settings.js'
 import { open } from '../policy/route-access.js'
+import { permissionRefusalProperties } from '../schemas/response-schemas.js'
 
 /**
  * What auth-mcp asks jinbe, so hydra-admin stays closed to everything but jinbe
@@ -82,7 +83,7 @@ const claimsSchema = {
     },
   },
 }
-const refusalSchema = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, reason: { type: 'string' } } }
+const refusalSchema = { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' }, reason: { type: 'string' }, code: { type: 'string' }, ...permissionRefusalProperties } }
 
 export async function mcpRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', actorOnly)

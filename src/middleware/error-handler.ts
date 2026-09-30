@@ -267,9 +267,15 @@ export function errorHandler(
     return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: error.message })
   }
 
-  // Handle custom HTTP errors with statusCode property
+  // Handle custom HTTP errors with statusCode property. A permission refusal (the escalation guard)
+  // carries what the caller can act on — code, what is missing, the groups granting it, a hint —
+  // beside the message it always sent as `error`.
   if ((error as any).statusCode) {
+    const refusal = (error as any).statusCode === 403 && (error as any).refusal && typeof (error as any).refusal === 'object'
+      ? (error as any).refusal as Record<string, unknown>
+      : undefined
     return reply.status((error as any).statusCode).send({
+      ...refusal,
       error: error.message,
       ...(isDevelopment && { stack: error.stack }),
     })
