@@ -162,6 +162,14 @@ describe('DELETE /api/me/mcp/connections/:clientId', () => {
 })
 
 describe('disconnecting all of a person\'s sign-ins', () => {
+  it('DELETE /api/me/mcp/connections disconnects all of your own; a token may not', async () => {
+    expect((await app.inject({ method: 'DELETE', url: '/api/me/mcp/connections', headers: { 'x-via': 'machine' } })).statusCode).toBe(403)
+    const res = await app.inject({ method: 'DELETE', url: '/api/me/mcp/connections' })
+    expect(res.statusCode).toBe(204)
+    expect(h.revokeConsentSessions.mock.calls.map((c) => (c as unknown[])[1]).sort()).toEqual(['c-1', 'c-2'])
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ v1Event: 'mcp.oauth.revoked_all', targetId: 'user-1' }))
+  })
+
   it('DELETE /api/admin/users/:id/mcp-connections needs sessions:revoke and revokes every MCP consent', async () => {
     expect((await app.inject({ method: 'DELETE', url: '/api/admin/users/user-1/mcp-connections' })).statusCode).toBe(403)
     const res = await app.inject({ method: 'DELETE', url: '/api/admin/users/user-1/mcp-connections', headers: { 'x-test-perms': 'sessions:revoke', 'x-test-mfa': '1' } })

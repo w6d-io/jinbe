@@ -49,7 +49,8 @@ export interface ConsentScreen {
   requested: string[]
   offline_access: boolean
   catalog: ConsentCatalogEntry[]
-  protectedActions: { offered: boolean; until: string | null; permissions: string[] }
+  /** `hours`: the administrator's window (oauth.protectedActionsHours), for "for N hours". */
+  protectedActions: { offered: boolean; until: string | null; hours: number; permissions: string[] }
   grantExpiresAt: string
 }
 
@@ -134,7 +135,7 @@ async function inspect(challenge: string, ctx: ConsentContext): Promise<Inspecte
       requested: asked.sort(),
       offline_access: (req.requested_scope ?? []).includes(OFFLINE_SCOPE),
       catalog,
-      protectedActions: { offered, until: until === null ? null : new Date(until).toISOString(), permissions: offered ? protectedPermissions : [] },
+      protectedActions: { offered, until: until === null ? null : new Date(until).toISOString(), hours: o.protectedActionsHours, permissions: offered ? protectedPermissions : [] },
       grantExpiresAt: new Date(grantExpiresAt).toISOString(),
     },
   }

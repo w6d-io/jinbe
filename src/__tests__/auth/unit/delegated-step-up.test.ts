@@ -49,6 +49,7 @@ beforeAll(async () => {
   app.delete('/api/me/api-keys/:clientId', ok)
   app.delete('/api/me/mcp/connections/:clientId', ok)
   app.get('/api/me/mcp/connections', ok)
+  app.delete('/api/me/mcp/connections', ok)
   app.delete('/api/organizations/:organizationId/api-keys/:clientId', { preHandler: guard('org.keys:revoke') }, ok)
   app.delete('/api/admin/rbac/groups/:name/members/:email', { preHandler: guard('groups.members:revoke') }, ok)
   app.delete('/api/admin/sites/:name', { preHandler: guard('sites:delete') }, ok)
@@ -137,6 +138,8 @@ describe('signed-in apps through a token', () => {
     const list = await app.inject({ method: 'GET', url: '/api/me/mcp/connections', headers: { 'x-who': JSON.stringify({ kind: 'oauth' }) } })
     expect(list.statusCode).toBe(403)
     expect(list.json().reason).toBe('delegation_ineligible:api_keys')
+    // Disconnecting ALL of them is a person's call, not a token's.
+    expect((await call('DELETE', '/api/me/mcp/connections', { kind: 'oauth' })).statusCode).toBe(403)
   })
 })
 

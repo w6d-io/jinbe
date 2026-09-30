@@ -186,7 +186,7 @@ describe('consent screen', () => {
       client: { client_id: 'c-1', name: 'Claude Code', name_verified: false, redirect_host: 'localhost:53682', registered_at: '2026-09-30T10:00:00Z' },
       account: { email: 'ann@acme.io', subject: 'user-1' },
       offline_access: true,
-      protectedActions: { offered: true, until: new Date(minutesAgo(2).getTime() + 12 * 3600_000).toISOString(), permissions: ['sites:apply'] },
+      protectedActions: { offered: true, until: new Date(minutesAgo(2).getTime() + 12 * 3600_000).toISOString(), hours: 12, permissions: ['sites:apply'] },
     })
     expect(body.requested).toEqual(['payroll:read', 'settings:read', 'sites:apply', 'sites:read', 'users:read'])
     // payroll:read and settings:read are asked but not held: never offered.
@@ -197,7 +197,7 @@ describe('consent screen', () => {
 
   it('offers no protected actions without a held protected permission, with the window off, or a stale factor', async () => {
     h.held = ['sites:read']
-    expect((await screen()).json().protectedActions).toEqual({ offered: false, until: null, permissions: [] })
+    expect((await screen()).json().protectedActions).toEqual({ offered: false, until: null, hours: 12, permissions: [] })
     h.held = ['sites:apply']
     h.config = { mcp: JSON.stringify({ enabled: true, oauth: { protectedActions: 'off' } }) }
     resetMcpSettingsCache()

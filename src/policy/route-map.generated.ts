@@ -323,6 +323,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"POST","path":"/api/me/api-keys"},
   {"method":"DELETE","path":"/api/me/api-keys/:clientId"},
   {"method":"GET","path":"/api/me/api-keys/scopes"},
+  {"method":"DELETE","path":"/api/me/mcp/connections"},
   {"method":"GET","path":"/api/me/mcp/connections"},
   {"method":"DELETE","path":"/api/me/mcp/connections/:clientId"},
   {"method":"GET","path":"/api/me/organizations"},

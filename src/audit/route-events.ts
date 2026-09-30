@@ -74,6 +74,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /oauth2/register': by('mcp.oauth.client_registered'),
   'POST /api/public/oauth2/consent': by(['mcp.oauth.consent_granted', 'mcp.oauth.consent_denied', 'mcp.oauth.login_refused']),
   'DELETE /api/me/mcp/connections/:clientId': by('mcp.oauth.revoked'),
+  'DELETE /api/me/mcp/connections': by('mcp.oauth.revoked_all'),
   'DELETE /api/admin/users/:id/mcp-connections': by('mcp.oauth.revoked_all'),
   'POST /api/mcp/token-info': exempt('introspects a token for auth-mcp; changes nothing (the calls made with it are audited with actor.act)'),
   'POST /api/mcp/personal-keys/exchange': by('apikey.used'),

@@ -28,6 +28,7 @@ import { notFoundResponseSchema, serviceUnavailableResponseSchema, unauthorizedR
  *   kuma:
  *     GET    /api/me/mcp/connections                 your signed-in apps (connections.ts)
  *     DELETE /api/me/mcp/connections/:clientId       disconnect one
+ *     DELETE /api/me/mcp/connections                 disconnect all of yours
  *     DELETE /api/admin/users/:id/mcp-connections    disconnect all of a person's (sessions:revoke)
  */
 
@@ -210,7 +211,7 @@ export async function oauthProviderRoutes(fastify: FastifyInstance) {
             },
             protectedActions: {
               type: 'object',
-              properties: { offered: { type: 'boolean' }, until: { type: ['string', 'null'] }, permissions: { type: 'array', items: { type: 'string' } } },
+              properties: { offered: { type: 'boolean' }, until: { type: ['string', 'null'] }, hours: { type: 'integer' }, permissions: { type: 'array', items: { type: 'string' } } },
             },
             grantExpiresAt: { type: 'string' },
           },
@@ -314,6 +315,25 @@ export async function mcpConnectionsRoutes(fastify: FastifyInstance) {
     } catch (err) {
       return hydraDown(err, reply)
     }
+  })
+
+  fastify.delete('/', {
+    ...open('self'),
+    schema: {
+      description: 'Disconnect every AI app you signed in with a browser: their tokens stop within 30 seconds and their registrations are deleted.',
+      tags: ['oauth'],
+      response: { 204: { type: 'null' }, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFoundResponseSchema, 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    const me = request.userContext!.id
+    let clients: string[]
+    try {
+      clients = await revokeAllConnections(me)
+    } catch (err) {
+      return hydraDown(err, reply)
+    }
+    oauthAudit('mcp.oauth.revoked_all', { actor: auditActor(request), targetId: me, targetType: 'user', details: { subject: me, clients: clients.length, via: 'self' } })
+    return reply.status(204).send()
   })
 
   fastify.delete('/:clientId', {
