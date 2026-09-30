@@ -15,7 +15,6 @@ import {
   createGroupBodyJsonSchema,
   updateGroupBodyJsonSchema,
   groupJsonSchema,
-  oathkeeperRuleJsonSchema,
 } from '../schemas/rbac/index.js'
 import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-handlers.schema.js'
 
@@ -272,21 +271,8 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.updateServiceRoutes.bind(rbacController) as never)
 
   // ===========================================================================
-  // Access Rules (Oathkeeper)
+  // Oathkeeper handlers
   // ===========================================================================
-
-  fastify.get('/access-rules', {
-    ...needs('sites:read'),
-    schema: {
-      description: 'List all Oathkeeper access rules.',
-      tags: ['rbac'],
-      response: {
-        200: { type: 'object', properties: { rules: { type: 'array', items: oathkeeperRuleJsonSchema } } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-      },
-    },
-  }, rbacController.getAccessRules.bind(rbacController))
 
   fastify.get('/oathkeeper/handlers', {
     ...needs('gateway:read'),
@@ -416,28 +402,4 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 
   // POST /health-check is gone: a constant {status:'ok'} behind admin:read, with no caller — a write
   // verb that asked only for reading, and a liveness answer that checked nothing.
-
-  fastify.get('/history', needs('audit:read'), async (request, reply) => {
-    // Proxy to the rich audit stream — returns FrontendAuditEvent[] as "commits" for backward compat
-    try {
-      const { auditEventService } = await import('../services/audit-event.service.js')
-      const q = request.query as Record<string, string>
-      const perPage = parseInt(q.perPage || '50', 10)
-      const events = await auditEventService.query({ limit: perPage, category: q.category as never })
-      // Map to legacy commit shape so existing callers don't break
-      const commits = events.map(e => ({
-        id:           e.id,
-        message:      `${e.verb} ${e.target}`,
-        authorEmail:  e.who,
-        timestamp:    e.ts,
-        filesChanged: [],
-        // Rich fields (bonus)
-        category: e.category, verb: e.verb, target: e.target, result: e.result,
-        ip: e.ip, ua: e.ua, reason: e.reason,
-      }))
-      return reply.send({ commits, total: commits.length })
-    } catch {
-      return reply.send({ commits: [], total: 0 })
-    }
-  })
 }

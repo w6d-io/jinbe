@@ -158,15 +158,6 @@ export class RbacController {
   }
 
   // ===========================================================================
-  // Access Rules (Oathkeeper)
-  // ===========================================================================
-
-  async getAccessRules(_request: FastifyRequest, reply: FastifyReply) {
-    const result = await rbacService.getAccessRules()
-    return reply.send(result)
-  }
-
-  // ===========================================================================
   // Oathkeeper Handler Catalog
   // ===========================================================================
 

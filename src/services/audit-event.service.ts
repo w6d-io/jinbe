@@ -3,7 +3,7 @@ import { componentLogger } from '../telemetry/logger.js'
 import { getRedisClient } from './redis-client.service.js'
 import { env } from '../config/env.js'
 import { foldCategory, type AuditCategory, type AuditChanges, type AuditEvent, type AuditKind, type AuditResult, type AuditSeverity, type LegacyAuditEvent } from './audit-types.js'
-import { queryPage, summarizeStream, type AuditQueryOptions, type AuditSummary, type FrontendAuditEvent } from './audit-query.js'
+import { queryPage, type AuditQueryOptions, type FrontendAuditEvent } from './audit-query.js'
 import { auditLog as auditV1 } from '../audit/v1/index.js'
 import { legacyToV1 } from '../audit/v1/legacy-map.js'
 
@@ -26,7 +26,7 @@ import { legacyToV1 } from '../audit/v1/legacy-map.js'
 // ─── Rich event schema (audit-types.ts) ─────────────────────────────────────
 
 export * from './audit-types.js'
-export type { AuditQueryOptions, AuditSummary, FrontendAuditEvent } from './audit-query.js'
+export type { AuditQueryOptions, FrontendAuditEvent } from './audit-query.js'
 
 // ─── Prometheus metrics ──────────────────────────────────────────────────────
 
@@ -360,47 +360,6 @@ class AuditEventService {
   /** Events only, newest first — for exports and trails that do not page. */
   async query(options: AuditQueryOptions = {}): Promise<FrontendAuditEvent[]> {
     return (await this.queryPage(options)).events
-  }
-
-  async summary(windowMs: number): Promise<AuditSummary> {
-    return summarizeStream(this.redis, this.streamKey, windowMs)
-  }
-
-  // ── SWR cache for /summary (mirrors getDirectoryStats: fresh-ms + single-
-  // flight). Per-replica in-memory cache is safe because the summary is derived
-  // from the SHARED stream, so every replica computes the same value; the cache
-  // only avoids recomputing the window scan on every request. ──
-  private summaryCache = new Map<number, { computedAt: number; data: AuditSummary }>()
-  private summaryFlight = new Map<number, Promise<AuditSummary>>()
-  private readonly SUMMARY_FRESH_MS = 15_000
-
-  /** SWR-cached windowed summary — returns fresh-or-stale at once, refreshes in bg. */
-  async summaryCached(windowMs: number): Promise<AuditSummary & { computedAt: string; window: number }> {
-    const cached = this.summaryCache.get(windowMs)
-    if (cached) {
-      if (Date.now() - cached.computedAt >= this.SUMMARY_FRESH_MS) {
-        void this.refreshSummary(windowMs).catch(() => {})
-      }
-      return { ...cached.data, computedAt: new Date(cached.computedAt).toISOString(), window: windowMs }
-    }
-    const data = await this.refreshSummary(windowMs)
-    return { ...data, computedAt: new Date().toISOString(), window: windowMs }
-  }
-
-  private refreshSummary(windowMs: number): Promise<AuditSummary> {
-    const inflight = this.summaryFlight.get(windowMs)
-    if (inflight) return inflight
-    const p = (async () => {
-      const data = await this.summary(windowMs)
-      this.summaryCache.set(windowMs, { computedAt: Date.now(), data })
-      return data
-    })().finally(() => this.summaryFlight.delete(windowMs))
-    this.summaryFlight.set(windowMs, p)
-    return p
-  }
-
-  async count(): Promise<number> {
-    return this.redis.xlen(this.streamKey)
   }
 }
 

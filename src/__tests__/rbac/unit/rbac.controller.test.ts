@@ -33,7 +33,6 @@ vi.mock('../../../services/rbac.service.js', () => ({
       service: 'jinbe',
       roles: [{ name: 'admin', permissions: ['*'] }, { name: 'viewer', permissions: ['read'] }],
     }),
-    getAccessRules: vi.fn().mockResolvedValue({ rules: [] }),
     getAccessRule: vi.fn().mockResolvedValue({ rule: { id: 'rule-1', match: {} } }),
     createAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     updateAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
@@ -238,20 +237,6 @@ describe('RbacController', () => {
       )
 
       expect(rbacService.getServiceRoles).toHaveBeenCalledWith('jinbe')
-    })
-  })
-
-  // ===========================================================================
-  // Access Rules
-  // ===========================================================================
-  describe('getAccessRules', () => {
-    it('should return all access rules', async () => {
-      const request = createMockRequest({})
-      const reply = createMockReply()
-
-      await controller.getAccessRules(request, reply)
-
-      expect(rbacService.getAccessRules).toHaveBeenCalled()
     })
   })
 

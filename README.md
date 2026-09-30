@@ -240,23 +240,19 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 ### Services
 | Method | Path | Description |
 |---|---|---|
-| `GET / POST` | `/api/admin/rbac/services` | List / register a service (creates default roles + Oathkeeper rule) |
-| `DELETE` | `/api/admin/rbac/services/:name` | Delete service + all associated data |
+| `GET` | `/api/admin/rbac/services` | List services |
 | `GET / PUT` | `/api/admin/rbac/services/:name/roles` | Read / replace service role-permission map |
 | `GET / PUT` | `/api/admin/rbac/services/:name/routes` | Read / replace route-permission map |
 
 ### Access rules
 | Method | Path | Description |
 |---|---|---|
-| `GET / POST` | `/api/admin/rbac/access-rules` | List / create Oathkeeper access rules |
-| `PUT / DELETE` | `/api/admin/rbac/access-rules/:id` | Update / delete an access rule |
 | `GET` | `/api/oathkeeper/rules` | **Feed Oathkeeper points its `repositories` at this URL.** |
 
 ### Audit
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/admin/audit/events` | Audit event stream |
-| `GET` | `/api/admin/rbac/history` | Mutation history |
+| `GET` | `/api/audit/events` | Audit trail (audit/v1, read from Loki) |
 
 ### Bundle
 | Method | Path | Description |
@@ -267,7 +263,6 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 ### OPA / OPAL
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/opa/bundle` | OPA policy bundle (tar.gz) |
 | `GET` | `/api/admin/rbac/opal-datasource` | OPAL external data source config |
 
 ---

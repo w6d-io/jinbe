@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import Fastify from 'fastify'
 
 // A Redis stream mock that honours XREVRANGE bounds (inclusive, `(` exclusive, `+`/`-`) and COUNT,
 // so paging and scan budgets behave as they do against Redis.
@@ -35,25 +34,16 @@ const { redisMock } = vi.hoisted(() => {
 })
 
 vi.mock('../../../services/redis-client.service.js', () => ({ getRedisClient: () => redisMock }))
-vi.mock('../../../middleware/require-admin.js', () => ({ requireAdmin: vi.fn(async () => undefined) }))
 
 import { auditEventService } from '../../../services/audit-event.service.js'
-import { auditRoutes } from '../../../routes/audit.routes.js'
 import { auditLog } from '../../../audit/v1/index.js'
 
 auditLog.useSinks({ write: () => {}, outbox: { append: async () => '' } })
 
-async function app() {
-  const fastify = Fastify()
-  await fastify.register(auditRoutes, { prefix: '/api/admin/audit' })
-  await fastify.ready()
-  return fastify
-}
-
-async function events(url: string) {
-  const res = await (await app()).inject({ method: 'GET', url: `/api/admin/audit/events${url}` })
-  expect(res.statusCode).toBe(200)
-  return res.json() as { events: Array<{ id: string; kind: string; target: string }>; nextCursor: string | null }
+// The trail the Home's change tile and the access review read (auditEventService.query).
+async function events(qs: string) {
+  const p = Object.fromEntries(new URLSearchParams(qs))
+  return auditEventService.queryPage({ ...p, ...(p.limit ? { limit: Number(p.limit) } : {}) } as never)
 }
 
 const actor = { email: 'admin@example.com', id: 'admin-uuid' }

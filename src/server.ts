@@ -30,7 +30,6 @@ import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
-import { auditRoutes } from './routes/audit.routes.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
@@ -176,7 +175,6 @@ export async function buildServer() {
       await api.register(secondFactorSettingsRoutes, { prefix: '/admin/settings' }) // groups that must use 2FA
       await api.register(signInProtectionSettingsRoutes, { prefix: '/admin/settings' }) // bot check + sign-up policy
       await api.register(mcpSettingsRoutes, { prefix: '/admin/settings' }) // AI assistants (MCP) switch, under the env ceiling
-      await api.register(auditRoutes, { prefix: '/admin/audit' })           // legacy Redis trail, until AUD-14
       await api.register(auditApiRoutes, { prefix: '/audit' })              // audit/v1 from Loki, scoped (AUD-9)
       await api.register(homeRoutes, { prefix: '/home' }) // briefing, own scope guard — NOT under /admin (requireAdmin would lock out support and org admins)
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)

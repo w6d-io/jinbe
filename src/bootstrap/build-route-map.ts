@@ -87,13 +87,10 @@ const HAND_ROUTES: readonly RouteRule[] = [
   { method: 'GET',    path: '/api/admin/rbac/services',             permission: 'admin:read' },
   { method: 'GET',    path: '/api/admin/rbac/services/:name/roles', permission: 'admin:read' },
   { method: 'PUT',    path: '/api/admin/rbac/services/:name/routes', permission: 'admin:update' },
-  { method: 'GET',    path: '/api/admin/rbac/access-rules',         permission: 'admin:read' },
   // Lists what another user holds: only holders of `*` (super_admin, global admin) carry admin:write.
   { method: 'POST',   path: '/api/admin/rbac/access-check',         permission: 'admin:write' },
-  { method: 'GET',    path: '/api/admin/rbac/history',              permission: 'admin:read' },
 
   // Audit
-  { method: 'GET',    path: '/api/admin/audit/:any*',               permission: 'admin:read' },
   // audit/v1 (AUD-9). No gateway permission: an org admin holds no platform permission to test here,
   // and /me/logins is every user's own. jinbe resolves the scope itself (platform audit:read /
   // admin:read → all; org admin → their orgs, org filter injected server-side) and refuses the rest.

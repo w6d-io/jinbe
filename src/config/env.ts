@@ -378,7 +378,8 @@ export const envSchema = z.object({
   REDIS_AUDIT_MAXLEN: z.string().transform(Number).pipe(z.number().int().positive()).default('100000'),
   // Where audit events go. `legacy` — the Redis stream above only. `dual` — that stream AND the
   // audit/v1 line (stdout, `log_type:"audit"`) plus its outbox. `v1` — the v1 line and outbox only;
-  // the legacy /admin/audit reads then stop receiving new rows.
+  // the Redis-stream readers (the Home's change tile, the access review's trail) then stop
+  // receiving new rows.
   AUDIT_SINK: z.enum(['legacy', 'dual', 'v1']).default('dual'),
   // Key for the HMACs that stand in for an IP, a session id or an unknown identifier in audit/v1.
   // Unset: those fields are left out (the truncated network is still written).
