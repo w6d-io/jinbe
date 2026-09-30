@@ -5,6 +5,9 @@ import { groupsForSubjects } from '../services/organisation-store.js'
 import { allows } from '../services/user-permissions.js'
 import { callerRights, demandPermissions } from './require-permission.js'
 import { requireRecentMfa } from './require-admin.js'
+import { delegationRefusal } from './delegation-gate.js'
+import { keyStepUpVerdict } from './delegated-step-up.js'
+import { denyAudit } from '../audit/deny.js'
 
 /**
  * PUT /api/admin/users/:email/groups replaces a person's platform groups. What it needs depends on
@@ -33,8 +36,20 @@ export const requireMembershipChange = enforcing(async function (
   if (identity) current = (await groupsForSubjects([identity.id])).get(identity.id) ?? []
 
   const adds = wanted.some((g) => !current.includes(g))
+  const removes = current.some((g) => !wanted.includes(g))
+  // Through a key (owner decision 2026-09-30): adding is normal work, removing is a deletion — by hand.
+  // The global gate leaves this route to its guard (guard-checked); what the call really is is decided here.
+  if (request.userContext?.authVia === 'delegated') {
+    const refusal = delegationRefusal(request, removes ? 'groups.members:revoke' : 'groups.members:write')
+    if (refusal) {
+      denyAudit(request, refusal)
+      return reply.status(403).send({ error: 'Forbidden', code: 'delegation_refused', message: 'This credential acts for a user through a client and may not use this route.', reason: refusal })
+    }
+  }
   if (!(await demandPermissions(request, reply, [adds ? 'groups.members:write' : 'groups.members:revoke']))) return reply
-  if (adds) {
+  // A key's creation-time second factor stands in for an addition (delegated-step-up.ts): asked with
+  // the permission this call really is, not the route's declared one.
+  if (adds && !keyStepUpVerdict(request, 'groups.members:write').ok) {
     await requireRecentMfa(request, reply)
     if (reply.sent) return reply
   }

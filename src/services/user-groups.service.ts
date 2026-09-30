@@ -26,6 +26,12 @@ export type GroupUpdateActor = {
   authenticatedAt?: Date | string
   secondFactorAt?: Date | string | null
   authVia?: 'session' | 'bearer' | 'machine' | 'dev' | 'delegated'
+  /**
+   * A personal MCP key standing on the second factor proven at its creation (delegated-step-up.ts —
+   * owner decisions 2026-09-29 (c) and 2026-09-30: group assignment is normal work through a key).
+   * The escalation guard still runs: no `*` group, no super admins, never the caller.
+   */
+  stepUpViaKey?: boolean
 }
 
 /**
@@ -441,7 +447,7 @@ class UserGroupsService {
         hint: 'Re-verify your second factor at /login?aal=aal2&refresh=true, then retry.',
       },
     })
-    const failure = stepUpFailure(actor)
+    const failure = actor.stepUpViaKey ? null : stepUpFailure(actor)
     // A caller proven by a token asserts no second factor this service can read, so sending them to
     // prove one would loop: the answer cannot change. Said under its own name so the console does
     // not offer a step-up that leads nowhere.

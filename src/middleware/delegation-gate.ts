@@ -74,6 +74,13 @@ const KEY_REVOKE = [
   /^\/api\/organizations\/:organizationId\/api-keys\/:clientId$/,
 ]
 
+// Routes whose permission depends on the request, decided by their own guard with delegationRefusal
+// (e.g. a membership change: adding is groups.members:write, removing is a deletion). The global gate
+// still refuses them for the backstop and self-change rules.
+const GUARD_DECIDED: readonly { method: string; pattern: RegExp }[] = [
+  { method: 'PUT', pattern: /^\/api\/admin\/users\/:email\/groups$/ },
+]
+
 /** Why no delegated caller may reach this route pattern (rule 1), or null. */
 export function ineligibleWhy(method: string, pattern: string): string | null {
   if (method === 'DELETE' && KEY_REVOKE.some((p) => p.test(pattern))) return null
@@ -103,6 +110,11 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
   const method = request.method.toUpperCase()
   const pattern = request.routeOptions?.url ?? (request.url || '').split('?')[0]
 
+  if (!permission && GUARD_DECIDED.some((r) => r.method === method && r.pattern.test(pattern))) {
+    const why0 = ineligibleWhy(method, pattern)
+    if (why0) return `delegation_ineligible:${why0}`
+    return targetsSelf(request, method, pattern) ? 'delegation_ineligible:self_change' : null
+  }
   const required = permission ?? declaredRoute(method, pattern)?.permission
   // The catalogue's verdict first: it names the permission a token may never use.
   if (required && (required === EVERYTHING || specOf(required)?.delegable === 'never')) return `delegation_ineligible:${required}`
