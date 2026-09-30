@@ -67,7 +67,7 @@ describe('platformScopes — what a personal key may carry', () => {
       'org:read', 'org:write', 'recert:read', 'sessions:read',
       'settings:read', 'sites:apply', 'sites:read', 'sites:write',
       'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
-      'users:update', 'zones:read',
+      'users:update', 'users:update_email', 'users:verify', 'zones:read',
     ])
   })
 

@@ -1,4 +1,4 @@
-import { grants, type Permission } from '../policy/catalog.js'
+import { CATALOG, effectivePermissions, grants, type Permission } from '../policy/catalog.js'
 
 /**
  * What a user-management check may name: a catalogue permission (policy/catalog.ts). The coarse
@@ -10,6 +10,21 @@ export type CheckedPermission = Permission
 /** Whether these held permissions allow the required one (`*`, itself, or a legacy alias of it). */
 export function allows(held: readonly string[], required: string): boolean {
   return grants(held, required)
+}
+
+/**
+ * The administrative rights among these held names: every catalogue permission above `low`
+ * sensitivity (the wildcard is all of them). Everyday site permissions are left out: an administrator
+ * can hand those out anyway. What a takeover-shaped action (removing a second factor, changing the
+ * sign-in address) compares: nobody may do it to somebody holding one they do not.
+ */
+export function administrativePermissions(held: readonly string[]): Permission[] {
+  return effectivePermissions(held).filter((p) => CATALOG[p].sensitivity !== 'low')
+}
+
+/** Administrative rights `theirs` holds that `mine` does not. */
+export function outranking(theirs: readonly string[], mine: readonly string[]): Permission[] {
+  return administrativePermissions(theirs).filter((p) => !grants(mine, p))
 }
 
 /** The user-management actions a console offers, in the order it lists them. */

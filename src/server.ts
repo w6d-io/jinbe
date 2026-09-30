@@ -22,6 +22,7 @@ import { whoamiRoutes } from './routes/whoami.routes.js'
 import { meRoutes } from './routes/me.routes.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { userManagementRoutes } from './routes/user-management.routes.js'
+import { userAddressRoutes } from './routes/user-address.routes.js'
 import { jobRoutes } from './routes/job.routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgGrantsRoutes } from './routes/org-grants.routes.js'
@@ -179,6 +180,7 @@ export async function buildServer() {
       await api.register(backupItemRoutes, { prefix: '/backup-items' })
       await api.register(databaseAPIRoutes, { prefix: '/database-apis' })
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
+      await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification
       await api.register(adminRoutes, { prefix: '/admin' })
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
       await api.register(rbacRoutes, { prefix: '/admin/rbac' })      // Admin RBAC management (auth required)

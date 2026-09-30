@@ -23,8 +23,7 @@ import {
   secondFactorsOf,
 } from '../services/second-factor-reset.service.js'
 import { lookupUsers, LOOKUP_MAX } from '../services/user-lookup.service.js'
-import { allows, requiredForEdit, type CheckedPermission, type EditableIdentity } from '../services/user-permissions.js'
-import { CATALOG, effectivePermissions } from '../policy/catalog.js'
+import { allows, outranking, requiredForEdit, type CheckedPermission, type EditableIdentity } from '../services/user-permissions.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
   userIdParamSchema,
@@ -172,7 +171,8 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
     preHandler: enforcing(requireEditPermissions, 'users:update'),
     schema: {
       description:
-        'Update a user. Needs users:update for the traits, users:update_email for the address, users:disable for the state, users.metadata:write for the schema and metadata.',
+        'Update a user. Needs users:update for the traits, users:disable for the state, users.metadata:write for the schema and metadata. ' +
+        'The address is not changed here (422 use_email_endpoint): use POST /admin/users/:id/email.',
       tags: ['admin'],
       params: idParams,
       body: userUpdateJsonSchema,
@@ -321,7 +321,12 @@ async function requireCreatePermissions(request: FastifyRequest, reply: FastifyR
   if (!(await demandPermissions(request, reply, required))) return reply
 }
 
-/** An edit needs what it changes: the name, the address, or (outside the traits) administration. */
+/**
+ * An edit needs what it changes: the name, or (outside the traits) administration. The address is
+ * not changed here any more: POST /admin/users/:id/email does it with the checks an address change
+ * needs (unverified until confirmed, a notice to the old address, a hashed history, no oracle for a
+ * taken address). A PUT that would change it answers 422 use_email_endpoint.
+ */
 async function requireEditPermissions(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
   // Decide on the caller first: somebody who may edit nothing learns nothing about the user.
   const rights = await callerRights(request, reply)
@@ -332,6 +337,12 @@ async function requireEditPermissions(request: FastifyRequest<{ Params: { id: st
   }
   const current = await kratosService.getIdentity(request.params.id)
   const required = requiredForEdit(current as EditableIdentity, (request.body ?? {}) as EditableIdentity)
+  if (required.includes('users:update_email')) {
+    return reply.status(422).send({
+      error: 'use_email_endpoint',
+      message: 'The sign-in address is changed with POST /api/admin/users/:id/email, not here.',
+    })
+  }
   if (!(await demandPermissions(request, reply, required))) return reply
 }
 
@@ -414,12 +425,10 @@ async function secondFactorsHandler(request: FastifyRequest<{ Params: { id: stri
  * The guard the route table cannot express: this is about WHO the target is.
  *   - never yourself: removing your own factor is the settings page's job, where Kratos asks for
  *     the factor first — this path would let a stolen session strip the account's last defence;
- *   - never somebody holding an administrative right you do not: with the address editable and a
- *     sign-in link one click away, removing a stronger account's factor is taking the account over.
- *     Administrative = every catalogue permission above `low` sensitivity (the wildcard is all of
- *     them). Everyday site permissions are left out: an administrator can hand those out anyway.
+ *   - never somebody holding an administrative right you do not (user-permissions.ts `outranking`):
+ *     with the address editable and a sign-in link one click away, removing a stronger account's
+ *     factor is taking the account over.
  */
-const administrative = (held: readonly string[]) => effectivePermissions(held).filter((p) => CATALOG[p].sensitivity !== 'low')
 
 async function resetSecondFactorsHandler(
   request: FastifyRequest<{ Params: { id: string }; Body: { reason: string; revokeSessions?: boolean } }>,
@@ -452,9 +461,7 @@ async function resetSecondFactorsHandler(
     } catch {
       return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify the user\'s rights. Please try again later.' })
     }
-    const mine = request.rbacInfo?.permissions ?? []
-    const beyond = administrative(theirs).filter((p) => !allows(mine, p))
-    if (beyond.length) {
+    if (outranking(theirs, request.rbacInfo?.permissions ?? []).length) {
       return reply.status(403).send({
         error: 'outranked',
         message: 'This user holds administrative rights you do not. Only somebody holding them can remove their two-step sign-in.',
