@@ -5387,7 +5387,9 @@ paths:
     put:
       tags: *a2
       description: "Save the intent as a new version (If-Match: the etag you edited;
-        absent only for a new site)"
+        absent only for a new site). ephemeral {ttl?}: paused automatically when
+        the TTL passes (1 hour to 7 days, 24 hours by default), counted from
+        this save; null: permanent again; absent: unchanged"
       requestBody:
         required: true
         content:
@@ -5824,6 +5826,16 @@ paths:
                 note:
                   type: string
                   maxLength: 280
+                ephemeral:
+                  type: object
+                  properties:
+                    ttl:
+                      anyOf:
+                        - type: integer
+                        - type: string
+                          pattern: ^\d{1,5}[mhd]$
+                  additionalProperties: false
+                  nullable: true
               required:
                 - site
               additionalProperties: false
@@ -6683,6 +6695,117 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/ttl:
+    post:
+      tags: &a4
+        - sites
+      description: "Extend an ephemeral site: its expiry becomes now + ttl (seconds or
+        30m/12h/3d, 1 hour to 7 days; its own TTL when left out). An expired
+        site stays paused: resuming it is sites:apply. 409 not_ephemeral for a
+        permanent site"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl:
+                  anyOf:
+                    - type: integer
+                    - type: string
+                      pattern: ^\d{1,5}[mhd]$
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/deletion-requests:
+    post:
+      tags: *a4
+      description: Ask for the site to be deleted; a person holding sites:delete,
+        other than the requester, decides. 409 deletion_request_pending while
+        one is open
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 280
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests:
+    get:
+      tags: *a4
+      description: Deletion requests, newest first
+        (?state=pending|approved|rejected|cancelled, ?site=)
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/pending:
+    get:
+      tags: *a4
+      description: "The deletion inbox: pending requests, oldest first, with
+        requestedByYou (the requester cannot approve their own)"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/{id}/approve:
+    post:
+      tags: *a4
+      description: "Approve a deletion request: deletes the site as the approver
+        (rules first, then its permissions; a 30-day snapshot). Four-eyes: 403
+        second_approver_required for the requester. Never through a key"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/{id}/reject:
+    post:
+      tags: *a4
+      description: Reject a deletion request, with an optional reason. Never through a key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 280
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/import/preview:
     post:
       tags:
@@ -6988,7 +7111,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration:
     get:
-      tags: &a4
+      tags: &a5
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
@@ -6997,7 +7120,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/preview:
     post:
-      tags: *a4
+      tags: *a5
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
       responses:
@@ -7005,7 +7128,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/parity:
     post:
-      tags: *a4
+      tags: *a5
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
       responses:
@@ -7013,20 +7136,20 @@ paths:
           description: Default Response
   /api/admin/sites/migration/dualrun:
     get:
-      tags: *a4
+      tags: *a5
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
       responses:
         "200":
           description: Default Response
     post:
-      tags: *a4
+      tags: *a5
       description: Start or stop the dual run
       responses:
         "200":
           description: Default Response
   /api/admin/sites/migration/cutover:
     post:
-      tags: *a4
+      tags: *a5
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
       responses:
@@ -7034,7 +7157,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/rollback:
     post:
-      tags: *a4
+      tags: *a5
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
       responses:
@@ -7042,7 +7165,7 @@ paths:
           description: Default Response
   /api/admin/gateway:
     get:
-      tags: &a5
+      tags: &a6
         - gateway
       description: "Every Oathkeeper handler: enabled, global config (secrets masked),
         defaults, the sites using it, form fields; plus rollout status.
@@ -7052,7 +7175,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a5
+      tags: *a6
       description: "Write the Gateway resource (If-Match: the etag you edited). The
         site-operator rolls the gateway pods"
       requestBody:
@@ -7104,7 +7227,7 @@ paths:
           description: Default Response
   /api/admin/gateway/preview:
     post:
-      tags: *a5
+      tags: *a6
       description: "Validate a proposed gateway configuration: handler schemas, in-use
         handlers, fallback, risk flags. Writes nothing"
       requestBody:
@@ -7156,21 +7279,21 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout:
     get:
-      tags: *a5
+      tags: *a6
       description: Rollout progress of the last gateway change (from the Gateway status)
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollout/events:
     get:
-      tags: *a5
+      tags: *a6
       description: Rollout progress as Server-Sent Events, until it settles
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollback:
     post:
-      tags: *a5
+      tags: *a6
       description: Restore the configuration before the last change, re-checked
         against the sites using each handler
       requestBody:
@@ -11199,7 +11322,7 @@ paths:
           description: Default Response
   /api/home:
     get:
-      tags: &a6
+      tags: &a7
         - home
       description: "The Home briefing: every module the caller may see, each with its
         own status, freshness and sources"
@@ -12478,7 +12601,7 @@ paths:
                       super_admins."
   /api/home/{module}:
     get:
-      tags: *a6
+      tags: *a7
       description: One Home module (retry after unavailable, or refresh a single
         tile). 403 with status "forbidden" for a module the caller may not see.
       parameters:

@@ -89,6 +89,13 @@ const SITE: Record<string, AuditEventType> = {
   request: 'site.apply_requested',
   approve: 'site.request_approved',
   reject: 'site.request_rejected',
+  ephemeral: 'site.ephemeral_set',
+  ephemeral_off: 'site.ephemeral_cleared',
+  ttl_renew: 'site.ttl_renewed',
+  expire: 'site.expired',
+  deletion_request: 'site.deletion_requested',
+  deletion_approve: 'site.deletion_approved',
+  deletion_reject: 'site.deletion_rejected',
 }
 
 function eventOf(rich: AuditEvent, legacyType?: string): AuditEventType {

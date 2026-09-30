@@ -177,7 +177,21 @@ export const nameParamsSchema = z.object({ name })
 export const draftBodySchema = z.object({ site: z.unknown(), baseVersion: z.number().int().min(0).optional() }).strict()
 export const previewBodySchema = z.object({ site: siteSchema, baseVersion: z.number().int().min(0).optional() }).strict()
 export const diffBodySchema = z.object({ site: siteSchema.optional() }).strict()
-export const saveBodySchema = z.object({ site: siteSchema, note: z.string().max(280).optional() }).strict()
+/**
+ * An ephemeral site's time to live (wave 19): seconds, or `<n>m|h|d`; 1 hour to 7 days, 24 hours when
+ * left out. When it passes, the site is paused (never deleted).
+ */
+export const EPHEMERAL_TTL = { minSec: 3600, maxSec: 7 * 24 * 3600, defaultSec: 24 * 3600 } as const
+const UNIT_SEC = { m: 60, h: 3600, d: 86_400 } as const
+export const ttlSchema = z
+  .union([z.number().int(), z.string().regex(/^\d{1,5}[mhd]$/, 'seconds, or a duration like 30m, 12h, 3d')])
+  .transform((v) => (typeof v === 'number' ? v : Number(v.slice(0, -1)) * UNIT_SEC[v.slice(-1) as keyof typeof UNIT_SEC]))
+  .refine((sec) => sec >= EPHEMERAL_TTL.minSec && sec <= EPHEMERAL_TTL.maxSec, 'between 1 hour and 7 days')
+export const ephemeralSchema = z.object({ ttl: ttlSchema.optional() }).strict()
+/** `ephemeral`: make the site expire (or move its expiry); null makes it permanent; absent leaves it as it is. */
+export const saveBodySchema = z.object({ site: siteSchema, note: z.string().max(280).optional(), ephemeral: ephemeralSchema.nullable().optional() }).strict()
+export const renewTtlBodySchema = z.object({ ttl: ttlSchema.optional() }).strict()
+export const deletionRequestBodySchema = z.object({ reason: z.string().max(280).optional() }).strict()
 /** Codes of the security findings (findings.ts) a person confirms by publishing: `confirm` findings only. */
 export const acknowledgeSchema = z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'a finding code')).max(32)
 export const applyBodySchema = z.object({ version: z.number().int().min(1), acknowledge: acknowledgeSchema.optional() }).strict()

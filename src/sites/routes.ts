@@ -15,13 +15,16 @@ import { assertGatesAuthenticated } from './checks.js'
 import { siteOpsRoutes } from './ops.routes.js'
 import { migrationRoutes } from './migration/routes.js'
 import { siteImportRoutes } from './openapi/routes.js'
+import { siteLifecycleRoutes } from './lifecycle.routes.js'
+import { setEphemeral } from './ephemeral.js'
 
 /**
  * /api/admin/sites — plug a site (SERVICE_PLUG.md, site-ux.md §14.2).
  *
  * Each route names its catalogue permission as the first argument of `doc`: reading `sites:read`,
- * drafts, saves and requests `sites:write`, anything that changes what the gateway serves — apply,
- * rollback, pause/resume, restore — `sites:apply`, deleting `sites:delete`, zones `zones:*`; the
+ * drafts, saves, requests (apply and deletion) and TTL renewals `sites:write`, anything that changes what the gateway serves — apply,
+ * rollback, pause/resume, restore — `sites:apply`, deleting and deciding a deletion request
+ * `sites:delete`, zones `zones:*`; the
  * catalogue adds the second factor proven in the last 15 minutes where it says stepUp.
  *
  * Bodies are validated by zod here, and only here: the JSON schemas below document them in the
@@ -98,15 +101,16 @@ export async function sitesRoutes(fastify: FastifyInstance) {
     return out
   }))
 
-  fastify.put('/:name', { ...docNamed('sites:write', 'Save the intent as a new version (If-Match: the etag you edited; absent only for a new site)', saveBodySchema) },
+  fastify.put('/:name', { ...docNamed('sites:write', 'Save the intent as a new version (If-Match: the etag you edited; absent only for a new site). ephemeral {ttl?}: paused automatically when the TTL passes (1 hour to 7 days, 24 hours by default), counted from this save; null: permanent again; absent: unchanged', saveBodySchema) },
     handle(async (request, reply) => {
       const name = nameOf(request)
       // A gate that lets nobody in is 422 (like a draft), not a schema 400.
       assertGatesAuthenticated((request.body as { site?: unknown } | null)?.site)
       const body = parse(saveBodySchema, request.body)
       const record = await sites.save(name, body.site, { note: body.note, ifMatch: request.headers['if-match'] as string | undefined, actor: actorOf(request) })
+      const ephemeral = body.ephemeral === undefined ? undefined : await setEphemeral(name, body.ephemeral, actorOf(request))
       reply.header('etag', `"${record.etag}"`)
-      return { name, version: record.version, etag: record.etag, savedAt: record.savedAt }
+      return { name, version: record.version, etag: record.etag, savedAt: record.savedAt, ...(ephemeral !== undefined ? { ephemeral } : {}) }
     }))
 
   fastify.delete('/:name', { ...docNamed('sites:delete', 'Delete a site: rules first, then its permissions; a snapshot is kept 30 days') },
@@ -157,8 +161,10 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.get('/:name/blast-radius', docNamed('sites:read', 'What deleting the site would take with it'), handle(async (request) => ops.blastRadius(nameOf(request))))
 
-  // Day-2 (status, drift, timelines, requests, logo), OpenAPI import, and the one-time migration.
+  // Day-2 (status, drift, timelines, requests, logo), lifecycle (TTL, deletion requests), OpenAPI
+  // import, and the one-time migration.
   await fastify.register(siteOpsRoutes)
+  await fastify.register(siteLifecycleRoutes)
   await fastify.register(siteImportRoutes)
   await fastify.register(migrationRoutes, { prefix: '/migration' })
 }

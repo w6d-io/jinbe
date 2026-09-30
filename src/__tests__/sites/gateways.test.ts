@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
   dns: {} as Record<string, string[]>,
 }))
 
-vi.mock('../../services/redis-client.service.js', () => ({ getRedisClient: () => ({}) }))
+vi.mock('../../services/redis-client.service.js', () => ({ getRedisClient: () => ({ hgetall: async () => ({}), hget: async () => null }) }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
 vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
 vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
