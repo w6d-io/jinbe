@@ -16,7 +16,6 @@ import { JINBE_BUILT_IN_ROUTES } from '../../bootstrap/build-route-map.js'
  * input — each says where. An entry that a route starts declaring, or that stops existing, fails.
  */
 const CHECKED_INSIDE_A_GUARD: Record<string, string> = {
-  'groups.members:write': 'PUT /api/admin/users/:email/groups asks it when the diff adds anybody (require-membership-change.ts); POST /api/admin/users when groups are given',
 }
 
 let app: FastifyInstance

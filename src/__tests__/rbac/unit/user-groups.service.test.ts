@@ -137,6 +137,23 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
     expect(allGranted()).toEqual([])
   })
 
+  it('add-only mode keeps what the user holds under the lock and ignores newGroups (a bulk add never removes)', async () => {
+    holds('platform-operator')
+
+    await userGroupsService.applyGroupUpdate({
+      identity: IDENTITY,
+      newGroups: [],
+      addGroups: ['users', 'platform-operator', 'users'],
+      actor: ACTOR,
+      privilegePolicy: { kind: 'super_admin_required' },
+      auditEventType: 'user.groups_changed',
+    })
+
+    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['platform-operator', 'users'])
+    expect(allRevoked()).toEqual([])
+    expect(allGranted()).toEqual(['users'])
+  })
+
   it('emits audit event with extra details merged into details object', async () => {
     await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,

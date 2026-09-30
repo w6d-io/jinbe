@@ -68,6 +68,11 @@ export type ActorPrivilegePolicy =
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
   newGroups: string[]
+  /**
+   * Add-only: the final groups are what the user holds UNDER THE LOCK plus these, and `newGroups` is
+   * ignored. A bulk add computed from an earlier read must never take away a group granted since.
+   */
+  addGroups?: string[]
   // `aal` / `secondFactorAt` carry the actor's second-factor state for the R2
   // step-up gate; sourced from the Kratos-validated session (request.userContext).
   actor: GroupUpdateActor
@@ -115,7 +120,7 @@ const ORG_ADMIN_FLAG_GROUP = 'org_admins'
  */
 class UserGroupsService {
   async applyGroupUpdate(input: ApplyGroupUpdateInput): Promise<ApplyGroupUpdateResult> {
-    const { identity, newGroups, actor, privilegePolicy, auditEventType, auditExtraDetails } = input
+    const { identity, newGroups, addGroups, actor, privilegePolicy, auditEventType, auditExtraDetails } = input
 
     // Serialize all group updates for THIS user under a per-user lock. The
     // removal privilege gate is computed from the oldGroups pre-image (read
@@ -172,7 +177,7 @@ class UserGroupsService {
     // granting nothing AND made "holds no group" unreachable: taking the last one away returned 200
     // and left the person exactly where they were. Holding nothing is a legitimate state, and in the
     // store that decides it is simply the absence of a row.
-    const finalGroups = newGroups
+    const finalGroups = addGroups ? [...oldGroups, ...addGroups.filter((g, i) => !oldGroups.includes(g) && addGroups.indexOf(g) === i)] : newGroups
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
     // Groups this (replace-semantics) update REMOVES. Containment must be
     // SYMMETRIC — an org admin may only remove a group they could also grant.

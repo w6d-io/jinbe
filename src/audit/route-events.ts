@@ -101,6 +101,14 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/users/:id/login-link': by('user.login_link_sent'),
   'POST /api/admin/users/:id/email': by(['user.email_changed', 'user.address_notice_pending']),
   'POST /api/admin/users/:id/verification': by('user.verification_sent'),
+  'POST /api/admin/bulk/sites.routes.upsert/plan': exempt('a dry run: judges the items, writes nothing but the plan (kept 1 h)'),
+  'POST /api/admin/bulk/sites.routes.upsert/execute': by(['bulk.executed', 'site.draft_saved']),
+  'POST /api/admin/bulk/users.invite/plan': exempt('a dry run: judges the items, writes nothing but the plan (kept 1 h)'),
+  'POST /api/admin/bulk/users.invite/execute': by(['bulk.executed', 'user.created']),
+  'POST /api/admin/bulk/users.verification/plan': exempt('a dry run: judges the items, writes nothing but the plan (kept 1 h)'),
+  'POST /api/admin/bulk/users.verification/execute': by(['bulk.executed', 'user.verification_sent']),
+  'POST /api/admin/bulk/groups.members.add/plan': exempt('a dry run: judges the items, writes nothing but the plan (kept 1 h)'),
+  'POST /api/admin/bulk/groups.members.add/execute': by(['bulk.executed', 'rbac.user_groups.changed']),
   'POST /api/admin/users/:id/second-factors/reset': by('user.second_factor_reset'),
 
   // Sites (src/sites calls auditSite — audit/record.ts)
