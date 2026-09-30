@@ -48,6 +48,7 @@ import { apiKeyRoutes, apiKeyInternalRoutes } from './routes/api-key.routes.js'
 import { personalKeyRoutes } from './routes/personal-key.routes.js'
 import { mcpRoutes } from './routes/mcp.routes.js'
 import { delegationGate } from './middleware/delegation-gate.js'
+import { registerIdempotency } from './middleware/idempotency.js'
 import { scimRoutes } from './routes/scim.routes.js'
 import { recertRoutes } from './routes/recert.routes.js'
 import { testDatabaseConnection, applyMongoValidation } from './utils/prisma.js'
@@ -115,6 +116,11 @@ export async function buildServer() {
   // A user acting through a client (delegated token) reaches only what its scopes cover, in its one
   // organization, and never an ineligible route — before any route gate runs (middleware/delegation-gate.ts).
   fastify.addHook('preHandler', delegationGate)
+
+  // `Idempotency-Key` on POST/PUT/PATCH, for every caller that sends one: a retried write replays the
+  // first answer instead of doing the work twice (middleware/idempotency.ts). After the gate, so a
+  // refused caller never claims a key.
+  registerIdempotency(fastify)
 
   // Register other plugins
   await fastify.register(rateLimitPlugin)
