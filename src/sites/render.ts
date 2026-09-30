@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { FlatRolesMap, GroupDefinition, OathkeeperRule, RouteRule } from '../services/redis-rbac.repository.js'
 import { orgParamProblem } from '../policy/route-org-param.js'
+import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
 import { defaultServiceRoles } from '../services/rbac-defaults.js'
 import { HTTP_METHODS, SYSTEM_SITES, type Access, type Gate, type Handler, type Route, type Site } from './schemas.js'
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
@@ -89,7 +90,14 @@ export const MATCH_URL_MAX = 4096
 const DENY_GATE = 'deny'
 const CATCH_ALL_ID = 'catch-all'
 // Static paths under /api/admin/sites and the migrated system sites: a site by that name would be shadowed.
-const RESERVED_NAMES = ['migration', 'requests', 'deletion-requests', 'preview', 'zones', 'check-host', 'match', 'render', 'platform', 'sign-in']
+/**
+ * Names a site may not take: every fixed segment right under /api/admin/sites, read off the published
+ * route table (GET /deleted would answer instead of GET /:name for a site called `deleted`), the fixed
+ * ones under /api/public/sites (not in that table: public routes), and `sign-in`. A new fixed route is
+ * reserved by regenerating the route map; site-reserved-names.test.ts fails until it is.
+ */
+const ADMIN_SEGMENTS = GENERATED_ROUTE_MAP.map((r) => /^\/api\/admin\/sites\/([^/:]+)/.exec(r.path)?.[1]).filter((s): s is string => !!s)
+export const RESERVED_NAMES: readonly string[] = [...new Set([...ADMIN_SEGMENTS, 'by-host', 'mine', 'sign-in'])].sort()
 // The services the operator and admission refuse as upstreams in any namespace (site-operator):
 // the identity admin API, the policy engine and its feeder, the data stores.
 const FORBIDDEN_SERVICE = /^(kratos-admin|opa|opal(-.*)?|redis(-.*)?|postgres(ql)?(-.*)?)$/
