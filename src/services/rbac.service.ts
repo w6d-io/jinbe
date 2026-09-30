@@ -1254,6 +1254,8 @@ export class RbacService {
   // rostered non-member is inert — they gain nothing until they're a member.
   async setOrgAdmins(organizationId: string, admins: string[], actor?: AuditActorInput): Promise<void> {
     const before = await redisRbacRepository.getOrgAdmins(organizationId)
+    // Stored lowercased (redis-rbac.repository.ts): the diff compares what is stored.
+    admins = [...new Set(admins.map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0))]
     await redisRbacRepository.setOrgAdmins(organizationId, admins)
     // The roster is a list of addresses: the legacy stream keeps them as it always has, and audit/v1
     // replaces each with its HMAC (scrubEmails) — who was added stays comparable, not readable.

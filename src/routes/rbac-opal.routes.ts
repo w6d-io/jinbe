@@ -11,6 +11,7 @@ import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSucce
 import { mirrorOpalFetch } from '../home/runtime.js'
 import { apiClientsDataset } from '../services/api-clients.js'
 import { open } from '../policy/route-access.js'
+import { bindingsWithLowercaseKeys, rosterForPolicy } from '../services/email-spellings.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -42,7 +43,8 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     try {
       const [bindings, groups] = await Promise.all([rbacService.getBindingsFromKratos(), redisRbacRepository.getGroups()])
-      return reply.send({ ...bindings, groups })
+      // Each address also under its lowercase key: the roster is lowercased (email-spellings.ts).
+      return reply.send({ ...bindingsWithLowercaseKeys(bindings), groups })
     } catch (err) {
       // 503, never an empty or partial dataset. OPAL skips an entry whose fetch fails and leaves what OPA
       // already holds at /bindings (opal_client/data/updater.py `_store_fetched_update`); an empty
@@ -89,10 +91,18 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     return reply.send(map)
   })
 
-  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map).
-  fastify.get('/opal/org_admin_map', open('machine'), async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgAdminMap()
-    return reply.send(map)
+  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map). Every spelling of
+  // each entry (as stored, lowercased, as the identity spells it) while the policy compares addresses
+  // exactly; the identities are best effort — without them the stored and lowercase spellings still go.
+  fastify.get('/opal/org_admin_map', open('machine'), async (request, reply) => {
+    const stored = await redisRbacRepository.getOrgAdminMapAsStored()
+    let addresses: string[] = []
+    try {
+      addresses = Object.keys((await rbacService.getBindingsFromKratos()).group_membership)
+    } catch (err) {
+      request.log.warn({ err: (err as Error).message }, 'org_admin_map: identities unavailable — publishing stored and lowercase spellings only')
+    }
+    return reply.send(rosterForPolicy(stored, addresses))
   })
 
   // Org grants: { organizationId: { email: [group, …] } } (feeds data.org_grants). 503 on a store

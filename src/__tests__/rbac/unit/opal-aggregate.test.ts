@@ -33,6 +33,7 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
     },
     getOrgServiceMap: async () => ({}),
     getOrgAdminMap: async () => ({}),
+    getOrgAdminMapAsStored: async () => ({}),
   },
 }))
 // The other data sources, so a whole-manifest refresh can run: their content does not matter here.
