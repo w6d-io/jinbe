@@ -303,4 +303,19 @@ describe('requireServiceAdmin — the org user routes through a client (MCP list
     const res = await app.inject({ url: '/api/organizations/acme/users', headers: { 'x-test-user': 'super', 'x-test-aal': 'aal1' } })
     expect(res.statusCode).toBe(403)
   })
+
+  it("the refusal carries OPA's reason, not a flattened 'Admin access required': needs_2fa", async () => {
+    const res = await app.inject({ url: '/api/organizations/acme/users', headers: { 'x-test-user': 'super', 'x-test-aal': 'aal1' } })
+    expect(res.json()).toMatchObject({ error: 'Forbidden', code: 'needs_2fa', reason: 'needs_2fa', stepUp: { requiredAal: 'aal2' } })
+    expect(res.json().message).not.toMatch(/Admin access required/)
+    expect(typeof res.json().hint).toBe('string')
+  })
+
+  it('a plain refusal is forbidden with the grant-guard shape (code, reason, grantedBy, hint)', async () => {
+    const res = await call('GET', '/api/organizations/acme/users', 'nobody')
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: 'Forbidden', code: 'permission_required', reason: 'forbidden' })
+    expect(Array.isArray(res.json().grantedBy)).toBe(true)
+    expect(typeof res.json().hint).toBe('string')
+  })
 })
