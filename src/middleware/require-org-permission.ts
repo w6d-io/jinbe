@@ -51,7 +51,7 @@ function caller(request: FastifyRequest): string | null {
  * routes that hand out that org's grants (OPA can_grant still bounds what may be handed out).
  */
 export function requireOrgAdmin(paramName = 'organizationId') {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async function requireOrgAdmin(request: FastifyRequest, reply: FastifyReply) {
     const email = caller(request)
     if (!email) return unauthenticated(reply)
     const organizationId = (request.params as Record<string, string>)[paramName]
@@ -87,7 +87,7 @@ export function requireOrgAdmin(paramName = 'organizationId') {
  * (`config.permission`), so a plugin can mount one gate for routes needing different permissions.
  */
 export function requireOrgPermission(fixed?: string, paramName = 'organizationId') {
-  const gate = async function (request: FastifyRequest, reply: FastifyReply) {
+  const gate = async function requireOrgPermission(request: FastifyRequest, reply: FastifyReply) {
     const email = caller(request)
     if (!email) return unauthenticated(reply)
     const organizationId = (request.params as Record<string, string>)[paramName]

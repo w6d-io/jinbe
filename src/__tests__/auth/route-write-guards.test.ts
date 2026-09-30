@@ -26,6 +26,7 @@ const EXCEPTIONS: Record<string, string> = {
   'POST /api/admin/sites/render': 'renders a header/claims template as Oathkeeper would (gatekit); writes nothing',
   'POST /api/admin/sites/:name/verify': 'reads the rollout, asks the policy and sends anonymous GET/HEAD probes to the public URL; writes nothing (1 per site per 30 s)',
   'POST /api/admin/gateway/preview': 'validates a proposed gateway configuration; writes nothing',
+  'POST /api/admin/rbac/explain-route': "explains one route's verdict (guards run in a dry run); about anybody but the caller it needs access:check",
 
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────
   'POST /api/audit/saved-queries': "the caller's own saved query; a shared one is refused outside the caller's audit scope",
