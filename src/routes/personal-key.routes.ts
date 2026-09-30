@@ -26,7 +26,7 @@ import { open } from '../policy/route-access.js'
  *
  * 404 on every route unless MCP is on: DELEGATED_TOKENS_ENABLED (the deployment's ceiling) and the
  * administrator's switch (mcp/settings.ts, Settings → AI assistants). A person only: a machine caller has no
- * personal keys, and a delegated caller never reaches here (middleware/delegation-gate.ts).
+ * personal keys, and a delegated caller only reaches the revoke (middleware/delegation-gate.ts).
  *
  * GET    /            - the caller's keys (no secrets)
  * GET    /scopes      - the permissions the caller may narrow a key to (what they hold, concrete)
@@ -45,6 +45,8 @@ async function personOnly(request: FastifyRequest, reply: FastifyReply) {
     return reply.status(404).send({ error: 'Not Found', message })
   }
   const via = request.userContext?.authVia
+  // A key may revoke the holder's keys, itself included (owner decision 2026-09-30); revoke() checks ownership.
+  if (via === 'delegated' && request.method === 'DELETE') return
   if (via === 'machine' || via === 'delegated') {
     return reply.status(403).send({ error: 'Forbidden', message: 'Personal API keys are managed by a person, in a browser.' })
   }

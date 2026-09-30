@@ -11,13 +11,14 @@ const s = vi.hoisted(() => ({
   env: { DELEGATED_TOKENS_ENABLED: true },
   scopes: vi.fn(),
   list: vi.fn(async () => [] as unknown[]),
+  revoke: vi.fn(async (_holder: string, clientId: string) => ({ client_id: clientId, all_permissions: false })),
   decorate: vi.fn(async (_r: unknown, views: unknown[]) => views.map((v) => ({ ...(v as object), last_used_at: '2026-09-28T12:00:00.000Z' }))),
 }))
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
 // The MCP setting (mcp/settings.ts) read from rbac:config — unset is OFF, so each test saves it on (every org).
 vi.mock('../../../services/redis-rbac.repository.js', () => ({ redisRbacRepository: { getConfig: async () => s.mcpConfig, setConfig: vi.fn() } }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn().mockResolvedValue(undefined) } }))
-vi.mock('../../../services/personal-key.service.js', () => ({ personalKeyService: { scopes: s.scopes, list: s.list } }))
+vi.mock('../../../services/personal-key.service.js', () => ({ personalKeyService: { scopes: s.scopes, list: s.list, revoke: s.revoke } }))
 vi.mock('../../../services/api-key-views.js', () => ({ decorateKeyViews: s.decorate }))
 
 import { personalKeyRoutes } from '../../../routes/personal-key.routes.js'
@@ -103,5 +104,41 @@ describe('GET /api/me/api-keys', () => {
     const res = await app.inject({ url: '/api/me/api-keys' })
     expect(res.statusCode).toBe(200)
     expect(res.json().data[0]).toMatchObject({ client_id: 'pk', created_by_email: 'ann@acme.io', last_used_at: '2026-09-28T12:00:00.000Z' })
+  })
+
+  it('403 to a delegated or machine caller: a key never lists keys', async () => {
+    expect((await app.inject({ url: '/api/me/api-keys', headers: { 'x-via': 'delegated' } })).statusCode).toBe(403)
+    expect((await app.inject({ url: '/api/me/api-keys', headers: { 'x-via': 'machine' } })).statusCode).toBe(403)
+  })
+})
+
+describe('POST /api/me/api-keys', () => {
+  it('403 to a delegated caller: a key never mints a key', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/me/api-keys', headers: { 'x-via': 'delegated' }, payload: { label: 'k' } })
+    expect(res.statusCode).toBe(403)
+  })
+})
+
+describe('DELETE /api/me/api-keys/:clientId', () => {
+  beforeEach(() => s.revoke.mockClear())
+
+  it('a key revokes a key of its holder (itself included): 204, ownership checked by revoke()', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/me/api-keys/pk1', headers: { 'x-via': 'delegated' } })
+    expect(res.statusCode).toBe(204)
+    expect(s.revoke).toHaveBeenCalledWith('u1', 'pk1')
+  })
+
+  it('a machine caller still cannot revoke', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/me/api-keys/pk1', headers: { 'x-via': 'machine' } })
+    expect(res.statusCode).toBe(403)
+    expect(s.revoke).not.toHaveBeenCalled()
+  })
+
+  it('stays 404 for a key while MCP is off', async () => {
+    s.mcpConfig = { mcp: JSON.stringify({ enabled: false }) }
+    resetMcpSettingsCache()
+    const res = await app.inject({ method: 'DELETE', url: '/api/me/api-keys/pk1', headers: { 'x-via': 'delegated' } })
+    expect(res.statusCode).toBe(404)
+    expect(s.revoke).not.toHaveBeenCalled()
   })
 })
