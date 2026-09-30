@@ -9385,9 +9385,10 @@ paths:
     get:
       tags:
         - rbac
-      description: "OPAL data source: user → groups + org membership, read from
-        Kratos. 503 when Kratos cannot be read, so OPAL keeps the bindings OPA
-        already holds instead of replacing them with an empty set."
+      description: "OPAL data source: all of data.bindings — user → groups + org
+        membership (Kratos) and group → service → roles (`groups`, Redis). 503
+        when either cannot be read, so OPAL keeps the bindings OPA already holds
+        instead of replacing them with an empty or partial set."
       responses:
         "503":
           description: Default Response
@@ -9405,9 +9406,26 @@ paths:
                     type: string
   /api/admin/rbac/opal/groups:
     get:
+      tags:
+        - rbac
+      description: "OPAL data source (older manifests only — now part of /bindings):
+        group → service → roles. 503 when the store cannot be read, so OPAL
+        keeps the groups OPA already holds."
       responses:
-        "200":
+        "503":
           description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/admin/rbac/opal/org_service_map:
     get:
       responses:

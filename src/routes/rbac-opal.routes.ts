@@ -20,39 +20,65 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', requireOpalClient)
   fastify.addHook('onResponse', recordDatasourceFetch)
 
-  // Bindings: user → groups + org membership (from Kratos). Routed through the
-  // service so the shape can't drift from the tested getBindingsFromKratos().
+  // Bindings: user → groups + org membership (from Kratos) AND group → service → roles (from Redis),
+  // i.e. the whole of data.bindings in one document. Routed through the service so the shape can't drift
+  // from the tested getBindingsFromKratos().
+  //
+  // `groups` MUST travel here, not in an entry of its own at /bindings/groups: OPAL writes each entry
+  // with its own PUT and OPA's PUT replaces the subtree, so a PUT on /bindings wiped data.bindings.groups
+  // until the child PUT landed — every group-derived role (super_admin included) denied for that window,
+  // every refresh, and for a whole refresh period whenever the groups fetch failed.
   fastify.get('/bindings', {
     ...open('machine'),
     schema: {
       description:
-        'OPAL data source: user → groups + org membership, read from Kratos. 503 when Kratos cannot be ' +
-        'read, so OPAL keeps the bindings OPA already holds instead of replacing them with an empty set.',
+        'OPAL data source: all of data.bindings — user → groups + org membership (Kratos) and group → ' +
+        'service → roles (`groups`, Redis). 503 when either cannot be read, so OPAL keeps the bindings OPA ' +
+        'already holds instead of replacing them with an empty or partial set.',
       tags: ['rbac'],
       // No 200 schema: the dataset is keyed by email — let it pass through unserialized.
       response: { 503: serviceUnavailableResponseSchema },
     },
   }, async (request, reply) => {
     try {
-      const bindings = await rbacService.getBindingsFromKratos()
-      return reply.send(bindings)
+      const [bindings, groups] = await Promise.all([rbacService.getBindingsFromKratos(), redisRbacRepository.getGroups()])
+      return reply.send({ ...bindings, groups })
     } catch (err) {
-      // 503, never an empty dataset. OPAL skips an entry whose fetch fails and leaves what OPA
+      // 503, never an empty or partial dataset. OPAL skips an entry whose fetch fails and leaves what OPA
       // already holds at /bindings (opal_client/data/updater.py `_store_fetched_update`); an empty
-      // 200 would REPLACE it and deny everybody, super_admin included, until the next fetch.
+      // 200 would REPLACE it and deny everybody, super_admin included, until the next fetch — and a
+      // 200 without `groups` would do the same to every group-derived role.
       // With no previous data OPA still has none at /bindings, and the policy denies on that.
-      request.log.error({ err }, 'bindings: Kratos unavailable — answering 503 so OPAL keeps the last good data')
+      request.log.error({ err }, 'bindings: Kratos or the group store unavailable — answering 503 so OPAL keeps the last good data')
       return reply.status(503).send({
         error: 'Service Unavailable',
-        message: 'Identity bindings could not be read from Kratos. Keep the last good data and retry.',
+        message: 'Identity bindings or groups could not be read. Keep the last good data and retry.',
       })
     }
   })
 
-  // Groups: group → service → roles
-  fastify.get('/opal/groups', open('machine'), async (_request, reply) => {
-    const groups = await redisRbacRepository.getGroups()
-    return reply.send(groups)
+  // Groups: group → service → roles. No longer in the manifest (it travels inside /bindings); kept for an
+  // OPAL client still polling the manifest it pulled before, which writes the same groups right after
+  // /bindings. 503 on a store error, like every data source.
+  fastify.get('/opal/groups', {
+    ...open('machine'),
+    schema: {
+      description:
+        'OPAL data source (older manifests only — now part of /bindings): group → service → roles. 503 when ' +
+        'the store cannot be read, so OPAL keeps the groups OPA already holds.',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send(await redisRbacRepository.getGroups())
+    } catch (err) {
+      request.log.error({ err }, 'groups: store unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({
+        error: 'Service Unavailable',
+        message: 'Groups could not be read. Keep the last good data and retry.',
+      })
+    }
   })
 
   // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
