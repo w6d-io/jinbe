@@ -16,7 +16,7 @@ export type AuditKind     = 'change' | 'access' | 'auth' | 'system' | 'security'
 // Server-authoritative severity. Maps to UI semantic tokens (info/warn/err);
 // `high` is the security-critical tier surfaced via ?risk=high.
 export type AuditSeverity = 'info' | 'warn' | 'high'
-export type AuditFlag     = 'opened_to_public' | 'auth_disabled' | 'grants_super_admin' | 'wildcard_permission'
+export type AuditFlag     = 'opened_to_public' | 'auth_disabled' | 'grants_super_admin' | 'grants_critical'
 
 export interface AuditActor {
   id?:       string | null    // the immutable identity; an address changes hands, this does not

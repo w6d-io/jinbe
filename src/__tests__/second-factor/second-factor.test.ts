@@ -210,7 +210,7 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
     expect(h.config.second_factor_group_flags).toBeUndefined()
     expect(declaredRoute('PUT', '/api/admin/rbac/groups/:name/second-factor')).toMatchObject({ permission: 'groups.mfa:write', stepUp: true })
     expect(CATALOG['groups.mfa:write']).toMatchObject({ stepUp: true, delegable: 'never' })
-    expect(STAFF_ROLES.filter((r) => (ROLES[r].permissions as readonly string[]).includes('groups.mfa:write'))).toEqual([])
+    expect(STAFF_ROLES.filter((r) => (ROLES[r].permissions as readonly string[]).includes('groups.mfa:write'))).toEqual(['super_admin'])
   })
 
   it('PUT the list: listed groups on, every other group off; stored as switches and audited', async () => {

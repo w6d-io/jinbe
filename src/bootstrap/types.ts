@@ -62,6 +62,13 @@ export interface RunBootstrapOptions {
    * JINBE_BOOTSTRAP_DANGEROUS_RESET + JINBE_BOOTSTRAP_RESET_CONFIRM guards.
    */
   force?: boolean
+  /**
+   * The planHash an upgrade from the previous model may apply (the reviewed `--plan`). Without it, an
+   * install the previous model wrote is left untouched and the run fails (MigrationNotApprovedError).
+   */
+  expectPlan?: string | null
+  /** Where the mandatory pre-apply snapshot goes (and S3 when backup is configured). */
+  snapshotDir?: string
 }
 
 export type { OathkeeperRule, RouteRule }

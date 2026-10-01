@@ -10,27 +10,21 @@ const GLOBEX = '22222222-2222-2222-2222-222222222222'
 const s = vi.hoisted(() => ({
   identity: null as null | Record<string, unknown>,
   orgs: [] as string[],
-  grants: {} as Record<string, Record<string, string[]>>,
-  rosters: {} as Record<string, string[]>,
-  grantsFail: false,
+  assignments: {} as Record<string, Record<string, string[]>>,
+  assignmentsFail: false,
   methods: ['totp'] as string[] | null,
   config: {} as Record<string, string>,
   // OPA's answers, keyed on the address as the bindings key it.
-  manageable: {} as Record<string, string[]>,
-  members: {} as Record<string, string[]>,
+  inOrg: {} as Record<string, Record<string, string[]>>,
   opaDown: false,
   asked: [] as string[],
 }))
 
 vi.mock('../../../authz/opa.js', () => ({
-  manageableOrgs: vi.fn(async (email: string) => {
+  orgPermissionsByOrg: vi.fn(async (email: string) => {
     s.asked.push(email)
     if (s.opaDown) throw new Error('OPA unreachable')
-    return s.manageable[email] ?? []
-  }),
-  memberOrgs: vi.fn(async (email: string) => {
-    if (s.opaDown) throw new Error('OPA unreachable')
-    return s.members[email] ?? []
+    return s.inOrg[email] ?? {}
   }),
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: ['sites:read', 'groups:write'] })),
 }))
@@ -55,11 +49,11 @@ vi.mock('../../../services/organisation-store.js', () => ({
   organisationStoreConfigured: () => true,
   organisationsById: vi.fn(async (ids: string[]) => ids.filter((id) => id === ACME).map((id) => ({ id, name: 'Acme' }))),
 }))
-vi.mock('../../../services/org-grants.repository.js', () => ({
-  orgGrantsRepository: {
+vi.mock('../../../services/org-roles.repository.js', () => ({
+  orgRolesRepository: {
     getAll: vi.fn(async () => {
-      if (s.grantsFail) throw new Error('ECONNREFUSED')
-      return s.grants
+      if (s.assignmentsFail) throw new Error('ECONNREFUSED')
+      return s.assignments
     }),
   },
 }))
@@ -68,12 +62,11 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
     getGroups: vi.fn(async () => ({
       'kuma-admins': { kuma: ['admin'] },
       'fleet-viewers': { fleet: ['viewer'], kuma: ['reader'] },
-      super_admins: { global: ['super_admin'] },
+      super_admins: { jinbe: ['super_admin'] },
     })),
-    getOrgAdminMap: vi.fn(async () => s.rosters),
     getConfig: vi.fn(async () => s.config),
     getRoles: vi.fn(async (scope: string) => ({
-      global: { super_admin: ['*'] }, kuma: { admin: ['*'], reader: ['kuma:read'] }, fleet: { viewer: ['fleet:read'] },
+      jinbe: { super_admin: ['users:read'] }, kuma: { admin: ['kuma:write'], reader: ['kuma:read'] }, fleet: { viewer: ['fleet:read'] },
     } as Record<string, Record<string, string[]>>)[scope] ?? null),
   },
 }))
@@ -109,20 +102,18 @@ beforeEach(() => {
     metadata_admin: { groups: ['kuma-admins', 'fleet-viewers'] },
   }
   s.orgs = [ACME, GLOBEX]
-  s.grants = { [ACME]: { 'bob@acme.test': ['fleet-viewers'] } }
-  s.rosters = { [GLOBEX]: ['bob@acme.test'] }
-  s.grantsFail = false
+  s.assignments = { [GLOBEX]: { 'id-bob': ['jinbe:owner'] } }
+  s.assignmentsFail = false
   s.methods = ['totp']
   s.config = {}
   resetSecondFactorSettingsCache()
-  s.manageable = { 'Bob@acme.test': [GLOBEX] }
-  s.members = { 'Bob@acme.test': [ACME, GLOBEX] }
+  s.inOrg = { 'Bob@acme.test': { [GLOBEX]: ['org.keys:read', 'org.members:read', 'org.members:write'] } }
   s.opaDown = false
   s.asked = []
 })
 
 describe('GET /api/admin/users/:id/access', () => {
-  it('answers site groups + roles per service, and each org with admin flag and grants', async () => {
+  it('answers site groups + roles per service, and each org with its org roles and permissions', async () => {
     const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
@@ -131,10 +122,10 @@ describe('GET /api/admin/users/:id/access', () => {
         byService: { kuma: ['admin', 'reader'], fleet: ['viewer'] },
       },
       orgs: [
-        { orgId: ACME, name: 'Acme', admin: false, rostered: false, grants: ['fleet-viewers'] },
-        { orgId: GLOBEX, name: GLOBEX, admin: true, rostered: true, grants: [] },
+        { orgId: ACME, name: 'Acme', roles: [], permissions: [] },
+        { orgId: GLOBEX, name: GLOBEX, roles: ['jinbe:owner'], permissions: ['org.keys:read', 'org.members:read', 'org.members:write'] },
       ],
-      // kuma-admins holds kuma's '*', so its switch defaults on; fleet-viewers only reads.
+      // kuma-admins can write in kuma, so its switch defaults on; fleet-viewers only reads.
       secondFactor: {
         required: true,
         requiredBecause: ['kuma-admins'],
@@ -150,34 +141,7 @@ describe('GET /api/admin/users/:id/access', () => {
     expect(s.asked).toEqual(['Bob@acme.test'])
   })
 
-  it('admin is what the guard decides (manageable_orgs), not the roster', async () => {
-    // Rostered, but OPA does not list the org: the org routes refuse, so admin is false.
-    s.manageable = { 'Bob@acme.test': [] }
-    s.members = { 'Bob@acme.test': [ACME] }
-    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
-    expect(orgs[1]).toEqual({ orgId: GLOBEX, name: GLOBEX, admin: false, rostered: true, why: 'not_a_member_per_policy', grants: [] })
-    // Not rostered at all, but OPA lists the org (a roster OPAL has not yet caught up with): admin.
-    s.rosters = {}
-    s.manageable = { 'Bob@acme.test': [ACME] }
-    const again = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
-    expect(again[0]).toMatchObject({ orgId: ACME, admin: true, rostered: false })
-  })
-
-  it('says why a rostered member is not admin: policy not loaded yet', async () => {
-    s.rosters = { [GLOBEX]: ['Bob@acme.test'] }
-    s.manageable = { 'Bob@acme.test': [] }
-    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
-    expect(orgs[1]).toMatchObject({ admin: false, rostered: true, why: 'policy_not_yet_loaded' })
-  })
-
-  it('a roster entry differing only in case counts as rostered', async () => {
-    s.rosters = { [GLOBEX]: ['BOB@ACME.TEST'] }
-    const orgs = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json().orgs
-    expect(orgs[1]).toMatchObject({ admin: true, rostered: true })
-    expect(orgs[1].why).toBeUndefined()
-  })
-
-  it('503 when OPA cannot be asked — never an admin flag it could not decide', async () => {
+  it('503 when OPA cannot be asked — never an org view it could not decide', async () => {
     s.opaDown = true
     expect((await app.inject({ url: '/api/admin/users/id-bob/access' })).statusCode).toBe(503)
   })
@@ -206,8 +170,8 @@ describe('GET /api/admin/users/:id/access', () => {
     expect((await app.inject({ url: '/api/admin/users/nobody/access' })).statusCode).toBe(404)
   })
 
-  it('503 when the grants cannot be read — never an empty org view', async () => {
-    s.grantsFail = true
+  it('503 when the org roles cannot be read — never an empty org view', async () => {
+    s.assignmentsFail = true
     expect((await app.inject({ url: '/api/admin/users/id-bob/access' })).statusCode).toBe(503)
   })
 })

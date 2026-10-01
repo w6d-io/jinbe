@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
 // The '*'-group / self-assignment check asks OPA; it has its own tests (rbac-escalation-guard.test.ts).
-vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}), assertGrantWithinOwn: vi.fn(async () => {}) }))
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 vi.mock('../../../second-factor/settings.js', async () =>
@@ -61,7 +61,7 @@ import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
-import { assertGrantWithinOwn, assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
+import { assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -105,7 +105,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -132,7 +131,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: [],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -149,7 +147,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       newGroups: [],
       addGroups: ['users', 'platform-operator', 'users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -163,7 +160,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
       auditEventType: 'organization_user.groups_changed',
       auditExtraDetails: { organizationId: 'org-1' },
     })
@@ -186,7 +182,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -200,7 +195,6 @@ describe('userGroupsService.applyGroupUpdate — happy path', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -222,7 +216,6 @@ describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
       identity: IDENTITY,
       newGroups: ['super_admins'],
       actor,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -292,188 +285,9 @@ describe('userGroupsService.applyGroupUpdate — MFA step-up (R2)', () => {
       identity: IDENTITY,
       newGroups: ['users'],
       actor: { email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() }, // AAL1 is fine: nothing gated
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
     expect(result.ok).toBe(true)
-  })
-})
-
-describe('userGroupsService.applyGroupUpdate — org_admins flag gate', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    holds()
-    // The flag group is EMPTY → NOT admin-power. Without the explicit guard the
-    // global path (isAdminPowerGroup) would skip the super_admin check for it.
-  })
-
-  it('global path: assigning org_admins is super_admin-gated even though it is not admin-power', async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
-      Object.assign(new Error('only super_admins may assign org_admins'), { statusCode: 403 }),
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['org_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.status).toBe(422)
-      expect(result.body).toMatchObject({ error: 'privilege_escalation_blocked', blockingGroup: 'org_admins' })
-    }
-    expect(rbacService.assertSuperAdmin).toHaveBeenCalled()
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-  })
-
-  it('global path: a super_admin CAN assign org_admins', async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['org_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result.ok).toBe(true)
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['org_admins'])
-  })
-
-  it('org-scoped path: a group that grants nothing is still not waved through', async () => {
-    // The property worth keeping from when this went to a delegation policy: the org-scoped
-    // exemption keys on the base group NAME ("users"), so a group that merely resolves to no
-    // permission is NOT exempt. It is refused with the whole path, which is stricter than the
-    // per-group check it replaces.
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['org_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
-      auditEventType: 'organization_user.groups_changed',
-    })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.body).toMatchObject({ error: 'delegation_not_defined', blockingGroup: 'org_admins' })
-    }
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-  })
-})
-
-describe('userGroupsService.applyGroupUpdate — super_admin_required policy', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    holds()
-  })
-
-  it('returns 422 privilege_escalation_blocked when assertSuperAdmin throws 403', async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
-      Object.assign(new Error('Only super_admins may assign group ...'), { statusCode: 403 })
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['super_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      status: 422,
-      body: expect.objectContaining({
-        error: 'privilege_escalation_blocked',
-        targetEmail: 'target@example.com',
-        blockingGroup: 'super_admins',
-      }),
-    })
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-  })
-
-  it('returns 401 when assertSuperAdmin throws 401 (missing actor email)', async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
-      Object.assign(new Error('Authentication required'), { statusCode: 401 })
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['super_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.status).toBe(401)
-  })
-
-  it('proceeds to MFA gate when actor IS super_admin', async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValueOnce(undefined)
-    vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['super_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      status: 422,
-      body: expect.objectContaining({
-        error: 'mfa_required',
-        targetEmail: 'target@example.com',
-        targetGroups: ['super_admins'],
-        secondFactor: { rule: 'enrol_before_joining', requiredAal: 'aal2', groups: ['super_admins'] },
-      }),
-    })
-  })
-
-  it("asks the '*' / self-assignment check for every privileged ADDITION, and refuses when it does", async () => {
-    vi.mocked(rbacService.assertSuperAdmin).mockResolvedValueOnce(undefined)
-    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(
-      Object.assign(new Error("Only a super admin may assign 'super_admins': it grants '*'"), { statusCode: 403 }),
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['super_admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(vi.mocked(assertMayAssignGroup)).toHaveBeenCalledWith('super_admins', 'target@example.com', expect.objectContaining({ email: 'actor@example.com' }))
-    expect(result).toMatchObject({ ok: false, status: 422, body: { error: 'privilege_escalation_blocked', blockingGroup: 'super_admins' } })
-    expect(allGranted()).toEqual([])
-  })
-
-  it('does NOT gate REMOVALS on the super_admin endpoint (a super_admin may freely remove)', async () => {
-    // A super_admin drops a privileged group. Removals are not gated here — the
-    // endpoint is super_admin-gated at the route and a super_admin can remove
-    // anything. Only *added* admin-power groups reach assertSuperAdmin.
-    holds('admins', 'users')
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['users'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
-    expect(result.ok).toBe(true)
-    expect(kratosService.updateUserGroups).toHaveBeenCalledWith('target@example.com', ['users'])
   })
 })
 
@@ -491,7 +305,6 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       identity: IDENTITY,
       newGroups: ['users', 'operators'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -518,7 +331,6 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -539,7 +351,6 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       identity: IDENTITY,
       newGroups: ['users', 'operators'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -558,76 +369,11 @@ describe('userGroupsService.applyGroupUpdate — the store the engine reads', ()
       identity: IDENTITY,
       newGroups: ['users', 'operators'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
     expect(allGranted()).toEqual([])
     expect(allRevoked()).toEqual([])
-  })
-})
-
-describe('userGroupsService.applyGroupUpdate — the org-scoped path has no delegation to check', () => {
-  // What this block used to assert: an OPA delegation policy (`can_grant`) decided whether an
-  // org-scoped admin could hand out a given group inside their organisation, with containment,
-  // service-scope and authority tiers. None of that survives in `strada.authz` — no permission
-  // expresses "may hand out this group here", so there is nothing to check against.
-  //
-  // It is refused with a reason that says so, rather than through a query that answers nothing:
-  // that query was reaching an engine which stopped serving `data.rbac.*` when the model changed,
-  // and every assignment had been refused since — a 403 indistinguishable from a missing right.
-  beforeEach(() => {
-    vi.clearAllMocks()
-    holds()
-  })
-
-  it('refuses an org-scoped grant, and names what is missing', async () => {
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
-      auditEventType: 'organization_user.groups_changed',
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      status: 422,
-      body: expect.objectContaining({ error: 'delegation_not_defined' }),
-    })
-  })
-
-  it('refuses an org-scoped REMOVAL too, so nothing is stripped through a path with no authority', async () => {
-    // The property the old block guarded and which must survive its removal: a replace-PUT through
-    // the org endpoint must not be able to take a group away either. Refusing the whole path is a
-    // stronger guarantee than checking each group, not a weaker one.
-    holds('admins')
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: [],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
-      auditEventType: 'organization_user.groups_changed',
-    })
-
-    expect(result).toMatchObject({ ok: false, status: 422 })
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(allRevoked()).toEqual([])
-  })
-
-  it('writes nothing at all when it refuses', async () => {
-    await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['admins'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'wildcard_in_org', orgId: 'org-1' },
-      auditEventType: 'organization_user.groups_changed',
-    })
-
-    expect(allGranted()).toEqual([])
-    expect(allRevoked()).toEqual([])
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 })
 
@@ -644,7 +390,6 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
       identity: IDENTITY,
       newGroups: ['super_admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -665,12 +410,11 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
     beforeEach(() => resetSecondFactorSwitch())
     afterEach(() => { resetSecondFactorSwitch(); resetGroupCatalogue() })
     const add = (group: string) => userGroupsService.applyGroupUpdate({
-      identity: IDENTITY, newGroups: [group], actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
+      identity: IDENTITY, newGroups: [group], actor: ACTOR, auditEventType: 'user.groups_changed',
     })
 
     it('a platform-wide group switched off (a read-only staff group) asks for no enrolment', async () => {
-      groupCatalogue.groups = { ...groupCatalogue.groups, 'staff-auditors': { global: ['auditor'] } }
+      groupCatalogue.groups = { ...groupCatalogue.groups, 'staff-auditors': { jinbe: ['auditor'] } }
       secondFactorSwitch.flags['staff-auditors'] = false
       vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
       expect((await add('staff-auditors')).ok).toBe(true)
@@ -707,41 +451,6 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
   })
 })
 
-describe('applyGroupUpdate — denied writes emit an audit event (A2)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    holds()
-  })
-
-  it('emits a denied event when a privilege escalation is blocked', async () => {
-    // A non-super actor attempts to grant an admin-power group on the global
-    // endpoint → assertSuperAdmin rejects → privilege_escalation_blocked.
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValue(
-      Object.assign(new Error('not a super_admin'), { statusCode: 403 }),
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['super_admins'],
-      actor: { email: 'attacker@x.io', ip: '9.9.9.9', aal: 'aal2', authenticatedAt: new Date(), secondFactorAt: new Date() },
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result.ok).toBe(false)
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(auditEventService.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: 'access',
-        result: 'denied',
-        reason: 'privilege_escalation_blocked',
-        target: 'user:target@example.com',
-        targetType: 'user',
-      }),
-    )
-  })
-})
-
 describe('userGroupsService.applyGroupUpdate — the model the engine decides against', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -751,38 +460,14 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     vi.mocked(rbacService.assertSuperAdmin).mockResolvedValue(undefined)
   })
 
-  it('gates a group the model declares but the retired catalogue never held', async () => {
-    // The defect this closes. `platform-admin` grants the whole administration API in every
-    // organisation, and the predicates that used to decide whether handing it out needed the
-    // actor's authority and the target's second factor asked a store that had never heard of it —
-    // so all of them answered "not needed", silently, for the most powerful group there is.
-    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
-    vi.mocked(rbacService.assertSuperAdmin).mockRejectedValueOnce(
-      Object.assign(new Error('not a platform admin'), { statusCode: 403 }),
-    )
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['platform-admin'],
-      actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result).toMatchObject({ ok: false, status: 422 })
-    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
-    expect(allGranted()).toEqual([])
-  })
-
   it('requires the target of that grant to hold a second factor', async () => {
-    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
+    groupCatalogue.groups['platform-admin'] = { jinbe: ['platform-admin'] }
     vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: ['platform-admin'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -790,29 +475,11 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
     expect(allGranted()).toEqual([])
   })
 
-  it('does NOT gate a grant scoped to one organisation', async () => {
-    // Scope is what separates a platform grant from a tenant one, now that the model has no `*`
-    // permission to spot. A role held in a single organisation is an ordinary tenant role.
-    groupCatalogue.groups['premium-operator'] = { 'org-9': ['operator'] }
-
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY,
-      newGroups: ['premium-operator'],
-      actor: { email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() },
-      privilegePolicy: { kind: 'super_admin_required' },
-      auditEventType: 'user.groups_changed',
-    })
-
-    expect(result.ok).toBe(true)
-    expect(rbacService.assertSuperAdmin).not.toHaveBeenCalled()
-  })
-
   it('refuses a group the model does not declare, and writes nothing', async () => {
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: ['kuma-admin'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -834,7 +501,6 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -853,7 +519,6 @@ describe('userGroupsService.applyGroupUpdate — the model the engine decides ag
       identity: IDENTITY,
       newGroups: ['super_admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -882,7 +547,6 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -900,7 +564,6 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
       identity: IDENTITY,
       newGroups: ['super_admins'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -917,7 +580,6 @@ describe('userGroupsService.applyGroupUpdate — a membership the display copy n
       identity: IDENTITY,
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -944,7 +606,6 @@ describe('userGroupsService.applyGroupUpdate — a change lands whole or not at 
       identity: IDENTITY,
       newGroups: ['viewers', 'operators'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -960,14 +621,13 @@ describe('userGroupsService.applyGroupUpdate — a change lands whole or not at 
     // The five-group change measured in dev: refused on the actor's step-up, and the screen then
     // showed the PREVIOUS state — which reads as "three of five failed" unless the refusal says it
     // applied nothing.
-    groupCatalogue.groups['platform-admin'] = { global: ['platform-admin'] }
+    groupCatalogue.groups['platform-admin'] = { jinbe: ['platform-admin'] }
     holds('premium-operator')
 
     const result = await userGroupsService.applyGroupUpdate({
       identity: IDENTITY,
       newGroups: ['platform-admin', 'premium-operator'],
       actor: { email: 'a@x.io', ip: '1', aal: 'aal1', authenticatedAt: new Date() },
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
 
@@ -979,69 +639,32 @@ describe('userGroupsService.applyGroupUpdate — a change lands whole or not at 
   })
 })
 
-describe('userGroupsService.applyGroupUpdate — grant only what you hold', () => {
-  const exceeds = () => Object.assign(new Error("Group 'devs' grants what you do not hold: dev:deploy"), {
-    statusCode: 403,
-    code: 'grant_exceeds_own',
-    refusal: { code: 'grant_exceeds_own', missing: ['dev:deploy'], missingByScope: { 'org-1': ['dev:deploy'] }, grantedBy: ['super_admins'], hint: 'Ask an administrator to add you to one of: super_admins.' },
-  })
-
+describe('userGroupsService.applyGroupUpdate — the holding rule', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetGroupCatalogue()
+    resetSecondFactorSwitch()
     holds()
   })
 
-  it('asks it of a group bound to one app too (not only platform-wide ones), and answers 403 with what is missing', async () => {
-    vi.mocked(assertGrantWithinOwn).mockRejectedValueOnce(exceeds())
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY, newGroups: ['devs'], actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
-    })
-    expect(vi.mocked(assertGrantWithinOwn)).toHaveBeenCalledWith('devs', expect.objectContaining({ email: 'actor@example.com' }))
-    expect(result).toMatchObject({
-      ok: false,
-      status: 403,
-      body: {
-        error: 'grant_exceeds_own', code: 'grant_exceeds_own', missing: ['dev:deploy'],
-        grantedBy: ['super_admins'], hint: 'Ask an administrator to add you to one of: super_admins.',
-        targetEmail: 'target@example.com', blockingGroup: 'devs',
-      },
-    })
-    expect(allGranted()).toEqual([])
-    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'grant_exceeds_own' }))
+  it('asks it for every group ADDED, and for nothing removed', async () => {
+    holds('viewers')
+    await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['admins', 'devs'], actor: ACTOR, auditEventType: 'user.groups_changed' })
+    expect(vi.mocked(assertMayAssignGroup).mock.calls.map((c) => c[0]).sort()).toEqual(['admins', 'devs'])
   })
 
-  it('answers 403 staff_group_super_admin_only for a staff group through the platform gate', async () => {
-    groupCatalogue.groups['staff-security'] = { global: ['security'] }
-    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(Object.assign(new Error("Only a super admin may assign 'staff-security'"), {
-      statusCode: 403, code: 'staff_group_super_admin_only', refusal: { code: 'staff_group_super_admin_only', permission: '*', grantedBy: ['super_admins'], hint: 'x' },
+  it('answers 403 with what is missing, and writes nothing', async () => {
+    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(Object.assign(new Error("Group 'admins' grants what you do not hold: payroll:write"), {
+      statusCode: 403, code: 'grant_exceeds_own', refusal: { code: 'grant_exceeds_own', missing: ['payroll:write'] },
     }))
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY, newGroups: ['staff-security'], actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
-    })
-    expect(result).toMatchObject({ ok: false, status: 403, body: { error: 'staff_group_super_admin_only', permission: '*', grantedBy: ['super_admins'], blockingGroup: 'staff-security' } })
-    // The platform gate already asked it: not asked twice.
-    expect(vi.mocked(assertGrantWithinOwn)).not.toHaveBeenCalled()
-    expect(allGranted()).toEqual([])
+    const result = await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['admins'], actor: ACTOR, auditEventType: 'user.groups_changed' })
+    expect(result).toMatchObject({ ok: false, status: 403, body: { code: 'grant_exceeds_own', missing: ['payroll:write'], blockingGroup: 'admins' } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied' }))
   })
 
-  it('keeps every other refusal as it was (422 privilege_escalation_blocked), and 503 when it could not tell', async () => {
-    vi.mocked(assertGrantWithinOwn).mockRejectedValueOnce(Object.assign(new Error('OPA down'), { statusCode: 503 }))
-    const result = await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY, newGroups: ['devs'], actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
-    })
-    expect(result).toMatchObject({ ok: false, status: 503, body: { error: 'privilege_escalation_blocked' } })
-    expect(allGranted()).toEqual([])
-  })
-
-  it('does not ask it of the base group, which confers nothing', async () => {
-    await userGroupsService.applyGroupUpdate({
-      identity: IDENTITY, newGroups: ['users'], actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' }, auditEventType: 'user.groups_changed',
-    })
-    expect(vi.mocked(assertGrantWithinOwn)).not.toHaveBeenCalled()
+  it('a code-defined group refusal (409) and an unreadable model (503) keep their status', async () => {
+    vi.mocked(assertMayAssignGroup).mockRejectedValueOnce(Object.assign(new Error('x'), { statusCode: 503 }))
+    expect(await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['admins'], actor: ACTOR, auditEventType: 'user.groups_changed' })).toMatchObject({ ok: false, status: 503 })
   })
 })

@@ -1,5 +1,5 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
-import { orgGrantsRepository } from '../services/org-grants.repository.js'
+import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { render } from './render.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
@@ -165,11 +165,12 @@ export async function blastRadius(name: string) {
   const groups = await redisRbacRepository.getGroups()
   const covering = Object.entries(groups).filter(([, def]) => name in def).map(([g]) => g)
   const orgGrantable = covering.filter((g) => record.site.groups.orgGrantable[g] || (g.startsWith(`${name}-`) && Object.keys(groups[g]).length === 1))
-  const orgMap = await redisRbacRepository.getOrgServiceMap()
-  const grants = await orgGrantsRepository.getAll()
+  const orgMap = await redisRbacRepository.getOrgSites()
+  const assignments = await orgRolesRepository.getAll()
+  // Per entitled org: how many people hold one of this site's org roles there.
   const orgs = Object.entries(orgMap)
     .filter(([, svcs]) => svcs.includes(name))
-    .map(([id]) => ({ id, grants: Object.values(grants[id] ?? {}).filter((gs) => gs.some((g) => orgGrantable.includes(g))).length }))
+    .map(([id]) => ({ id, grants: Object.values(assignments[id] ?? {}).filter((roles) => roles.some((r) => r.startsWith(`${name}:`))).length }))
   const routeMap = await redisRbacRepository.getRouteMap(name)
   return {
     groups: covering.filter((g) => !orgGrantable.includes(g)),

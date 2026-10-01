@@ -24,8 +24,6 @@ import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-h
 // =============================================================================
 
 
-/** Retired by authz v2 (org roles replace the roster and the service map): no v2 gateway row, 404 once v2 is active. */
-const V1_ONLY = { model: 'v1' } as const
 export async function rbacRoutes(fastify: FastifyInstance) {
   // Each route declares its catalogue permission; there is no plugin-wide gate.
   await fastify.register(accessCheckRoutes)
@@ -293,117 +291,9 @@ export async function rbacRoutes(fastify: FastifyInstance) {
     },
   }, rbacController.getOathkeeperHandlers.bind(rbacController))
 
-  // ===========================================================================
-  // Org → Service Map
-  // ===========================================================================
-
-  fastify.get('/org-service-map', {
-    ...needs('org:read', V1_ONLY),
-    schema: {
-      description: 'List all organization → service bundle mappings (each org maps to an array of service names).',
-      tags: ['rbac'],
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            mappings: {
-              type: 'object',
-              additionalProperties: { type: 'array', items: { type: 'string' } },
-            },
-          },
-        },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-      },
-    },
-  }, rbacController.getOrgServiceMap.bind(rbacController))
-
-  fastify.put('/org-service-map', {
-    ...needs('groups:write', V1_ONLY),
-    // groups:write (step-up from the catalogue): which services an org's members reach.
-    schema: {
-      description: 'Set an organization → service bundle mapping. Replaces the org\'s entire bundle with the provided (non-empty) list of service names.',
-      tags: ['rbac'],
-      body: {
-        type: 'object',
-        required: ['organizationId', 'services'],
-        properties: {
-          organizationId: { type: 'string', format: 'uuid' },
-          services: {
-            type: 'array',
-            minItems: 1,
-            items: { type: 'string', pattern: SERVICE_NAME_PATTERN.source },
-          },
-        },
-      },
-      response: {
-        201: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
-        400: badRequestResponseSchema,
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-      },
-    },
-  }, rbacController.setOrgServiceMapping.bind(rbacController) as never)
-
-  // Org → admin roster (per-org admin list; feeds data.org_admin_map).
-  fastify.get('/org-admin-map', {
-    ...needs('org:read', V1_ONLY),
-    schema: {
-      description: 'List all organization → admin roster mappings (each org maps to an array of admin emails).',
-      tags: ['rbac'],
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            mappings: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
-          },
-        },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-      },
-    },
-  }, rbacController.getOrgAdminMap.bind(rbacController))
-
-  // Set an org's admin roster. super_admin + a RECENT second factor (R2 step-up)
-  // are required — assigning who administers an org is a privileged action.
-  fastify.put('/org-admin-map', {
-    ...needs('org.admins:write', V1_ONLY),
-    schema: {
-      description: "Set an organization's admin roster (emails). Replaces the org's entire roster; an empty list clears it. Requires org.admins:write + a second factor proven within 15 minutes.",
-      tags: ['rbac'],
-      body: {
-        type: 'object',
-        required: ['organizationId', 'admins'],
-        properties: {
-          organizationId: { type: 'string', format: 'uuid' },
-          admins: { type: 'array', items: { type: 'string', format: 'email' } },
-        },
-      },
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
-        400: badRequestResponseSchema,
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        422: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
-      },
-    },
-  }, rbacController.setOrgAdmins.bind(rbacController))
-
-  fastify.delete('/org-service-map/:organizationId', {
-    ...needs('groups:write', V1_ONLY),
-    // groups:write (step-up from the catalogue): which services an org's members reach.
-    schema: {
-      description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',
-      tags: ['rbac'],
-      params: { type: 'object', required: ['organizationId'], properties: { organizationId: { type: 'string', format: 'uuid' } } },
-      response: {
-        200: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } },
-        401: unauthorizedResponseSchema,
-        403: forbiddenResponseSchema,
-        404: notFoundResponseSchema,
-      },
-    },
-  }, rbacController.deleteOrgServiceMapping.bind(rbacController) as never)
+  // The org → service map and the org admin roster are gone (authz-v2-design §2.2): an org's sites
+  // come from the site intents (rbac:org_sites), its owners are org roles (PUT
+  // /admin/organizations/:organizationId/owners), its people's power is what is assigned in it.
 
   // POST /health-check is gone: a constant {status:'ok'} behind admin:read, with no caller — a write
   // verb that asked only for reading, and a liveness answer that checked nothing.

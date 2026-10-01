@@ -2,9 +2,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
-// The writes that sat behind the administration API's `admin:read` gate alone — an administrator who
-// may only READ could edit a group they were in, or give a role `admin:write`, and so promote
-// themselves. Each is driven over HTTP here: the permission and the fresh second factor.
+// The writes that change the access model. A reader must not reach them, a writer needs the write
+// permission AND a fresh second factor. Each is driven over HTTP here.
 
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
@@ -69,10 +68,10 @@ afterAll(async () => { await app.close() })
 beforeEach(() => {
   resetOpaWorld()
   handled.calls = []
-  opaWorld.permissions['reader@example.com'] = ['admin:read']
-  opaWorld.permissions['writer@example.com'] = ['admin:read', 'admin:write']
-  opaWorld.permissions['root@example.com'] = ['*']
-  opaWorld.superAdmins.add('root@example.com')
+  const READS = ['groups:read', 'orgs:read', 'recert:read']
+  opaWorld.permissions['reader@example.com'] = READS
+  opaWorld.permissions['writer@example.com'] = [...READS, 'groups:write', 'recert:manage', 'recert:delete']
+  opaWorld.permissions['root@example.com'] = [...PERMISSIONS]
 })
 
 const call = (method: string, url: string, who: string, opts: { fresh?: boolean; body?: unknown } = {}) =>
@@ -84,13 +83,11 @@ const call = (method: string, url: string, who: string, opts: { fresh?: boolean;
   })
 
 const RBAC_WRITES: Array<[string, string, unknown]> = [
-  ['POST', '/api/admin/rbac/groups', { name: 'ops', services: { jinbe: ['admin'] } }],
-  ['PUT', '/api/admin/rbac/groups/ops', { services: { jinbe: ['admin'] } }],
+  ['POST', '/api/admin/rbac/groups', { name: 'ops', services: { payroll: ['admin'] } }],
+  ['PUT', '/api/admin/rbac/groups/ops', { services: { payroll: ['admin'] } }],
   ['DELETE', '/api/admin/rbac/groups/ops', undefined],
-  ['PUT', '/api/admin/rbac/services/jinbe/roles', { roles: { admin: ['admin:write'] } }],
-  ['PUT', '/api/admin/rbac/services/jinbe/routes', { rules: [{ method: 'GET', path: '/x', permission: 'admin:read' }] }],
-  ['PUT', '/api/admin/rbac/org-service-map', { organizationId: ORG, services: ['jinbe'] }],
-  ['DELETE', `/api/admin/rbac/org-service-map/${ORG}`, undefined],
+  ['PUT', '/api/admin/rbac/services/payroll/roles', { roles: { admin: ['payroll:write'] } }],
+  ['PUT', '/api/admin/rbac/services/payroll/routes', { rules: [{ method: 'GET', path: '/x', permission: 'payroll:read' }] }],
 ]
 
 describe('RBAC-changing writes', () => {
@@ -100,22 +97,27 @@ describe('RBAC-changing writes', () => {
     expect(handled.calls).toEqual([])
   })
 
-  it.each(RBAC_WRITES)('%s %s asks admin:write for a fresh second factor (422)', async (method, url, body) => {
+  it.each(RBAC_WRITES)('%s %s asks the writer for a fresh second factor (422)', async (method, url, body) => {
     const res = await call(method, url, 'writer', { body })
     expect(res.statusCode).toBe(422)
     expect(res.json().error).toBe('reauth_required')
     expect(handled.calls).toEqual([])
   })
 
-  it.each(RBAC_WRITES)('%s %s reaches the handler with admin:write and a fresh second factor', async (method, url, body) => {
+  it.each(RBAC_WRITES)('%s %s reaches the handler with groups:write and a fresh second factor', async (method, url, body) => {
     const res = await call(method, url, 'writer', { fresh: true, body })
     expect(res.statusCode).toBeLessThan(300)
     expect(handled.calls).toHaveLength(1)
   })
 
-  it('reads stay open to admin:read', async () => {
+  it('reads stay open to groups:read', async () => {
     expect((await call('GET', '/api/admin/rbac/groups', 'reader')).statusCode).toBe(200)
-    expect((await call('GET', '/api/admin/rbac/org-service-map', 'reader')).statusCode).toBe(200)
+  })
+
+  it('the org → service map and the org admin roster are gone', async () => {
+    for (const [m, u] of [['GET', '/api/admin/rbac/org-service-map'], ['PUT', '/api/admin/rbac/org-admin-map'], ['DELETE', `/api/admin/rbac/org-service-map/${ORG}`]]) {
+      expect((await call(m, u, 'root', { fresh: true })).statusCode, `${m} ${u}`).toBe(404)
+    }
   })
 })
 
@@ -126,7 +128,7 @@ describe('recertification campaign writes', () => {
     ['POST', '/api/admin/recert/campaigns/c1/close', undefined],
     ['DELETE', '/api/admin/recert/campaigns/c1', undefined],
   ]
-  it.each(WRITES)('%s %s needs recert:manage / recert:delete (admin:write is their legacy alias)', async (method, url, body) => {
+  it.each(WRITES)('%s %s needs recert:manage / recert:delete', async (method, url, body) => {
     expect((await call(method, url, 'reader', { body })).statusCode).toBe(403)
     expect(handled.calls).toEqual([])
     // Activation also needs a recent second factor (it generates every review item).
@@ -137,7 +139,7 @@ describe('recertification campaign writes', () => {
     expect((await call('POST', '/api/admin/recert/campaigns/c1/activate', 'writer')).statusCode).toBe(422)
   })
 
-  it('a decision by somebody who is not the reviewer needs admin:write, not admin:read', async () => {
+  it('a decision by somebody who is not the reviewer needs recert:manage, not recert:read', async () => {
     const url = '/api/admin/recert/items/c1/i1/decision'
     expect((await call('POST', url, 'reader', { body: { decision: 'approved' } })).statusCode).toBe(403)
     expect(handled.calls).toEqual([])
@@ -163,7 +165,6 @@ describe('delegated callers never change the access model', () => {
     ['PUT', '/api/admin/rbac/groups/:name', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/roles', 'groups:write'],
     ['PUT', '/api/admin/rbac/services/:name/routes', 'groups:write'],
-    ['PUT', '/api/admin/rbac/org-service-map', 'groups:write'],
   ])('%s %s (%s) passes the gate with a scope granting it', (method, path, permission) => {
     expect(declaredRoute(method, path)?.permission ?? permission).toBe(permission)
     expect(refusal(method, path, permission)).toBeNull()
@@ -171,7 +172,6 @@ describe('delegated callers never change the access model', () => {
 
   it.each([
     ['DELETE', '/api/admin/rbac/groups/:name'],
-    ['DELETE', '/api/admin/rbac/org-service-map/:organizationId'],
   ])('%s %s is refused: nothing is deleted through a key', (method, path) => {
     expect(refusal(method, path)).toBe('delegation_ineligible:delete')
   })
@@ -180,7 +180,7 @@ describe('delegated callers never change the access model', () => {
     ['POST', '/api/admin/rbac/bundle/import', 'policy.bundle:write'],
     ['POST', '/api/admin/rbac/bundle/backups/restore', 'policy.bundle:write'],
     ['POST', '/api/admin/rbac/bundle/history/:id/rollback', 'policy.bundle:write'],
-    ['PUT', '/api/admin/rbac/org-admin-map', 'org.admins:write'],
+    ['PUT', '/api/admin/organizations/:organizationId/owners', 'orgs.owners:write'],
     ['POST', '/api/admin/recert/campaigns/:id/close', 'recert:manage'],
   ])('%s %s (%s) is always refused, whatever the scopes', (method, path, permission) => {
     expect(declaredRoute(method, path)?.permission ?? permission).toBe(permission)
@@ -201,8 +201,7 @@ describe('delegated callers never change the access model', () => {
     expect(refusal('GET', '/api/admin/rbac/groups', 'groups:read')).toBeNull()
   })
 
-  it('no scope ever exercises the super-admin wildcard', () => {
-    expect(refusal('GET', '/api/admin/rbac/groups', '*')).toBe('delegation_ineligible:*')
-    expect(refusal('GET', '/api/admin/x', '*')).toBe('delegation_ineligible:*')
+  it('a wildcard scope covers nothing', () => {
+    expect(refusal('GET', '/api/admin/rbac/groups', '*')).toBe('scope_missing:*')
   })
 })

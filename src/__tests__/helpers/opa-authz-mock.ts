@@ -9,14 +9,15 @@ import { grants } from '../../policy/catalog.js'
  * Use: `vi.mock("<rel>/authz/opa.js", async () => (await import("<rel>/helpers/opa-authz-mock.js")).opaAuthzMock())`.
  */
 export const opaWorld = {
-  /** email → permissions in jinbe (global roles included). */
+  /** email → platform permissions in jinbe. */
   permissions: {} as Record<string, string[]>,
   /** email → groups, as user_info reports them. */
   groups: {} as Record<string, string[]>,
   manageable: {} as Record<string, string[]>,
   members: {} as Record<string, string[]>,
-  superAdmins: new Set<string>(),
-  /** Verdict for rbac.decision; default: super_admin, or the roster admin of the org in the path. */
+  /** email → org → org permissions held there (rbac.org_permissions_by_org). */
+  orgPermissions: {} as Record<string, Record<string, string[]>>,
+  /** Verdict for rbac.decision; default: holds anything in the org named by the path. */
   decide: null as null | ((q: { email: string; method: string; path: string }) => boolean),
   down: false,
 }
@@ -26,7 +27,7 @@ export function resetOpaWorld(): void {
   opaWorld.groups = {}
   opaWorld.manageable = {}
   opaWorld.members = {}
-  opaWorld.superAdmins = new Set()
+  opaWorld.orgPermissions = {}
   opaWorld.decide = null
   opaWorld.down = false
 }
@@ -37,7 +38,7 @@ function up(): void {
   if (opaWorld.down) throw new AuthzUnavailableError('OPA is unreachable (TypeError).')
 }
 
-// The real rule (exact, `*`, legacy aliases): pure, so the stand-in uses it rather than a copy.
+// The real rule (exact match): pure, so the stand-in uses it rather than a copy.
 const holds = grants
 
 export function opaAuthzMock() {
@@ -55,12 +56,12 @@ export function opaAuthzMock() {
       const org = q.path.split('/')[3]
       const allow = opaWorld.decide
         ? opaWorld.decide(q)
-        : opaWorld.superAdmins.has(q.email) || (opaWorld.manageable[q.email] ?? []).includes(org)
+        : (opaWorld.orgPermissions[q.email]?.[org] ?? []).length > 0 || (opaWorld.manageable[q.email] ?? []).includes(org)
       return { allow, reason: allow ? 'ok' : 'forbidden' }
     }),
     manageableOrgs: vi.fn(async (email: string) => { up(); return opaWorld.manageable[email] ?? [] }),
     memberOrgs: vi.fn(async (email: string) => { up(); return opaWorld.members[email] ?? [] }),
-    isSuperAdmin: vi.fn(async (email: string) => { up(); return opaWorld.superAdmins.has(email) }),
+    orgPermissionsByOrg: vi.fn(async (email: string) => { up(); return { ...(opaWorld.orgPermissions[email] ?? {}) } }),
     holds,
     holdsInJinbe: vi.fn(async (email: string, required: string) => holds((await rights(email)).permissions, required)),
     clearAuthzCache: vi.fn(),

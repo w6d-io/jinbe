@@ -10,7 +10,7 @@ vi.mock('../../../services/redis-client.service.js', () => ({
   getRedisClient: () => ({ incr: async () => 1, expire: async () => 1, ttl: async () => 60 }),
 }))
 vi.mock('../../../middleware/require-permission.js', () => ({
-  callerRights: async () => ({ permissions: ['*'], groups: ['super_admins'] }),
+  callerRights: async () => ({ permissions: ['groups.members:write', 'groups.members:revoke'], groups: ['super_admins'] }),
   demandPermissions: async () => true,
 }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { findByEmail: async () => ({ id: 'bob-id' }) } }))

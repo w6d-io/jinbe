@@ -1,7 +1,7 @@
 import { allGroupMemberships } from './organisation-store.js'
 import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { kratosService } from './kratos.service.js'
-import { orgGrantsRepository } from './org-grants.repository.js'
+import { orgRolesRepository } from './org-roles.repository.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
 import { findRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
@@ -9,14 +9,12 @@ import { assertOrgParams } from '../policy/route-org-param.js'
 import { auditEventService, type AuditActorInput, type AuditChanges } from './audit-event.service.js'
 import { accessReviewService } from './access-review.service.js'
 import { invalidateHome } from '../home/cache.js'
-import { diffGroupDefinition, diffList, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
-import { ASSIGN_MEMBERSHIP } from './group-catalogue.js'
-import { STAFF_ROLES, globalRoleDefinitions } from '../policy/roles.js'
-import { holdsInJinbe, invalidateAuthz } from '../authz/opa.js'
+import { diffGroupDefinition, diffRoles, diffRouteMap, diffOathkeeperRule } from './audit-diff.js'
+import { JINBE } from '../policy/roles.js'
+import { PLATFORM_PERMISSIONS } from '../policy/catalog.js'
+import { invalidateAuthz } from '../authz/opa.js'
 import { assertNoSelfEscalation } from './rbac-escalation-guard.js'
-import { missingPermissionFields } from './permission-refusal.js'
 import { assertValidBinding } from './group-bindings.js'
-import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { realtimeService } from './realtime.service.js'
 import { opalPublisher } from './opal-publisher.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
@@ -225,12 +223,13 @@ export interface MutationResult {
 }
 
 export interface KratosBindingsResponse {
-  emails: Record<string, unknown>
   group_membership: Record<string, string[]>
   /** email → organizations[] (multi-org membership from metadata_admin.organizations). */
   user_organizations: Record<string, string[]>
   /** email → primary org id (legacy single-org, from the native organization_id). */
   user_organization_primary: Record<string, string>
+  /** email → org → org roles (`svc:role`) assigned there, for orgs the person belongs to (rbac:org_assignments). */
+  org_assignments: Record<string, Record<string, string[]>>
 }
 
 // Re-export types from repository for convenience
@@ -241,17 +240,15 @@ export type { GroupDefinition, FlatRolesMap, RouteMap, OathkeeperRule }
 // =============================================================================
 
 /**
- * Thrown when a regular admin tries to mutate a `system: true` group/service
- * without holding the global super_admin role. The check is *data-driven*:
- * group/service metadata stored in Redis (`rbac:groups:meta`,
- * `rbac:services:meta`) flags resources as system, and the actor's effective
- * role is queried via OPA — same code path as request-time authorization, so
- * there is no hardcoded list inside this service file.
+ * Thrown on a write to a group or service defined in code or by a site's intent (`system: true` in
+ * `rbac:groups:meta` / `rbac:services:meta`, written by the bootstrap): nobody changes those through
+ * the API, whatever they hold.
  */
 export class SystemResourceImmutable extends Error {
-  statusCode = 403
+  statusCode = 409
+  code = 'defined_in_code'
   constructor(kind: string, name: string) {
-    super(`Refusing to mutate system ${kind} '${name}' — only super_admins may modify system resources`)
+    super(`The ${kind} '${name}' is defined in code and cannot be changed here`)
     this.name = 'SystemResourceImmutable'
   }
 }
@@ -280,43 +277,6 @@ export class RbacService {
   }
 
   /**
-   * Privilege escalation guard: refuses the mutation unless the actor holds `groups.members:write`
-   * across the platform.
-   *
-   * A DECLARED PERMISSION, not a shape, asked of OPA (what the actor holds in jinbe, global roles
-   * included): `*`, `groups.members:write` or a legacy alias of it (`admin:write`, catalog.ts).
-   *
-   * FAIL-CLOSED on every uncertainty: no identity, or OPA unreachable, both refuse.
-   */
-  private async requireSuperAdmin(
-    reason: string,
-    actor?: { id?: string | null; email?: string | null },
-  ): Promise<void> {
-    if (!actor?.id || !actor.email) {
-      throw Object.assign(
-        new Error('Authentication required for this operation'),
-        { statusCode: 401 },
-      )
-    }
-    let powerful: boolean
-    try {
-      powerful = await holdsInJinbe(actor.email, ASSIGN_MEMBERSHIP)
-    } catch (err) {
-      throw Object.assign(
-        new Error(`OPA could not be asked, so nobody may ${reason}: ${(err as Error).message}`),
-        { statusCode: 503, code: POLICY_UNAVAILABLE },
-      )
-    }
-    if (!powerful) {
-      const message = `Only ${ASSIGN_MEMBERSHIP} may ${reason}`
-      throw Object.assign(new Error(message), {
-        statusCode: 403,
-        refusal: { code: 'permission_required', message, ...(await missingPermissionFields([ASSIGN_MEMBERSHIP])) },
-      })
-    }
-  }
-
-  /**
    * Returns true when the resource is flagged `system: true` in its
    * metadata. Used by mutation methods to decide whether the operation
    * needs super_admin authority instead of plain rbac:write.
@@ -331,16 +291,7 @@ export class RbacService {
     return meta?.system === true
   }
 
-  /**
-   * Public wrapper exposing the super_admin authority check used internally
-   * by mutation guards. Throws 403 if the actor is not a super_admin.
-   */
-  async assertSuperAdmin(
-    reason: string,
-    actor?: { id?: string | null; email?: string | null },
-  ): Promise<void> {
-    return this.requireSuperAdmin(reason, actor)
-  }
+
 
   // Public: call after any user-group mutation that bypasses rbacService methods.
   //
@@ -464,33 +415,16 @@ export class RbacService {
   // stale counts stamped "fresh" for STATS_FRESH_MS. See audit finding #10.
   private statsEpoch = 0
 
-  /** Group names that grant a wildcard ('*') permission — a global super_admin
-   *  role, or any (service, role) whose permission set includes '*'. Used to
-   *  count full-access users in the stats walk. */
+  /** Group names whose jinbe roles hold every platform permission (super_admin, generated): the
+   *  full-access users the stats walk counts. Read from content, not from a name. */
   private async wildcardGroupNames(): Promise<Set<string>> {
-    const groups = await redisRbacRepository.getGroups()
-    const services = new Set<string>()
-    for (const def of Object.values(groups)) {
-      for (const svc of Object.keys(def)) services.add(svc)
-    }
-    const rolesByService: Record<string, FlatRolesMap> = {}
-    await Promise.all(
-      [...services].map(async (svc) => {
-        rolesByService[svc] = (await redisRbacRepository.getRoles(svc)) ?? {}
-      }),
-    )
-    const wild = new Set<string>()
+    const [groups, roles] = await Promise.all([redisRbacRepository.getGroups(), redisRbacRepository.getRoles('jinbe')])
+    const full = new Set<string>()
     for (const [name, def] of Object.entries(groups)) {
-      const isWild = Object.entries(def).some(([svc, roles]) =>
-        roles.some(
-          (r) =>
-            (svc === 'global' && r === 'super_admin') ||
-            (rolesByService[svc]?.[r] ?? []).includes('*'),
-        ),
-      )
-      if (isWild) wild.add(name)
+      const held = new Set((def.jinbe ?? []).flatMap((r) => roles?.[r] ?? []))
+      if (PLATFORM_PERMISSIONS.every((p) => held.has(p))) full.add(name)
     }
-    return wild
+    return full
   }
 
   async getDirectoryStats(): Promise<DirectoryStats> {
@@ -522,18 +456,16 @@ export class RbacService {
       // Kratos metadata — the display copy — so every group the model declares showed `0 members`
       // while the memberships that decide requests sat in `group_members`, uncounted. A screen
       // saying nobody holds a group is the one answer that is certainly wrong.
-      const [bindings, wildGroups, groupDefs, memberships, orgGrants, orgAdmins] = await Promise.all([
+      const [bindings, wildGroups, groupDefs, memberships, orgAssignments] = await Promise.all([
         kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS }),
         this.wildcardGroupNames(),
         redisRbacRepository.getGroups(),
         allGroupMemberships().catch(() => null),
-        orgGrantsRepository.getAll().catch(() => ({})),
-        redisRbacRepository.getOrgAdminMap().catch(() => ({} as Record<string, string[]>)),
+        orgRolesRepository.getAll().catch(() => ({} as Record<string, Record<string, string[]>>)),
       ])
-      // Who holds a role in some org: an org grant or a seat on an org's admin roster.
+      // Who holds a role in some org (by identity id).
       const orgRole = new Set<string>()
-      for (const members of Object.values(orgGrants)) for (const email of Object.keys(members)) orgRole.add(email.toLowerCase())
-      for (const roster of Object.values(orgAdmins)) for (const email of roster) orgRole.add(email.toLowerCase())
+      for (const members of Object.values(orgAssignments)) for (const subject of Object.keys(members)) orgRole.add(subject)
       // group → the services it grants roles on (for per-service reach counts)
       const groupServices: Record<string, string[]> = {}
       for (const [g, def] of Object.entries(groupDefs)) groupServices[g] = Object.keys(def)
@@ -544,7 +476,7 @@ export class RbacService {
       const perGroup: Record<string, number> = {}
       const perOrg: Record<string, number> = {}
       const perService: Record<string, number> = {}
-      for (const [email, b] of bindings) {
+      for (const b of bindings.values()) {
         if (b.active) active++
         // Only when the enforced store could not be read — see below.
         if (!memberships) for (const g of b.groups) perGroup[g] = (perGroup[g] ?? 0) + 1
@@ -552,7 +484,7 @@ export class RbacService {
         // Only the default 'users' membership (in the enforced store when it answers) and no org role
         // → can't reach anything.
         const held = memberships ? (memberships.get(b.id) ?? []) : b.groups
-        if (b.active && held.every((g) => g === 'users') && !orgRole.has(email.toLowerCase())) unassigned++
+        if (b.active && held.every((g) => g === 'users') && !orgRole.has(b.id)) unassigned++
         if (b.groups.some((g) => wildGroups.has(g))) fullAccess++
         // Distinct services this user can reach via their groups.
         const svcs = new Set<string>()
@@ -641,12 +573,6 @@ export class RbacService {
     }
     await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
-    // Block creating a group that grants the global super_admin role unless
-    // the actor is themselves a super_admin.
-    const grantsSuperAdmin = (services.global ?? []).includes('super_admin')
-    if (grantsSuperAdmin) {
-      await this.requireSuperAdmin('create a group with the super_admin role', actor)
-    }
     await redisRbacRepository.setGroup(name, services)
     const changes = diffGroupDefinition(name, null, services)
     await this.invalidateBundle('rbac.group_created', { type: 'group', id: name }, actor, changes)
@@ -656,11 +582,6 @@ export class RbacService {
   async updateGroup(name: string, services: GroupDefinition, actor?: AuditActorInput): Promise<MutationResult> {
     if (!(await redisRbacRepository.groupExists(name))) {
       throw Object.assign(new Error(`Group not found: ${name}`), { statusCode: 404 })
-    }
-    // Privilege escalation guard: editing super_admins (the wildcard group)
-    // requires the caller to already be a super_admin themselves.
-    if (name === 'super_admins') {
-      await this.requireSuperAdmin(`modify the 'super_admins' group`, actor)
     }
     await assertValidBinding(name, services)
     await assertNoSelfEscalation({ kind: 'group', name, after: services }, actor)
@@ -683,9 +604,8 @@ export class RbacService {
     }
     await assertNoSelfEscalation({ kind: 'group', name, after: null }, actor)
     if (await this.isSystemGroup(name)) {
-      // System groups are never deletable — even by super_admins. Removing
-      // super_admins leaves the cluster with no path back to global admin.
-      // Emit the denied attempt (previously silent) before failing closed.
+      // Groups defined in code (the staff groups, super_admins) are never deleted through the API,
+      // whoever asks. Emit the denied attempt before failing closed.
       auditEventService.emit({
         category: 'rbac', kind: 'change', verb: 'delete', target: `group:${name}`,
         result: 'denied', reason: 'system_resource_immutable', severity: 'warn',
@@ -964,6 +884,10 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
+    if (serviceName === JINBE) {
+      // Generated from jinbe's route declarations (policy/route-map.ts) and converged on every boot.
+      throw Object.assign(new Error(`The route map of '${JINBE}' is generated from code and cannot be changed here`), { statusCode: 409, code: 'defined_in_code' })
+    }
     await assertNoSelfEscalation({ kind: 'routes', service: serviceName }, actor)
     // An org_param the policy cannot read would deny every request on the route: refuse it first.
     assertOrgParams(serviceName, rules)
@@ -997,22 +921,10 @@ export class RbacService {
     if (!(await redisRbacRepository.serviceExists(serviceName))) {
       throw Object.assign(new Error(`Service not found: ${serviceName}`), { statusCode: 404 })
     }
-    if (serviceName === 'global') {
-      // The staff roles are code (policy/roles.ts): an edit would be overwritten on the next boot,
-      // and would let somebody redefine a role they hold until then.
-      const code = globalRoleDefinitions()
-      const edited = (Object.keys(code) as (keyof typeof code)[])
-        .filter((r) => JSON.stringify(roles[r] ?? null) !== JSON.stringify(code[r]))
-      if (edited.length > 0) {
-        throw Object.assign(new Error(`Roles defined in code cannot be changed here: ${edited.join(', ')}`), { statusCode: 409 })
-      }
-    } else if (serviceName === 'jinbe') {
-      // The policy merges roles by name across scopes: a jinbe role named like a staff role would go to
-      // every holder of that staff role (bootstrap/seed-staff.ts unshadowStaffRoles).
-      const shadowing = STAFF_ROLES.filter((r) => roles[r] !== undefined)
-      if (shadowing.length > 0) {
-        throw Object.assign(new Error(`A jinbe role cannot be named like a staff role: ${shadowing.join(', ')}`), { statusCode: 409 })
-      }
+    if (serviceName === JINBE) {
+      // jinbe's roles are code (policy/roles.ts): an edit would be overwritten on the next boot, and
+      // would let somebody redefine a role they hold until then.
+      throw Object.assign(new Error(`The roles of '${JINBE}' are defined in code and cannot be changed here`), { statusCode: 409, code: 'defined_in_code' })
     }
     await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)
     const before = await redisRbacRepository.getRoles(serviceName)
@@ -1209,61 +1121,6 @@ export class RbacService {
   }
 
   // ===========================================================================
-  // Org → Service Map
-  // ===========================================================================
-
-  async getOrgServiceMap(): Promise<Record<string, string[]>> {
-    return redisRbacRepository.getOrgServiceMap()
-  }
-
-  async setOrgServiceMapping(organizationId: string, services: string[], actor?: AuditActorInput): Promise<void> {
-    await assertNoSelfEscalation({ kind: 'org_services', organizationId }, actor)
-    // Fail-closed: validate EVERY service in the bundle exists before writing.
-    // Reject the whole set if any is unknown rather than mapping an org to a
-    // phantom service (which would resolve to no route_map / no roles in OPA).
-    for (const serviceName of services) {
-      const serviceExists = await redisRbacRepository.serviceExists(serviceName)
-      if (!serviceExists) {
-        throw Object.assign(new Error(`Service '${serviceName}' does not exist`), { statusCode: 400 })
-      }
-    }
-    const before = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
-    await redisRbacRepository.setOrgServiceMapping(organizationId, services)
-    await this.invalidateBundle('rbac.org_service_mapping_set', { type: 'org_service_map', id: organizationId, services }, actor,
-      diffList('org_service_map', organizationId, before, services))
-  }
-
-  async deleteOrgServiceMapping(organizationId: string, actor?: AuditActorInput): Promise<void> {
-    await assertNoSelfEscalation({ kind: 'org_services', organizationId }, actor)
-    const before = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
-    const deleted = await redisRbacRepository.deleteOrgServiceMapping(organizationId)
-    if (!deleted) {
-      throw Object.assign(new Error(`No mapping found for organization '${organizationId}'`), { statusCode: 404 })
-    }
-    await this.invalidateBundle('rbac.org_service_mapping_deleted', { type: 'org_service_map', id: organizationId }, actor,
-      diffList('org_service_map', organizationId, before, []))
-  }
-
-  async getOrgAdminMap(): Promise<Record<string, string[]>> {
-    return redisRbacRepository.getOrgAdminMap()
-  }
-
-  // Replace an org's admin roster with exactly `admins`. Membership is NOT
-  // re-validated here on purpose: the policy's manageable_orgs requires the admin
-  // to also be a MEMBER of the org (data.bindings.user_organizations), so a
-  // rostered non-member is inert — they gain nothing until they're a member.
-  async setOrgAdmins(organizationId: string, admins: string[], actor?: AuditActorInput): Promise<void> {
-    const before = await redisRbacRepository.getOrgAdmins(organizationId)
-    // Stored lowercased (redis-rbac.repository.ts): the diff compares what is stored.
-    admins = [...new Set(admins.map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0))]
-    await redisRbacRepository.setOrgAdmins(organizationId, admins)
-    // The roster is a list of addresses: the legacy stream keeps them as it always has, and audit/v1
-    // replaces each with its HMAC (scrubEmails) — who was added stays comparable, not readable.
-    await this.invalidateBundle('rbac.org_admins_set', { type: 'org_admin_map', id: organizationId }, actor,
-      diffList('org_admin_map', organizationId, before, admins))
-  }
-
-  // ===========================================================================
   // Kratos Bindings
   // ===========================================================================
 
@@ -1275,8 +1132,9 @@ export class RbacService {
   async getBindingsFromKratos(opts: { maxAgeMs?: number } = { maxAgeMs: AUTHZ_DIRECTORY_MAX_AGE_MS }): Promise<KratosBindingsResponse> {
     // Single directory scan → groups + org membership + primary org, so OPA's
     // group view and its tenant (org) view come from the same snapshot.
-    const bindings = await kratosService.getAllIdentitiesWithBindings(opts)
+    const [bindings, assignments] = await Promise.all([kratosService.getAllIdentitiesWithBindings(opts), orgRolesRepository.getAll()])
     const group_membership: Record<string, string[]> = {}
+    const org_assignments: Record<string, Record<string, string[]>> = {}
     const user_organizations: Record<string, string[]> = {}
     const user_organization_primary: Record<string, string> = {}
     for (const [email, b] of bindings) {
@@ -1295,8 +1153,16 @@ export class RbacService {
       // minimal and don't advertise the full directory as empty entries.
       if (orgs.length > 0) user_organizations[email] = orgs
       if (b.primaryOrganization) user_organization_primary[email] = b.primaryOrganization
+      // Org roles by identity id, published by address; only where the person is a member (an
+      // assignment outliving its membership grants nothing, and is listed by the plan instead).
+      const mine: Record<string, string[]> = {}
+      for (const org of orgs) {
+        const roles = b.id ? assignments[org]?.[b.id] : undefined
+        if (roles?.length) mine[org] = roles
+      }
+      if (Object.keys(mine).length > 0) org_assignments[email] = mine
     }
-    return { emails: {}, group_membership, user_organizations, user_organization_primary }
+    return { group_membership, user_organizations, user_organization_primary, org_assignments }
   }
 }
 

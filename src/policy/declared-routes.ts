@@ -30,12 +30,10 @@ export type DeclaredRoute = {
   alsoAccepts?: string[]
   /** Its own guard narrows the answer per caller (the audit scope): the gateway lets any signed-in person through. */
   scopedBy?: string
-  /** The authorization model the route exists in; absent = both (authz-v2). */
-  model?: 'v1' | 'v2'
 }
 
 /** What a route declared about itself, as the route-access hook read it. */
-export type Declaration = Pick<DeclaredRoute, 'permission' | 'access' | 'stepUp' | 'org' | 'edge' | 'alsoAccepts' | 'scopedBy' | 'model'>
+export type Declaration = Pick<DeclaredRoute, 'permission' | 'access' | 'stepUp' | 'org' | 'edge' | 'alsoAccepts' | 'scopedBy'>
 
 /** The property a guard carries to say what it enforces. */
 export const ENFORCES = Symbol.for('jinbe.enforces')
@@ -93,7 +91,6 @@ export function recordRoute(
   if (declared?.org) extra.org = declared.org
   if (declared?.edge) extra.edge = true
   if (declared?.alsoAccepts?.length) extra.alsoAccepts = [...declared.alsoAccepts]
-  if (declared?.model) extra.model = declared.model
   const by = declared?.scopedBy ?? [guards].flat(2).map(scopedByOf).find((b) => b !== null)
   if (by) extra.scopedBy = by
   for (const verb of [method].flat()) {

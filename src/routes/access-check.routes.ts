@@ -48,7 +48,6 @@ const accessCheckResponseSchema = {
     groups: { type: 'array', items: { type: 'string' } },
     roles: { type: 'array', items: { type: 'string' } },
     permissions: { type: 'array', items: { type: 'string' } },
-    superAdmin: { type: 'boolean' },
     aal: { type: 'string', enum: ['aal1', 'aal2'] },
     stepUp: {
       type: 'object',
@@ -60,7 +59,7 @@ const accessCheckResponseSchema = {
       },
     },
   },
-  required: ['allow', 'reason', 'app', 'owners', 'matchingRules', 'groups', 'roles', 'permissions', 'superAdmin'],
+  required: ['allow', 'reason', 'app', 'owners', 'matchingRules', 'groups', 'roles', 'permissions'],
 }
 
 export async function accessCheckRoutes(fastify: FastifyInstance) {

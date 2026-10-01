@@ -3,6 +3,9 @@ import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { redisRbacRepository, type FlatRolesMap } from './redis-rbac.repository.js'
 import { auditEventService } from './audit-event.service.js'
 import { getRedisClient } from './redis-client.service.js'
+import { orgRolesRepository } from './org-roles.repository.js'
+import { JINBE } from '../policy/roles.js'
+import { PLATFORM_PERMISSIONS } from '../policy/catalog.js'
 
 /**
  * Access Review Service (audit-overhaul Part B / [P1-5])
@@ -20,13 +23,11 @@ import { getRedisClient } from './redis-client.service.js'
  *  - MFA comes from a dedicated PAGINATED credential pass (every page, with
  *    include_credential) so it is not truncated at 250.
  *
- * Tiers (highest wins):
- *  - T0 = a group grants GLOBAL power (global super_admin role, or a global role
- *         resolving to the "*" permission).
- *  - T1 = a group grants a SERVICE wildcard ("*") but not global power.
- *  - T2 = org-admin, POSITIONAL: rostered in getOrgAdminMap() AND a member of
- *         that org (user_organizations). This is invisible to a perms-walk — the
- *         power comes from the org roster, not from a group→role→perm chain.
+ * Tiers (highest wins), read from CONTENT, never from a name:
+ *  - T0 = a group holds every platform permission of jinbe (super_admin, generated).
+ *  - T1 = a group holds every permission a service's roles define (the whole of that service).
+ *  - T2 = org owner: holds org.members:write in an org they belong to, through an org role
+ *         assigned there (rbac:org_assignments) — power that no group→role chain shows.
  *  - T3 = broad cross-service reach (>= BROAD_REACH_MIN distinct services).
  *
  * SWR-cached exactly like getDirectoryStats: served fresh-or-stale at once,
@@ -115,10 +116,11 @@ export interface AccessReviewResult {
 
 // ── Per-group resolved power (computed once per walk) ──────────────────────────
 interface GroupPower {
+  /** Holds every platform permission of jinbe. */
   globalPower: boolean
-  /** Services where one of the group's roles grants the "*" permission. */
+  /** Services whose every role permission the group holds. */
   wildcardServices: Set<string>
-  /** All (non-global) services the group binds a role on. */
+  /** All services the group binds a role on. */
   services: Set<string>
   paths: AccessReviewGrantPath[]
 }
@@ -169,21 +171,19 @@ class AccessReviewService {
   private async compute(): Promise<AccessReviewResult> {
     // Fail-closed core reads: any of these throwing aborts the whole review so
     // the caller sees a load error, never an empty "clean" posture.
-    const [bindings, groupDefs, services, orgAdminMap] = await Promise.all([
+    const [bindings, groupDefs, services, assignments, orgRoleDefs] = await Promise.all([
       kratosService.getAllIdentitiesWithBindings({ maxAgeMs: DERIVED_MAX_AGE_MS }),
       redisRbacRepository.getGroups(),
       redisRbacRepository.getServices(),
-      redisRbacRepository.getOrgAdminMap(),
+      orgRolesRepository.getAll(),
+      redisRbacRepository.getOrgRoles(JINBE),
     ])
 
-    // Resolve every role definition once, across all services + global (the walk
-    // shape of wildcardGroupNames): union of registry services + services any
-    // group binds, plus 'global'.
+    // Resolve every role definition once: registry services ∪ services any group binds.
     const svcSet = new Set<string>(services)
     for (const def of Object.values(groupDefs)) {
       for (const svc of Object.keys(def)) svcSet.add(svc)
     }
-    svcSet.add('global')
     const rolesByService: Record<string, FlatRolesMap> = {}
     await Promise.all(
       [...svcSet].map(async (svc) => {
@@ -197,37 +197,27 @@ class AccessReviewService {
     for (const [name, def] of Object.entries(groupDefs)) {
       const gp: GroupPower = { globalPower: false, wildcardServices: new Set(), services: new Set(), paths: [] }
       for (const [svc, roles] of Object.entries(def)) {
+        const held = new Set((roles ?? []).flatMap((role) => rolesByService[svc]?.[role] ?? []))
+        const all = new Set(Object.values(rolesByService[svc] ?? {}).flat())
+        const everything = svc === JINBE ? PLATFORM_PERMISSIONS.every((p) => held.has(p)) : all.size > 0 && [...all].every((p) => held.has(p))
+        gp.services.add(svc)
+        if (everything && svc === JINBE) gp.globalPower = true
+        else if (everything) gp.wildcardServices.add(svc)
         for (const role of roles ?? []) {
-          const perms = rolesByService[svc]?.[role] ?? []
-          const isWild = perms.includes('*')
-          if (svc === 'global') {
-            if (role === 'super_admin' || isWild) {
-              gp.globalPower = true
-              gp.paths.push({ group: name, service: 'global', role, summary: `${name} → global:${role} → *` })
-            } else {
-              gp.paths.push({ group: name, service: 'global', role, summary: `${name} → global:${role}` })
-            }
-          } else {
-            gp.services.add(svc)
-            if (isWild) {
-              gp.wildcardServices.add(svc)
-              gp.paths.push({ group: name, service: svc, role, summary: `${name} → ${svc}:${role} → *` })
-            } else {
-              gp.paths.push({ group: name, service: svc, role, summary: `${name} → ${svc}:${role}` })
-            }
-          }
+          gp.paths.push({ group: name, service: svc, role, summary: `${name} → ${svc}:${role}${everything ? ' → every permission' : ''}` })
         }
       }
       groupPower.set(name, gp)
     }
 
-    // Invert the org-admin roster: email(lower) → orgs they are rostered admin of.
-    const rosterByEmail = new Map<string, Set<string>>()
-    for (const [org, roster] of Object.entries(orgAdminMap)) {
-      for (const e of roster) {
-        const key = e.toLowerCase()
-        if (!rosterByEmail.has(key)) rosterByEmail.set(key, new Set())
-        rosterByEmail.get(key)!.add(org)
+    // Org owners: identity id → orgs where an assigned jinbe org role carries org.members:write.
+    const managing = new Set(Object.entries(orgRoleDefs ?? {}).filter(([, perms]) => perms.includes('org.members:write')).map(([r]) => `${JINBE}:${r}`))
+    const ownerOrgsById = new Map<string, Set<string>>()
+    for (const [org, members] of Object.entries(assignments)) {
+      for (const [subject, roles] of Object.entries(members)) {
+        if (!roles.some((r) => managing.has(r))) continue
+        if (!ownerOrgsById.has(subject)) ownerOrgsById.set(subject, new Set())
+        ownerOrgsById.get(subject)!.add(org)
       }
     }
 
@@ -271,18 +261,15 @@ class AccessReviewService {
         for (const p of gp.paths) paths.push(p)
       }
 
-      // Org-admin is POSITIONAL: rostered admin AND member of that org.
+      // Org owner: an org role carrying org.members:write, assigned in an org they belong to.
       const memberOrgs = new Set<string>([
         ...(b.organizations ?? []),
         ...(b.primaryOrganization ? [b.primaryOrganization] : []),
       ])
-      const rostered = rosterByEmail.get(email.toLowerCase())
-      const adminOrgs = rostered ? [...rostered].filter((o) => memberOrgs.has(o)) : []
+      const owned = b.id ? ownerOrgsById.get(b.id) : undefined
+      const adminOrgs = owned ? [...owned].filter((o) => memberOrgs.has(o)) : []
       const isOrgAdmin = adminOrgs.length > 0
 
-      // A global super-admin (T0) can reach EVERY service, not just the ones
-      // their groups explicitly bind — report the true blast radius.
-      if (globalPower) for (const s of services) reached.add(s)
       const reach = reached.size
 
       // Tier ladder — highest power wins; below the ladder = not privileged.
@@ -293,11 +280,10 @@ class AccessReviewService {
       else if (reach >= BROAD_REACH_MIN) tier = 3
       if (tier === null) continue
 
-      // Positional org-admin has no group→role→perm chain — surface a synthetic
-      // path so "how they got it" is not blank (drawer + list "how" column).
+      // An org role has no group→role→perm chain — surface a path so "how they got it" is not blank.
       if (isOrgAdmin) {
         for (const o of adminOrgs) {
-          paths.push({ group: `org:${o}`, summary: `org-admin of ${o} (positional — org roster, not a group role)` })
+          paths.push({ group: `org:${o}`, summary: `manages the members of ${o} (an org role assigned there)` })
         }
       }
 
@@ -320,8 +306,8 @@ class AccessReviewService {
       const noMfa = mfaOk && (mfaKnown ? mfa === false : true)
 
       const flags: string[] = []
-      if (globalPower) flags.push('global-super-admin')
-      if (wildcardServices.size > 0) flags.push('wildcard')
+      if (globalPower) flags.push('every-permission')
+      if (wildcardServices.size > 0) flags.push('whole-service')
       if (reach >= SPRAWL_MIN) flags.push('sprawl')
       if (isOrgAdmin && reach >= BROAD_REACH_MIN) flags.push('org-admin-broad-reach')
       if (isDormant(lastActive, now)) flags.push('dormant')
@@ -448,8 +434,8 @@ class AccessReviewService {
 
 // ── Pure helpers ───────────────────────────────────────────────────────────
 function pathRank(p: AccessReviewGrantPath): number {
-  if (p.service === 'global') return 0
-  if (p.summary.endsWith('→ *')) return 1
+  if (p.service === JINBE && p.summary.endsWith('→ every permission')) return 0
+  if (p.summary.endsWith('→ every permission')) return 1
   if (p.group.startsWith('org:')) return 2
   return 3
 }
@@ -479,7 +465,7 @@ function isDormant(lastActive: string | null, now: number): boolean {
 /** A "done-to" event that plausibly granted power to the target. */
 function isGrantLike(e: { verb?: string; changes?: { added?: string[]; flags?: string[] } }): boolean {
   if ((e.changes?.added?.length ?? 0) > 0) return true
-  if (e.changes?.flags?.some((f) => f === 'grants_super_admin' || f === 'wildcard_permission')) return true
+  if (e.changes?.flags?.some((f) => f === 'grants_super_admin' || f === 'grants_critical')) return true
   return e.verb === 'assign' || e.verb === 'grant'
 }
 

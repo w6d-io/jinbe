@@ -15,7 +15,8 @@ const H = vi.hoisted(() => ({
   getGroups: vi.fn(),
   getRoles: vi.fn(),
   getServices: vi.fn(),
-  getOrgAdminMap: vi.fn(),
+  getOrgRoles: vi.fn(),
+  getAssignments: vi.fn(),
   query: vi.fn(),
   hgetall: vi.fn(),
 }))
@@ -32,8 +33,11 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
     getGroups: H.getGroups,
     getRoles: H.getRoles,
     getServices: H.getServices,
-    getOrgAdminMap: H.getOrgAdminMap,
+    getOrgRoles: H.getOrgRoles,
   },
+}))
+vi.mock('../../../services/org-roles.repository.js', () => ({
+  orgRolesRepository: { getAll: H.getAssignments },
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { query: H.query },
@@ -49,22 +53,23 @@ vi.mock('../../../services/redis-client.service.js', () => ({
 }))
 
 import { accessReviewService } from '../../../services/access-review.service.js'
+import { roleDefinitions, orgRoleDefinitions } from '../../../policy/roles.js'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 const GROUPS: Record<string, Record<string, string[]>> = {
-  super_admins:   { global: ['super_admin'] },     // T0 (global super_admin → *)
-  billing_admins: { billing: ['admin'] },          // T1 (billing:admin → *)
-  broad:          { svcA: ['member'], svcB: ['member'], svcC: ['member'] }, // T3 reach 3, no *
+  super_admins:   { jinbe: ['super_admin'] },      // T0 (every platform permission)
+  billing_admins: { billing: ['admin'] },          // T1 (every billing permission)
+  broad:          { svcA: ['member'], svcB: ['member'], svcC: ['member'] }, // T3 reach 3, no whole service
   viewers:        { reporting: ['viewer'] },        // no power (reach 1)
   users:          {},
 }
 const ROLES: Record<string, Record<string, string[]>> = {
-  global:    { super_admin: ['*'] },
-  billing:   { admin: ['*'], viewer: ['billing:read'] },
-  reporting: { viewer: ['reporting:read'] },
-  svcA:      { member: ['svcA:read'] },
-  svcB:      { member: ['svcB:read'] },
-  svcC:      { member: ['svcC:read'] },
+  jinbe:     roleDefinitions(),
+  billing:   { admin: ['billing:read', 'billing:write'], viewer: ['billing:read'] },
+  reporting: { viewer: ['reporting:read'], editor: ['reporting:read', 'reporting:write'] },
+  svcA:      { member: ['svcA:read'], admin: ['svcA:read', 'svcA:write'] },
+  svcB:      { member: ['svcB:read'], admin: ['svcB:read', 'svcB:write'] },
+  svcC:      { member: ['svcC:read'], admin: ['svcC:read', 'svcC:write'] },
 }
 const SERVICES = ['billing', 'reporting', 'svcA', 'svcB', 'svcC']
 
@@ -83,7 +88,7 @@ function standardBindings() {
   return new Map<string, ReturnType<typeof binding>>([
     ['t0@ex.com', binding('id-t0', ['super_admins', 'users'], { name: 'Zero' })],
     ['t1@ex.com', binding('id-t1', ['billing_admins', 'users'], { name: 'One' })],
-    // T2 is POSITIONAL: no wildcard group at all — invisible to a perms-walk.
+    // T2 holds an org role only — invisible to a group→role walk.
     ['t2@ex.com', binding('id-t2', ['users'], { organizations: ['org-1'], primaryOrganization: 'org-1', name: 'Two' })],
     ['t3@ex.com', binding('id-t3', ['broad', 'users'], { name: 'Three' })],
     ['plain@ex.com', binding('id-p', ['viewers', 'users'], { name: 'Plain' })],
@@ -95,7 +100,8 @@ function primeStandard() {
   H.getGroups.mockResolvedValue(GROUPS)
   H.getRoles.mockImplementation(async (svc: string) => ROLES[svc] ?? null)
   H.getServices.mockResolvedValue(SERVICES)
-  H.getOrgAdminMap.mockResolvedValue({ 'org-1': ['t2@ex.com'] })
+  H.getOrgRoles.mockResolvedValue(orgRoleDefinitions())
+  H.getAssignments.mockResolvedValue({ 'org-1': { 'id-t2': ['jinbe:owner'] } })
   H.getAllIdentitiesWithBindings.mockResolvedValue(standardBindings())
   H.listIdentities.mockResolvedValue({
     identities: [...standardBindings()].map(([email, b]) => ({ id: b.id, traits: { email }, credentials: {} })),
@@ -110,7 +116,7 @@ const byEmail = (list: any[], email: string) => list.find((i) => i.email === ema
 describe('accessReviewService — tier enumeration ([P1-5])', () => {
   beforeEach(() => accessReviewService.invalidate())
 
-  it('enumerates all four tiers, including the positional org-admin invisible to a perms-walk', async () => {
+  it('enumerates all four tiers, including the org owner invisible to a group walk', async () => {
     primeStandard()
     const res = await accessReviewService.getAccessReview()
 
@@ -123,13 +129,12 @@ describe('accessReviewService — tier enumeration ([P1-5])', () => {
     expect(byEmail(res.identities, 't1@ex.com').tier).toBe(1)
     expect(byEmail(res.identities, 't3@ex.com').tier).toBe(3)
 
-    // T2: classified purely from the org-admin roster ∩ org membership. It holds
-    // no wildcard/global group, so a group→role→perm walk alone would drop it.
+    // T2: an org role carrying org.members:write ∩ org membership; a group walk alone would drop it.
     const t2 = byEmail(res.identities, 't2@ex.com')
     expect(t2.tier).toBe(2)
-    expect(t2.flags).not.toContain('wildcard')
-    expect(t2.flags).not.toContain('global-super-admin')
-    expect(t2.paths[0].summary).toContain('org-admin of org-1')
+    expect(t2.flags).not.toContain('whole-service')
+    expect(t2.flags).not.toContain('every-permission')
+    expect(t2.paths[0].summary).toContain('manages the members of org-1')
 
     // Summary rollups.
     expect(res.summary.totalPrivileged).toBe(4)
@@ -141,10 +146,10 @@ describe('accessReviewService — tier enumeration ([P1-5])', () => {
     expect(t0.tierLabel).toBe('T0')
     expect(t0.powerScore).toBeGreaterThan(0)
     expect(t0.score).toBe(t0.powerScore)
-    expect(t0.flags).toContain('global-super-admin')
+    expect(t0.flags).toContain('every-permission')
     const t1 = byEmail(res.identities, 't1@ex.com')
-    expect(t1.flags).toContain('wildcard')
-    expect(t1.powerPaths.join(' ')).toContain('billing:admin → *')
+    expect(t1.flags).toContain('whole-service')
+    expect(t1.powerPaths.join(' ')).toContain('billing:admin → every permission')
     const t3 = byEmail(res.identities, 't3@ex.com')
     expect(t3.reach).toBe(3)
     expect(t3.reachServices).toEqual(['svcA', 'svcB', 'svcC'])
@@ -152,9 +157,9 @@ describe('accessReviewService — tier enumeration ([P1-5])', () => {
     expect(res.limits.bounded).toBe(true)
   })
 
-  it('T2 vanishes when the org roster no longer intersects org membership', async () => {
+  it('T2 vanishes when the org role is for an org they no longer belong to', async () => {
     primeStandard()
-    // t2 is rostered for org-1 but is a member of org-9 only → not org-admin.
+    // t2 holds owner in org-1 but is a member of org-9 only → not an org owner.
     const b = standardBindings()
     b.set('t2@ex.com', binding('id-t2', ['users'], { organizations: ['org-9'], primaryOrganization: 'org-9' }))
     H.getAllIdentitiesWithBindings.mockResolvedValue(b)

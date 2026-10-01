@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
-import { requireServiceAdmin } from '../middleware/require-service-admin.js'
-import { requireManageableOrg } from '../middleware/require-manageable-org.js'
 import { needs } from '../policy/route-access.js'
 import {
   organizationIdParamJsonSchema,
@@ -11,7 +9,6 @@ import {
 } from '../schemas/organization-user.schema.js'
 import {
   kratosIdentityJsonSchema,
-  userGroupsResponseJsonSchema,
 } from '../schemas/admin.schema.js'
 import {
   forbiddenResponseSchema,
@@ -26,8 +23,8 @@ const ORG = { org: 'organizationId' }
 /**
  * Organization-scoped user management routes
  *
- * Authorization via OPA/OPAL: requires admin role for the target
- * organization or super_admin (global *).
+ * Authorization via OPA/OPAL: the caller's grants in the target organization (org roles assigned
+ * there, or the every-org map of their platform roles) — the org clause, per route.
  *
  * GET    /users     - List users in organization
  * GET    /users/:id - Get user by ID in organization
@@ -37,13 +34,8 @@ const ORG = { org: 'organizationId' }
  * PUT    /users/:id/membership - Add an existing user to organization
  */
 export async function organizationUserRoutes(fastify: FastifyInstance) {
-  // requireServiceAdmin populates rbacInfo (and rejects callers with no
-  // permission for the org's service); requireManageableOrg then confines
-  // non-wildcard callers to organizations they actually administer. Order
-  // matters — requireManageableOrg depends on rbacInfo. `orgAdmin` lets the org's own admin (roster
-  // or directory role) in without a group granting there — these are the routes it exists for.
-  fastify.addHook('preHandler', requireServiceAdmin('organizationId', { orgAdmin: true }))
-  fastify.addHook('preHandler', requireManageableOrg())
+  // Each route's gate is the org clause for that request, attached by the route-access hook from
+  // its `org` declaration (policy/route-access.ts).
 
   fastify.get(
     '/users',
@@ -176,26 +168,4 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
     organizationUserController.addMembership.bind(organizationUserController)
   )
 
-  // ===========================================================================
-  // User Group Management (scoped to organization)
-  // ===========================================================================
-
-  fastify.get(
-    '/users/:id/groups',
-    {
-      ...needs('org.members:read', ORG),
-      schema: {
-        description: "Get a user's groups within this organization",
-        tags: ['organization-users'],
-        params: organizationUserIdParamJsonSchema,
-        response: {
-          200: userGroupsResponseJsonSchema,
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          404: notFoundResponseSchema,
-        },
-      },
-    },
-    organizationUserController.getUserGroups.bind(organizationUserController)
-  )
 }

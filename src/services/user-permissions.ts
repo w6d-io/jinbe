@@ -1,20 +1,16 @@
 import { CATALOG, effectivePermissions, grants, type Permission } from '../policy/catalog.js'
 
-/**
- * What a user-management check may name: a catalogue permission (policy/catalog.ts). The coarse
- * `admin:read` / `admin:write` fallback that lived here is now the catalogue's alias table, honoured
- * for one release like every other retired name.
- */
+/** What a user-management check may name: a catalogue permission (policy/catalog.ts). */
 export type CheckedPermission = Permission
 
-/** Whether these held permissions allow the required one (`*`, itself, or a legacy alias of it). */
+/** Whether these held permissions allow the required one (exactly itself). */
 export function allows(held: readonly string[], required: string): boolean {
   return grants(held, required)
 }
 
 /**
  * The administrative rights among these held names: every catalogue permission above `low`
- * sensitivity (the wildcard is all of them). Everyday site permissions are left out: an administrator
+ * sensitivity. Everyday site permissions are left out: an administrator
  * can hand those out anyway. What a takeover-shaped action (removing a second factor, changing the
  * sign-in address) compares: nobody may do it to somebody holding one they do not.
  */
@@ -35,23 +31,12 @@ const USER_ACTIONS: readonly Permission[] = [
 ]
 
 /**
- * Keys kuma read before the catalogue, kept for one release: the coarse pair (whether the caller
- * holds it, as a name) and `users:assign_group` (now `groups.members:write`).
- */
-const LEGACY_ACTIONS: Record<string, (held: readonly string[]) => boolean> = {
-  'admin:read': (held) => grants(held, 'admin:read'),
-  'admin:write': (held) => grants(held, 'admin:write'),
-  'users:assign_group': (held) => grants(held, 'groups.members:write'),
-}
-
-/**
  * What a console may offer this caller: each user-management action, and whether it is allowed.
  * Every key is always present, so a missing one can never be read as "allowed".
  */
 export function userActions(held: readonly string[]): Record<string, boolean> {
   const out: Record<string, boolean> = {}
   for (const p of USER_ACTIONS) out[p] = grants(held, p)
-  for (const [name, test] of Object.entries(LEGACY_ACTIONS)) out[name] = test(held)
   return out
 }
 

@@ -1,7 +1,6 @@
-import { EVERYTHING } from '../policy/catalog.js'
 import { redisRbacRepository } from './redis-rbac.repository.js'
 import { redisClientService } from './redis-client.service.js'
-import { GLOBAL, exceeding, flatten, heldIn, isEmpty, loadRoles, type PermissionsByScope } from './grant-subset.js'
+import { exceeding, flatten, heldIn, isEmpty, loadRoles, type PermissionsByScope } from './grant-subset.js'
 
 /**
  * What a 403 for a missing permission tells the caller besides "no": which groups would give it and
@@ -9,8 +8,8 @@ import { GLOBAL, exceeding, flatten, heldIn, isEmpty, loadRoles, type Permission
  * existing `error` / `code`, never in place of them.
  *
  * Group NAMES only, never their members. Read from the published model (groups → roles), staff
- * groups included; a group granting `*` is listed last — it grants everything, and is rarely the
- * group to ask for. Best effort: a model that cannot be read (Redis down, slow past
+ * groups included; the narrowest group first — the one granting the most (super_admins) is rarely
+ * the group to ask for. Best effort: a model that cannot be read (Redis down, slow past
  * GRANTED_BY_TIMEOUT_MS) gives an empty list and a hint that says only "ask an administrator for
  * <permission>" — never "no group grants this", which it could not tell. The refusal stands either way.
  */
@@ -19,7 +18,7 @@ export interface RefusalDetails {
   hint: string
 }
 
-/** A permission list, read in jinbe's own scope (global roles included). */
+/** A permission list, read in jinbe's own scope. */
 function inScope(needed: readonly string[] | PermissionsByScope, app: string): PermissionsByScope {
   return Array.isArray(needed) ? { [app]: [...needed] } : (needed as PermissionsByScope)
 }
@@ -64,12 +63,12 @@ async function readHolders(want: PermissionsByScope): Promise<string[] | null> {
   try {
     const defs = await redisRbacRepository.getGroups()
     const scopes = Object.keys(want)
-    const roles = await loadRoles([GLOBAL, ...scopes])
-    const wildcard = (name: string) => Object.values(heldIn([defs[name]], roles, scopes)).some((p) => p.includes(EVERYTHING))
+    const roles = await loadRoles(scopes)
+    const breadth = (name: string) => flatten(heldIn([defs[name]], roles, scopes)).length
     return Object.entries(defs)
       .filter(([, def]) => isEmpty(exceeding(want, heldIn([def], roles, scopes))))
       .map(([name]) => name)
-      .sort((a, b) => Number(wildcard(a)) - Number(wildcard(b)) || a.localeCompare(b))
+      .sort((a, b) => breadth(a) - breadth(b) || a.localeCompare(b))
   } catch {
     return null
   }

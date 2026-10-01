@@ -2,7 +2,6 @@ import { queryOpa } from '../services/opa-client.js'
 import type { HeldRights } from '../services/authorization-resolution.js'
 import { grants } from '../policy/catalog.js'
 import { SwrCache } from '../cache/swr.js'
-import { isV2 } from '../authz-v2/model.js'
 
 /**
  * Every authorization question jinbe asks about its own API, answered by the engine that enforces
@@ -133,7 +132,7 @@ export interface Decision {
 
 /**
  * The gateway's own verdict on one request to jinbe (`rbac.decision`): the jinbe route_map, the site
- * layer, the org layer (membership, org grants, the per-org admin roster) and per-site 2FA — the same
+ * layer, the org layer (roles assigned in that org, the every-org map) and per-site 2FA — the same
  * rule, the same data, the same input.
  */
 export function decide(q: RouteQuestion): Promise<Decision> {
@@ -163,7 +162,7 @@ export function decisionInput(q: RouteQuestion): Record<string, unknown> {
   return input
 }
 
-/** The organisations this address administers: on that org's roster AND a member of it. */
+/** The organisations where this address holds `org.members:write` (assigned, or every-org). */
 export function manageableOrgs(email: string): Promise<string[]> {
   return ask('rbac/delegation/manageable_orgs', { actor: { email } }, strings)
 }
@@ -174,14 +173,21 @@ export function memberOrgs(email: string): Promise<string[]> {
 }
 
 /**
- * Holder of a GLOBAL role carrying `*` — power over every org, not only within one service.
- * Nobody under authz v2: there is no `*` and no bypass; a super admin passes by holding (holding.ts).
+ * What this address holds in each organisation (`rbac.org_permissions_by_org`): org permissions per
+ * org, over the org universe — the roles assigned in each org it belongs to, plus what its platform
+ * roles carry into every org (the every-org map). The org gates and `/me` read this.
  */
-export function isSuperAdmin(email: string): Promise<boolean> {
-  if (isV2()) return Promise.resolve(false)
-  return ask('rbac/super_admin', { email, app: JINBE_APP }, (r) =>
-    typeof r === 'boolean' ? r : undefined,
-  )
+export function orgPermissionsByOrg(email: string, app: string = JINBE_APP): Promise<Record<string, string[]>> {
+  return ask('rbac/org_permissions_by_org', { email, app }, (r) => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined
+    const out: Record<string, string[]> = {}
+    for (const [org, perms] of Object.entries(r as Record<string, unknown>)) {
+      const list = strings(perms)
+      if (!list) return undefined
+      out[org] = list
+    }
+    return out
+  })
 }
 
 /**
@@ -193,10 +199,7 @@ export function secondFactorRequired(email: string): Promise<boolean> {
   return ask('rbac/second_factor_required', { email }, (r) => (typeof r === 'boolean' ? r : undefined))
 }
 
-/**
- * Whether permissions OPA resolved allow the required one: `*`, the permission itself, or a legacy
- * name the catalogue still honours for it (policy/catalog.ts `grants`).
- */
+/** Whether permissions OPA resolved include the required one (exact match, policy/catalog.ts). */
 export function holds(permissions: readonly string[], required: string): boolean {
   return grants(permissions, required)
 }

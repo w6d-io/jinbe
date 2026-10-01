@@ -329,7 +329,6 @@ export class AdminController {
         },
         newGroups: desiredGroups,
         actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
-        privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
       if (!grant.ok) {
@@ -613,7 +612,6 @@ export class AdminController {
         },
         newGroups: groups,
         actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
-        privilegePolicy: { kind: 'super_admin_required' },
         auditEventType: 'user.groups_changed',
       })
 

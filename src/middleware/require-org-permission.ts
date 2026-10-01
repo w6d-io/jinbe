@@ -1,45 +1,21 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { decide, isSuperAdmin } from '../authz/opa.js'
+import { decide } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
-import { administersOrganisation } from '../services/org-admin.js'
 import { enforcing } from '../policy/declared-routes.js'
 import { denyAudit } from '../audit/deny.js'
-import { delegationOf, isClient, requestPath } from './require-service-admin.js'
+import { delegationOf, isClient, requestPath, serviceAdminRefusal } from './require-service-admin.js'
 import { delegationRefusal } from './delegation-gate.js'
-import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
-import { isV2 } from '../authz-v2/model.js'
 
 /**
- * Gates for routes that act on ONE organisation — the one named by the route parameter — decided by
- * OPA, the engine the gateway decides with.
+ * The ONE gate of a route that acts on one organisation (authz-v2-design §2.3), attached by the
+ * route-access hook to every route declaring `org`: exactly what the gateway decides, OPA's
+ * `rbac.decision` for this very request — the caller's grants IN THAT ORG (org roles assigned to a
+ * member, the org entitled to the app) or the every-org map of their platform roles. Platform
+ * permissions count for nothing here, and there is no super-admin flag and no roster.
  *
- * super_admin is a holder of a GLOBAL `*` role (`rbac.super_admin`). Org admin is on that org's
- * roster and a member of it (`rbac.delegation.manageable_orgs`). Nothing held in another
- * organisation counts: a service admin of Globex is nobody in Acme.
- *
- * "Is not" and "cannot tell" stay apart: when OPA could not be asked, the answer is 503, never a
- * quiet 403 — and never an allow.
+ * Asked again here because the gateway is not the only way in. "Is not" and "cannot tell" stay
+ * apart: OPA unreachable is a 503, never a quiet 403 and never an allow.
  */
-
-function unavailable(request: FastifyRequest, reply: FastifyReply, organizationId: string, err?: unknown) {
-  request.log.warn({ organizationId, err: (err as Error | undefined)?.message }, '[org-gate] OPA could not be asked — 503')
-  return reply.status(503).send({
-    error: POLICY_UNAVAILABLE,
-    message: 'Unable to verify authorization. Please try again later.',
-  })
-}
-
-function refuse(request: FastifyRequest, reply: FastifyReply, organizationId: string, reason: string) {
-  denyAudit(request, reason)
-  return reply.status(403).send({
-    error: 'Forbidden',
-    message: `Not allowed in organization '${organizationId}'`,
-  })
-}
-
-function unauthenticated(reply: FastifyReply) {
-  return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-}
 
 function caller(request: FastifyRequest): string | null {
   const email = request.userContext?.email
@@ -48,89 +24,44 @@ function caller(request: FastifyRequest): string | null {
 }
 
 /**
- * The org's own admin, super_admin, or a platform holder of the route's declared permission. For the
- * routes that hand out that org's grants (OPA can_grant still bounds what may be handed out).
- */
-export function requireOrgAdmin(paramName = 'organizationId') {
-  return async function requireOrgAdmin(request: FastifyRequest, reply: FastifyReply) {
-    const email = caller(request)
-    if (!email) return unauthenticated(reply)
-    const organizationId = (request.params as Record<string, string>)[paramName]
-
-    // authz v2: one gate — the org clause for this request (rbac.decision routes to rbacv2). No
-    // super-admin flag, no platform holder, no roster.
-    if (isV2()) {
-      let allow: boolean
-      try {
-        ;({ allow } = await decide({
-          email, method: request.method, path: requestPath(request), aal: request.userContext?.aal,
-          client: isClient(request), delegation: delegationOf(request),
-        }))
-      } catch (err) {
-        return unavailable(request, reply, organizationId, err)
-      }
-      return allow ? undefined : refuse(request, reply, organizationId, 'not_granted_in_org')
-    }
-
-    let superAdmin: boolean
-    try {
-      superAdmin = await isSuperAdmin(email)
-    } catch (err) {
-      return unavailable(request, reply, organizationId, err)
-    }
-    if (superAdmin) return
-
-    let staff: boolean
-    try {
-      staff = await holdsDeclaredPermissionGlobally(request)
-    } catch (err) {
-      return unavailable(request, reply, organizationId, err)
-    }
-    if (staff) return
-
-    const orgAdmin = await administersOrganisation(request, organizationId)
-    if (orgAdmin === null) return unavailable(request, reply, organizationId)
-    if (orgAdmin) return
-    return refuse(request, reply, organizationId, 'not_org_admin')
-  }
-}
-
-/**
- * `permission` in the org named by the route: a platform holder of it (a staff role), or exactly as
- * the gateway decides it — OPA's `rbac.decision` for this request: super_admin; that org's roster
- * admin for the org-management set; or a MEMBER of that org holding the route's permission from site
- * grants ∪ org_grants[that org]. Without `fixed`, the permission is the route's own declaration
- * (`config.permission`), so a plugin can mount one gate for routes needing different permissions.
+ * `permission` in the org named by `paramName`. Without `fixed`, the permission is the route's own
+ * declaration (`config.permission`).
  */
 export function requireOrgPermission(fixed?: string, paramName = 'organizationId') {
   const gate = async function requireOrgPermission(request: FastifyRequest, reply: FastifyReply) {
     const email = caller(request)
-    if (!email) return unauthenticated(reply)
+    if (!email) return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
     const organizationId = (request.params as Record<string, string>)[paramName]
     const permission = fixed ?? request.routeOptions?.config?.permission
-    if (!permission) return refuse(request, reply, organizationId, 'route_declares_no_permission')
+    if (!permission) {
+      denyAudit(request, 'route_declares_no_permission')
+      return reply.status(403).send({ error: 'Forbidden', message: `Not allowed in organization '${organizationId}'` })
+    }
 
-    // A user through a client: the token must cover THIS permission in THIS org, whatever the user
-    // holds (the global delegation gate asks too; this guard knows its permission for certain).
+    // A user through a client: the token must cover THIS permission, whatever the user holds.
     const narrowed = delegationRefusal(request, permission)
-    if (narrowed) return refuse(request, reply, organizationId, narrowed)
+    if (narrowed) {
+      denyAudit(request, narrowed)
+      return reply.status(403).send({ error: 'Forbidden', message: `Not allowed in organization '${organizationId}'`, reason: narrowed })
+    }
 
-    let allow: boolean
+    let decision: { allow: boolean; reason: string }
     try {
-      if (await holdsDeclaredPermissionGlobally(request)) return
-      ;({ allow } = await decide({
+      decision = await decide({
         email,
         method: request.method,
         path: requestPath(request),
         aal: request.userContext?.aal,
         client: isClient(request),
         delegation: delegationOf(request),
-      }))
+      })
     } catch (err) {
-      return unavailable(request, reply, organizationId, err)
+      request.log.warn({ organizationId, err: (err as Error).message }, '[org-gate] OPA could not be asked — 503')
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
     }
-    if (allow) return
-    return refuse(request, reply, organizationId, `missing_permission:${permission}`)
+    if (decision.allow) return
+    denyAudit(request, `${decision.reason}:${permission}`)
+    return reply.status(403).send(await serviceAdminRefusal(request, organizationId, decision.reason))
   }
   // Marked when fixed, so a route carrying it is checked against its declaration.
   return fixed ? enforcing(gate, fixed) : gate

@@ -6,9 +6,15 @@
  * kuma and auth-mcp paint and scope themselves from) are all read off this table. A route naming a
  * permission that is not here fails the boot.
  *
- * LEAVES ONLY, matched EXACTLY. `org:write` does not imply `org.admins:write`, whatever the dots say:
- * the gateway's policy matches permission names exactly, so an ancestor that passed here and failed
- * there would be two answers to one question (staff-rbac-proposal §0 F3).
+ * LEAVES ONLY, matched EXACTLY. `orgs:write` does not imply `orgs.owners:write`, whatever the dots
+ * say, and there is no wildcard and no alias: the gateway's policy matches names exactly, so anything
+ * looser here would be two answers to one question.
+ *
+ * TWO SCOPES (authz-v2-design §2.1). A `platform` permission is decided on routes without an org
+ * parameter and held through platform roles (groups). An `org` permission is decided ONLY on routes
+ * naming an org parameter, held through org roles assigned in that org (or the explicit every-org
+ * map, roles.ts); it means nothing elsewhere. The boot refuses a route whose permission does not
+ * match its shape.
  *
  * NO IMPORTS, like authorization-resolution.ts: the kuma snapshot and the resolver comparison load
  * this file on its own.
@@ -27,7 +33,11 @@ export type Sensitivity = 'low' | 'medium' | 'high' | 'critical'
  */
 export type Delegable = 'direct' | 'never'
 
+/** Where a permission is decided (see the file comment). */
+export type Scope = 'platform' | 'org'
+
 export interface PermissionSpec {
+  scope: Scope
   /** The console section it belongs to. */
   area: 'users' | 'access' | 'organizations' | 'sites' | 'gateway' | 'settings' | 'audit' | 'platform'
   label: string
@@ -43,8 +53,9 @@ const p = (
   area: PermissionSpec['area'],
   label: string,
   sensitivity: Sensitivity,
-  opts: { stepUp?: boolean; fourEyes?: 'prod'; delegable?: Delegable } = {},
+  opts: { stepUp?: boolean; fourEyes?: 'prod'; delegable?: Delegable; scope?: Scope } = {},
 ): PermissionSpec => ({
+  scope: opts.scope ?? 'platform',
   area,
   label,
   sensitivity,
@@ -82,16 +93,21 @@ export const CATALOG = {
   // with a second factor, and who may join without one.
   'groups.mfa:write': p('access', "Switch a group's \"Members must use 2FA\"", 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
 
-  // ── Organisations ──────────────────────────────────────────────────────────────────────────────
-  'org:read': p('organizations', 'List organisations and their admins', 'low'),
-  'org:write': p('organizations', 'Create or edit an organisation', 'high'),
-  'org:delete': p('organizations', 'Delete an organisation', 'critical', { stepUp: true, delegable: 'never' }),
-  'org.members:read': p('organizations', "See an organisation's members and grants", 'medium'),
-  'org.members:write': p('organizations', "Invite, remove and grant an organisation's members", 'high'),
-  'org.admins:write': p('organizations', 'Change who administers an organisation', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
-  'org.keys:read': p('organizations', "See an organisation's API keys and key policy", 'medium'),
-  'org.keys:write': p('organizations', 'Create API keys, change the key policy', 'critical', { stepUp: true, delegable: 'never' }),
-  'org.keys:revoke': p('organizations', 'Revoke an API key', 'high'),
+  // ── Organisations, from the platform (no org parameter) ────────────────────────────────────────
+  'orgs:read': p('organizations', 'List organisations and their owners', 'low'),
+  'orgs:write': p('organizations', 'Create or edit an organisation', 'high'),
+  'orgs:delete': p('organizations', 'Delete an organisation', 'critical', { stepUp: true, delegable: 'never' }),
+  'orgs.members:write': p('organizations', 'Move a person into or out of an organisation from the platform console', 'high'),
+  // Onboarding and break-glass of one organisation: who owns it (jinbe:owner there).
+  'orgs.owners:write': p('organizations', "Name an organisation's owners", 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
+
+  // ── Inside one organisation (org scope: routes under /api/organizations/:organizationId) ─────────
+  'org.members:read': p('organizations', "See this organisation's members and their roles", 'medium', { scope: 'org' }),
+  'org.members:write': p('organizations', "Invite and remove this organisation's members, assign their roles", 'high', { scope: 'org' }),
+  'org.keys:read': p('organizations', "See this organisation's API keys and key policy", 'medium', { scope: 'org' }),
+  'org.keys:write': p('organizations', 'Create API keys, change the key policy', 'critical', { stepUp: true, delegable: 'never', scope: 'org' }),
+  'org.keys:revoke': p('organizations', 'Revoke an API key', 'high', { scope: 'org' }),
+  'org.audit:read': p('organizations', "Read this organisation's audit events", 'medium', { scope: 'org' }),
 
   // ── Sites and the edge ─────────────────────────────────────────────────────────────────────────
   'sites:read': p('sites', 'View sites, versions, status, drift, requests; test a URL', 'low'),
@@ -124,9 +140,6 @@ export const CATALOG = {
 
 export type Permission = keyof typeof CATALOG
 
-/** The wildcard: only a global role carrying `*` (super_admin) holds it, and no scope ever covers it. */
-export const EVERYTHING = '*'
-
 export function isCatalogPermission(name: string): name is Permission {
   return Object.prototype.hasOwnProperty.call(CATALOG, name)
 }
@@ -143,84 +156,27 @@ export const catalogPermission = specOf
 
 export const PERMISSIONS = Object.keys(CATALOG) as Permission[]
 
-const reads = PERMISSIONS.filter((n) => n.endsWith(':read'))
+export const PLATFORM_PERMISSIONS = PERMISSIONS.filter((n) => CATALOG[n].scope === 'platform')
+export const ORG_PERMISSIONS = PERMISSIONS.filter((n) => CATALOG[n].scope === 'org')
 
-/**
- * Names the model held before the catalogue, still honoured FOR ONE RELEASE (remove in wave W5): a
- * role in Redis, an OPAL org grant, a token scope or a kuma check may carry them. Each covers exactly
- * the catalogue permissions its old gate used to open, so nobody gains or loses a route in the
- * release that introduces the catalogue — the staff roles replace them in W3.
- *
- * Not aliased on purpose: `sites:apply` is a live name with a narrower meaning now (zones, the gateway,
- * approvals and deletion are their own permissions; only `*` held all of them before).
- */
-export const ALIASES: Readonly<Record<string, readonly Permission[]>> = {
-  // The plugin-wide gate on /api/admin/*. `audit:export` rode on it through the audit scope guard.
-  'admin:read': [
-    ...reads.filter((n) => !['org.keys:read', 'policy.bundle:read'].includes(n)),
-    'audit:export',
-  ],
-  // requireSuperAdmin, and the fine user-management names USER_PERMISSIONS refined it into.
-  'admin:write': [
-    'users:create', 'users:update', 'users:update_email', 'users.metadata:write', 'users:disable', 'users:delete', 'users:recovery',
-    'users:verify', 'users:send_login_link', 'users:reset_second_factor', 'sessions:revoke',
-    'access:check', 'groups:write', 'groups.members:write', 'groups.members:revoke',
-    'org:write', 'org:delete', 'org.members:write', 'org.admins:write',
-    'sites:write', 'settings.signin:write', 'settings.mcp:write',
-    'policy.bundle:read', 'policy.bundle:write', 'recert:manage', 'recert:delete',
-  ],
-  'admin.organisation:read': ['org:read'],
-  'admin.organisation:write': ['org:write', 'org:delete'],
-  'admin.membership:write': ['groups.members:write', 'groups.members:revoke'],
-  'users:assign_group': ['groups.members:write', 'groups.members:revoke'],
-  // Renamed (OPAL org_grants and ORG_ADMIN_PERMISSIONS still carry the old names).
-  'org:manage_users': ['org.members:read', 'org.members:write'],
-  'org:manage_api_keys': ['org.keys:read', 'org.keys:write', 'org.keys:revoke'],
+export function scopeOf(name: string): Scope | undefined {
+  return specOf(name)?.scope
 }
 
-/**
- * Whether held permissions grant a required one: `*`, the permission itself, or a legacy alias of
- * it. A required name outside the catalogue (a site's own permission) keeps the dotted-ancestor rule
- * of the model it belongs to.
- */
+/** Whether held permissions grant a required one: the permission itself, nothing else. */
 export function grants(held: readonly string[], required: string): boolean {
-  if (grantsModel) return grantsModel(held, required)
-  if (held.includes(EVERYTHING)) return true
-  if (required === EVERYTHING) return false
-  if (held.includes(required)) return true
-  if (isCatalogPermission(required)) {
-    return held.some((h) => ALIASES[h]?.includes(required) ?? false)
-  }
-  return held.some((h) => coversByAncestry(h, required))
+  return held.includes(required)
 }
 
 /**
- * The rule `grants` follows instead of the one above while another authorization model is active
- * (authz-v2/model.ts installs it on the switch, null puts v1 back). A hook rather than an import, so
- * this file keeps loading on its own.
- */
-let grantsModel: ((held: readonly string[], required: string) => boolean) | null = null
-
-export function setGrantsModel(rule: ((held: readonly string[], required: string) => boolean) | null): void {
-  grantsModel = rule
-}
-
-/**
- * Whether a token's scopes cover a required permission: `grants` without the wildcard. A scope that
- * is not a plain `resource:verb` covers nothing, so a forged `*` opens no route.
+ * Whether a token's scopes cover a required permission: the same exact match, over scopes that are
+ * a plain `resource:verb` (anything else covers nothing).
  */
 export function scopeGrants(scopes: readonly string[], required: string): boolean {
   return grants(scopes.filter((s) => /^[a-z][a-z0-9_.-]*:[a-z][a-z0-9_-]*$/.test(s)), required)
 }
 
-/** The catalogue permissions these held names amount to (`*` is every one of them). */
+/** The catalogue permissions among these held names. */
 export function effectivePermissions(held: readonly string[]): Permission[] {
-  return PERMISSIONS.filter((name) => grants(held, name))
-}
-
-// authorization-resolution `covers`, repeated so this file needs no import.
-function coversByAncestry(held: string, required: string): boolean {
-  const [heldResource, heldVerb] = held.split(':')
-  const [requiredResource, requiredVerb] = required.split(':')
-  return heldVerb === requiredVerb && requiredResource.startsWith(`${heldResource}.`)
+  return PERMISSIONS.filter((name) => held.includes(name))
 }

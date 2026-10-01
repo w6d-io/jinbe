@@ -1,20 +1,19 @@
 import { declaredRoute } from './declared-routes.js'
-import { V2NameError, v2Name } from '../authz-v2/catalogue.js'
+import { scopeOf } from './catalog.js'
 
 /**
  * What each OpenAPI operation says about its own authorization, written from the SAME declaration
  * the route-access hook turned into the guard (routing-remap §2.1): openapi.yaml becomes the
  * reviewable contract, and CI checks it against the declarations and the catalogue.
  *
- *   x-permission       the catalogue permission (v1 name, what the gateway matches today)
- *   x-permission-v2    its authz v2 name (by the route's shape: org parameter or not)
+ *   x-permission       the catalogue permission, matched exactly by the gateway
+ *   x-scope            where it is decided: platform, or org (inside the organisation named by x-org-param)
  *   x-access           why no permission is needed: public | self | authenticated | machine
  *   x-org-param        the route parameter naming the organisation (org scope)
  *   x-step-up          a second factor proven within 15 minutes
  *   x-also-accepts     permissions the route's own guard also accepts on part of its input
  *   x-scoped-by        its own guard narrows the answer per caller (the audit scope)
  *   x-edge             machine routes: whether the gateway forwards it at all
- *   x-model            exists in one authorization model only (v1: retired by v2; v2: new)
  */
 export function declarationExtensions(method: string, url: string): Record<string, unknown> {
   // A route registered as `/` under a prefix reaches swagger with its trailing slash, the table without.
@@ -23,11 +22,8 @@ export function declarationExtensions(method: string, url: string): Record<strin
   const ext: Record<string, unknown> = {}
   if (row.permission) {
     ext['x-permission'] = row.permission
-    try {
-      if (row.model !== 'v1') ext['x-permission-v2'] = v2Name(row.permission, !!row.org)
-    } catch (err) {
-      if (!(err instanceof V2NameError)) throw err
-    }
+    const scope = scopeOf(row.permission)
+    if (scope) ext['x-scope'] = scope
   }
   if (row.access) ext['x-access'] = row.access
   if (!row.permission && !row.access) ext['x-access'] = row.class === 'public' ? 'public' : 'authenticated'
@@ -36,7 +32,6 @@ export function declarationExtensions(method: string, url: string): Record<strin
   if (row.alsoAccepts?.length) ext['x-also-accepts'] = row.alsoAccepts
   if (row.scopedBy) ext['x-scoped-by'] = row.scopedBy
   if (row.access === 'machine') ext['x-edge'] = row.edge === true
-  if (row.model) ext['x-model'] = row.model
   return ext
 }
 

@@ -103,7 +103,7 @@ describe('decorateKeyViews', () => {
 
   it('reuses the rights already read for this request', async () => {
     s.byIds.mockResolvedValue(new Map([[OTHER, { id: OTHER, traits: { email: 'bob@acme.io' } }]]))
-    const req = request({ rbacInfo: { email: 'me@acme.io', groups: [], roles: [], permissions: ['*'] } } as Partial<FastifyRequest>)
+    const req = request({ rbacInfo: { email: 'me@acme.io', groups: [], roles: [], permissions: ['users:read'] } } as Partial<FastifyRequest>)
     expect((await decorateKeyViews(req, [view('k1', OTHER)]))[0].created_by_email).toBe('bob@acme.io')
     expect(s.rights).not.toHaveBeenCalled()
   })

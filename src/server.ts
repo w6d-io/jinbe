@@ -20,7 +20,6 @@ import { userManagementRoutes } from './routes/user-management.routes.js'
 import { userAddressRoutes } from './routes/user-address.routes.js'
 import { bulkRoutes } from './bulk/routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
-import { orgGrantsRoutes } from './routes/org-grants.routes.js'
 import { orgOwnersRoutes, orgRolesRoutes } from './routes/org-roles.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
@@ -53,7 +52,8 @@ import { realtimeService } from './services/realtime.service.js'
 import { opalPublisher } from './services/opal-publisher.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
-import { AUTHZ_ACTIVE_KEY, startActiveModelWatch } from './authz-v2/model.js'
+import { SCHEMA_VERSION } from './bootstrap/index.js'
+import { startBreakGlassSweeper } from './bootstrap/break-glass.js'
 import { rootLogger, componentLogger, captureProcessWarnings, fastifyLoggingOptions } from './telemetry/logger.js'
 import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
@@ -192,10 +192,9 @@ export async function buildServer() {
       await api.register(recertRoutes, { prefix: '/admin/recert' }) // Access recertification campaigns (admin; inbox/decision self-gated)
       await api.register(webhookRoutes, { prefix: '/webhooks' })  // Kratos after-hooks (self-authenticated)
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
-      await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
-      await api.register(orgRolesRoutes, { prefix: '/organizations/:organizationId' }) // authz v2 org roles (404 under v1)
-      await api.register(orgOwnersRoutes, { prefix: '/admin/organizations/:organizationId' }) // authz v2 owners (404 under v1)
+      await api.register(orgRolesRoutes, { prefix: '/organizations/:organizationId' }) // org roles: list, a member's, assign (holding rule)
+      await api.register(orgOwnersRoutes, { prefix: '/admin/organizations/:organizationId' }) // name an org's owners (orgs.owners:write)
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
@@ -237,7 +236,8 @@ async function start() {
     // 6 minutes — matches the chart's startupProbe (failureThreshold: 72,
     // periodSeconds: 5).
     try {
-      const marker = await waitForBootstrap({ logger: fastify.log })
+      // A marker from the previous model is not enough: wait until the release's apply has run.
+      const marker = await waitForBootstrap({ logger: fastify.log, minSchema: SCHEMA_VERSION })
       markBootstrapReady()
       fastify.log.info(
         { schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
@@ -256,8 +256,8 @@ async function start() {
         await notificationService.start()
       }
 
-      // Which authorization model this process follows (rbac:authz_active, v1 until the switch).
-      startActiveModelWatch(() => getRedisClient().get(AUTHZ_ACTIVE_KEY))
+      // Break-glass grants end on their deadline even if nobody remembers them (bootstrap/break-glass.ts).
+      startBreakGlassSweeper(fastify.log)
 
       // Real-time SSE fan-out — pushes a minimal change signal to connected
       // admin browsers (via Redis pub/sub, so it works across replicas).

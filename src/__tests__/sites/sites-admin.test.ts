@@ -5,7 +5,7 @@ import { payrollSite, ACK } from './fixtures.js'
 import { fakeGatekit } from './mocks.js'
 import { fakeCluster } from './harness.js'
 
-// Owner decision: `admin:write` drafts, saves and requests; `sites:apply` (held only through the
+// Owner decision: `sites:write` drafts, saves and requests; `sites:apply` (held only through the
 // global "*", i.e. super_admin) + recent MFA applies, rolls back, pauses, deletes, restores, accepts
 // drift, approves requests and cuts the migration over. Plus the list's draft-only sites, /platform,
 // /deleted and restore.
@@ -46,8 +46,8 @@ import * as rbacRepo from '../../services/redis-rbac.repository.js'
 type Store = ReturnType<typeof import('./mocks.js').makeRbacStore>
 const store = (rbacRepo as unknown as { __store: Store }).__store
 const redis = (redisClient as unknown as { __redis: import('./mocks.js').InlineRedisMock }).__redis
-const ADMIN = { 'x-test-perms': 'admin:read,admin:write' }
-const SUPER = { 'x-test-perms': 'admin:read,admin:write,*', 'x-test-mfa': '1' }
+const ADMIN = { 'x-test-perms': 'sites:read,sites:write' }
+const SUPER = { 'x-test-perms': 'all', 'x-test-mfa': '1' }
 const cluster = fakeCluster()
 
 let app: FastifyInstance
@@ -82,7 +82,7 @@ async function saveAs(headers: Record<string, string>) {
   return res.json().version as number
 }
 
-describe('permissions: admin:write edits and asks, sites:apply applies', () => {
+describe('permissions: sites:write edits and asks, sites:apply applies', () => {
   it('the route table says sites:apply for everything that changes the gateway', async () => {
     resetDeclaredRoutes()
     const admin = Fastify()
@@ -105,7 +105,7 @@ describe('permissions: admin:write edits and asks, sites:apply applies', () => {
     await admin.close()
   })
 
-  it('an admin:write caller saves and requests, but cannot apply, even with MFA', async () => {
+  it('a sites:write caller saves and requests, but cannot apply, even with MFA', async () => {
     const v = await saveAs(ADMIN)
     expect((await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: ADMIN, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(201)
     const withMfa = { ...ADMIN, 'x-test-mfa': '1' }

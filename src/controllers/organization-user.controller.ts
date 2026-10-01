@@ -2,9 +2,9 @@ import { FastifyReply, FastifyRequest } from 'fastify'
 import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
-import { userGroupsService } from '../services/user-groups.service.js'
+import { orgRolesRepository } from '../services/org-roles.repository.js'
+import { orgRoleRefusals } from '../services/org-role-grants.js'
 import { auditActor } from '../utils/audit-actor.js'
-import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import {
   KratosIdentity,
   KratosIdentityCreate,
@@ -19,7 +19,6 @@ import {
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
 import { addMember, membershipRowsKept, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
-import { declaredGroups } from '../services/group-catalogue.js'
 import {
   identitiesInOrganisation,
   isMemberOf,
@@ -126,60 +125,33 @@ export class OrganizationUserController {
     reply: FastifyReply
   ) {
     const { organizationId } = request.params
-    const { email, name, sendInvite, groups } = organizationUserCreateBodySchema.parse(
+    const { email, name, sendInvite, roles } = organizationUserCreateBodySchema.parse(
       request.body
     )
 
-    // Omitted / base `users` → no privileged grant, no delegation check. Any
-    // other group is validated + containment-checked through the shared guard.
-    const desiredGroups = groups && groups.length > 0 ? groups : ['users']
-    const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
+    // Org roles given at creation clear the same holding rule as PUT …/users/:id/roles, BEFORE
+    // anything is created: a refused role never leaves a half-provisioned person behind.
+    const wanted = [...new Set(roles ?? [])]
+    const refused = await orgRoleRefusals(request.userContext?.email ?? '', organizationId, wanted)
+    if (refused.length > 0) {
+      return reply.status(403).send({ error: 'Forbidden', message: `Not allowed to assign: ${refused.map((r) => r.role).join(', ')}`, refused })
+    }
 
     const kratosBody: KratosIdentityCreate = {
       schema_id: 'default',
       state: 'active',
       traits: { email, ...(name ? { name } : {}) },
       organization_id: organizationId,
-      // Persist the base `users` group up front for the no-privileged-group
-      // case, so an invited user visibly holds `users` rather than showing
-      // null/empty in the UI. When groups need a grant check, applyGroupUpdate
-      // below sets them (with rollback), so leave metadata_admin unset here.
-      ...(needsGrantCheck ? {} : { metadata_admin: { groups: desiredGroups } }),
+      metadata_admin: { groups: ['users'] },
     }
 
     const identity = await kratosService.createIdentity(kratosBody)
-
-    // Assign the requested groups through the SAME containment guard as the
-    // group-assign endpoint (delegation can_grant + global backstop + MFA).
-    // A blocked grant rolls the just-created identity back so a refused
-    // privilege escalation can never strand a half-provisioned user.
-    if (needsGrantCheck) {
-      const grant = await userGroupsService.applyGroupUpdate({
-        identity: { id: identity.id, email, organizationId },
-        newGroups: desiredGroups,
-        actor: { ...auditActor(request), aal: request.userContext?.aal, authenticatedAt: request.userContext?.authenticatedAt, secondFactorAt: request.userContext?.secondFactorAt, authVia: request.userContext?.authVia, stepUpViaKey: keyStepUpVerdict(request, 'groups.members:write').ok },
-        privilegePolicy: {
-          kind: 'wildcard_in_org',
-          orgId: organizationId,
-        },
-        auditEventType: 'organization_user.groups_changed',
-        auditExtraDetails: { organizationId },
-      })
-      if (!grant.ok) {
-        await kratosService.deleteIdentity(identity.id).catch((err) => {
-          request.log.error(
-            { err, id: identity.id },
-            'Failed to roll back user after a blocked group assignment'
-          )
-        })
-        return reply.status(grant.status).send(grant.body)
-      }
-    }
 
     // Where this service owns membership, the assignment is a record here — not something read
     // back out of the identity's own metadata. Written AFTER the grant check, so a refused
     // privilege never leaves a membership behind the rollback.
     await recordMembership(organizationId, identity.id, request)
+    if (wanted.length > 0) await orgRolesRepository.setForMember(organizationId, identity.id, wanted)
 
     if (sendInvite) {
       try {
@@ -256,26 +228,6 @@ export class OrganizationUserController {
   }
 
   /**
-   * Get a user's groups within an organization
-   * GET /api/organizations/:organizationId/users/:id/groups
-   */
-  async getUserGroups(
-    request: FastifyRequest<{ Params: { organizationId: string; id: string } }>,
-    reply: FastifyReply
-  ) {
-    const { organizationId, id } = request.params
-
-    const identity = await kratosService.getIdentity(id)
-    await assertOrganizationMatch(identity, organizationId)
-
-    const email = identity.traits?.email as string
-    const groups = await kratosService.getUserGroups(email)
-    const availableGroups = await declaredGroups()
-
-    return reply.send({ email, groups, availableGroups })
-  }
-
-  /**
    * Remove a user from an organization — that membership only
    * DELETE /api/organizations/:organizationId/users/:id
    *
@@ -294,6 +246,8 @@ export class OrganizationUserController {
 
     try {
       await leaveOrganisation(identity, organizationId)
+      // Their org roles there go with the membership (an assignment without it grants nothing anyway).
+      await orgRolesRepository.forgetMember(organizationId, id)
     } catch (err) {
       return storeUnavailable(reply, err)
     }

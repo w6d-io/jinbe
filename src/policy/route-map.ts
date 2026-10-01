@@ -1,27 +1,23 @@
-import { ALIASES, isCatalogPermission, type Permission } from './catalog.js'
 import type { DeclaredRoute } from './declared-routes.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 
 /**
- * jinbe's route_map rows, GENERATED from the routes it declares (staff-rbac-proposal §3 rule 3) —
- * `npm run gen:route-map` writes them to route-map.generated.ts, and CI fails when the file and the
- * running route table disagree. Every generated row is a live route. The hand rows in
- * build-route-map.ts stay beside them for one release: the bootstrap merge never deletes, and a
- * built-in variant dropped from the code would make its path read as operator-customised.
+ * jinbe's route_map, GENERATED from its declarations alone (authz-v2-design §3.1): `npm run
+ * gen:route-map` writes route-map.generated.ts and CI fails when the file and the running route table
+ * disagree. No hand rows, no aliases, no catch-all but the documentation:
  *
- * What the gateway's policy needs to admit a request jinbe will then decide itself:
- *   - a route requiring a catalogue permission: one row with it (exact match, as rbac.rego does),
- *     `org_param` when the route is org-scoped, and one row per legacy name that still stands for it
- *     (catalog.ts ALIASES) — so holders of `admin:read` or an OPAL org grant of `org:manage_users`
- *     keep reaching it for the release that introduces the catalogue;
- *   - a route answering about its caller (`self`, `authenticated`): one row with no permission, which
- *     the policy reads as "any signed-in person";
- *   - `public` and `machine` routes and `*` (legacy infrastructure): none here — the hand-kept public
- *     rows and the super-admin wildcard in build-route-map.ts cover them.
+ *   permission P                    {method, path, permission: P} (+ org_param), one more per alsoAccepts
+ *   scoped by its own guard (audit) {method, path} — any signed-in person; the guard narrows
+ *   access self | authenticated     {method, path}
+ *   access public                   {method, path, public: true}
+ *   access machine, edge            {method, path, public: true} (SCIM authenticates itself)
+ *   access machine                  no row: the gateway answers not_found (OPAL feeds, rules, webhooks)
+ *   /docs*                          DOCS_ROW, added by the bootstrap only with ENABLE_SWAGGER
  */
 
-const legacyNamesFor = (permission: Permission): string[] =>
-  Object.entries(ALIASES).filter(([, leaves]) => leaves.includes(permission)).map(([name]) => name).sort()
+export const DOCS_ROW: RouteRule = { method: 'GET', path: '/docs/:any*', public: true }
+
+const isDocs = (path: string) => /^\/docs(\/|$)/.test(path)
 
 export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
   const rows: RouteRule[] = []
@@ -32,30 +28,34 @@ export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
     seen.add(key)
     rows.push(row)
   }
-
   const sorted = [...declared]
-    // New in authz v2: not a v1 route until the cut-over.
-    .filter((r) => r.method !== 'HEAD' && r.model !== 'v2')
+    .filter((r) => r.method !== 'HEAD' && !isDocs(r.path))
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
   for (const r of sorted) {
-    if (r.access === 'self' || r.access === 'authenticated') {
-      push({ method: r.method, path: r.path })
+    const base = { method: r.method, path: r.path }
+    if (r.permission) {
+      if (r.scopedBy) {
+        push(base)
+        continue
+      }
+      const org = r.org ? { org_param: r.org } : {}
+      for (const permission of [r.permission, ...(r.alsoAccepts ?? [])]) push({ ...base, permission, ...org })
       continue
     }
-    if (!r.permission || !isCatalogPermission(r.permission)) continue
-    // Its own guard admits callers holding no platform permission (the audit scope lets an org admin
-    // read their organisations' events): any signed-in person through.
-    if (r.scopedBy) push({ method: r.method, path: r.path })
-    const orgParam = r.org ? { org_param: r.org } : {}
-    // Permissions the route's own guard also accepts on part of its input (config.alsoAccepts).
-    const accepted = [r.permission, ...(r.alsoAccepts ?? []).filter(isCatalogPermission)]
-    for (const permission of accepted) push({ method: r.method, path: r.path, permission, ...orgParam })
-    for (const permission of accepted) {
-      for (const legacy of legacyNamesFor(permission)) {
-        // The org grants' names mean something only on a route of one organisation.
-        if (legacy.startsWith('org:manage_') && !r.org) continue
-        push({ method: r.method, path: r.path, permission: legacy, ...orgParam })
-      }
+    switch (r.access) {
+      case 'self':
+      case 'authenticated':
+        push(base)
+        break
+      case 'public':
+        push({ ...base, public: true })
+        break
+      case 'machine':
+        if (r.edge) push({ ...base, public: true })
+        break
+      default:
+        // `authenticated` class with no access recorded (read off guards): any signed-in person.
+        if (r.class === 'authenticated') push(base)
     }
   }
   return rows
@@ -63,14 +63,13 @@ export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
 
 /** The generated file's contents (scripts/gen-route-map.ts writes it; the CI test compares it). */
 export function renderRouteMapModule(rows: readonly RouteRule[]): string {
-  const body = rows.map((r) => `  ${JSON.stringify(r)},`).join('\n')
   return [
     '// GENERATED by `npm run gen:route-map` from the routes jinbe declares (policy/route-map.ts).',
-    '// Do not edit: change the route\'s `config.permission` or the catalogue, then regenerate.',
+    "// Do not edit: change the route's declaration or the catalogue, then regenerate.",
     "import type { RouteRule } from '../services/redis-rbac.repository.js'",
     '',
     'export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [',
-    body,
+    ...rows.map((r) => `  ${JSON.stringify(r)},`),
     ']',
     '',
   ].join('\n')

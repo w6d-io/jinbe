@@ -181,63 +181,6 @@ export class RbacController {
     return reply.send(getEnabledHandlers())
   }
 
-  // ===========================================================================
-  // Org → Service Map
-  // ===========================================================================
-
-  async getOrgServiceMap(_request: FastifyRequest, reply: FastifyReply) {
-    const mappings = await rbacService.getOrgServiceMap()
-    return reply.send({ mappings })
-  }
-
-  async setOrgServiceMapping(
-    request: FastifyRequest<{ Body: { organizationId: string; services: string[] } }>,
-    reply: FastifyReply,
-  ) {
-    // Set-bundle semantics: the request replaces the org's ENTIRE service
-    // bundle with `services`. Require at least one service — clearing the
-    // mapping is DELETE /org-service-map/:organizationId.
-    const body = z.object({
-      organizationId: z.string().uuid(),
-      services: z.array(z.string().min(1).regex(/^[a-z0-9_]+$/)).min(1),
-    }).parse(request.body)
-    await rbacService.setOrgServiceMapping(body.organizationId, body.services, this.actor(request))
-    return reply.status(201).send({ success: true, message: `Mapped ${body.organizationId} → [${body.services.join(', ')}]` })
-  }
-
-  async deleteOrgServiceMapping(
-    request: FastifyRequest<{ Params: { organizationId: string } }>,
-    reply: FastifyReply,
-  ) {
-    const { organizationId } = z.object({ organizationId: z.string().uuid() }).parse(request.params)
-    await rbacService.deleteOrgServiceMapping(organizationId, this.actor(request))
-    return reply.send({ success: true, message: `Mapping removed for ${organizationId}` })
-  }
-
-  // ===========================================================================
-  // Org → Admin Roster (per-org admin list; feeds data.org_admin_map)
-  // ===========================================================================
-
-  async getOrgAdminMap(_request: FastifyRequest, reply: FastifyReply) {
-    const mappings = await rbacService.getOrgAdminMap()
-    return reply.send({ mappings })
-  }
-
-  async setOrgAdmins(request: FastifyRequest, reply: FastifyReply) {
-    // Set-roster semantics: replaces the org's ENTIRE admin roster with `admins`
-    // (emails). An empty list clears the roster (the org then has no delegated
-    // admins). Gated at the route by super_admin + a recent second factor.
-    const body = z.object({
-      organizationId: z.string().uuid(),
-      admins: z.array(z.string().email()).max(100),
-    }).parse(request.body)
-    await rbacService.setOrgAdmins(body.organizationId, body.admins, this.actor(request))
-    return reply.status(200).send({
-      success: true,
-      message: `Roster for ${body.organizationId} set to [${body.admins.join(', ') || 'none'}]`,
-    })
-  }
-
   // Impact preview and the decision simulator lived here. Both asked an engine for `data.rbac.*`,
   // a path that stopped existing when the model became `strada.authz` — they answered nothing, so
   // the screens over them showed an error whatever was asked.

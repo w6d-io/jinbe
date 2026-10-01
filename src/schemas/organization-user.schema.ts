@@ -16,9 +16,8 @@ export const organizationUserCreateBodySchema = z.object({
   email: z.string().email(),
   name: z.string().optional(),
   sendInvite: z.boolean().optional().default(false),
-  // Optional initial groups. Each is validated against the caller's delegation
-  // grant (containment + scope) via the shared guard; omitted → base `users`.
-  groups: z.array(z.string()).optional(),
+  // Optional initial org roles (`svc:role`), each under the holding rule (services/org-role-grants.ts).
+  roles: z.array(z.string().regex(/^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$/)).max(32).optional(),
 })
 
 // Update user in organization
@@ -74,7 +73,7 @@ export const organizationUserCreateBodyJsonSchema = {
     email: { type: 'string', format: 'email' },
     name: { type: 'string' },
     sendInvite: { type: 'boolean', default: false },
-    groups: { type: 'array', items: { type: 'string' } },
+    roles: { type: 'array', maxItems: 32, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$' } },
   },
   additionalProperties: false,
 }

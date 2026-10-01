@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { declaredRoutes, resetDeclaredRoutes, type DeclaredRoute } from '../../policy/declared-routes.js'
-import { CATALOG, PERMISSIONS, isCatalogPermission } from '../../policy/catalog.js'
+import { CATALOG, PERMISSIONS, PLATFORM_PERMISSIONS, isCatalogPermission, scopeOf } from '../../policy/catalog.js'
+import { ROLES } from '../../policy/roles.js'
 import { routeMapRows } from '../../policy/route-map.js'
 import { GENERATED_ROUTE_MAP } from '../../policy/route-map.generated.js'
-import { JINBE_BUILT_IN_ROUTES } from '../../bootstrap/build-route-map.js'
 
 /**
  * CI rules 1, 3, 4 and 5 of staff-rbac-proposal §3, over the route table the running service declares.
@@ -12,10 +12,11 @@ import { JINBE_BUILT_IN_ROUTES } from '../../bootstrap/build-route-map.js'
  */
 
 /**
- * Catalogue permissions no route DECLARES, because a route's own guard asks for them on part of its
- * input — each says where. An entry that a route starts declaring, or that stops existing, fails.
+ * Catalogue permissions no route DECLARES, because a route's own guard asks for them — each says
+ * where. An entry that a route starts declaring, or that stops existing, fails.
  */
 const CHECKED_INSIDE_A_GUARD: Record<string, string> = {
+  'org.audit:read': 'audit/query/scope.ts — the org part of the audit scope (the audit routes are scoped by their own guard)',
 }
 
 let app: FastifyInstance
@@ -37,19 +38,16 @@ afterAll(async () => { await app?.close() })
 const key = (r: DeclaredRoute) => `${r.method} ${r.path}`
 
 describe('every route declares what it needs (rule 1)', () => {
-  it('a catalogue permission, `*` (legacy infrastructure), or why it needs none', () => {
+  it('a catalogue permission, or why it needs none', () => {
     const undecided = rows.filter((r) => !r.path.startsWith('/docs'))
-      .filter((r) => !(r.permission && (r.permission === '*' || isCatalogPermission(r.permission))) && !r.access)
+      .filter((r) => !(r.permission && isCatalogPermission(r.permission)) && !r.access)
       .map(key)
     expect(undecided).toEqual([])
   })
 
-  it('no route requires a retired name (admin:*, org:manage_*, users:assign_group)', () => {
-    expect(rows.filter((r) => r.permission && /^(admin[.:]|org:manage_|users:assign_group)/.test(r.permission)).map(key)).toEqual([])
-  })
-
-  it('`*` only guards the legacy infrastructure', () => {
-    expect(rows.filter((r) => r.permission === '*' && !/^\/api\/(clusters|databases|backups|backup-items|database-apis)(\/|$)/.test(r.path)).map(key)).toEqual([])
+  it('an org permission exactly on a route naming an org parameter, a platform one everywhere else', () => {
+    const wrong = rows.filter((r) => r.permission).filter((r) => (scopeOf(r.permission!) === 'org') !== !!r.org).map(key)
+    expect(wrong).toEqual([])
   })
 })
 
@@ -68,7 +66,7 @@ describe('step-up comes from the catalogue (rule 5)', () => {
   })
 })
 
-describe('the route_map is generated from the routes (rule 3)', () => {
+describe('the route_map is generated from the declarations alone (rule 3)', () => {
   it('the committed file is what the running route table generates — run `npm run gen:route-map`', () => {
     expect(GENERATED_ROUTE_MAP).toEqual(routeMapRows(declaredRoutes()))
   })
@@ -78,44 +76,69 @@ describe('the route_map is generated from the routes (rule 3)', () => {
     expect(GENERATED_ROUTE_MAP.map((r) => `${r.method} ${r.path}`).filter((k) => !live.has(k))).toEqual([])
   })
 
-  it('each permission row comes with the legacy names that still stand for it, org_param included', () => {
-    const at = (method: string, path: string) => GENERATED_ROUTE_MAP.filter((r) => r.method === method && r.path === path)
-    expect(at('GET', '/api/admin/sites').map((r) => r.permission)).toEqual(['sites:read', 'admin:read'])
-    expect(at('POST', '/api/admin/sites/:name/apply').map((r) => r.permission)).toEqual(['sites:apply'])
-    expect(at('GET', '/api/organizations/:organizationId/users')).toEqual([
-      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org.members:read', org_param: 'organizationId' },
-      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'admin:read', org_param: 'organizationId' },
-      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org:manage_users', org_param: 'organizationId' },
-    ])
-    expect(at('GET', '/api/catalog')).toEqual([{ method: 'GET', path: '/api/catalog' }])
+  it('one row per operation: no alias, no legacy name, no catch-all, no method wildcard', () => {
+    // A second row only for what the route's own guard also accepts (config.alsoAccepts).
+    const keys = GENERATED_ROUTE_MAP.map(key)
+    const repeated = [...new Set(keys.filter((k, i) => keys.indexOf(k) !== i))].sort()
+    expect(repeated).toEqual(rows.filter((r) => r.alsoAccepts?.length).map(key).sort())
+    for (const r of GENERATED_ROUTE_MAP) {
+      expect(r.method).not.toBe('*')
+      expect(r.path).not.toMatch(/:any\*|\*$/)
+      if (r.permission) expect(isCatalogPermission(r.permission), `${key(r)} ${r.permission}`).toBe(true)
+    }
   })
 
-  it('the bootstrap merges the generated rows beside the hand ones, each once', () => {
-    const keys = JINBE_BUILT_IN_ROUTES.map((r) => `${r.method} ${r.path} ${r.permission ?? ''}`)
-    expect(new Set(keys).size).toBe(keys.length)
-    for (const r of GENERATED_ROUTE_MAP) expect(keys).toContain(`${r.method} ${r.path} ${r.permission ?? ''}`)
+  it('every operation the gateway may admit has its row; machine routes without edge have none', () => {
+    const have = new Set(GENERATED_ROUTE_MAP.map(key))
+    const admitted = rows.filter((r) => !r.path.startsWith('/docs') && !(r.access === 'machine' && !r.edge))
+    expect(admitted.map(key).filter((k) => !have.has(k))).toEqual([])
+    const hidden = rows.filter((r) => r.access === 'machine' && !r.edge).map(key)
+    expect(hidden.filter((k) => have.has(k))).toEqual([])
+    for (const k of ['GET /api/admin/rbac/bindings', 'POST /api/webhooks/kratos', 'GET /api/oathkeeper/rules']) expect(have.has(k), k).toBe(false)
+    expect(GENERATED_ROUTE_MAP.find((r) => key(r) === 'POST /scim/v2/Users')).toMatchObject({ public: true })
+  })
+
+  it('org rows carry org_param, a parameter of their path under /api/organizations/:organizationId', () => {
+    for (const r of GENERATED_ROUTE_MAP.filter((x) => x.permission)) {
+      expect(scopeOf(r.permission!) === 'org', key(r)).toBe(!!r.org_param)
+      if (r.org_param) expect(r.path).toMatch(/^\/api\/organizations\/:organizationId\//)
+    }
+    const at = (method: string, path: string) => GENERATED_ROUTE_MAP.filter((r) => r.method === method && r.path === path)
+    expect(at('GET', '/api/organizations/:organizationId/users')).toEqual([
+      { method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org.members:read', org_param: 'organizationId' },
+    ])
+    expect(at('GET', '/api/admin/sites').map((r) => r.permission)).toEqual(['sites:read'])
+    expect(at('GET', '/api/catalog')).toEqual([{ method: 'GET', path: '/api/catalog' }])
+    expect(at('GET', '/api/audit/events')).toEqual([{ method: 'GET', path: '/api/audit/events' }])
+  })
+
+  it('super_admin holds every platform permission any row asks for', () => {
+    const held = new Set<string>(ROLES.super_admin.permissions)
+    for (const r of GENERATED_ROUTE_MAP.filter((x) => x.permission && !x.org_param)) expect(held.has(r.permission!), key(r)).toBe(true)
+    expect([...held].sort()).toEqual([...PLATFORM_PERMISSIONS].sort())
   })
 })
 
 describe('GET /api/catalog', () => {
-  it('lists every permission with its metadata and the routes needing it, the roles and the aliases', async () => {
+  it('lists every permission with its scope, metadata and routes, the staff roles and the org roles', async () => {
     const res = await app.inject({ url: '/api/catalog' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.permissions.map((p: { name: string }) => p.name)).toEqual(PERMISSIONS)
     const apply = body.permissions.find((p: { name: string }) => p.name === 'sites:apply')
-    expect(apply).toMatchObject({ area: 'sites', sensitivity: 'high', stepUp: true, fourEyes: 'prod', delegable: 'direct' })
+    expect(apply).toMatchObject({ scope: 'platform', area: 'sites', sensitivity: 'high', stepUp: true, fourEyes: 'prod', delegable: 'direct' })
     expect(apply.routes).toContainEqual({ method: 'POST', path: '/api/admin/sites/:name/apply' })
-    expect(body.roles.find((r: { name: string }) => r.name === 'support')).toMatchObject({ group: 'staff-support' })
-    expect(body.aliases['admin:read']).toContain('users:read')
+    expect(body.roles.find((r: { name: string }) => r.name === 'support')).toMatchObject({ group: 'staff-support', everyOrg: ['org.members:read', 'org.members:write'] })
+    expect(body.orgRoles.map((r: { name: string }) => r.name)).toContain('jinbe:owner')
+    expect(body.aliases).toBeUndefined()
   })
 })
 
 describe('GET /api/whoami', () => {
   it('returns the effective catalogue permissions beside the names held', async () => {
     const body = (await app.inject({ url: '/api/whoami' })).json()
-    // The dev bypass acts as DEV_ROLE (super_admin by default): `*`, which is every leaf.
-    expect(body.permissions).toEqual(['*'])
-    expect(body.effective_permissions).toEqual(PERMISSIONS)
+    // The dev bypass acts as DEV_ROLE (super_admin by default): every platform permission, by name.
+    expect([...body.permissions].sort()).toEqual([...PLATFORM_PERMISSIONS].sort())
+    expect(body.effective_permissions).toEqual(PLATFORM_PERMISSIONS)
   })
 })

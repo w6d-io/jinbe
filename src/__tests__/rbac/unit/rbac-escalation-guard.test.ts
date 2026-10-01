@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// No administrator rewrites the model in their own favour: not a group they sit in, not a role or
-// route map of a service one of their groups holds a role in, not the services of their own
-// organisation — and nobody short of a super admin hands out `*`.
+// The holding rule: nobody grants what they do not hold — a group definition, a widened role, a group
+// assignment, an import — app by app, what a group carries into every org included. A super admin
+// passes by holding everything, never by a flag. What code defines is never changed through the API.
 
 const store = vi.hoisted(() => ({
   groups: {} as Record<string, Record<string, string[]>>,
   roles: {} as Record<string, Record<string, string[]>>,
+  everyOrg: {} as Record<string, Record<string, string[]>>,
 }))
 
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
@@ -15,172 +16,122 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getGroups: vi.fn(async () => store.groups),
     getRoles: vi.fn(async (service: string) => store.roles[service] ?? null),
+    getEveryOrg: vi.fn(async (service: string) => store.everyOrg[service] ?? null),
   },
 }))
 
-import { assertMayAssignGroup, assertNoSelfEscalation, grantsEverything } from '../../../services/rbac-escalation-guard.js'
+import { assertBundleWithinOwn, assertMayAssignGroup, assertNoSelfEscalation } from '../../../services/rbac-escalation-guard.js'
 import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
+import { everyOrgDefinitions, roleDefinitions, staffGroups } from '../../../policy/roles.js'
 
 const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
 const ROOT = { id: 'id-root', email: 'root@example.com' }
-const ORG = '11111111-1111-4111-8111-111111111111'
 
 const status = async (p: Promise<unknown>) => {
   try { await p; return 200 } catch (e) { return (e as { statusCode?: number }).statusCode ?? 500 }
+}
+const refusal = async (p: Promise<unknown>) => {
+  try { await p; return null } catch (e) { return e as { statusCode?: number; code?: string; refusal?: Record<string, unknown> } }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   resetOpaWorld()
   store.groups = {
-    ops: { jinbe: ['admin'] },
+    ...staffGroups(),
+    ops: { billing: ['admin'] },
     billing: { billing: ['viewer'] },
-    super_admins: { global: ['super_admin'] },
   }
   store.roles = {
-    jinbe: { admin: ['admin:read', 'admin:write'], viewer: ['admin:read'], root: ['*'] },
-    billing: { viewer: ['invoices:read'] },
-    // As seeded (bootstrap/seed-rbac.ts): global.admin resolves to '*', not only global.super_admin.
-    global: { super_admin: ['*'], admin: ['*'] },
+    jinbe: roleDefinitions(),
+    billing: { admin: ['invoices:read', 'invoices:write'], viewer: ['invoices:read'] },
   }
+  store.everyOrg = { jinbe: everyOrgDefinitions() }
   opaWorld.groups['admin@example.com'] = ['ops']
-  opaWorld.members['admin@example.com'] = [ORG]
-  opaWorld.superAdmins.add('root@example.com')
+  opaWorld.groups['root@example.com'] = ['super_admins']
 })
 
-describe('groups', () => {
-  it('refuses a change to a group the actor is a member of', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'ops', after: { jinbe: ['admin', 'root'] } }, ADMIN))).toBe(403)
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'ops', after: null }, ADMIN))).toBe(403)
-    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'self_escalation' }))
-  })
-
-  it('allows a change to a group the actor is not in, when it grants nothing beyond what they hold', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'readers', after: { jinbe: ['viewer'] } }, ADMIN))).toBe(200)
+describe('group definitions', () => {
+  it('allows a group that grants nothing beyond what the actor holds', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'readers', after: { billing: ['viewer'] } }, ADMIN))).toBe(200)
     expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: null }, ADMIN))).toBe(200)
   })
 
-  it('refuses a group granting what the actor does not hold, in that scope (grant_exceeds_own)', async () => {
-    // ADMIN holds admin:read/admin:write in jinbe and nothing in billing.
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: { billing: ['viewer'] } }, ADMIN))).toBe(403)
+  it('refuses one granting what the actor does not hold, in that app (grant_exceeds_own), saying what', async () => {
+    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { jinbe: ['viewer'] } }, ADMIN))
+    expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+    expect(e!.refusal).toMatchObject({ missingByScope: { jinbe: expect.arrayContaining(['sites:read']) } })
     expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'grant_exceeds_own' }))
   })
 
-  it("refuses a group that grants '*' — a role carrying it, or the global super_admin role", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { jinbe: ['root'] } }, ADMIN))).toBe(403)
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['super_admin'] } }, ADMIN))).toBe(403)
+  it('counts what a group carries into every org: holding the platform part is not enough', async () => {
+    // A grant-holder holding everything security holds on platform, but no every-org reach.
+    store.roles.jinbe = { ...store.roles.jinbe, lead: [...roleDefinitions().security, 'groups:write'] }
+    store.groups.leads = { jinbe: ['lead'] }
+    opaWorld.groups['lead@example.com'] = ['leads']
+    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, { id: 'id-lead', email: 'lead@example.com' }))
+    expect(e).toMatchObject({ code: 'grant_exceeds_own' })
+    expect(e!.refusal).toMatchObject({ missingByScope: { 'every_org:jinbe': ['org.audit:read', 'org.keys:read', 'org.members:read'] } })
   })
 
-  it('lets a super admin do all of it', async () => {
-    opaWorld.groups['root@example.com'] = ['super_admins', 'ops']
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'ops', after: { jinbe: ['root'] } }, ROOT))).toBe(200)
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['super_admin'] } }, ROOT))).toBe(200)
-  })
-})
-
-describe('service roles and route maps', () => {
-  it('refuses the roles or routes of a service a group of the actor holds a role in', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'jinbe', roles: { viewer: ['admin:write'] } }, ADMIN))).toBe(403)
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'jinbe' }, ADMIN))).toBe(403)
+  it('a super admin passes by holding everything', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, ROOT))).toBe(200)
   })
 
-  it('allows them for a service none of their groups reaches', async () => {
-    // A role no group binds grants nobody anything yet.
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'], exporter: ['invoices:export'] } }, ADMIN))).toBe(200)
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN))).toBe(200)
+  it('a super admin missing ONE permission is refused like anybody else', async () => {
+    store.roles.jinbe = { ...store.roles.jinbe, super_admin: roleDefinitions().super_admin.filter((p) => p !== 'recert:delete') }
+    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, ROOT))
+    expect(e).toMatchObject({ code: 'grant_exceeds_own' })
+    expect(e!.refusal).toMatchObject({ missing: ['recert:delete'] })
   })
 
-  it('refuses widening a role a group binds with what the actor does not hold: that widens the group', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'invoices:export'] } }, ADMIN))).toBe(403)
-  })
-
-  it("refuses a role carrying '*', whatever the service", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['*'] } }, ADMIN))).toBe(403)
-  })
-
-  it('lets a super admin change them', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'jinbe', roles: { viewer: ['*'] } }, ROOT))).toBe(200)
+  it('the staff groups and super_admins are defined in code: 409 for everybody', async () => {
+    for (const g of ['super_admins', 'staff-viewers']) {
+      expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: g, after: { jinbe: ['viewer'] } }, ROOT))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
+      expect(await status(assertNoSelfEscalation({ kind: 'group', name: g, after: null }, ROOT))).toBe(409)
+    }
   })
 })
 
-describe('org → service map', () => {
-  it("refuses a change to the actor's own organisation's services", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'org_services', organizationId: ORG }, ADMIN))).toBe(403)
+describe('roles and route maps', () => {
+  it('widening a role some group binds needs what it adds', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'invoices:write'] } }, ADMIN))).toBe(200)
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))).toBe(403)
   })
 
-  it('allows it for an organisation they do not belong to', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'org_services', organizationId: '22222222-2222-4222-8222-222222222222' }, ADMIN))).toBe(200)
-  })
-})
-
-describe("the global role definitions ('global.admin' is '*')", () => {
-  it("refuses a group granting global.admin — '*' by another name — even one the actor is not in", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: { billing: ['viewer'], global: ['admin'] } }, ADMIN))).toBe(403)
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['admin'] } }, ADMIN))).toBe(403)
+  it('a role no group binds grants nobody anything yet', async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { fresh: ['payments:write'] } }, ADMIN))).toBe(200)
   })
 
-  it("refuses redefining a global role to '*', and any global role change by a holder of one", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'global', roles: { super_admin: ['*'], admin: ['*'], ops: ['*'] } }, ADMIN))).toBe(403)
-    store.groups.ops = { jinbe: ['admin'], global: ['auditor'] }
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'global', roles: { auditor: ['admin:write'] } }, ADMIN))).toBe(403)
-  })
-
-  it('lets a super admin grant global.admin', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { global: ['admin'] } }, ROOT))).toBe(200)
+  it("the routes of a service the actor holds a role in are not theirs to change", async () => {
+    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN))).toBe(403)
+    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'shop' }, ADMIN))).toBe(200)
   })
 })
 
-describe('handing out a platform group (PUT /api/admin/users/:email/groups)', () => {
-  it("refuses a group that grants '*' — super_admins, or one binding global.admin — to anyone", async () => {
-    store.groups.platform_admins = { global: ['admin'] }
-    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ADMIN))).toBe(403)
-    expect(await status(assertMayAssignGroup('platform_admins', 'someone@example.com', ADMIN))).toBe(403)
+describe('group assignment', () => {
+  it('needs everything the group confers, for anybody', async () => {
+    expect(await status(assertMayAssignGroup('billing', ADMIN))).toBe(200)
+    expect(await status(assertMayAssignGroup('staff-viewers', ADMIN))).toBe(403)
+    expect(await status(assertMayAssignGroup('super_admins', ROOT))).toBe(200)
   })
 
-  it('refuses adding oneself to any group', async () => {
-    expect(await status(assertMayAssignGroup('billing', 'Admin@Example.com', ADMIN))).toBe(403)
+  it('a group nothing defines is left to the caller (it confers nothing)', async () => {
+    expect(await status(assertMayAssignGroup('ghost', ADMIN))).toBe(200)
   })
 
-  it('allows a group without a wildcard, within what the actor holds, to somebody else', async () => {
-    store.groups.readers = { jinbe: ['viewer'] }
-    expect(await status(assertMayAssignGroup('readers', 'someone@example.com', ADMIN))).toBe(200)
-  })
-
-  it('refuses a group granting what the actor does not hold', async () => {
-    expect(await status(assertMayAssignGroup('billing', 'someone@example.com', ADMIN))).toBe(403)
-  })
-
-  it('lets a super admin do both', async () => {
-    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ROOT))).toBe(200)
-    expect(await status(assertMayAssignGroup('billing', 'root@example.com', ROOT))).toBe(200)
-  })
-
-  it('fails closed', async () => {
-    expect(await status(assertMayAssignGroup('billing', 'someone@example.com'))).toBe(401)
+  it('401 without an identity, 503 when OPA cannot tell', async () => {
+    expect(await status(assertMayAssignGroup('billing', { id: null, email: null } as never))).toBe(401)
     opaWorld.down = true
-    expect(await status(assertMayAssignGroup('super_admins', 'someone@example.com', ADMIN))).toBe(503)
+    expect(await status(assertMayAssignGroup('billing', ADMIN))).toBe(503)
   })
 })
 
-describe('fail closed', () => {
-  it('answers 401 without an identified actor', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }))).toBe(401)
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, { email: 'admin@example.com' }))).toBe(401)
-  })
-
-  it('answers 503 when OPA cannot be asked, super admin included', async () => {
-    opaWorld.down = true
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN))).toBe(503)
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ROOT))).toBe(503)
-  })
-})
-
-describe('grantsEverything', () => {
-  it('reads the wildcard off the role definitions', async () => {
-    expect(await grantsEverything({ jinbe: ['viewer'] })).toBe(false)
-    expect(await grantsEverything({ jinbe: ['viewer', 'root'] })).toBe(true)
-    expect(await grantsEverything({ global: ['super_admin'] })).toBe(true)
-    expect(await grantsEverything({ unknown: ['whatever'] })).toBe(false)
+describe('bundle imports', () => {
+  it('a changed group clears the same rule; a staff group is never imported over', async () => {
+    expect(await status(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN))).toBe(200)
+    expect(await status(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['payments:write'] } }], ADMIN))).toBe(403)
+    expect(await status(assertBundleWithinOwn([{ name: 'super_admins', after: {} }], ROOT))).toBe(409)
   })
 })

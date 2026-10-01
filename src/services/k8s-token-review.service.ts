@@ -9,8 +9,7 @@ const log = () => componentLogger('k8s-token-review')
  * A machine caller authenticated by the cluster's API server.
  *
  * `email` is the SYNTHETIC SUBJECT the rest of the stack authorizes on: the
- * whole authorization chain (requireServiceAdmin → OPA getUserInfo,
- * requireManageableOrg → OPA manageable_orgs, the audit trail) keys off an
+ * whole authorization chain (the guards → OPA user_info and rbac.decision, the audit trail) keys off an
  * email, so a ServiceAccount is projected into that namespace rather than
  * given a parallel authorization path. A token that verifies but has no
  * matching Kratos identity resolves to zero permissions → 403.

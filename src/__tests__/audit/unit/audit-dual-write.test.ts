@@ -67,7 +67,6 @@ describe('one admin write → exactly one audit/v1 event (AUD-2, AUD-3, AUD-5)',
       identity: { id: 'target-uuid-1', email: 'target@example.com', organizationId: 'org-1' },
       newGroups: ['users'],
       actor: ACTOR,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
     })
     expect(result.ok).toBe(true)

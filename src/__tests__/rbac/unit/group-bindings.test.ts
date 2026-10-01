@@ -24,15 +24,6 @@ const refusal = async (p: Promise<unknown>) => {
 }
 
 describe('group bindings', () => {
-  it('refuses super_admin under any service but global — the second-account path', async () => {
-    const err = await refusal(assertValidBinding('mine', { jinbe: ['super_admin'] }))
-    expect(err).toBeInstanceOf(InvalidBindingError)
-    expect((err as InvalidBindingError).statusCode).toBe(422)
-    expect((err as InvalidBindingError).problems[0]).toContain('super_admin is bound only under global')
-    // Even when the service happens to define a role of that name.
-    store.roles.jinbe.super_admin = ['users:read']
-    expect(await refusal(assertValidBinding('mine', { jinbe: ['super_admin'] }))).toBeInstanceOf(InvalidBindingError)
-  })
 
   it('refuses a role the service does not define (it would resolve to the global role of that name)', async () => {
     expect(await refusal(assertValidBinding('desk', { jinbe: ['support'] }))).toBeInstanceOf(InvalidBindingError)

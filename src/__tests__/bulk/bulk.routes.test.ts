@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
   redis: new Map<string, string>(),
   identities: new Map<string, Record<string, unknown>>(),
   groups: new Map<string, string[]>(),
-  facts: {} as Record<string, { declared: boolean; everyOrganisation: boolean; empty: boolean }>,
+  facts: {} as Record<string, { declared: boolean; platform: boolean; empty: boolean }>,
   grants: [] as Array<Record<string, unknown>>,
   created: [] as Array<Record<string, unknown>>,
   sends: [] as string[],
@@ -57,7 +57,7 @@ vi.mock('../../services/kratos.service.js', async (importOriginal) => {
 })
 vi.mock('../../services/organisation-store.js', () => ({ groupsForSubjects: vi.fn(async (ids: string[]) => new Map(ids.map((id) => [id, h.groups.get(id) ?? []]))) }))
 vi.mock('../../services/group-catalogue.js', () => ({
-  groupFacts: vi.fn(async (names: string[]) => new Map(names.map((n) => [n, h.facts[n] ?? { declared: false, everyOrganisation: false, empty: true }]))),
+  groupFacts: vi.fn(async (names: string[]) => new Map(names.map((n) => [n, h.facts[n] ?? { declared: false, platform: false, empty: true }]))),
 }))
 vi.mock('../../services/user-groups.service.js', () => ({
   userGroupsService: { applyGroupUpdate: vi.fn(async (input: Record<string, unknown>) => { h.grants.push(input); return { ok: true, response: {} } }) },
@@ -116,7 +116,7 @@ beforeEach(() => {
   h.redis.clear()
   h.identities = new Map([[U1, ident(U1, 'u1@x.test', false)], [U2, ident(U2, 'u2@x.test', true)], [ME, ident(ME, 'me@x.test', false)]])
   h.groups = new Map([[U2, ['billing']]])
-  h.facts = { billing: { declared: true, everyOrganisation: false, empty: false }, platform_ops: { declared: true, everyOrganisation: true, empty: false } }
+  h.facts = { billing: { declared: true, platform: false, empty: false }, platform_ops: { declared: true, platform: true, empty: false } }
   h.grants = []
   h.created = []
   h.sends = []
@@ -284,12 +284,12 @@ describe('groups.members.add', () => {
     ])
     expect(job.items[0]).toMatchObject({ status: 'done' })
     expect(h.grants).toHaveLength(1)
-    expect(h.grants[0]).toMatchObject({ addGroups: ['billing'], newGroups: [], privilegePolicy: { kind: 'super_admin_required' }, auditExtraDetails: { bulk: job.id } })
+    expect(h.grants[0]).toMatchObject({ addGroups: ['billing'], newGroups: [], auditExtraDetails: { bulk: job.id } })
   })
 
   it('refuses up front what the escalation guard would refuse at run time: a staff group, a grant beyond the caller', async () => {
-    h.facts['staff-security'] = { declared: true, everyOrganisation: true, empty: false }
-    h.facts.edge = { declared: true, everyOrganisation: true, empty: false }
+    h.facts['staff-security'] = { declared: true, platform: true, empty: false }
+    h.facts.edge = { declared: true, platform: true, empty: false }
     h.guard = { 'staff-security': 'staff_group_super_admin_only', edge: 'grant_exceeds_own' }
     const res = await post('groups.members.add/plan', { items: [{ user: U1, groups: ['staff-security'] }, { user: U2, groups: ['edge'] }] }, G)
     expect(res.json().items.map((i: { outcome: { reason?: string } }) => i.outcome.reason)).toEqual([

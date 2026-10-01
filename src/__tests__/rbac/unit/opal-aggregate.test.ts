@@ -31,18 +31,18 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
       if (store.groupsFail) throw new Error('redis down')
       return structuredClone(store.groups)
     },
-    getOrgServiceMap: async () => ({}),
-    getOrgAdminMap: async () => ({}),
-    getOrgAdminMapAsStored: async () => ({}),
+    getOrgRoles: async () => null,
+    getEveryOrg: async () => null,
+    getOrgSites: async () => ({}),
   },
 }))
 // The other data sources, so a whole-manifest refresh can run: their content does not matter here.
-vi.mock('../../../services/org-grants.repository.js', () => ({ orgGrantsRepository: { getAll: async () => ({}) } }))
+vi.mock('../../../services/organisation-store.js', () => ({ organisationStoreConfigured: () => false, allOrganisations: async () => [] }))
 vi.mock('../../../sites/login-store.js', () => ({ siteLoginStore: { getAll: async () => ({}) } }))
 vi.mock('../../../second-factor/settings.js', () => ({ getSecondFactorGroups: async () => ['super_admins'] }))
 vi.mock('../../../services/api-clients.js', () => ({ apiClientsDataset: async () => ({}) }))
 vi.mock('../../../services/rbac.service.js', () => ({ rbacService: { getBindingsFromKratos } }))
-vi.mock('../../../services/kratos.service.js', () => ({ kratosService: {}, KratosApiError: class extends Error {} }))
+vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getAllIdentitiesWithBindings: async () => new Map() }, KratosApiError: class extends Error {} }))
 vi.mock('../../../home/runtime.js', () => ({ mirrorOpalFetch }))
 vi.mock('../../../config/env.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../config/env.js')>()
@@ -94,8 +94,8 @@ function put(data: Record<string, unknown>, dstPath: string, value: unknown) {
 /** The per-service layout the manifest used to carry, entry for entry. */
 async function legacyEntries(): Promise<Array<{ url: string; dst_path: string }>> {
   const base = 'http://auth-jinbe:8080/api/admin/rbac'
-  const out = [{ url: `${base}/opal/roles/global`, dst_path: '/roles/global' }]
-  for (const svc of store.services) {
+  const out: Array<{ url: string; dst_path: string }> = []
+  for (const svc of [...new Set(['jinbe', ...store.services])]) {
     out.push({ url: `${base}/opal/roles/${svc}`, dst_path: `/roles/${svc}` })
     if (store.routeMaps[svc]) out.push({ url: `${base}/opal/route_map/${svc}`, dst_path: `/route_map/${svc}` })
   }
@@ -114,16 +114,16 @@ beforeEach(() => {
   mirrorOpalFetch.mockClear()
   store.fail = false
   store.groupsFail = false
-  store.groups = { super_admins: { global: ['super_admin'] }, kuma_viewers: { kuma: ['viewer'] } }
+  store.groups = { super_admins: { jinbe: ['super_admin'] }, kuma_viewers: { kuma: ['viewer'] } }
   getBindingsFromKratos.mockReset().mockImplementation(async () => ({
-    emails: {},
     group_membership: { 'root@example.com': ['super_admins'] },
     user_organizations: {},
     user_organization_primary: {},
+    org_assignments: {},
   }))
   store.services = ['kuma', 'stairfleet1', 'empty']
   store.roles = {
-    global: { super_admin: ['*'] },
+    jinbe: { super_admin: ['users:read'] },
     kuma: { viewer: ['sites:read'], editor: ['sites:read', 'sites:write'] },
     stairfleet1: { pilot: ['fleet:fly'] },
     empty: null,
@@ -143,18 +143,12 @@ describe('OPAL roles / route maps as aggregate entries', () => {
     expect(after).toEqual(before)
     // spelled out, so a change on both sides at once cannot pass unnoticed
     expect(after.roles).toEqual({
-      global: { super_admin: ['*'] },
+      jinbe: { super_admin: ['users:read'] },
       kuma: { viewer: ['sites:read'], editor: ['sites:read', 'sites:write'] },
       stairfleet1: { pilot: ['fleet:fly'] },
       empty: {},
     })
     expect(Object.keys(after.route_map as object).sort()).toEqual(['kuma', 'stairfleet1'])
-  })
-
-  it('carries global roles even when "global" is also listed as a service, once', async () => {
-    store.services = ['global', 'kuma']
-    const { routes } = await mount()
-    expect(await opaData(await buildOpalDatasourceEntries(), routes)).toEqual(await opaData(await legacyEntries(), routes))
   })
 
   it('the manifest does not change when a service is added or removed', async () => {
@@ -165,8 +159,8 @@ describe('OPAL roles / route maps as aggregate entries', () => {
     store.services = ['kuma']
     expect(await buildOpalDatasourceEntries()).toEqual(before)
     expect(before.map((e) => opalEntryName(e.url))).toEqual([
-      'bindings', 'opal/roles', 'opal/route_maps', 'opal/org_service_map', 'opal/org_admin_map',
-      'opal/org_grants', 'opal/site_login', 'opal/second_factor', 'opal/api_clients',
+      'bindings', 'opal/roles', 'opal/route_maps', 'opal/org_roles', 'opal/every_org',
+      'opal/org_sites', 'opal/site_login', 'opal/second_factor', 'opal/api_clients',
     ])
     for (const e of before) expect(e.periodic_update_interval).toBe(60)
   })
@@ -225,10 +219,10 @@ describe('data.bindings is written in one PUT — never a window without binding
     const { status, body } = await fetchWithStatus(routes, '/api/admin/rbac/bindings')
     expect(status).toBe(200)
     expect(body).toEqual({
-      emails: {},
       group_membership: { 'root@example.com': ['super_admins'] },
       user_organizations: {},
       user_organization_primary: {},
+      org_assignments: {},
       groups: store.groups,
     })
     expect((await fetchWithStatus(routes, '/api/admin/rbac/opal/groups')).body).toEqual(store.groups)

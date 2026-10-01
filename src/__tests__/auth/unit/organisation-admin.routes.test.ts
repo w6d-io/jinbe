@@ -17,7 +17,7 @@ const s = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../authz/opa.js', () => ({
-  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: s.holds ? ['org:write', 'org:delete'] : [] })),
+  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: s.holds ? ['orgs:write', 'orgs:delete'] : [] })),
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn(async (e: Record<string, unknown>) => { s.audits.push(e) }) },
@@ -96,7 +96,7 @@ describe('PATCH /api/admin/organizations/:id', () => {
     expect(res.json()).toMatchObject({ error: 'organisation_not_found' })
   })
 
-  it('refuses a caller without org:write / org:delete', async () => {
+  it('refuses a caller without orgs:write / orgs:delete', async () => {
     s.holds = false
     expect((await patch({ name: 'x' })).statusCode).toBe(403)
     expect(s.record?.name).toBe('Acme')
@@ -126,7 +126,7 @@ describe('DELETE /api/admin/organizations/:id', () => {
     expect(s.record).not.toBeNull()
   })
 
-  it('refuses a caller without org:write / org:delete', async () => {
+  it('refuses a caller without orgs:write / orgs:delete', async () => {
     s.holds = false
     expect((await del()).statusCode).toBe(403)
     expect(s.record).not.toBeNull()

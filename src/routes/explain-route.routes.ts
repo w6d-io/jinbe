@@ -159,7 +159,7 @@ export async function explainRouteRoutes(fastify: FastifyInstance) {
         'Why jinbe accepts or refuses METHOD PATH for the caller (or `subject`, which needs access:check): the ' +
         'route and its guards, the catalogue permission, the delegation gate, platform holdings, OPA rbac.decision ' +
         "with the guard's exact input (and rbac.explain: which clause fired), the org trail (membership, the " +
-        'roster in Redis vs OPA, manageable_orgs, org grants), and the real guards run in a dry run. ' +
+        'org roles assigned there, org permissions held there, entitled sites), and the real guards run in a dry run. ' +
         '`disagreements` lists surfaces that answer the same question differently.',
       tags: ['rbac'],
       body: {

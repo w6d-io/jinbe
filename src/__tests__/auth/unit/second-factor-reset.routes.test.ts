@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { ROLES } from '../../../policy/roles.js'
 import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
@@ -94,9 +95,9 @@ afterAll(async () => {
 })
 beforeEach(() => {
   s.rights = {
-    admin: ['admin:read', 'admin:write'],
+    admin: [...ROLES.security.permissions],
     support: ['sessions:read', 'sessions:revoke', 'users:read', 'users:recovery', 'users:send_login_link'],
-    star: ['*'],
+    star: [...ROLES.super_admin.permissions],
     bob: ['clusters:list', 'databases:read'],
   }
   s.credentials = { totp: TOTP, lookup_secret: CODES, webauthn: KEYS }
@@ -198,7 +199,7 @@ describe('POST /users/:id/second-factors/reset', () => {
 })
 
 describe('who may', () => {
-  it('needs users:reset_second_factor (admin:write) — the support role is refused', async () => {
+  it('needs users:reset_second_factor — the support role is refused', async () => {
     const res = await reset(undefined, 'support')
     expect(res.statusCode).toBe(403)
     expect(res.json().message).toContain('users:reset_second_factor')
@@ -218,7 +219,7 @@ describe('who may', () => {
   })
 
   it('refuses removing your own factors through this path', async () => {
-    s.rights.bob = ['admin:read', 'admin:write']
+    s.rights.bob = [...ROLES.security.permissions]
     const res = await reset(undefined, 'bob')
     expect(res.statusCode).toBe(403)
     expect(res.json().error).toBe('own_second_factor')
@@ -226,7 +227,7 @@ describe('who may', () => {
   })
 
   it('refuses an account holding administrative rights the caller does not', async () => {
-    s.rights.bob = ['*']
+    s.rights.bob = [...ROLES.super_admin.permissions]
     const res = await reset()
     expect(res.statusCode).toBe(403)
     expect(res.json().error).toBe('outranked')
@@ -236,7 +237,7 @@ describe('who may', () => {
   })
 
   it('an administrator may reset another administrator', async () => {
-    s.rights.bob = ['admin:read', 'admin:write']
+    s.rights.bob = [...ROLES.security.permissions]
     expect((await reset()).statusCode).toBe(200)
   })
 

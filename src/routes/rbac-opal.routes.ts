@@ -1,18 +1,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { rbacService } from '../services/rbac.service.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
-import { orgGrantsRepository } from '../services/org-grants.repository.js'
 import { siteLoginStore } from '../sites/login-store.js'
 import { getSecondFactorGroups } from '../second-factor/settings.js'
-import { buildOpalDatasourceEntries, opalRolesDataset, opalRouteMapsDataset } from '../services/opal-datasource.js'
+import { buildOpalDatasourceEntries, opalEveryOrgDataset, opalOrgRolesDataset, opalOrgSitesDataset, opalRolesDataset, opalRouteMapsDataset } from '../services/opal-datasource.js'
 import { requireOpalClient } from '../middleware/require-opal-client.js'
 import { serviceUnavailableResponseSchema } from '../schemas/response-schemas.js'
 import { opalDatasourceRequests, opalDatasourceDuration, opalDatasourceLastSuccess } from '../telemetry/metrics.js'
 import { mirrorOpalFetch } from '../home/runtime.js'
 import { apiClientsDataset } from '../services/api-clients.js'
 import { open } from '../policy/route-access.js'
-import { bindingsWithLowercaseKeys, rosterForPolicy } from '../services/email-spellings.js'
-import { loadDataV2, readAuthzActive } from '../authz-v2/service.js'
+import { bindingsWithLowercaseKeys } from '../services/email-spellings.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -22,9 +20,10 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', requireOpalClient)
   fastify.addHook('onResponse', recordDatasourceFetch)
 
-  // Bindings: user → groups + org membership (from Kratos) AND group → service → roles (from Redis),
-  // i.e. the whole of data.bindings in one document. Routed through the service so the shape can't drift
-  // from the tested getBindingsFromKratos().
+  // Bindings: user → groups + org membership (from Kratos), group → app → roles (Redis) and the org roles
+  // assigned per person per org (org_assignments, Redis by identity id, published by address) — the
+  // whole of data.bindings in one document. Routed through the service so the shape can't drift from
+  // the tested getBindingsFromKratos().
   //
   // `groups` MUST travel here, not in an entry of its own at /bindings/groups: OPAL writes each entry
   // with its own PUT and OPA's PUT replaces the subtree, so a PUT on /bindings wiped data.bindings.groups
@@ -34,9 +33,9 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     ...open('machine'),
     schema: {
       description:
-        'OPAL data source: all of data.bindings — user → groups + org membership (Kratos) and group → ' +
-        'service → roles (`groups`, Redis). 503 when either cannot be read, so OPAL keeps the bindings OPA ' +
-        'already holds instead of replacing them with an empty or partial set.',
+        'OPAL data source: all of data.bindings — user → groups + org membership (Kratos), group → app → roles ' +
+        '(`groups`, Redis) and person → org → org roles (`org_assignments`, Redis). 503 when any cannot be read, ' +
+        'so OPAL keeps the bindings OPA already holds instead of replacing them with an empty or partial set.',
       tags: ['rbac'],
       // No 200 schema: the dataset is keyed by email — let it pass through unserialized.
       response: { 503: serviceUnavailableResponseSchema },
@@ -44,7 +43,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     try {
       const [bindings, groups] = await Promise.all([rbacService.getBindingsFromKratos(), redisRbacRepository.getGroups()])
-      // Each address also under its lowercase key: the roster is lowercased (email-spellings.ts).
+      // Each address also under its lowercase key (email-spellings.ts).
       return reply.send({ ...bindingsWithLowercaseKeys(bindings), groups })
     } catch (err) {
       // 503, never an empty or partial dataset. OPAL skips an entry whose fetch fails and leaves what OPA
@@ -84,50 +83,26 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Org → service map: { organizationId: [serviceName, …] } (feeds data.org_service_map).
-  // Values are service bundles (arrays). Legacy scalar values in Redis are
-  // normalized to single-element arrays by the repository before serving.
-  fastify.get('/opal/org_service_map', open('machine'), async (_request, reply) => {
-    const map = await redisRbacRepository.getOrgServiceMap()
-    return reply.send(map)
-  })
-
-  // Org → admin roster: { organizationId: [email, …] } (feeds data.org_admin_map). Every spelling of
-  // each entry (as stored, lowercased, as the identity spells it) while the policy compares addresses
-  // exactly; the identities are best effort — without them the stored and lowercase spellings still go.
-  fastify.get('/opal/org_admin_map', open('machine'), async (request, reply) => {
-    const stored = await redisRbacRepository.getOrgAdminMapAsStored()
-    let addresses: string[] = []
-    try {
-      addresses = Object.keys((await rbacService.getBindingsFromKratos()).group_membership)
-    } catch (err) {
-      request.log.warn({ err: (err as Error).message }, 'org_admin_map: identities unavailable — publishing stored and lowercase spellings only')
-    }
-    return reply.send(rosterForPolicy(stored, addresses))
-  })
-
-  // Org grants: { organizationId: { email: [group, …] } } (feeds data.org_grants). 503 on a store
-  // error, never an empty or partial map — same rule as /bindings: OPAL then keeps what OPA holds,
-  // where an empty 200 would silently take every org grant away.
-  fastify.get('/opal/org_grants', {
+  // Org roles of every service (feeds data.org_roles), the every-org map (data.every_org) and the org
+  // entitlements (data.org_sites: every known org with `jinbe`, plus the sites its intents name). Each
+  // replaces its whole subtree, so a read error answers 5xx and OPAL keeps what OPA holds.
+  fastify.get('/opal/org_roles', open('machine'), async (_request, reply) => reply.send(await opalOrgRolesDataset()))
+  fastify.get('/opal/every_org', open('machine'), async (_request, reply) => reply.send(await opalEveryOrgDataset()))
+  fastify.get('/opal/org_sites', {
     ...open('machine'),
     schema: {
       description:
-        'OPAL data source: groups handed out per org by its admins (data.org_grants). 503 when the store ' +
-        'cannot be read, so OPAL keeps the org grants OPA already holds.',
+        'OPAL data source: org → the apps it is entitled to (data.org_sites) — every known organisation with jinbe, plus ' +
+        'the sites whose intents name it. Its keys are the org universe. 503 when a source cannot be read.',
       tags: ['rbac'],
-      // No 200 schema: keyed by org id and email — let it pass through unserialized.
       response: { 503: serviceUnavailableResponseSchema },
     },
   }, async (request, reply) => {
     try {
-      return reply.send(await orgGrantsRepository.getAll())
+      return reply.send(await opalOrgSitesDataset())
     } catch (err) {
-      request.log.error({ err }, 'org_grants: store unavailable — answering 503 so OPAL keeps the last good data')
-      return reply.status(503).send({
-        error: 'Service Unavailable',
-        message: 'Org grants could not be read. Keep the last good data and retry.',
-      })
+      request.log.error({ err: (err as Error).message }, 'org_sites: a source is unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({ error: 'Service Unavailable', message: 'Org entitlements could not be read. Keep the last good data and retry.' })
     }
   })
 
@@ -203,7 +178,7 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Roles of every service plus "global": { <svc>: roles } (feeds data.roles). No try/catch: a read
+  // Roles of every service: { <svc>: roles } (feeds data.roles). No try/catch: a read
   // error answers 500 and OPAL keeps what OPA holds — this entry replaces the whole subtree.
   fastify.get('/opal/roles', open('machine'), async (_request, reply) => {
     return reply.send(await opalRolesDataset())
@@ -227,45 +202,6 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     const { service } = request.params as { service: string }
     const routeMap = await redisRbacRepository.getRouteMap(service)
     return reply.send(routeMap || { rules: [] })
-  })
-
-  // authz v2 (authz-v2-design §3.2): ALL of data.v2 in one document, so OPA never holds half a model.
-  // In the manifest only with RBAC_V2_PUBLISH; nothing decides on it until the router does.
-  fastify.get('/opal/v2', {
-    ...open('machine'),
-    schema: {
-      description:
-        'OPAL data source (authz v2): all of data.v2 — roles, groups, memberships, org roles and assignments, ' +
-        'the every-org map, org entitlements, route maps and the catalogue. 503 when any source cannot be read, ' +
-        'so OPAL keeps the last good copy.',
-      tags: ['rbac'],
-      response: { 503: serviceUnavailableResponseSchema },
-    },
-  }, async (request, reply) => {
-    try {
-      return reply.send(await loadDataV2())
-    } catch (err) {
-      request.log.error({ err: (err as Error).message }, 'v2: a source is unavailable — answering 503 so OPAL keeps the last good data')
-      return reply.status(503).send({ error: 'Service Unavailable', message: 'The v2 model could not be read. Keep the last good data and retry.' })
-    }
-  })
-
-  // Which model decides (data.authz.active): the router in opal-policies reads it. 503 on a store error,
-  // so OPAL keeps the value OPA holds instead of falling back to a default mid-incident.
-  fastify.get('/opal/authz', {
-    ...open('machine'),
-    schema: {
-      description: 'OPAL data source (authz v2): which authorization model is active, {"active":"v1"|"v2"} (data.authz).',
-      tags: ['rbac'],
-      response: { 503: serviceUnavailableResponseSchema },
-    },
-  }, async (request, reply) => {
-    try {
-      return reply.send({ active: await readAuthzActive() })
-    } catch (err) {
-      request.log.error({ err: (err as Error).message }, 'authz: store unavailable — answering 503 so OPAL keeps the last good data')
-      return reply.status(503).send({ error: 'Service Unavailable', message: 'The active model could not be read. Keep the last good data and retry.' })
-    }
   })
 
   // OPAL datasource config (tells OPAL what to fetch)

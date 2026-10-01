@@ -12,7 +12,7 @@ import { groupSecondFactorJsonSchema } from '../second-factor.schema.js'
  *   "emails": {},
  *   "groups": {
  *     "super_admins": {
- *       "global": ["super_admin"],
+ *       "jinbe": ["super_admin"],
  *       "jinbe": ["admin", "write"],
  *       "kuma_v2": ["admin"]
  *     },

@@ -8,12 +8,8 @@ import Fastify, { type FastifyInstance } from 'fastify'
 const s = vi.hoisted(() => ({
   calls: [] as Array<{ rule: string; input: Record<string, unknown> }>,
   explainLoaded: true,
-  // OPA's copy of the roster, and jinbe's own (Redis) — the two may differ (OPAL lag).
-  opaRoster: { acme: ['acme-admin@example.com'] } as Record<string, string[]>,
-  redisRoster: { acme: ['acme-admin@example.com'] } as Record<string, string[]>,
-  // manageable_orgs as OPA answers it, and whether the roster clause fires in rbac.decision.
-  manageable: { 'acme-admin': ['acme'] } as Record<string, string[]>,
-  rosterClauseFires: true,
+  // What each person holds per org, as OPA answers rbac.org_permissions_by_org (owner of Acme).
+  inOrg: { 'acme-admin': { acme: ['org.members:read', 'org.members:write'] } } as Record<string, Record<string, string[]>>,
   identities: {} as Record<string, { id: string; traits: { email: string } }>,
   siteStepUp: false,
 }))
@@ -30,13 +26,12 @@ vi.mock('../../config/index.js', async (importOriginal) => {
 })
 vi.mock('../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
-    getOrgAdmins: vi.fn(async (org: string) => (s.redisRoster[org] ?? []).map((e) => e.toLowerCase())),
     getRouteMap: vi.fn(async () => ({ rules: [{ method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org.members:read' }] })),
-    getOrgServiceMap: vi.fn(async () => ({ acme: ['kuma'] })),
+    getOrgSites: vi.fn(async () => ({ acme: ['payroll'] })),
     getGroups: vi.fn(async () => ({})),
   },
 }))
-vi.mock('../../services/org-grants.repository.js', () => ({ orgGrantsRepository: { getForMember: vi.fn(async () => []) } }))
+vi.mock('../../services/org-roles.repository.js', () => ({ orgRolesRepository: { getForMember: vi.fn(async (_o: string, id: string) => (id === 'id-acme-admin' ? ['jinbe:owner'] : [])) } }))
 vi.mock('../../services/kratos.service.js', () => ({
   kratosService: {
     findByEmail: vi.fn(async (email: string) => Object.values(s.identities).find((i) => i.traits.email === email) ?? null),
@@ -54,14 +49,14 @@ vi.mock('../../audit/record.js', async (importOriginal) => ({ ...(await importOr
 const budget = vi.hoisted(() => vi.fn(async () => null))
 vi.mock('../../middleware/delegated-writes.js', async (importOriginal) => ({ ...(await importOriginal<object>()), delegatedWriteBudget: budget }))
 
-const JINBE: Record<string, string[]> = { super: ['*'], auditor: ['access:check'], 'acme-admin': [], nobody: [] }
+const JINBE: Record<string, string[]> = { super: ['stats:read', 'access:check'], auditor: ['access:check'], 'acme-admin': [], nobody: [] }
 const who = (email: unknown) => String(email).split('@')[0]
 
 function decision(input: Record<string, unknown>) {
   const u = who(input.email)
   const org = String(input.object).split('/')[3]
-  const onRoster = s.rosterClauseFires && (s.manageable[u] ?? []).includes(org)
-  const granted = u === 'super' || onRoster
+  const inOrg = (s.inOrg[u]?.[org] ?? []).length > 0
+  const granted = u === 'super' || inOrg
   // Platform 2FA (8c) for super, per-site 2FA (8b) for everybody at aal1 when the site asks.
   const platform = granted && u === 'super' && input.client !== true && input.aal !== 'aal2'
   const site = granted && s.siteStepUp && input.client !== true && input.aal === 'aal1'
@@ -69,20 +64,17 @@ function decision(input: Record<string, unknown>) {
   return {
     allow: granted && !stepUp,
     reason: stepUp ? 'needs_2fa' : granted ? 'ok' : String(input.object).includes('/nowhere') ? 'not_found' : 'forbidden',
-    grantedBy: u === 'super' ? ['global_wildcard'] : onRoster ? ['org_roster'] : [],
+    grantedBy: u === 'super' ? ['every_org'] : inOrg ? ['org_role'] : [],
     stepUpBy: [...(site ? ['site_8b'] : []), ...(platform ? ['platform_8c'] : [])],
   }
 }
 
 function answer(rule: string, input: Record<string, unknown>): unknown {
-  if (rule.startsWith('org_admin_map/')) return s.opaRoster[decodeURIComponent(rule.slice('org_admin_map/'.length))]
   switch (rule) {
     case 'rbac/user_info':
       return { groups: [], roles: [], permissions: JINBE[who(input.email)] ?? [] }
-    case 'rbac/super_admin':
-      return who(input.email) === 'super'
-    case 'rbac/delegation/manageable_orgs':
-      return s.manageable[who((input.actor as { email: string }).email)] ?? []
+    case 'rbac/org_permissions_by_org':
+      return who(input.email) === 'super' ? { acme: ['org.members:read', 'org.members:write'] } : s.inOrg[who(input.email)] ?? {}
     case 'rbac/caller_organizations':
       return who(input.email) === 'acme-admin' ? ['acme'] : []
     case 'rbac/second_factor_required':
@@ -99,9 +91,7 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
       return {
         allow: d.allow, reason: d.reason, granted: d.grantedBy.length > 0, granted_by: d.grantedBy, step_up_required: d.stepUpBy.length > 0,
         step_up_by: d.stepUpBy, effective_app: 'jinbe', is_client: input.client === true, session_aal: 0, second_factor_required: who(input.email) === 'super',
-        super_admin: who(input.email) === 'super',
         matching_rules: [{ method: 'GET', path: '/api/organizations/:organizationId/users', permission: 'org.members:read' }],
-        orgs: [{ org: 'acme', member: who(input.email) === 'acme-admin', rostered: (s.opaRoster.acme ?? []).includes(String(input.email)), services: ['kuma'], org_grants: [] }],
       }
     }
   }
@@ -110,7 +100,6 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
 
 import { installRouteAccess, needs } from '../../policy/route-access.js'
 import { delegationGate } from '../../middleware/delegation-gate.js'
-import { requireServiceAdmin } from '../../middleware/require-service-admin.js'
 import { explainRouteRoutes } from '../../routes/explain-route.routes.js'
 import { clearAuthzCache } from '../../authz/opa.js'
 
@@ -140,7 +129,6 @@ beforeAll(async () => {
   }
   await app.register(async (api) => {
     await api.register(async (org) => {
-      org.addHook('preHandler', requireServiceAdmin('organizationId', { orgAdmin: true }))
       org.get('/users', needs('org.members:read', { org: 'organizationId' }), handler)
       org.post('/users', needs('org.members:write', { org: 'organizationId' }), handler)
     }, { prefix: '/organizations/:organizationId' })
@@ -156,10 +144,7 @@ afterAll(async () => {
 beforeEach(() => {
   s.calls.length = 0
   s.explainLoaded = true
-  s.opaRoster = { acme: ['acme-admin@example.com'] }
-  s.redisRoster = { acme: ['acme-admin@example.com'] }
-  s.manageable = { 'acme-admin': ['acme'] }
-  s.rosterClauseFires = true
+  s.inOrg = { 'acme-admin': { acme: ['org.members:read', 'org.members:write'] } }
   s.siteStepUp = false
   s.identities = { 'id-acme-admin': { id: 'id-acme-admin', traits: { email: 'acme-admin@example.com' } } }
   handled = 0
@@ -177,43 +162,41 @@ const explain = async (body: Record<string, unknown>, headers: Record<string, st
 }
 
 describe('explain-route — the caller as they are calling', () => {
-  it('a delegated super admin (MCP list_org_users): client to OPA, granted by global_wildcard, reaches the handler', async () => {
+  it('a delegated super admin (MCP list_org_users): client to OPA, granted by the every-org map, reaches the handler', async () => {
     const { res, json, step } = await explain({ method: 'get', path: '/api/organizations/acme/users' }, { 'x-test-user': 'super', 'x-test-scopes': 'org.members:read' })
     expect(res.statusCode).toBe(200)
     expect(json.verdict).toEqual({ status: 200, allowed: true })
     expect(json.decidedBy).toBe('handler')
     expect(json.subject).toMatchObject({ email: 'super@example.com', via: 'delegated', client: true })
     expect(step('route').detail).toMatchObject({ pattern: '/api/organizations/:organizationId/users', permission: 'org.members:read', org: 'organizationId' })
-    expect(step('route').detail.guards).toEqual(expect.arrayContaining(['delegationGate', 'requireServiceAdmin']))
+    expect(step('route').detail.guards).toEqual(expect.arrayContaining(['delegationGate', 'requireOrgPermission']))
     expect(step('delegation')).toMatchObject({ verdict: 'pass' })
     // Exactly the guard's input: client, delegated, the token's scopes.
     expect(step('opa').input).toMatchObject({ email: 'super@example.com', object: '/api/organizations/acme/users', action: 'GET', app: 'jinbe', client: true, delegated: true, scopes: ['org.members:read'] })
-    expect(step('opa').detail).toMatchObject({ allow: true, reason: 'ok', explain: { available: true, grantedBy: ['global_wildcard'] } })
+    expect(step('opa').detail).toMatchObject({ allow: true, reason: 'ok', explain: { available: true, grantedBy: ['every_org'] } })
     expect(json.disagreements).toEqual([])
     // A dry run: the handler never ran.
     expect(handled).toBe(0)
   })
 
-  it('a roster admin at aal1 on a site asking 2FA is refused needs_2fa by requireServiceAdmin, clause named — nothing audited as denied', async () => {
+  it('an org owner at aal1 on a site asking 2FA is refused needs_2fa by the org gate, clause named — nothing audited as denied', async () => {
     s.siteStepUp = true
     const { json, step } = await explain({ method: 'GET', path: '/api/organizations/acme/users' }, { 'x-test-user': 'acme-admin', 'x-test-aal': 'aal1' })
     expect(json.verdict).toMatchObject({ status: 403, allowed: false, code: 'needs_2fa', reason: 'needs_2fa' })
-    expect(json.decidedBy).toBe('requireServiceAdmin')
+    expect(json.decidedBy).toBe('requireOrgPermission')
     expect(step('opa').input).toMatchObject({ client: false, aal: 'aal1' })
-    expect(step('opa').detail).toMatchObject({ reason: 'needs_2fa', explain: { grantedBy: ['org_roster'], stepUpBy: ['site_8b'] } })
-    expect(step('guard').detail.guards).toEqual(expect.arrayContaining([expect.objectContaining({ guard: 'requireServiceAdmin', verdict: 'refuse', status: 403 })]))
-    // get_user_access would show admin: exactly the mismatch the endpoint exists to name.
-    expect((json.disagreements as Array<{ kind: string; detail: string }>).find((d) => d.kind === 'user_access_vs_guard')?.detail).toMatch(/needs_2fa \(site_8b\)/)
+    expect(step('opa').detail).toMatchObject({ reason: 'needs_2fa', explain: { grantedBy: ['org_role'], stepUpBy: ['site_8b'] } })
+    expect(step('guard').detail.guards).toEqual(expect.arrayContaining([expect.objectContaining({ guard: 'requireOrgPermission', verdict: 'refuse', status: 403 })]))
+    expect(json.disagreements).toEqual([])
     expect(emitted).not.toHaveBeenCalled()
   })
 
-  it('a super admin at aal1: OPA refuses needs_2fa, jinbe lets the platform holder through — said, as by design', async () => {
+  it('a super admin at aal1: OPA refuses needs_2fa and so does jinbe — one rule, no platform bypass', async () => {
     const { json, step } = await explain({ method: 'GET', path: '/api/organizations/acme/users' }, { 'x-test-user': 'super', 'x-test-aal': 'aal1' })
     expect(step('opa').detail).toMatchObject({ allow: false, reason: 'needs_2fa', explain: { stepUpBy: ['platform_8c'] } })
-    expect(step('platform').detail).toMatchObject({ superAdmin: true, holdsRoutePermissionGlobally: true })
-    expect(json.verdict).toMatchObject({ status: 200, allowed: true })
-    const d = (json.disagreements as Array<{ kind: string; detail: string }>).find((x) => x.kind === 'opa_vs_guard')
-    expect(d?.detail).toMatch(/platform holder/)
+    expect(step('org').detail).toMatchObject({ org: 'acme', holdsRoutePermissionHere: true })
+    expect(json.verdict).toMatchObject({ status: 403, allowed: false, code: 'needs_2fa' })
+    expect(json.disagreements).toEqual([])
   })
 
   it('without rbac.explain in the policy it degrades: the clause is inferred where it can be, every other step still runs', async () => {
@@ -222,7 +205,7 @@ describe('explain-route — the caller as they are calling', () => {
     expect(res.statusCode).toBe(200)
     expect(step('opa').detail.explain).toMatchObject({ available: false, stepUpByInferred: ['platform_8c'] })
     expect(json.steps).toHaveLength(7)
-    expect(json.decidedBy).toBe('handler')
+    expect(json.decidedBy).toBe('requireOrgPermission')
   })
 
   it('an unknown path is a 404 verdict decided by the route step', async () => {
@@ -249,21 +232,20 @@ describe('explain-route — the caller as they are calling', () => {
   })
 })
 
-describe('explain-route — disagreements', () => {
-  it('get_user_access says admin (manageable_orgs) but the guard refuses: the roster clause did not fire (catalogue name missing in rego)', async () => {
-    s.rosterClauseFires = false
+describe('explain-route — the org step', () => {
+  it('shows membership, the org roles assigned there, the org permissions held there and the entitled sites', async () => {
     const { json, step } = await explain({ method: 'GET', path: '/api/organizations/acme/users' }, { 'x-test-user': 'acme-admin' })
-    expect(json.verdict).toMatchObject({ status: 403, code: 'permission_required', reason: 'forbidden' })
-    expect(step('org').detail).toMatchObject({ org: 'acme', member: true, manageable: true, rosteredInRedis: true, userAccess: { admin: true, rostered: true }, requireOrgAdminWouldAllow: true })
-    const kinds = (json.disagreements as Array<{ kind: string }>).map((d) => d.kind)
-    expect(kinds).toEqual(expect.arrayContaining(['user_access_vs_guard', 'org_admin_guards']))
+    expect(json.verdict).toMatchObject({ status: 200, allowed: true })
+    expect(step('org').detail).toEqual({
+      org: 'acme', member: true, roles: ['jinbe:owner'], permissions: ['org.members:read', 'org.members:write'],
+      holdsRoutePermissionHere: true, sites: ['jinbe', 'payroll'],
+    })
   })
 
-  it('a roster change jinbe holds but OPA does not yet: redis vs OPA', async () => {
-    s.redisRoster = { acme: ['acme-admin@example.com', 'nobody@example.com'] }
+  it('somebody holding nothing in the org is refused, with the permission and who grants it', async () => {
     const { json, step } = await explain({ method: 'GET', path: '/api/organizations/acme/users' }, { 'x-test-user': 'nobody' })
-    expect(step('org').detail).toMatchObject({ rosteredInRedis: true, rosteredInOpa: false })
-    expect((json.disagreements as Array<{ kind: string }>).map((d) => d.kind)).toContain('roster_redis_vs_opa')
+    expect(json.verdict).toMatchObject({ status: 403, code: 'permission_required', reason: 'forbidden' })
+    expect(step('org').detail).toMatchObject({ member: false, permissions: [], holdsRoutePermissionHere: false })
   })
 })
 

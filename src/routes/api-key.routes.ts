@@ -1,6 +1,5 @@
 import { FastifyInstance } from 'fastify'
 import { apiKeyController } from '../controllers/api-key.controller.js'
-import { requireOrgPermission } from '../middleware/require-org-permission.js'
 import { needs } from '../policy/route-access.js'
 import { apiKeyScopesController } from '../controllers/api-key-scopes.controller.js'
 import {
@@ -27,12 +26,10 @@ const ORG = { org: 'organizationId' }
 /**
  * Organization-scoped API-key (Hydra OAuth2 client) management.
  *
- * Mounted under /api/organizations/:organizationId. Every route requires its
- * `org.keys:*` permission IN THAT organization (`org:manage_api_keys` still counts, as a legacy
- * alias): a staff role holding it platform-wide, its org admin, super_admin, or a member holding it there (site grants ∪
- * org_grants of that org). Holding it in another organization counts for
- * nothing. Declared in jinbe's route_map with `org_param` so the gateway draws
- * the same org boundary.
+ * Mounted under /api/organizations/:organizationId. Every route requires its `org.keys:*`
+ * permission IN THAT organization: an org role assigned there (owner, key_manager, …) or the
+ * every-org map of a platform role. Holding it in another organization counts for nothing.
+ * Declared in jinbe's route_map with `org_param` so the gateway draws the same org boundary.
  *
  * POST   /api-keys            - create a key (returns client_secret ONCE)
  * GET    /api-keys            - list keys (no secrets)
@@ -50,8 +47,8 @@ const apiKeyBadRequestResponseSchema = {
 }
 
 export async function apiKeyRoutes(fastify: FastifyInstance) {
-  // One gate for every key route, asking each route's own declared permission (org.keys:*).
-  fastify.addHook('preHandler', requireOrgPermission())
+  // Each route's gate is the org clause for its declared permission (org.keys:*), attached by the
+  // route-access hook from its `org` declaration.
 
   fastify.post(
     '/api-keys',

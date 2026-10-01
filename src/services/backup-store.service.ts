@@ -90,6 +90,31 @@ class BackupStoreService {
     await this.client().send(new PutObjectCommand({ Bucket: env.BACKUP_S3_BUCKET!, Key: this.latestKey(), Body: body, ContentType: 'application/json' }))
     return { key }
   }
+
+  /**
+   * Raw store snapshots (bootstrap/snapshot.ts — the mandatory one before an RBAC wipe), under
+   * `<prefix>-snapshots/`, apart from the bundles: a snapshot is not a bundle and must never be offered
+   * as one by the Backup tab.
+   */
+  private snapshotPrefix(): string {
+    return `${this.prefix()}-snapshots`
+  }
+
+  async putSnapshot(name: string, body: string): Promise<{ key: string }> {
+    if (!this.enabled()) throw this.disabledError()
+    const key = `${this.snapshotPrefix()}/${name}.json`
+    await this.client().send(new PutObjectCommand({ Bucket: env.BACKUP_S3_BUCKET!, Key: key, Body: body, ContentType: 'application/json' }))
+    return { key }
+  }
+
+  async getSnapshot(key: string): Promise<string> {
+    if (!this.enabled()) throw this.disabledError()
+    if (!key.startsWith(`${this.snapshotPrefix()}/`) || key.includes('..')) {
+      throw Object.assign(new Error('Invalid snapshot key'), { statusCode: 400, code: 'invalid_key' })
+    }
+    const out = await this.client().send(new GetObjectCommand({ Bucket: env.BACKUP_S3_BUCKET!, Key: key }))
+    return out.Body!.transformToString()
+  }
 }
 
 export const backupStore = new BackupStoreService()

@@ -11,6 +11,8 @@ import { assertOrgParams } from '../policy/route-org-param.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { assertBundleWithinOwn } from './rbac-escalation-guard.js'
 import { groupGrants, loadRoles, type PermissionsByScope, type RolesByScope } from './grant-subset.js'
+import { orgRolesRepository, type OrgAssignments } from './org-roles.repository.js'
+import { JINBE, isStaffGroup } from '../policy/roles.js'
 
 export interface AuthBundle {
   version: '1'
@@ -21,14 +23,52 @@ export interface AuthBundle {
     roles: Record<string, FlatRolesMap>
     routeMaps: Record<string, RouteMap>
     oathkeeperRules: OathkeeperRule[]
-    // Org → service bundle. Exported as arrays; legacy bundles that stored a
-    // scalar per org are tolerated on import (see import() below).
+    /** Org → the sites it is entitled to (rbac:org_sites). */
+    orgSites?: Record<string, string[]>
+    /** Org → identity id → org roles (rbac:org_assignments): people's org roles, backed up with the rest. */
+    orgAssignments?: OrgAssignments
+    /** Service → org roles; service → every-org map (with the roles section). */
+    orgRoles?: Record<string, FlatRolesMap>
+    everyOrg?: Record<string, FlatRolesMap>
+    /** A bundle exported before org entitlements: read as orgSites on import, jinbe and kuma left out. */
     orgServiceMap?: Record<string, string[]>
   }
 }
 
-export type BundleSection = 'services' | 'groups' | 'roles' | 'routeMaps' | 'oathkeeperRules' | 'orgServiceMap'
-export const ALL_BUNDLE_SECTIONS: BundleSection[] = ['services', 'groups', 'roles', 'routeMaps', 'oathkeeperRules', 'orgServiceMap']
+export type BundleSection = 'services' | 'groups' | 'roles' | 'routeMaps' | 'oathkeeperRules' | 'orgSites' | 'orgAssignments'
+export const ALL_BUNDLE_SECTIONS: BundleSection[] = ['services', 'groups', 'roles', 'routeMaps', 'oathkeeperRules', 'orgSites', 'orgAssignments']
+
+/**
+ * What an import may never write: what jinbe defines in code (its roles, route map, org roles,
+ * every-org map, the staff groups) — the next boot would converge it back anyway, and an import is
+ * not a way around "defined in code". A bundle from before the in-place model is read too: its
+ * `global` roles and `kuma` service are dropped, its org → service map becomes org entitlements.
+ */
+export function withoutOwned(bundle: AuthBundle): AuthBundle {
+  const r = bundle.rbac
+  // `global` and `kuma` were services of the previous model; neither exists now.
+  const drop = (svc: string) => svc === JINBE || svc === 'global' || svc === 'kuma'
+  const keep = <T>(m: Record<string, T> | undefined) => Object.fromEntries(Object.entries(m ?? {}).filter(([svc]) => !drop(svc)))
+  const orgSites = r.orgSites ?? Object.fromEntries(Object.entries(r.orgServiceMap ?? {})
+    .map(([org, svcs]) => [org, (Array.isArray(svcs) ? svcs : [svcs as unknown as string]).filter((svc) => !drop(svc))] as const)
+    .filter(([, svcs]) => svcs.length > 0))
+  return {
+    ...bundle,
+    rbac: {
+      services: (r.services ?? []).filter((svc) => !drop(svc)),
+      groups: Object.fromEntries(Object.entries(r.groups ?? {})
+        .filter(([name]) => !isStaffGroup(name))
+        .map(([name, def]) => [name, Object.fromEntries(Object.entries(def).filter(([svc]) => !drop(svc)))])),
+      roles: keep(r.roles),
+      routeMaps: keep(r.routeMaps),
+      oathkeeperRules: r.oathkeeperRules ?? [],
+      orgSites,
+      orgAssignments: r.orgAssignments ?? {},
+      orgRoles: keep(r.orgRoles),
+      everyOrg: keep(r.everyOrg),
+    },
+  }
+}
 
 export interface ImportResult {
   rbac: {
@@ -64,25 +104,29 @@ export interface ImportHistorySummary {
   takenAt: string
   actor: string | null
   reason: ImportHistoryReason
-  counts: { services: number; groups: number; roles: number; routeMaps: number; oathkeeperRules: number; orgServiceMap: number }
+  counts: { services: number; groups: number; roles: number; routeMaps: number; oathkeeperRules: number; orgSites: number; orgAssignments: number }
 }
 
 class RbacBundleService {
   // `sections` (optional) narrows a MANUAL export/download to selected parts.
   // Omitted → full 1:1 snapshot (what the backup CronJob + restore use).
   async export(sections?: BundleSection[]): Promise<AuthBundle> {
-    const [services, groups, oathkeeperRules, orgServiceMap] = await Promise.all([
+    const [services, groups, oathkeeperRules, orgSites, orgAssignments] = await Promise.all([
       redisRbacRepository.getServices(),
       redisRbacRepository.getGroups(),
       redisRbacRepository.getAccessRules(),
-      redisRbacRepository.getOrgServiceMap(),
+      redisRbacRepository.getOrgSites(),
+      orgRolesRepository.getAll(),
     ])
 
-    const allServiceKeys = [...services, 'global']
-    const [rolesEntries, routeMapEntries] = await Promise.all([
-      Promise.all(allServiceKeys.map(async svc => [svc, await redisRbacRepository.getRoles(svc)] as const)),
+    const [rolesEntries, routeMapEntries, orgRoleEntries, everyOrgEntries] = await Promise.all([
+      Promise.all(services.map(async svc => [svc, await redisRbacRepository.getRoles(svc)] as const)),
       Promise.all(services.map(async svc => [svc, await redisRbacRepository.getRouteMap(svc)] as const)),
+      Promise.all(services.map(async svc => [svc, await redisRbacRepository.getOrgRoles(svc)] as const)),
+      Promise.all(services.map(async svc => [svc, await redisRbacRepository.getEveryOrg(svc)] as const)),
     ])
+    const orgRoles = Object.fromEntries(orgRoleEntries.filter((e): e is readonly [string, FlatRolesMap] => !!e[1]))
+    const everyOrg = Object.fromEntries(everyOrgEntries.filter((e): e is readonly [string, FlatRolesMap] => !!e[1]))
 
     const roles: Record<string, FlatRolesMap> = {}
     for (const [svc, r] of rolesEntries) {
@@ -93,11 +137,12 @@ class RbacBundleService {
       if (rm) routeMaps[svc] = rm
     }
 
-    const fullRbac = { services, groups, roles, routeMaps, oathkeeperRules, orgServiceMap }
+    const fullRbac = { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, orgRoles, everyOrg }
     let rbac: AuthBundle['rbac'] = fullRbac
     if (sections && sections.length && sections.length < ALL_BUNDLE_SECTIONS.length) {
       const picked: Partial<typeof fullRbac> = {}
       for (const s of sections) if (s in fullRbac) (picked as Record<string, unknown>)[s] = fullRbac[s]
+      if (sections.includes('roles')) Object.assign(picked, { orgRoles, everyOrg })
       rbac = picked as AuthBundle['rbac']
     }
     return { version: '1', exportedAt: new Date().toISOString(), rbac }
@@ -163,9 +208,9 @@ class RbacBundleService {
     const { services, groups, roles } = bundle.rbac
     const after = new Map<string, Record<string, string[]> | null>()
     for (const svc of new Set(Object.values(groups).flatMap((def) => Object.keys(def)))) {
-      if (want('roles') && roles[svc]) after.set(svc, svc === 'global' ? roles[svc] : { ...defaultServiceRoles(svc), ...roles[svc] })
-      else if (want('services') && services.includes(svc) && !(svc in roles) && svc !== 'global') after.set(svc, defaultServiceRoles(svc))
-      else if (want('services') && isFull && svc !== 'global' && !services.includes(svc)) after.set(svc, null)
+      if (want('roles') && roles[svc]) after.set(svc, { ...defaultServiceRoles(svc), ...roles[svc] })
+      else if (want('services') && services.includes(svc) && !(svc in roles)) after.set(svc, defaultServiceRoles(svc))
+      else if (want('services') && isFull && svc !== JINBE && !services.includes(svc)) after.set(svc, null)
       else after.set(svc, await redisRbacRepository.getRoles(svc))
     }
     const problems = Object.entries(groups).flatMap(([name, def]) => bindingProblems(name, def, (s) => after.get(s)))
@@ -187,9 +232,9 @@ class RbacBundleService {
     const before = await loadRoles(scopes)
     const after: RolesByScope = {}
     for (const svc of scopes) {
-      if (want('roles') && roles[svc]) after[svc] = svc === 'global' ? roles[svc] : { ...defaultServiceRoles(svc), ...roles[svc] }
-      else if (want('roles') && want('services') && services.includes(svc) && svc !== 'global') after[svc] = defaultServiceRoles(svc)
-      else if (want('services') && isFull && svc !== 'global' && !services.includes(svc)) after[svc] = null
+      if (want('roles') && roles[svc]) after[svc] = { ...defaultServiceRoles(svc), ...roles[svc] }
+      else if (want('roles') && want('services') && services.includes(svc)) after[svc] = defaultServiceRoles(svc)
+      else if (want('services') && isFull && svc !== JINBE && !services.includes(svc)) after[svc] = null
       else after[svc] = before[svc]
     }
     const same = (a: PermissionsByScope, b: PermissionsByScope) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
@@ -199,7 +244,9 @@ class RbacBundleService {
       .map(({ name, after: grants }) => ({ name, after: grants }))
   }
 
-  async import(bundle: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
+  async import(incoming: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
+    // What jinbe defines in code is never imported (withoutOwned); a pre-in-place bundle is read too.
+    const bundle = withoutOwned(incoming)
     const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
     // `sections` (optional) restricts a selective import to the chosen parts.
     // Full 1:1 restore (prune orphans) happens ONLY when applying the whole
@@ -252,10 +299,10 @@ class RbacBundleService {
       throw err
     }
 
-    // A full restore is high-signal — flag it if any imported group grants the
-    // global super_admin role (structural, no secrets in the envelope).
+    // A full restore is high-signal — flag it if any imported group binds a role named super_admin
+    // (structural, no secrets in the envelope).
     const flags: AuditFlag[] = []
-    const grantsSuper = Object.values(groups).some((def) => (def.global ?? []).includes('super_admin'))
+    const grantsSuper = Object.values(groups).some((def) => Object.values(def).some((rs) => rs.includes('super_admin')))
     if (grantsSuper) flags.push('grants_super_admin')
 
     auditEventService.emit({
@@ -303,7 +350,7 @@ class RbacBundleService {
    * it throws mid-way. Returns the services pruned by a full restore.
    */
   private async applyBundle(bundle: AuthBundle, sections?: BundleSection[]): Promise<string[]> {
-    const { services, groups, roles, routeMaps, oathkeeperRules, orgServiceMap } = bundle.rbac
+    const { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, orgRoles, everyOrg } = bundle.rbac
     const want = (s: BundleSection) => !sections || sections.length === 0 || sections.includes(s)
     const isFull = !sections || sections.length === 0 || sections.length >= ALL_BUNDLE_SECTIONS.length
 
@@ -316,7 +363,7 @@ class RbacBundleService {
       if (isFull) {
         // True 1:1 restore: drop services (and their roles/routeMaps) not in the bundle.
         const bundleServices = new Set(services)
-        orphanServices = existingServices.filter(svc => !bundleServices.has(svc))
+        orphanServices = existingServices.filter(svc => !bundleServices.has(svc) && svc !== JINBE)
         await Promise.all(orphanServices.map(svc => redisRbacRepository.removeService(svc)))
         await Promise.all(orphanServices.flatMap(svc => [
           redisRbacRepository.deleteRoles(svc),
@@ -330,7 +377,7 @@ class RbacBundleService {
       if (isFull) {
         const existingGroups = await redisRbacRepository.getGroups()
         for (const name of Object.keys(existingGroups)) {
-          if (!(name in groups)) await redisRbacRepository.deleteGroup(name)
+          if (!(name in groups) && !isStaffGroup(name)) await redisRbacRepository.deleteGroup(name)
         }
       }
       for (const [name, def] of Object.entries(groups)) {
@@ -338,13 +385,14 @@ class RbacBundleService {
       }
     }
 
-    // ── Roles: AUTOFIX — defaults fill gaps; the bundle's definitions win.
-    // 'global' is not a service, so it passes through untouched. ──
+    // ── Roles: AUTOFIX — defaults fill gaps; the bundle's definitions win. Org roles and the
+    // every-org map travel with them. ──
     if (want('roles')) {
       for (const [svc, r] of Object.entries(roles)) {
-        const merged = svc === 'global' ? r : { ...defaultServiceRoles(svc), ...r }
-        await redisRbacRepository.setRoles(svc, merged)
+        await redisRbacRepository.setRoles(svc, { ...defaultServiceRoles(svc), ...r })
       }
+      for (const [svc, r] of Object.entries(orgRoles ?? {})) await redisRbacRepository.setOrgRoles(svc, r)
+      for (const [svc, r] of Object.entries(everyOrg ?? {})) await redisRbacRepository.setEveryOrg(svc, r)
       // A newly-added service with no roles entry still gets defaults (only when
       // the services section was also applied, so we don't seed untouched services).
       if (want('services')) {
@@ -364,12 +412,13 @@ class RbacBundleService {
       await redisRbacRepository.setAccessRules(oathkeeperRules)
     }
 
-    if (want('orgServiceMap') && orgServiceMap && Object.keys(orgServiceMap).length > 0) {
-      for (const [orgId, svcs] of Object.entries(orgServiceMap)) {
-        // Tolerate a legacy bundle whose values are a scalar service name
-        // (pre-migration export) as well as the current array shape.
-        const mapped = Array.isArray(svcs) ? svcs : [svcs as unknown as string]
-        await redisRbacRepository.setOrgServiceMapping(orgId, mapped)
+    if (want('orgSites')) {
+      for (const [orgId, sites] of Object.entries(orgSites ?? {})) await redisRbacRepository.setOrgSites(orgId, sites)
+    }
+
+    if (want('orgAssignments')) {
+      for (const [orgId, members] of Object.entries(orgAssignments ?? {})) {
+        for (const [subject, orgRoleList] of Object.entries(members)) await orgRolesRepository.setForMember(orgId, subject, orgRoleList)
       }
     }
 
@@ -392,7 +441,8 @@ class RbacBundleService {
           roles: Object.keys(rbac?.roles ?? {}).length,
           routeMaps: Object.keys(rbac?.routeMaps ?? {}).length,
           oathkeeperRules: rbac?.oathkeeperRules?.length ?? 0,
-          orgServiceMap: Object.keys(rbac?.orgServiceMap ?? {}).length,
+          orgSites: Object.keys(rbac?.orgSites ?? rbac?.orgServiceMap ?? {}).length,
+          orgAssignments: Object.keys(rbac?.orgAssignments ?? {}).length,
         },
       }
     })

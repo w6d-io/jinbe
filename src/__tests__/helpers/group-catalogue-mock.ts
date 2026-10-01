@@ -5,16 +5,14 @@
  */
 export type GroupDefinitions = Record<string, Record<string, string[]>>
 
-/** Groups the suite assigns. `global` is every service and org — a platform grant rather than a tenant one. */
+/** Groups the suite assigns. A group binding a `jinbe` role is a platform grant (power over jinbe). */
 const DEFAULT_GROUPS: GroupDefinitions = {
   users: {},
-  admins: { 'org-1': ['admin'] },
-  devs: { 'org-1': ['dev'] },
-  viewers: { 'org-1': ['viewer'] },
-  operators: { 'org-1': ['operator'] },
-  'kuma-viewers': { 'org-1': ['viewer'] },
-  org_admins: { 'org-1': ['org-admin'] },
-  super_admins: { global: ['super-admin'] },
+  admins: { payroll: ['admin'] },
+  devs: { payroll: ['dev'] },
+  viewers: { payroll: ['viewer'] },
+  operators: { payroll: ['operator'] },
+  super_admins: { jinbe: ['super_admin'] },
 }
 
 export const groupCatalogue = { groups: { ...DEFAULT_GROUPS } as GroupDefinitions }
@@ -30,20 +28,20 @@ import { vi } from 'vitest'
 export function groupCatalogueMock() {
   return {
     GroupCatalogueUnavailableError,
-    ASSIGN_MEMBERSHIP: 'admin.membership:write',
+    ASSIGN_MEMBERSHIP: 'groups.members:write',
     declaredGroups: vi.fn(async () => Object.keys(groupCatalogue.groups).sort()),
     groupFacts: vi.fn(async (names: readonly string[]) => {
-      const facts = new Map<string, { declared: boolean; everyOrganisation: boolean; empty: boolean }>()
+      const facts = new Map<string, { declared: boolean; platform: boolean; empty: boolean }>()
       for (const name of names) {
         const definition = groupCatalogue.groups[name]
         if (!definition) {
-          facts.set(name, { declared: false, everyOrganisation: false, empty: true })
+          facts.set(name, { declared: false, platform: false, empty: true })
           continue
         }
         const grants = Object.values(definition).filter((roles) => (roles ?? []).length > 0)
         facts.set(name, {
           declared: true,
-          everyOrganisation: (definition.global ?? []).length > 0,
+          platform: (definition.jinbe ?? []).length > 0,
           empty: grants.length === 0,
         })
       }
@@ -70,7 +68,7 @@ export function secondFactorSettingsMock() {
       if (secondFactorSwitch.fail) throw new Error('ECONNREFUSED')
       const out = new Map<string, { required: boolean; explicit: boolean; default: boolean }>()
       for (const [name, def] of Object.entries(groupCatalogue.groups)) {
-        const dflt = (def.global ?? []).length > 0
+        const dflt = (def.jinbe ?? []).length > 0
         out.set(name, { required: secondFactorSwitch.flags[name] ?? dflt, explicit: name in secondFactorSwitch.flags, default: dflt })
       }
       return out

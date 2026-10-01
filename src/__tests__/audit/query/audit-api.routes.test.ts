@@ -20,15 +20,15 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
   return { ...real, env: new Proxy(real.env, { get: (t, k) => (k === 'LOKI_AUDIT_SELECTOR' ? h.selector : t[k as keyof typeof t]) }) }
 })
 
-// The scope is OPA's: what the caller holds in jinbe, and the orgs they administer (roster ∧ member).
+// The scope is OPA's: what the caller holds in jinbe, and the orgs where they hold org.audit:read.
 const who = (email: string) => email.split('@')[0]
 vi.mock('../../../authz/opa.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
   rights: vi.fn(async (email: string) => {
     if (who(email) === 'broken') throw new Error('OPA is unreachable')
-    return { groups: [], roles: [], permissions: h.platform.has(who(email)) ? ['admin:read'] : [] }
+    return { groups: [], roles: [], permissions: h.platform.has(who(email)) ? ['audit:read', 'audit:export', 'users:read'] : [] }
   }),
-  manageableOrgs: vi.fn(async (email: string) => h.admins[who(email)] ?? []),
+  orgPermissionsByOrg: vi.fn(async (email: string) => Object.fromEntries((h.admins[who(email)] ?? []).map((o: string) => [o, ['org.audit:read', 'org.members:read']]))),
 }))
 vi.mock('../../../services/organisation-store.js', () => ({
   organisationsForSubject: vi.fn(async (id: string) => h.members[id] ?? []),
@@ -193,7 +193,7 @@ describe.each(['json', 'label'] as const)('org scoping (AU-3, AU-4) — %s selec
     expect((await get(`/api/audit/events?${week}`, 'nobody')).statusCode).toBe(403)
   })
 
-  it('super_admin / admin:read sees every org, and platform events', async () => {
+  it('a platform audit:read holder sees every org, and platform events', async () => {
     const body = (await get(`/api/audit/events?${week}&org=org-b`)).json()
     expect(body.events.map((e: { event: string }) => e.event)).toEqual(['org.member.added'])
   })

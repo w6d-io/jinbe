@@ -1,18 +1,11 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { isV2 } from '../authz-v2/model.js'
-import { PLATFORM_ROLES } from '../authz-v2/roles.js'
 import { env } from '../config/env.js'
-import { isSuperAdmin } from '../authz/opa.js'
-import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { STEP_UP_MAX_AGE_MS, canProveSecondFactor, secondFactorIsFresh } from '../services/step-up.js'
-import { enforcing } from '../policy/declared-routes.js'
 import type { UserRbacInfo } from '../services/authorization-resolution.js'
 import { denyAudit } from '../audit/deny.js'
 import { ROLES } from '../policy/roles.js'
-import { EVERYTHING } from '../policy/catalog.js'
 import { keyStepUpVerdict } from './delegated-step-up.js'
 import { routePermissionOf, secondFactorRefusal } from '../second-factor/requirements.js'
-import { missingPermissionFields } from '../services/permission-refusal.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -26,8 +19,6 @@ declare module 'fastify' {
  */
 export function devRights(): { groups: string[]; roles: string[]; permissions: string[] } {
   const role = ROLES[env.DEV_ROLE]
-  // authz v2: the role's generated v2 list (super_admin = every platform permission, never `*`).
-  if (isV2()) return { groups: [role.group], roles: [env.DEV_ROLE], permissions: [...PLATFORM_ROLES[env.DEV_ROLE]] }
   return { groups: [role.group], roles: [env.DEV_ROLE], permissions: [...role.permissions] }
 }
 
@@ -98,34 +89,3 @@ const GRANT_HINTS: Record<string, string> = {
   key_step_up_expired: 'The second factor proven when this assistant was connected is too old for protected actions; reconnect it, or do this in the console.',
   not_allowed_here: KEY_HINTS.not_allowed_here,
 }
-
-/** What the route table says a super-admin-only route requires: the wildcard, which no scope covers. */
-export { EVERYTHING }
-
-/**
- * A global role carrying `*` (OPA `rbac.super_admin`) — for what nobody short of a super admin may
- * touch (`config.permission: '*'`). Fail-closed: OPA unreachable answers 503, never an allow.
- */
-export const requireGlobalSuperAdmin = enforcing(async function requireGlobalSuperAdmin(request: FastifyRequest, reply: FastifyReply) {
-  const email = request.userContext?.email
-  const subject = request.userContext?.id
-  if (!email || email === 'unknown' || !subject || subject === 'unknown') {
-    return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
-  }
-  let superAdmin: boolean
-  if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
-    request.rbacInfo = { email, ...devRights() }
-    superAdmin = request.rbacInfo.permissions.includes(EVERYTHING)
-  } else {
-    try {
-      superAdmin = await isSuperAdmin(email)
-    } catch (err) {
-      request.log.warn({ email, err: (err as Error).message }, 'OPA could not say whether the caller is a super admin — refusing rather than guessing')
-      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
-    }
-  }
-  if (!superAdmin) {
-    denyAudit(request, 'not_super_admin')
-    return reply.status(403).send({ error: 'Forbidden', code: 'permission_required', message: 'Super admin access required', ...(await missingPermissionFields([EVERYTHING])) })
-  }
-}, EVERYTHING)

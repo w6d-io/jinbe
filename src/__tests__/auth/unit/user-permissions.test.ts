@@ -1,31 +1,23 @@
 import { describe, it, expect } from 'vitest'
 import { allows, requiredForEdit, userActions } from '../../../services/user-permissions.js'
 
-describe('a catalogue permission, held or through a legacy alias', () => {
-  it('holding it, or the coarse permission it refines, or `*`, allows it', () => {
+describe('a catalogue permission, held exactly', () => {
+  it('holding it allows it; no coarse name, no `*`', () => {
     expect(allows(['users:update_email'], 'users:update_email')).toBe(true)
-    expect(allows(['admin:write'], 'users:update_email')).toBe(true)
-    expect(allows(['*'], 'users:delete')).toBe(true)
-  })
-
-  it('reads come from admin:read, writes only from admin:write', () => {
-    expect(allows(['admin:read'], 'users:read')).toBe(true)
-    expect(allows(['admin:read'], 'sessions:read')).toBe(true)
-    expect(allows(['admin:read'], 'users:delete')).toBe(false)
-    expect(allows(['admin:read'], 'sessions:revoke')).toBe(false)
+    expect(allows(['admin:write'], 'users:update_email')).toBe(false)
+    expect(allows(['*'], 'users:delete')).toBe(false)
   })
 
   it('one fine permission implies no other', () => {
     expect(allows(['users:update'], 'users:update_email')).toBe(false)
     expect(allows(['sessions:read'], 'sessions:revoke')).toBe(false)
-    expect(allows(['users:read'], 'admin:read')).toBe(false)
   })
 
-  it('every action is answered, true or false — the legacy keys kuma reads included', () => {
+  it('every action is answered, true or false', () => {
     const actions = userActions([])
-    expect(Object.keys(actions)).toEqual(expect.arrayContaining(['users:read', 'users:disable', 'users:verify', 'groups.members:revoke', 'admin:read', 'admin:write', 'users:assign_group']))
+    expect(Object.keys(actions)).toEqual(expect.arrayContaining(['users:read', 'users:disable', 'users:verify', 'groups.members:write', 'groups.members:revoke']))
     expect(Object.values(actions).some(Boolean)).toBe(false)
-    expect(userActions(['admin:write'])['users:assign_group']).toBe(true)
+    expect(userActions(['groups.members:write'])['groups.members:write']).toBe(true)
   })
 })
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { PLATFORM_PERMISSIONS } from '../../../policy/catalog.js'
 import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
@@ -77,12 +78,16 @@ let app: FastifyInstance
 beforeAll(async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = String(input)
+    if (url.startsWith('http://opal-client:8181/v1/data/rbac/org_permissions_by_org')) {
+      if (s.opaDown) throw new TypeError('fetch failed')
+      return Response.json({ result: {} })
+    }
     if (url.startsWith('http://opal-client:8181/v1/data/rbac/user_info')) {
       const body = JSON.parse(init!.body as string) as { input: Record<string, unknown> }
       s.opaCalls.push({ auth: new Headers(init!.headers).get('authorization'), input: body.input })
       if (s.opaDown) throw new TypeError('fetch failed')
       const who = String(body.input.email).split('@')[0]
-      const perms = body.input.app === 'jinbe' ? (s.rights[who] ?? []) : who === 'support' ? [] : ['*']
+      const perms = body.input.app === 'jinbe' ? (s.rights[who] ?? []) : []
       return Response.json({ result: { email: body.input.email, groups: [], roles: [], permissions: perms } })
     }
     s.fetches.push({ url, body: init?.body as string | undefined })
@@ -116,7 +121,7 @@ afterAll(async () => {
   await app.close()
 })
 beforeEach(() => {
-  s.rights = { support: SUPPORT, admin: ['admin:read', 'admin:write'], reader: ['admin:read'], nobody: [], nameonly: ['users:read', 'users:update'] }
+  s.rights = { support: SUPPORT, admin: [...PLATFORM_PERMISSIONS], reader: ['users:read', 'sessions:read'], nobody: [], nameonly: ['users:read', 'users:update'] }
   s.identity = { id: USER, schema_id: 'default', state: 'active', traits: { email: 'bob@example.com', name: 'Bob' }, metadata_admin: { groups: ['users'] } }
   s.counters.clear()
   s.fetches = []
@@ -203,13 +208,13 @@ describe('an edit needs what it changes', () => {
 })
 
 describe('administrators keep everything; a reader no longer writes', () => {
-  it('admin:write edits, deletes (with a recent second factor) and creates', async () => {
+  it('an administrator edits, deletes (with a recent second factor) and creates', async () => {
     expect((await app.inject({ method: 'PUT', url: `/api/admin/users/${USER}`, headers: as('admin'), payload: { traits: { name: 'X' }, state: 'inactive' } })).statusCode).toBe(200)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('admin') })).statusCode).toBe(422)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('admin'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })
 
-  it('admin:read alone reads but cannot delete', async () => {
+  it('a reader alone reads but cannot delete', async () => {
     expect((await app.inject({ url: `/api/admin/users/${USER}`, headers: as('reader') })).statusCode).toBe(200)
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: as('reader') })).statusCode).toBe(403)
   })
@@ -294,19 +299,22 @@ describe('the guard asks OPA, and only OPA', () => {
     expect((await app.inject({ url: '/api/me/permissions', headers: as('admin') })).statusCode).toBe(503)
   })
 
-  it('the Redis-granted support role, as OPA reports it, has users:update_email but not users:assign_group', async () => {
+  it('the support role, as OPA reports it, has users:update_email but not groups.members:write', async () => {
     const { actions } = (await app.inject({ url: '/api/me/permissions', headers: as('support') })).json()
     expect(actions['users:update_email']).toBe(true)
-    expect(actions['users:assign_group']).toBe(false)
-    // Even a creator is refused a group unless OPA grants users:assign_group.
+    expect(actions['groups.members:write']).toBe(false)
+    // Even a creator is refused a group unless OPA grants groups.members:write.
     s.rights.creator = [...SUPPORT, 'users:create']
     const res = await app.inject({ method: 'POST', url: '/api/admin/users', headers: as('creator'), payload: { email: 'n@example.com', groups: ['admins'] } })
     expect(res.statusCode).toBe(403)
     expect(res.json().message).toContain('groups.members:write')
   })
 
-  it('the per-service `*` (jinbe admin role) passes every action', async () => {
+  it('a wildcard grants nothing; every permission by name passes every action', async () => {
     s.rights.star = ['*']
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('star'), 'x-test-fresh': '1' } })).statusCode).toBe(403)
+    s.rights.star = [...PLATFORM_PERMISSIONS]
+    ;(await import('../../../authz/opa.js')).clearAuthzCache()
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}`, headers: { ...as('star'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })
 })
@@ -317,12 +325,12 @@ describe('GET /api/me/permissions', () => {
     expect(res.statusCode).toBe(200)
     const { actions, permissions } = res.json()
     expect(permissions).toEqual(SUPPORT)
-    expect(res.json().apps).toEqual({ jinbe: { roles: [], permissions: SUPPORT }, kuma: { roles: [], permissions: [] } })
+    expect(res.json().orgPermissions).toEqual({})
     expect(actions).toMatchObject({
       'users:read': true, 'users:update_email': true, 'sessions:revoke': true, 'users:send_login_link': true,
-      'users:delete': false, 'users:create': false, 'users:assign_group': false, 'users:reset_second_factor': false,
-      'admin:read': false, 'admin:write': false,
+      'users:delete': false, 'users:create': false, 'groups.members:write': false, 'users:reset_second_factor': false,
     })
+    expect(actions['admin:read']).toBeUndefined()
   })
 
   it('an administrator is offered every action', async () => {

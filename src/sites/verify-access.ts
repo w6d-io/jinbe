@@ -9,29 +9,32 @@ import type { ProbeTarget } from './verify-probe.js'
  *
  * One ad-hoc OPA query evaluates `data.rbac.decision` for a synthetic caller (PROBE_EMAIL, which no
  * binding names) once per (subject, route), each time `with` the bindings that subject stands for:
- * a platform group through group membership, an org-grantable group through an org grant in the
- * route's organization, a role held directly, or a signed-in account holding nothing. Always as a
- * member of that organization and at aal2, so an org route and a 2FA site answer on the grant alone.
- * No session is made and nothing is written.
+ * a platform group through group membership, a role through a probe group binding just that role, an
+ * org role through an assignment in the route's organization (entitled to the site), or a signed-in
+ * account holding nothing. Always as a member of that organization and at aal2, so an org route and a
+ * 2FA site answer on the grant alone. No session is made and nothing is written.
  */
 
 export const PROBE_EMAIL = 'site-verify@jinbe.invalid'
 /** The organization a synthetic caller belongs to; org routes are asked about it. */
 export const PROBE_ORG = '00000000-0000-4000-8000-00000000c0de'
 const MAX_CASES = 1000
+/** The group a role subject is held through: bound to that one role, named by no real binding. */
+const PROBE_GROUP = 'site_verify_probe'
 
 const QUERY = [
   'x := {k: d |',
   '  c := input.cases[k]',
   '  d := data.rbac.decision with input as c.input',
   '    with data.bindings.group_membership as c.membership',
-  '    with data.bindings.emails as c.emails',
+  `    with data.bindings.groups.${PROBE_GROUP} as c.probeBinding`,
   '    with data.bindings.user_organizations as c.orgs',
-  '    with data.org_grants as c.orgGrants',
+  '    with data.bindings.org_assignments as c.assignments',
+  `    with data.org_sites["${PROBE_ORG}"] as c.entitled`,
   '}',
 ].join('\n')
 
-export type SubjectKind = 'group' | 'org-group' | 'role' | 'signed-in'
+export type SubjectKind = 'group' | 'org-role' | 'role' | 'signed-in'
 export interface Subject { key: string; kind: SubjectKind; name: string }
 
 export interface AccessRow {
@@ -53,10 +56,10 @@ export interface AccessMatrix {
   notChecked: string[]
 }
 
-export function subjectsOf(site: Pick<Site, 'groups'>, roles: FlatRolesMap): Subject[] {
+export function subjectsOf(site: Pick<Site, 'groups'>, roles: FlatRolesMap, orgRoles: FlatRolesMap = {}): Subject[] {
   return [
     ...Object.keys(site.groups.platform).map((g) => ({ key: `group:${g}`, kind: 'group' as const, name: g })),
-    ...Object.keys(site.groups.orgGrantable).map((g) => ({ key: `org-group:${g}`, kind: 'org-group' as const, name: g })),
+    ...Object.keys(orgRoles).map((r) => ({ key: `org-role:${r}`, kind: 'org-role' as const, name: r })),
     ...Object.keys(roles).map((r) => ({ key: `role:${r}`, kind: 'role' as const, name: r })),
     { key: 'signed-in', kind: 'signed-in' as const, name: 'any signed-in account' },
   ]
@@ -72,17 +75,18 @@ export function objectPath(path: string, orgParam?: string): string {
 
 function bindings(site: string, s: Subject) {
   return {
-    membership: s.kind === 'group' ? { [PROBE_EMAIL]: [s.name] } : {},
-    emails: s.kind === 'role' ? { [PROBE_EMAIL]: { [site]: [s.name] } } : {},
+    membership: s.kind === 'group' ? { [PROBE_EMAIL]: [s.name] } : s.kind === 'role' ? { [PROBE_EMAIL]: [PROBE_GROUP] } : {},
+    probeBinding: s.kind === 'role' ? { [site]: [s.name] } : {},
     orgs: { [PROBE_EMAIL]: [PROBE_ORG] },
-    orgGrants: s.kind === 'org-group' ? { [PROBE_ORG]: { [PROBE_EMAIL]: [s.name] } } : {},
+    assignments: s.kind === 'org-role' ? { [PROBE_EMAIL]: { [PROBE_ORG]: [`${site}:${s.name}`] } } : {},
+    entitled: ['jinbe', site],
   }
 }
 
 const accessLabel = (t: ProbeTarget) => (t.access.kind === 'permission' ? t.access.permission : t.access.kind)
 
-export async function accessMatrix(site: Site, roles: FlatRolesMap, targets: readonly (ProbeTarget & { orgParam?: string })[]): Promise<AccessMatrix> {
-  const subjects = subjectsOf(site, roles)
+export async function accessMatrix(site: Site, roles: FlatRolesMap, targets: readonly (ProbeTarget & { orgParam?: string })[], orgRoles: FlatRolesMap = {}): Promise<AccessMatrix> {
+  const subjects = subjectsOf(site, roles, orgRoles)
   const perRoute = Math.max(1, Math.floor(MAX_CASES / subjects.length))
   const checked = targets.slice(0, perRoute)
   const notChecked = targets.slice(perRoute).map((t) => t.route)

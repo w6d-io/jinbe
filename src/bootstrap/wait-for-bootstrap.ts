@@ -14,7 +14,9 @@ export class BootstrapTimeoutError extends Error {
  * Distinguishes:
  *   - Redis unreachable           — debug-level log, retry until deadline
  *   - Marker absent               — info-level log, retry until deadline
- *   - Marker present and parseable — return immediately
+ *   - Marker present and parseable — return immediately, unless it is older than `minSchema` (the
+ *     store still holds the previous model's data; the release's apply has not run): waited for
+ *     like an absent marker, so a new pod never serves a model it cannot read
  *   - Marker corrupt              — throw MarkerCorruptError (do not retry)
  *
  * Default timeout: 6 minutes (matches the API Deployment startupProbe budget
@@ -24,6 +26,7 @@ export async function waitForBootstrap(opts: {
   logger: BootstrapLogger
   timeoutMs?: number
   intervalMs?: number
+  minSchema?: number
 }): Promise<BootstrapMarker> {
   const { logger, timeoutMs = 360_000, intervalMs = 5_000 } = opts
   const start = Date.now()
@@ -33,7 +36,12 @@ export async function waitForBootstrap(opts: {
   for (;;) {
     try {
       const marker = await readMarker()
-      if (marker) {
+      if (marker && opts.minSchema !== undefined && marker.schemaVersion < opts.minSchema) {
+        if (lastLoggedState !== 'absent') {
+          logger.info({ schemaVersion: marker.schemaVersion, minSchema: opts.minSchema }, 'Bootstrap marker from the previous model — waiting for --apply')
+          lastLoggedState = 'absent'
+        }
+      } else if (marker) {
         logger.info(
           { elapsedMs: Date.now() - start, schemaVersion: marker.schemaVersion, gitSha: marker.gitSha },
           'Bootstrap marker present — proceeding',

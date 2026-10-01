@@ -53,7 +53,7 @@ afterAll(async () => {
   await app.close()
 })
 beforeEach(() => {
-  s.rights = { support: ['users:read'], nobody: [], admin: ['admin:read', 'admin:write'] }
+  s.rights = { support: ['users:read'], nobody: [], admin: ['users:read', 'users:create'], legacy: ['admin:read', 'admin:write'] }
   s.lookups = []
   clearAuthzCache()
 })
@@ -69,7 +69,8 @@ describe('GET /api/admin/users/lookup', () => {
     expect(s.lookups).toEqual([['alice@example.com', 5]])
   })
 
-  it('answers an administrator through the coarse permission', async () => {
+  it('a retired coarse name grants nothing: exact match only', async () => {
+    expect((await lookup('legacy', 'q=ali')).statusCode).toBe(403)
     expect((await lookup('admin', 'q=ali')).statusCode).toBe(200)
   })
 

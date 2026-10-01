@@ -8,8 +8,14 @@ import { withRedisLock } from './redis-lock.js'
  * Redis-backed RBAC data operations.
  *
  * Key schema:
- *   rbac:groups                    → Hash: { groupName: JSON(services) }
- *   rbac:roles:{service}           → String: JSON({ roleName: permissions[] })
+ *   rbac:groups                    → Hash: { groupName: JSON({ app: roles[] }) }
+ *   rbac:roles:{service}           → String: JSON({ roleName: permissions[] })  platform roles, no `*`
+ *   rbac:org_roles:{service}       → String: JSON({ roleName: org permissions[] })
+ *   rbac:every_org:{service}       → String: JSON({ platform role: org permissions[] })
+ *   rbac:org_sites                 → Hash: { organizationId: JSON([site]) }
+ *   rbac:org_assignments           → Hash: { organizationId: JSON({ subjectId: ["svc:role"] }) }
+ *   rbac:owned:{owner}             → String: JSON({ key: sha256 }) — what code last wrote (drift)
+ *   rbac:break_glass               → String: JSON(BreakGlassGrant) — the one emergency path
  *   rbac:route_map:{service}       → String: JSON({ rules: [...] })
  *   rbac:services                  → Set: [service names]
  *   rbac:oathkeeper:rules          → String: JSON([access rule objects])
@@ -40,13 +46,9 @@ export type FlatRolesMap = Record<string, string[]>    // { roleName: permission
 export interface RouteRule { id?: string; method: string; path: string; permission?: string; org_param?: string; public?: boolean }
 export interface RouteMap { rules: RouteRule[] }
 
-/**
- * Per-resource metadata for groups and services. Drives RBAC-driven
- * protection: `system: true` means deletion / structural mutation requires
- * the `rbac:write_system` permission (held only by super_admin), as opposed
- * to `rbac:write` (held by regular admins).
- */
+/** Per-resource metadata for groups and services (description, who and when). */
 export interface ResourceMetadata {
+  /** Written by code (jinbe) or a site intent: not editable through the API. */
   system?: boolean
   description?: string
   createdBy?: string
@@ -373,147 +375,62 @@ class RedisRbacRepository {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ORG → SERVICE MAP (organization UUID → RBAC service bundle)
+  // ORGANISATIONS: entitlements, org role definitions, every-org map
   //
-  // Storage: Redis hash rbac:org_service_map, value = JSON array of service
-  // names (e.g. '["kuma","fleet"]'). An org can bundle more than one service.
+  //   rbac:org_sites          Hash: { organizationId: JSON([site, …]) }  sites an org is entitled to
+  //                           (written by site intents). Published as data.org_sites with `jinbe`
+  //                           added for every known org.
+  //   rbac:org_roles:{svc}    JSON({ role: [org permission] })            org roles (code for jinbe,
+  //                           the site intent for a site)
+  //   rbac:every_org:{app}    JSON({ role: [org permission] })            what a platform role carries
+  //                           into every org (the only such path, design §2.4)
   //
-  // BACKWARD COMPAT: pre-migration values are a bare scalar service name
-  // (e.g. 'kuma'). Service names match ^[a-z0-9_]+$ so a legacy scalar can
-  // never be a JSON array literal. Reads normalize BOTH shapes to string[];
-  // writes always emit the JSON array. This lets pre-migration data keep
-  // serving correctly while jinbe emits arrays going forward.
+  // Who holds which org role in which org lives in rbac:org_assignments (org-roles.repository.ts).
   // ═══════════════════════════════════════════════════════════
 
-  /**
-   * Normalize a stored hash value to a service bundle (string[]).
-   *   - new format  → JSON array of strings   → the array (filtered to strings)
-   *   - legacy scalar → bare service name text → [name]
-   * A value that is valid JSON but not an array (a bare number/bool/null that
-   * happened to parse) is treated as a legacy scalar, not silently dropped.
-   */
-  private normalizeServiceBundle(raw: string): string[] {
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
-      }
-      // Parsed but not an array → fall through to legacy-scalar handling.
-    } catch {
-      // Not JSON at all → legacy scalar service name.
-    }
-    return raw ? [raw] : []
-  }
-
-  async getOrgServiceMap(): Promise<Record<string, string[]>> {
-    const raw = await this.redis.hgetall('rbac:org_service_map')
+  async getOrgSites(): Promise<Record<string, string[]>> {
+    const raw = await this.redis.hgetall('rbac:org_sites')
     const out: Record<string, string[]> = {}
     for (const [org, value] of Object.entries(raw)) {
-      out[org] = this.normalizeServiceBundle(value)
+      try {
+        const parsed: unknown = JSON.parse(value)
+        if (Array.isArray(parsed)) out[org] = parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
+      } catch { /* a malformed entry entitles nothing */ }
     }
     return out
   }
 
-  /**
-   * The primary (first) service of an org's bundle, or the legacy scalar.
-   * Returns null when the org is unmapped or its bundle is empty. Callers that
-   * resolve "which service's RBAC governs this org" keep single-service
-   * behaviour: a one-element bundle resolves exactly as the old scalar did.
-   */
-  async getServiceForOrg(organizationId: string): Promise<string | null> {
-    const raw = await this.redis.hget('rbac:org_service_map', organizationId)
-    if (raw === null) return null
-    const bundle = this.normalizeServiceBundle(raw)
-    return bundle[0] ?? null
+  /** Exactly these sites for one org; an empty list removes the entry. */
+  async setOrgSites(organizationId: string, sites: string[]): Promise<void> {
+    const list = [...new Set(sites.filter((s) => typeof s === 'string' && s.length > 0))].sort()
+    if (list.length === 0) await this.redis.hdel('rbac:org_sites', organizationId)
+    else await this.redis.hset('rbac:org_sites', organizationId, JSON.stringify(list))
   }
 
-  /**
-   * Replace the org's service bundle with exactly `services` (deduped, order
-   * preserved). Always writes the new JSON-array format. An empty bundle
-   * removes the mapping entirely (callers should prefer deleteOrgServiceMapping
-   * for that intent; the route layer rejects empty bundles up front).
-   */
-  async setOrgServiceMapping(organizationId: string, services: string[]): Promise<void> {
-    const bundle = [...new Set(services.filter(s => typeof s === 'string' && s.length > 0))]
-    if (bundle.length === 0) {
-      await this.redis.hdel('rbac:org_service_map', organizationId)
-      return
-    }
-    await this.redis.hset('rbac:org_service_map', organizationId, JSON.stringify(bundle))
+  async getOrgRoles(service: string): Promise<FlatRolesMap | null> {
+    const raw = await this.redis.get(`rbac:org_roles:${service}`)
+    return raw ? JSON.parse(raw) : null
   }
 
-  async deleteOrgServiceMapping(organizationId: string): Promise<boolean> {
-    const deleted = await this.redis.hdel('rbac:org_service_map', organizationId)
-    return deleted > 0
+  async setOrgRoles(service: string, roles: FlatRolesMap): Promise<void> {
+    await this.redis.set(`rbac:org_roles:${service}`, JSON.stringify(roles))
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ORG → ADMIN ROSTER (organization UUID → list of admin emails)
-  //
-  // Storage: Redis hash rbac:org_admins, value = JSON array of emails. Symmetric
-  // with rbac:org_service_map — an org has a service BUNDLE and an admin ROSTER.
-  // Being on an org's roster AND a member of it makes a user its org admin
-  // (enforced in policy: rbac.delegation.manageable_orgs + rbac.is_org_admin_of).
-  // Per-org: a user can be on org A's roster but not org B's.
-  //
-  // Addresses are LOWERCASED, on write and on read: a roster entry typed "Alice@X" against the
-  // identity "alice@x" showed as admin and was refused. Rows written before that are read lowercased
-  // (no migration needed); getOrgAdminMapAsStored keeps them as typed for the OPAL feed, which
-  // publishes every spelling until the policy compares without case.
-  // ═══════════════════════════════════════════════════════════
-
-  private parseRoster(raw: string): string[] {
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        return parsed.filter((e): e is string => typeof e === 'string' && e.length > 0)
-      }
-    } catch {
-      // not JSON → treat a bare value as a single-email roster
-    }
-    return raw ? [raw] : []
+  async deleteOrgRoles(service: string): Promise<void> {
+    await this.redis.del(`rbac:org_roles:${service}`)
   }
 
-  private normalizeRoster(raw: string): string[] {
-    return [...new Set(this.parseRoster(raw).map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0))]
+  async getEveryOrg(service: string): Promise<FlatRolesMap | null> {
+    const raw = await this.redis.get(`rbac:every_org:${service}`)
+    return raw ? JSON.parse(raw) : null
   }
 
-  async getOrgAdminMap(): Promise<Record<string, string[]>> {
-    const raw = await this.redis.hgetall('rbac:org_admins')
-    const out: Record<string, string[]> = {}
-    for (const [org, value] of Object.entries(raw)) {
-      out[org] = this.normalizeRoster(value)
-    }
-    return out
+  async setEveryOrg(service: string, map: FlatRolesMap): Promise<void> {
+    await this.redis.set(`rbac:every_org:${service}`, JSON.stringify(map))
   }
 
-  /** The rosters as written, legacy spellings included — for the policy feed only. */
-  async getOrgAdminMapAsStored(): Promise<Record<string, string[]>> {
-    const raw = await this.redis.hgetall('rbac:org_admins')
-    const out: Record<string, string[]> = {}
-    for (const [org, value] of Object.entries(raw)) {
-      out[org] = this.parseRoster(value)
-    }
-    return out
-  }
-
-  async getOrgAdmins(organizationId: string): Promise<string[]> {
-    const raw = await this.redis.hget('rbac:org_admins', organizationId)
-    return raw === null ? [] : this.normalizeRoster(raw)
-  }
-
-  /** Replace an org's admin roster with exactly `emails` (lowercased, deduped). An empty
-   *  roster removes the org's entry (the org then has no delegated admins). */
-  async setOrgAdmins(organizationId: string, emails: string[]): Promise<void> {
-    const roster = [...new Set(emails
-      .filter((e) => typeof e === 'string')
-      .map((e) => e.trim().toLowerCase())
-      .filter((e) => e.length > 0))]
-    if (roster.length === 0) {
-      await this.redis.hdel('rbac:org_admins', organizationId)
-      return
-    }
-    await this.redis.hset('rbac:org_admins', organizationId, JSON.stringify(roster))
+  async deleteEveryOrg(service: string): Promise<void> {
+    await this.redis.del(`rbac:every_org:${service}`)
   }
 
   // ═══════════════════════════════════════════════════════════

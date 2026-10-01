@@ -340,13 +340,14 @@ export const envSchema = z.object({
   OPAL_SERVER_TOKEN: z.string().min(1).optional(),
   // Each manifest entry's periodic_update_interval: the OPAL client refetches it this often even if a
   // push is lost. 0 leaves it out (fetched on connect and on push only).
-  // authz v2 (authz-v2-design §3.2): publish data.v2 and data.authz to OPA (two more datasource
-  // entries). Off by default: the rbac2 keys are written either way, and nothing reads data.v2 until
-  // the opal-policies router does.
-  RBAC_V2_PUBLISH: z
-    .string()
-    .transform((val) => val === 'true')
-    .default('false'),
+  // Break-glass (bootstrap/break-glass.ts): sha256 (hex) of the offline-held code. Unset = no
+  // break-glass path at all. Vault-injected; rotate after every use.
+  JINBE_BREAK_GLASS_CODE_SHA256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
+  // Where --apply writes its mandatory pre-apply store snapshot (and S3 too when backup is on).
+  JINBE_SNAPSHOT_DIR: z.string().default('/tmp/jinbe-snapshots'),
+  // The planHash an upgrade's bootstrap may apply on its own (the reviewed `--plan`). Unset: an
+  // install written by the previous model refuses to start the new one until --apply is run.
+  JINBE_RBAC_APPLY_EXPECT: z.string().optional(),
   OPAL_DATA_REFRESH_SECONDS: z.string().transform(Number).pipe(z.number().nonnegative()).default('60'),
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.

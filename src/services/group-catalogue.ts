@@ -1,11 +1,12 @@
 import { redisRbacRepository } from './redis-rbac.repository.js'
+import { JINBE } from '../policy/roles.js'
 
 /**
  * The groups jinbe publishes to OPA (Redis → OPAL → `data.bindings.groups`), read for the screens and
  * the write path — never to decide who may do what, which is OPA's alone (src/authz).
  *
- * A group is `{ "global": [roles], "<service>": [roles] }`: roles bound under `global` apply in every
- * service and every org — a platform grant rather than a tenant one.
+ * A group is `{ "<app>": [roles] }`: each role is read in that app's roles only. A group binding a
+ * jinbe role is a platform grant (power over the console and the API).
  */
 export class GroupCatalogueUnavailableError extends Error {}
 
@@ -31,15 +32,15 @@ export async function declaredGroups(): Promise<string[]> {
 export type GroupFacts = {
   /** OPA knows it. Anything else confers nothing, wherever it is written. */
   declared: boolean
-  /** Confers a `global` role — power in every service and every org. */
-  everyOrganisation: boolean
+  /** Confers a jinbe role — power over the platform itself. */
+  platform: boolean
   /** Confers no role anywhere. */
   empty: boolean
 }
 
 /**
- * Answer for every group at once. A group conferring a `global` role goes through the escalation
- * gate, the target's second factor and the actor's step-up, whatever it carries.
+ * Answer for every group at once. A group conferring a jinbe role goes through the holding rule, the
+ * target's second factor and the actor's step-up, whatever it carries.
  */
 export async function groupFacts(names: readonly string[]): Promise<Map<string, GroupFacts>> {
   const all = await groups()
@@ -47,13 +48,13 @@ export async function groupFacts(names: readonly string[]): Promise<Map<string, 
   for (const name of names) {
     const definition = all[name]
     if (!definition) {
-      facts.set(name, { declared: false, everyOrganisation: false, empty: true })
+      facts.set(name, { declared: false, platform: false, empty: true })
       continue
     }
     const grants = Object.values(definition).filter((roles) => (roles ?? []).length > 0)
     facts.set(name, {
       declared: true,
-      everyOrganisation: (definition.global ?? []).length > 0,
+      platform: (definition[JINBE] ?? []).length > 0,
       empty: grants.length === 0,
     })
   }

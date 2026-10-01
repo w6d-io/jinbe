@@ -1,4 +1,6 @@
 import type { AuditChanges, AuditFlag } from './audit-event.service.js'
+import { specOf } from '../policy/catalog.js'
+import { ROLES, isStaffGroup } from '../policy/roles.js'
 import type { GroupDefinition, FlatRolesMap, RouteMap, OathkeeperRule } from './redis-rbac.repository.js'
 
 /**
@@ -27,7 +29,7 @@ function flattenGroup(def: GroupDefinition): string[] {
   return out
 }
 
-/** Group definition diff — grants_super_admin when a global:super_admin binding is added. */
+/** Group definition diff — grants_super_admin when a jinbe:super_admin binding is added. */
 export function diffGroupDefinition(
   name: string,
   before: GroupDefinition | null | undefined,
@@ -35,7 +37,7 @@ export function diffGroupDefinition(
 ): AuditChanges {
   const { added, removed } = arrDiff(flattenGroup(before ?? {}), flattenGroup(after))
   const flags: AuditFlag[] = []
-  if (added.includes('global:super_admin')) flags.push('grants_super_admin')
+  if (added.includes('jinbe:super_admin')) flags.push('grants_super_admin')
   return {
     resource: 'group',
     id: name,
@@ -46,7 +48,7 @@ export function diffGroupDefinition(
   }
 }
 
-/** Roles map diff (service scoped) — wildcard_permission when a role gains '*'. */
+/** Roles map diff (service scoped) — grants_critical when a role gains a critical catalogue permission. */
 export function diffRoles(
   service: string,
   before: FlatRolesMap | null | undefined,
@@ -61,10 +63,7 @@ export function diffRoles(
   }
   const { added, removed } = arrDiff(flat(before ?? {}), flat(after))
   const flags: AuditFlag[] = []
-  const gainedWildcard =
-    Object.values(after).some((p) => p.includes('*')) &&
-    added.some((x) => x.endsWith(':*'))
-  if (gainedWildcard) flags.push('wildcard_permission')
+  if (added.some((x) => specOf(x.slice(x.indexOf(':') + 1))?.sensitivity === 'critical')) flags.push('grants_critical')
   return {
     resource: 'roles',
     id: service,
@@ -187,7 +186,7 @@ export function diffOathkeeperRule(
   }
 }
 
-/** User group membership diff. grants_super_admin when an admin/super group is added. */
+/** User group membership diff: grants_super_admin for super_admins, grants_critical for another staff group. */
 export function diffUserGroups(
   targetId: string,
   oldGroups: string[],
@@ -195,11 +194,8 @@ export function diffUserGroups(
 ): AuditChanges {
   const { added, removed } = arrDiff(oldGroups, newGroups)
   const flags: AuditFlag[] = []
-  const privileged = /super_admin|admins?$|org_admins/i
-  if (added.some((g) => /super_admin/i.test(g))) flags.push('grants_super_admin')
-  if (added.some((g) => privileged.test(g))) {
-    if (!flags.includes('grants_super_admin')) flags.push('wildcard_permission')
-  }
+  if (added.includes(ROLES.super_admin.group)) flags.push('grants_super_admin')
+  else if (added.some(isStaffGroup)) flags.push('grants_critical')
   return {
     resource: 'user_groups',
     id: targetId,

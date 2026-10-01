@@ -130,9 +130,9 @@ describe('RbacService - Groups', () => {
     })
 
     it('should refuse to delete a group flagged system: true in metadata', async () => {
-      await redisMock.hset('rbac:groups', 'platform', JSON.stringify({ global: ['super_admin'] }))
+      await redisMock.hset('rbac:groups', 'platform', JSON.stringify({ jinbe: ['viewer'] }))
       await redisMock.hset('rbac:groups:meta', 'platform', JSON.stringify({ system: true, description: 'platform owners' }))
-      await expect(service.deleteGroup('platform')).rejects.toThrow(/system group/)
+      await expect(service.deleteGroup('platform')).rejects.toThrow(/defined in code/)
     })
 
     it('should throw 404 when group not found', async () => {

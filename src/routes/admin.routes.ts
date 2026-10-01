@@ -131,7 +131,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/organizations',
     {
-      ...needs('org:read'),
+      ...needs('orgs:read'),
       schema: {
         description: 'Every organisation the directory holds. Needs org:read.',
         tags: ['admin'],
@@ -251,7 +251,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/users/:id/organization',
     {
       // Organisation membership (to be merged into PUT /organizations/:o/users/:id/membership).
-      ...needs('org.members:write'),
+      ...needs('orgs.members:write'),
       schema: {
         description: 'Set or remove the organization_id on a user (Kratos JSON Patch)',
         tags: ['admin'],

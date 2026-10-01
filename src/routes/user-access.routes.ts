@@ -2,11 +2,10 @@ import type { FastifyInstance } from 'fastify'
 import { kratosService } from '../services/kratos.service.js'
 import { organisationsOf } from '../services/org-membership.service.js'
 import { organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
-import { orgGrantsRepository } from '../services/org-grants.repository.js'
+import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { needs } from '../policy/route-access.js'
-import { manageableOrgs, memberOrgs, rights } from '../authz/opa.js'
-import { orgAdminView } from '../services/org-admin.js'
+import { orgPermissionsByOrg, rights } from '../authz/opa.js'
 import { getSecondFactorSetting } from '../second-factor/settings.js'
 import { userSecondFactor, type UserSecondFactor } from '../second-factor/requirements.js'
 import { userSecondFactorJsonSchema } from '../schemas/second-factor.schema.js'
@@ -21,15 +20,11 @@ import {
  * GET /admin/users/:id/access — one person's access, both layers side by side.
  *
  *   site: the groups they hold and the roles those give per service (org membership never touches it)
- *   orgs: each org they belong to, whether they administer it, and the groups granted to them there
- *
- * `admin` is the authoritative guard's answer — OPA `manageable_orgs` (on the roster AND a member),
- * the query requireOrgAdmin asks — never the roster store read beside it: the two disagreed on case,
- * on membership and on OPAL lag, and `admin: true` was shown for somebody the org routes refused.
- * `rostered` is the store's view; `why` says what keeps a rostered person from administering.
+ *   orgs: each org they belong to, the org roles assigned to them there, and the org permissions OPA
+ *         says they hold there (assigned roles ∪ the every-org map) — the same answer the org gate reads
  *
  * Needs access:read (enforced here: nothing stops a pod from calling jinbe directly). A store that cannot be read
- * answers 503: an empty `grants` would read as "nothing granted".
+ * answers 503: an empty `roles` would read as "nothing assigned".
  */
 
 const stringList = { type: 'array', items: { type: 'string' } }
@@ -63,9 +58,9 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     ...needs('access:read'),
     schema: {
       description:
-        "A user's site access (groups → roles per service) and org access (per org: `admin` as OPA decides it " +
-        "(manageable_orgs), `rostered` as jinbe's roster store says, `why` when they differ, and the groups " +
-        'granted there), and secondFactor (requiredBecause, enrolled, stepUpPermissions; session fields null). Needs access:read.',
+        "A user's site access (groups → roles per service) and org access (per org: the org roles assigned there and " +
+        'the org permissions held there, as OPA decides them), and secondFactor (requiredBecause, enrolled, ' +
+        'stepUpPermissions; session fields null). Needs access:read.',
       tags: ['admin'],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
       response: {
@@ -83,14 +78,8 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
                 properties: {
                   orgId: { type: 'string' },
                   name: { type: 'string' },
-                  admin: { type: 'boolean', description: "OPA would let them manage this org's people (manageable_orgs)" },
-                  rostered: { type: 'boolean', description: "On the org's admin roster in jinbe's store" },
-                  why: {
-                    type: 'string',
-                    enum: ['not_a_member_per_policy', 'email_case_mismatch', 'policy_not_yet_loaded'],
-                    description: 'Only when rostered but not admin: what keeps them from administering',
-                  },
-                  grants: stringList,
+                  roles: { ...stringList, description: 'Org roles assigned here (svc:role)' },
+                  permissions: { ...stringList, description: 'Org permissions held here (OPA rbac.org_permissions_by_org)' },
                 },
               },
             },
@@ -123,15 +112,13 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       ? metadata.groups.filter((g): g is string => typeof g === 'string')
       : ['users']
 
-    let orgIds: string[], definitions, grants, rosters, manageable: string[], members: string[]
+    let orgIds: string[], definitions, assignments, held: Record<string, string[]>
     try {
-      ;[orgIds, definitions, grants, rosters, manageable, members] = await Promise.all([
+      ;[orgIds, definitions, assignments, held] = await Promise.all([
         organisationsOf(identity),
         redisRbacRepository.getGroups(),
-        orgGrantsRepository.getAll(),
-        redisRbacRepository.getOrgAdminMap(),
-        address ? manageableOrgs(address) : Promise.resolve([]),
-        address ? memberOrgs(address) : Promise.resolve([]),
+        orgRolesRepository.getAll(),
+        address ? orgPermissionsByOrg(address) : Promise.resolve({}),
       ])
     } catch (err) {
       request.log.warn({ err, id }, '[user-access] a store could not be read')
@@ -149,8 +136,8 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     const orgs = orgIds.map((orgId) => ({
       orgId,
       name: names[orgId] ?? orgId,
-      ...orgAdminView(address, orgId, { manageable, memberOrgs: members, roster: rosters[orgId] ?? [] }),
-      grants: grants[orgId]?.[address] ?? grants[orgId]?.[email] ?? [],
+      roles: assignments[orgId]?.[id] ?? [],
+      permissions: held[orgId] ?? [],
     }))
 
     return reply.send({ site: { groups, byService }, orgs, secondFactor: await secondFactorOf(id, email, groups) })

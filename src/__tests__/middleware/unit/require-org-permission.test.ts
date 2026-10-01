@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { FastifyRequest, FastifyReply } from 'fastify'
 
-// J-3 / story 7: managing an org's API keys needs THAT org — its roster admin, super_admin, or a
-// member holding org:manage_api_keys there (site grants ∪ org_grants[that org]). Which of those holds
-// is OPA's `rbac.decision` for the request, exactly as at the gateway (the rule itself is proven by
-// opal-policies org_layer_test.rego); jinbe asks and obeys.
-// J-1: the grant routes need that org's admin (`manageable_orgs`), or super_admin (`super_admin`).
+// The one gate of a route of one organisation: OPA's `rbac.decision` for this very request — the
+// caller's grants IN THAT ORG (org roles assigned there, or the every-org map). The rule itself is
+// opal-policies' (tested against policy-contract.json); jinbe asks and obeys. No super-admin flag,
+// no platform holder, no roster.
 
 const ACME = '11111111-1111-1111-1111-111111111111'
 const GLOBEX = '22222222-2222-2222-2222-222222222222'
@@ -16,8 +15,7 @@ vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn().mockResolvedValue(undefined) },
 }))
 
-import { requireOrgAdmin, requireOrgPermission } from '../../../middleware/require-org-permission.js'
-import { ORG_ADMIN_PERMISSIONS } from '../../../services/org-admin.js'
+import { requireOrgPermission } from '../../../middleware/require-org-permission.js'
 import { enforcedBy } from '../../../policy/declared-routes.js'
 import { decide } from '../../../authz/opa.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
@@ -31,93 +29,57 @@ function run(guard: (req: FastifyRequest, rep: FastifyReply) => Promise<unknown>
     ip: '127.0.0.1',
     headers: {},
     params: { organizationId: org },
+    routeOptions: { config: { permission: 'org.keys:read' } },
     log: { warn: vi.fn(), debug: vi.fn() },
   } as unknown as FastifyRequest
   const rep = {
     code: undefined as number | undefined,
+    body: undefined as unknown,
     status(c: number) { this.code = c; return this },
-    send() { return this },
+    send(b: unknown) { this.body = b; return this },
   }
-  return guard(req, rep as unknown as FastifyReply).then(() => rep.code)
+  return guard(req, rep as unknown as FastifyReply).then(() => rep)
 }
 
-const apiKeys = () => requireOrgPermission('org:manage_api_keys')
+const keys = () => requireOrgPermission('org.keys:read')
 
 beforeEach(() => {
   vi.clearAllMocks()
   resetOpaWorld()
 })
 
-describe('requireOrgPermission("org:manage_api_keys") — API keys of THAT org', () => {
-  it('org admins hold org:manage_api_keys', () => {
-    expect(ORG_ADMIN_PERMISSIONS).toContain('org:manage_api_keys')
-  })
-
-  it('is marked with the permission it enforces (published route table)', () => {
-    expect(enforcedBy(apiKeys())).toBe('org:manage_api_keys')
+describe('requireOrgPermission — the org clause for this request', () => {
+  it('is marked with the permission it enforces when fixed (published route table)', () => {
+    expect(enforcedBy(keys())).toBe('org.keys:read')
   })
 
   it('401 without an identity, before asking OPA', async () => {
-    expect(await run(apiKeys(), ACME, {})).toBe(401)
+    expect((await run(keys(), ACME, {})).code).toBe(401)
     expect(decide).not.toHaveBeenCalled()
   })
 
-  it('asks rbac.decision about this very request', async () => {
+  it('asks rbac.decision about this very request, query string dropped', async () => {
     opaWorld.decide = () => true
-    expect(await run(apiKeys(), ACME)).toBeUndefined()
-    expect(decide).toHaveBeenCalledWith({
-      email: X,
-      method: 'GET',
-      path: `/api/organizations/${ACME}/api-keys`,
-      aal: 'aal2',
-      client: false,
-    })
+    expect((await run(keys(), ACME)).code).toBeUndefined()
+    expect(decide).toHaveBeenCalledWith({ email: X, method: 'GET', path: `/api/organizations/${ACME}/api-keys`, aal: 'aal2', client: false })
   })
 
-  it('lets in whoever OPA admits there (roster admin, super_admin, member holding it)', async () => {
-    opaWorld.manageable[X] = [ACME]
-    expect(await run(apiKeys(), ACME)).toBeUndefined()
-    resetOpaWorld()
-    opaWorld.superAdmins.add(X)
-    expect(await run(apiKeys(), GLOBEX)).toBeUndefined()
+  it('lets in whoever holds it in THAT org, and refuses (403, audited) whoever holds it only elsewhere', async () => {
+    opaWorld.orgPermissions[X] = { [ACME]: ['org.keys:read'] }
+    expect((await run(keys(), ACME)).code).toBeUndefined()
+    const refused = await run(keys(), GLOBEX)
+    expect(refused.code).toBe(403)
+    expect(refused.body).toMatchObject({ code: 'permission_required', permission: 'org.keys:read' })
+    expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'deny', reason: 'forbidden:org.keys:read' }))
   })
 
-  it('refuses (403, audited) whoever OPA refuses — e.g. the admin of ANOTHER org', async () => {
-    opaWorld.manageable[X] = [GLOBEX]
-    expect(await run(apiKeys(), ACME)).toBe(403)
-    expect(auditEventService.emit).toHaveBeenCalledWith(
-      expect.objectContaining({ verb: 'deny', reason: 'missing_permission:org:manage_api_keys' }),
-    )
+  it('a platform permission counts for nothing inside an org (OPA decides on org grants only)', async () => {
+    opaWorld.permissions[X] = ['orgs:read', 'users:read']
+    expect((await run(keys(), ACME)).code).toBe(403)
   })
 
   it('503, not 403, when OPA cannot be asked', async () => {
     opaWorld.down = true
-    expect(await run(apiKeys(), ACME)).toBe(503)
-  })
-})
-
-describe('requireOrgAdmin — grant routes', () => {
-  it('lets the org admin of that org and super_admin in', async () => {
-    opaWorld.manageable[X] = [ACME]
-    expect(await run(requireOrgAdmin(), ACME)).toBeUndefined()
-    resetOpaWorld()
-    opaWorld.superAdmins.add(X)
-    expect(await run(requireOrgAdmin(), ACME)).toBeUndefined()
-  })
-
-  it('refuses a member holding permissions there but not administering it', async () => {
-    opaWorld.members[X] = [ACME]
-    opaWorld.permissions[X] = ['org:manage_users', 'users:assign_group']
-    expect(await run(requireOrgAdmin(), ACME)).toBe(403)
-  })
-
-  it('refuses the admin of another org', async () => {
-    opaWorld.manageable[X] = [GLOBEX]
-    expect(await run(requireOrgAdmin(), ACME)).toBe(403)
-  })
-
-  it('503 when it cannot tell', async () => {
-    opaWorld.down = true
-    expect(await run(requireOrgAdmin(), ACME)).toBe(503)
+    expect((await run(keys(), ACME)).code).toBe(503)
   })
 })

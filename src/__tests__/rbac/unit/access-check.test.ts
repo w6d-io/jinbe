@@ -14,8 +14,7 @@ vi.mock('../../../config/env.js', async (importOriginal) => {
 })
 
 import { accessCheckRoutes } from '../../../routes/access-check.routes.js'
-import { requireSuperAdmin } from '../../../middleware/require-admin.js'
-import { JINBE_BUILT_IN_ROUTES } from '../../../bootstrap/build-route-map.js'
+import { GENERATED_ROUTE_MAP } from '../../../policy/route-map.generated.js'
 
 type Handler = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>
 type Registered = { method: string; path: string; opts: { preHandler?: unknown }; handler: Handler }
@@ -61,14 +60,8 @@ describe('POST /access-check', () => {
     route = fastify.registeredRoutes.find((r) => r.method === 'POST' && r.path === '/access-check')!
   })
 
-  it('is restricted to platform admins (admin:write) on top of the admin gate', () => {
-    expect([route.opts.preHandler].flat()).toContain(requireSuperAdmin)
-  })
-
-  it('is declared admin-only in the jinbe route_map — never anonymous', () => {
-    expect(JINBE_BUILT_IN_ROUTES).toContainEqual({
-      method: 'POST', path: '/api/admin/rbac/access-check', permission: 'admin:write',
-    })
+  it('is declared access:check in the jinbe route_map — never anonymous', () => {
+    expect(GENERATED_ROUTE_MAP).toContainEqual({ method: 'POST', path: '/api/admin/rbac/access-check', permission: 'access:check' })
   })
 
   it('answers 503 with a clear message when OPA is not configured', async () => {
@@ -107,7 +100,7 @@ describe('POST /access-check', () => {
         return opaAnswer({
           allow: false,
           matching_rules: [{ method: 'DELETE', path: '/api/invoices/:id', permission: 'invoices:delete' }],
-          groups: ['devs'], roles: ['viewer'], permissions: ['invoices:read'], super_admin: false,
+          groups: ['devs'], roles: ['viewer'], permissions: ['invoices:read'],
         })
       }
       throw new Error(`unexpected ${u}`)
@@ -126,7 +119,6 @@ describe('POST /access-check', () => {
       groups: ['devs'],
       roles: ['viewer'],
       permissions: ['invoices:read'],
-      superAdmin: false,
     })
     for (const [, init] of fetchSpy.mock.calls) {
       expect((init as RequestInit).headers).toMatchObject({ Authorization: `Bearer ${TOKEN}` })
@@ -143,7 +135,7 @@ describe('POST /access-check', () => {
       const u = String(url)
       if (u.endsWith('/decision')) return opaAnswer({ allow: false, reason: 'not_found', groups: [], organizations: [] })
       if (u.endsWith('/owning_apps')) return opaAnswer(['a', 'b'])
-      return opaAnswer({ allow: false, matching_rules: [], groups: [], roles: [], permissions: [], super_admin: false })
+      return opaAnswer({ allow: false, matching_rules: [], groups: [], roles: [], permissions: [] })
     })
     const reply = createMockReply()
     await route.handler(request({ email: 'a@example.com', method: 'GET', path: '/nowhere' }), reply)
@@ -159,7 +151,7 @@ describe('POST /access-check', () => {
         return opaAnswer(input.aal === 'aal2' ? { allow: true, reason: 'ok', groups: ['super_admins'] } : { allow: false, reason: 'needs_2fa', groups: ['super_admins'] })
       }
       if (u.endsWith('/owning_apps')) return opaAnswer(['echo-mfa'])
-      if (u.endsWith('/simulate')) return opaAnswer({ matching_rules: [{ method: 'GET', path: '/', permission: 'echo:read' }], roles: ['super_admin'], permissions: ['*'], super_admin: true })
+      if (u.endsWith('/simulate')) return opaAnswer({ matching_rules: [{ method: 'GET', path: '/', permission: 'echo:read' }], roles: ['super_admin'], permissions: ['users:read'] })
       if (u.endsWith('/site_login_cfg')) return opaAnswer({ min_aal: 'aal2', scope: 'all' })
       if (u.endsWith('/second_factor_required')) return opaAnswer(true)
       throw new Error(`unexpected ${u}`)
@@ -168,7 +160,7 @@ describe('POST /access-check', () => {
     await route.handler(request({ email: 'root@example.com', method: 'GET', path: '/', aal: 'aal1' }), reply)
     expect(reply._status).toBe(200)
     expect(reply._body).toMatchObject({
-      allow: false, reason: 'needs_2fa', aal: 'aal1', superAdmin: true,
+      allow: false, reason: 'needs_2fa', aal: 'aal1',
       stepUp: { requiredAal: 'aal2', allowedAtAal2: true, requiredBy: ['site', 'platform_group'] },
     })
     const first = JSON.parse(String((fetchSpy.mock.calls.find(([u]) => String(u).endsWith('/decision'))![1] as RequestInit).body)).input

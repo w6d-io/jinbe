@@ -39,7 +39,7 @@ vi.mock('../../services/redis-rbac.repository.js', async () => {
   return { redisRbacRepository: store.repo, __store: store }
 })
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateBundle: h.invalidate } }))
-vi.mock('../../services/org-grants.repository.js', () => ({ orgGrantsRepository: { getAll: vi.fn(async () => h.grants) } }))
+vi.mock('../../services/org-roles.repository.js', () => ({ orgRolesRepository: { getAll: vi.fn(async () => h.grants) } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
 vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn())
 vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
@@ -277,7 +277,7 @@ describe('apply', () => {
     expect(store.s.routeMaps.payroll.rules.length).toBeGreaterThan(0)
     expect(store.s.roles.payroll).toMatchObject({ admin: ['*'] })
     expect(store.s.services.has('payroll')).toBe(true)
-    expect(store.s.groups.admins).toEqual({ kuma: ['admin'], payroll: ['admin'] })
+    expect(store.s.groups.admins).toEqual({ payroll: ['admin'] })
     expect(store.s.groups['payroll-editors']).toEqual({ payroll: ['editor'] })
     expect(store.s.orgMap[ACME]).toEqual(['payroll'])
     const log = store.s.log
@@ -383,7 +383,7 @@ describe('rollback, pause, delete, blast radius', () => {
   it('blast radius names the groups, orgs, grants, rules and routes', async () => {
     await save()
     await applyV(1)
-    h.grants = { [ACME]: { 'bob@acme.test': ['payroll-editors'], 'eve@acme.test': ['other'] } }
+    h.grants = { [ACME]: { 'id-bob': ['payroll:editor'], 'id-eve': ['jinbe:viewer'] } }
     const res = await app.inject({ method: 'GET', url: '/sites/payroll/blast-radius' })
     expect(res.json()).toMatchObject({
       groups: ['admins'],
@@ -403,7 +403,7 @@ describe('rollback, pause, delete, blast radius', () => {
     expect(store.s.log[0]).toBe('kube.delete')
     expect(store.s.routeMaps.payroll).toBeUndefined()
     expect(store.s.services.has('payroll')).toBe(false)
-    expect(store.s.groups.admins).toEqual({ kuma: ['admin'] })
+    expect(store.s.groups.admins).toEqual({})
     expect(store.s.groups['payroll-editors']).toBeUndefined()
     expect(store.s.orgMap[ACME]).toBeUndefined()
     expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).statusCode).toBe(404)

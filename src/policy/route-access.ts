@@ -1,23 +1,25 @@
-import { EVERYTHING, isCatalogPermission, specOf, type Permission } from './catalog.js'
+import { isCatalogPermission, scopeOf, specOf, type Permission } from './catalog.js'
 import { enforcedBy, recordRoute } from './declared-routes.js'
 import { requirePermission } from '../middleware/require-permission.js'
-import { requireGlobalSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
+import { requireRecentMfa } from '../middleware/require-admin.js'
+import { requireOrgPermission } from '../middleware/require-org-permission.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { recordRouteContext } from './route-guards.js'
-import { V2NameError, v2Name } from '../authz-v2/catalogue.js'
-import { onlyInModel } from '../authz-v2/model.js'
 
 /**
  * Every route says what it needs, in its own options, and ONE hook turns that into the gate.
  *
  *   config: { permission: 'sites:apply' }   → requirePermission (+ requireRecentMfa when the catalogue
  *                                             says stepUp), recorded in the route table
- *   config: { permission: '*' }             → requireGlobalSuperAdmin (the legacy infrastructure)
+ *   config: { permission, org: 'organizationId' }
+ *                                           → requireOrgPermission: the org clause for THIS request
+ *                                             (grants in that org, every-org map included)
  *   config: { access: 'self' | ... }        → no permission, for a reason the value names
  *
- * A route declaring neither, a permission outside the catalogue, or a guard of its own that enforces
- * a DIFFERENT permission than the one it declares fails the boot: an undeclared route is one nobody
- * decided about.
+ * A route declaring neither, a permission outside the catalogue, a permission whose scope does not
+ * match the route's shape (an org permission ⇔ an org parameter), or a guard of its own that
+ * enforces a DIFFERENT permission than the one it declares fails the boot: an undeclared route is
+ * one nobody decided about.
  *
  * A route whose check depends on the request (an edit needs what it changes, the audit scope narrows
  * an org admin) keeps its own guard, marked with `enforcing(guard, permission)`; the hook sees that
@@ -39,40 +41,34 @@ export const ACCESS_VALUES: readonly Access[] = ['public', 'machine', 'self', 'a
 
 declare module 'fastify' {
   interface FastifyContextConfig {
-    /** The catalogue permission this route requires (policy/catalog.ts), or `*` for super admins alone. */
-    permission?: Permission | typeof EVERYTHING
+    /** The catalogue permission this route requires (policy/catalog.ts). */
+    permission?: Permission
     /** Why this route requires no permission. Exactly one of `permission` and `access`. */
     access?: Access
     /** A step-up on this route even though its permission does not need one everywhere. */
     stepUp?: boolean
     /**
-     * Decided per organisation by the plugin's own org gate (OPA rbac.decision, org admin roster),
-     * named by this route parameter. The hook attaches no platform guard: an org admin holds nothing
-     * across the platform.
+     * Decided per organisation, named by this route parameter: the hook attaches the org gate
+     * (OPA rbac.decision for the request), never a platform guard. Requires an org-scope permission.
      */
     org?: string
     /** Machine routes only: the gateway forwards it (SCIM authenticates itself). Default: no gateway row. */
     edge?: boolean
     /** Catalogue permissions the route's own guard also accepts on part of its input. */
     alsoAccepts?: Permission[]
-    /**
-     * The authorization model the route exists in (authz-v2). `v1`: retired by v2 (its gateway row is
-     * not generated and it answers 404 once v2 is active); `v2`: new in v2 (404 until then).
-     */
-    model?: 'v1' | 'v2'
   }
 }
 
 /** Route options that declare a permission. Spread into a route's options. */
 export function needs(
-  permission: Permission | typeof EVERYTHING,
-  extra: { stepUp?: boolean; org?: string; alsoAccepts?: Permission[]; model?: 'v1' | 'v2' } = {},
+  permission: Permission,
+  extra: { stepUp?: boolean; org?: string; alsoAccepts?: Permission[] } = {},
 ) {
   return { config: { permission, ...extra } }
 }
 
 /** Route options that declare why no permission is needed. */
-export function open(access: Access, extra: { edge?: boolean; model?: 'v1' | 'v2' } = {}) {
+export function open(access: Access, extra: { edge?: boolean } = {}) {
   return { config: { access, ...extra } }
 }
 
@@ -87,7 +83,7 @@ type RouteOptions = {
   preHandler?: unknown
   config?: {
     permission?: string; access?: string; stepUp?: boolean; org?: string
-    edge?: boolean; alsoAccepts?: string[]; model?: 'v1' | 'v2'
+    edge?: boolean; alsoAccepts?: string[]
   } & Record<string, unknown>
 }
 
@@ -97,10 +93,8 @@ type RouteOptions = {
  */
 export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) => boolean): void {
   const where = `${[route.method].flat().join(',')} ${route.url}`
-  const { permission, access, stepUp, org, edge, alsoAccepts, model } = route.config ?? {}
-  if (model !== undefined && model !== 'v1' && model !== 'v2') throw new RouteAccessError(`${where}: unknown model '${model}'`)
+  const { permission, access, stepUp, org, edge, alsoAccepts } = route.config ?? {}
   if (edge !== undefined && access !== 'machine') throw new RouteAccessError(`${where}: edge is for machine routes only`)
-  const modelGate = model ? [onlyInModel(model)] : []
 
   if (!permission && !access) {
     if (UNDECLARED.test(route.url)) {
@@ -118,14 +112,11 @@ export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) 
     if (access === 'public' && !isPublic(route.url)) {
       throw new RouteAccessError(`${where} declares access 'public' but the session gate does not let it through`)
     }
-    if (modelGate.length) route.preHandler = [...modelGate, ...chain]
-    recordRoute(route.method, route.url, chain, isPublic, {
-      access: access as Access, ...(edge ? { edge } : {}), ...(model ? { model } : {}),
-    })
+    recordRoute(route.method, route.url, chain, isPublic, { access: access as Access, ...(edge ? { edge } : {}) })
     return
   }
 
-  if (permission !== EVERYTHING && !isCatalogPermission(permission!)) {
+  if (!isCatalogPermission(permission!)) {
     throw new RouteAccessError(`${where} requires '${permission}', which is not in the catalogue`)
   }
   const own = chain.map(enforcedBy).filter((p): p is string => p !== null)
@@ -134,31 +125,26 @@ export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) 
   if (org !== undefined && !route.url.split('/').includes(`:${org}`)) {
     throw new RouteAccessError(`${where} is org-scoped by ':${org}', which is not a parameter of its path`)
   }
-  for (const also of alsoAccepts ?? []) {
-    if (!isCatalogPermission(also)) throw new RouteAccessError(`${where} also accepts '${also}', which is not in the catalogue`)
-  }
-  // v2: an org permission on an org route, a platform one elsewhere — or the boot fails.
-  if (model !== 'v1' && permission !== EVERYTHING) {
-    try {
-      for (const p of [permission!, ...(alsoAccepts ?? [])]) v2Name(p, org !== undefined)
-    } catch (err) {
-      if (err instanceof V2NameError) throw new RouteAccessError(`${where}: ${err.message}`)
-      throw err
+  for (const p of [permission!, ...(alsoAccepts ?? [])]) {
+    if (!isCatalogPermission(p)) throw new RouteAccessError(`${where} names '${p}', which is not in the catalogue`)
+    // An org permission exactly on a route naming an org parameter, a platform one everywhere else.
+    const wanted = org !== undefined ? 'org' : 'platform'
+    if (scopeOf(p) !== wanted) {
+      throw new RouteAccessError(`${where} requires '${p}', a ${scopeOf(p)} permission, on a ${wanted === 'org' ? 'route of one organisation' : 'platform route'}`)
     }
   }
 
-  const gate = own.length > 0 || org !== undefined
+  const gate = own.length > 0
     ? []
-    : [permission === EVERYTHING ? requireGlobalSuperAdmin : requirePermission(permission as Permission)]
+    : [org !== undefined ? requireOrgPermission(undefined, org) : requirePermission(permission as Permission)]
   const wantsStepUp = (specOf(permission!)?.stepUp || stepUp === true) && !chain.includes(requireRecentMfa)
-  route.preHandler = [...modelGate, ...gate, ...chain, ...(wantsStepUp ? [requireRecentMfa] : [])]
+  route.preHandler = [...gate, ...chain, ...(wantsStepUp ? [requireRecentMfa] : [])]
 
   recordRoute(route.method, route.url, route.preHandler, isPublic, {
     permission: permission!,
     stepUp: wantsStepUp || chain.includes(requireRecentMfa),
     ...(org !== undefined ? { org } : {}),
     ...(alsoAccepts?.length ? { alsoAccepts } : {}),
-    ...(model ? { model } : {}),
   })
 }
 

@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Grant only what you hold. A holder of groups:write / groups.members:write short of a super admin
-// may create, widen or hand out a group only when what it grants is a subset of what they hold, scope
-// by scope — otherwise a second account they invited would carry the difference. The staff groups and
-// super_admins are a super admin's alone.
+// Grant only what you hold, with the staff roles as code defines them: a holder of groups:write /
+// groups.members:write may create, widen or hand out a group only when what it grants is a subset of
+// what they hold, app by app — otherwise a second account they invited would carry the difference.
 
 const store = vi.hoisted(() => ({
   groups: {} as Record<string, Record<string, string[]>>,
   roles: {} as Record<string, Record<string, string[]>>,
+  everyOrg: {} as Record<string, Record<string, string[]>>,
 }))
 
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
@@ -17,20 +17,20 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getGroups: vi.fn(async () => store.groups),
     getRoles: vi.fn(async (service: string) => store.roles[service] ?? null),
+    getEveryOrg: vi.fn(async (service: string) => store.everyOrg[service] ?? null),
   },
 }))
 
-import { assertGrantWithinOwn, assertMayAssignGroup, assertNoSelfEscalation } from '../../../services/rbac-escalation-guard.js'
-import { covers, exceeding, groupGrants, heldIn, STAFF_GROUPS } from '../../../services/grant-subset.js'
+import { assertMayAssignGroup, assertNoSelfEscalation } from '../../../services/rbac-escalation-guard.js'
+import { exceeding, groupGrants, heldIn } from '../../../services/grant-subset.js'
 import { grantedBy, hintFor } from '../../../services/permission-refusal.js'
-import { globalRoleDefinitions, ROLES, STAFF_ROLES } from '../../../policy/roles.js'
+import { everyOrgDefinitions, roleDefinitions, staffGroups } from '../../../policy/roles.js'
 import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 
 const SUPPORT = { id: 'id-support', email: 'support@example.com' }
 const OPS = { id: 'id-ops', email: 'ops@example.com' }
 const SECURITY = { id: 'id-security', email: 'security@example.com' }
 const ROOT = { id: 'id-root', email: 'root@example.com' }
-const ALT = 'alt@example.com'
 
 type Refusal = { statusCode?: number; code?: string; refusal?: Record<string, unknown> }
 const refusal = async (p: Promise<unknown>): Promise<Refusal | null> => p.then(() => null, (e) => e as Refusal)
@@ -38,111 +38,100 @@ const refusal = async (p: Promise<unknown>): Promise<Refusal | null> => p.then((
 beforeEach(() => {
   vi.clearAllMocks()
   resetOpaWorld()
-  // As the bootstrap seeds them (seed-staff.ts): each staff role in roles.global, one group each.
-  store.roles = { global: globalRoleDefinitions(), jinbe: { security: ['sites:read'], viewer: ['sites:read'] } }
-  store.groups = Object.fromEntries(STAFF_ROLES.map((r) => [ROLES[r].group, { global: [r] }]))
+  // As the bootstrap writes them: the staff roles under jinbe, one group each.
+  store.roles = { jinbe: roleDefinitions(), billing: { reader: ['invoices:read'] } }
+  store.everyOrg = { jinbe: everyOrgDefinitions() }
+  store.groups = staffGroups()
   opaWorld.groups[SUPPORT.email] = ['staff-support']
   opaWorld.groups[OPS.email] = ['staff-ops']
   opaWorld.groups[SECURITY.email] = ['staff-security']
-  opaWorld.superAdmins.add(ROOT.email)
+  opaWorld.groups[ROOT.email] = ['super_admins']
 })
 
-describe('resolution, scope by scope (as rbac.rego)', () => {
-  it('reads global names in roles.global and app names in that app, never across', () => {
-    // jinbe.security is a different role from global.security: binding one never grants the other.
-    expect(groupGrants({ jinbe: ['security'] }, store.roles)).toEqual({ jinbe: ['sites:read'] })
-    expect(groupGrants({ global: ['security'] }, store.roles).global).toContain('users:reset_second_factor')
+describe('resolution, app by app (as rbac.rego)', () => {
+  it('reads each role name in its own app only', () => {
+    expect(groupGrants({ billing: ['reader'] }, store.roles)).toEqual({ billing: ['invoices:read'] })
+    expect(groupGrants({ billing: ['security'] }, store.roles)).toEqual({})
+    expect(groupGrants({ jinbe: ['security'] }, store.roles).jinbe).toContain('users:reset_second_factor')
   })
 
-  it('what somebody holds in an app includes their global permissions; globally only the global ones', () => {
-    const held = heldIn([{ global: ['viewer'] }, { billing: ['reader'] }], { ...store.roles, billing: { reader: ['invoices:read'] } }, ['global', 'billing'])
-    expect(held.global).not.toContain('invoices:read')
-    expect(held.billing).toEqual(expect.arrayContaining(['invoices:read', 'sites:read']))
+  it('what somebody holds in one app says nothing about another', () => {
+    const held = heldIn([{ jinbe: ['viewer'] }, { billing: ['reader'] }], store.roles, ['jinbe', 'billing'])
+    expect(held.jinbe).not.toContain('invoices:read')
+    expect(held.billing).toEqual(['invoices:read'])
   })
 
-  it("a legacy alias is covered by holding everything it stands for, and '*' covers everything", () => {
-    expect(covers(['groups.members:write', 'groups.members:revoke'], 'users:assign_group')).toBe(true)
-    expect(covers(['groups.members:write'], 'users:assign_group')).toBe(false)
-    expect(covers(['*'], 'users:reset_second_factor')).toBe(true)
-    expect(exceeding({ global: ['zones:write', 'sites:read'] }, { global: ['sites:read'] })).toEqual({ global: ['zones:write'] })
+  it('exceeding is an exact difference: no wildcard, no alias', () => {
+    expect(exceeding({ jinbe: ['zones:write', 'sites:read'] }, { jinbe: ['sites:read'] })).toEqual({ jinbe: ['zones:write'] })
+    expect(exceeding({ jinbe: ['users:read'] }, { jinbe: ['*'] })).toEqual({ jinbe: ['users:read'] })
   })
 })
 
 describe('the alt-account escalation (support holds users:create)', () => {
   it('support invites an alt account, then tries to add it to staff-security: refused', async () => {
-    const err = await refusal(assertMayAssignGroup('staff-security', ALT, SUPPORT))
-    expect(err).toMatchObject({ statusCode: 403, code: 'staff_group_super_admin_only' })
-    expect(err?.refusal).toMatchObject({ code: 'staff_group_super_admin_only', permission: '*', grantedBy: ['super_admins'] })
-  })
-
-  it('nor through a look-alike group bound to the security role', async () => {
-    store.groups['helpdesk-plus'] = { global: ['security'] }
-    const err = await refusal(assertMayAssignGroup('helpdesk-plus', ALT, SUPPORT))
+    const err = await refusal(assertMayAssignGroup('staff-security', SUPPORT))
     expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
     expect(err?.refusal?.missing).toEqual(expect.arrayContaining(['users:reset_second_factor', 'users:disable']))
     expect(err?.refusal?.missing).not.toContain('users:read')
   })
 
-  it('support may still hand out a group within what they hold', async () => {
-    store.groups.desk = { global: ['viewer'] }
-    expect(await refusal(assertMayAssignGroup('desk', ALT, SUPPORT))).toBeNull()
+  it('nor through a look-alike group bound to the security role', async () => {
+    store.groups['helpdesk-plus'] = { jinbe: ['security'] }
+    expect(await refusal(assertMayAssignGroup('helpdesk-plus', SUPPORT))).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+  })
+
+  it('support may still hand out a group within what they hold, every-org part included', async () => {
+    store.groups.desk = { jinbe: ['viewer'] }
+    expect(await refusal(assertMayAssignGroup('desk', SUPPORT))).toBeNull()
+    expect(await refusal(assertMayAssignGroup('staff-viewers', SUPPORT))).toBeNull()
   })
 })
 
 describe('ops with groups:write', () => {
   it('may not create a group carrying users:reset_second_factor', async () => {
-    const err = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { global: ['security'] } }, OPS))
+    const err = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, OPS))
     expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
-    expect(err?.refusal).toMatchObject({ missingByScope: { global: expect.arrayContaining(['users:reset_second_factor']) } })
-    // Who could make the change: a group holding everything missing, the wildcard last.
+    expect(err?.refusal).toMatchObject({ missingByScope: expect.objectContaining({ jinbe: expect.arrayContaining(['users:reset_second_factor']) }) })
+    // Who could make the change: the narrowest group holding everything missing first.
     expect(err?.refusal?.grantedBy).toEqual(['staff-security', 'super_admins'])
     expect(err?.refusal?.hint).toBe('Ask an administrator to add you to one of: staff-security, super_admins.')
   })
 
-  it('nor through a custom global role, nor by widening a staff group they are not in', async () => {
-    store.roles.global.resetter = ['users:reset_second_factor']
-    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'resetters', after: { global: ['resetter'] } }, OPS))).toMatchObject({ code: 'grant_exceeds_own' })
-    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'staff-viewers', after: { global: ['viewer', 'ops'] } }, OPS))).toMatchObject({ code: 'staff_group_super_admin_only' })
-  })
-
   it('may create a group within what they hold', async () => {
-    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'edge-readers', after: { global: ['viewer'] } }, OPS))).toBeNull()
+    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'edge-readers', after: { jinbe: ['viewer'] } }, OPS))).toBeNull()
   })
 })
 
-describe('staff groups are a super admin\'s alone', () => {
-  it('covers every staff group and super_admins', () => {
-    expect([...STAFF_GROUPS].sort()).toEqual(['staff-auditors', 'staff-developers', 'staff-ops', 'staff-security', 'staff-support', 'staff-viewers', 'super_admins'])
+describe('the staff groups', () => {
+  it('a security member may hand out staff-security: they hold all of it', async () => {
+    expect(await refusal(assertMayAssignGroup('staff-security', SECURITY))).toBeNull()
   })
 
-  it('refuses a security member handing out staff-security, though they hold all of it', async () => {
-    expect(await refusal(assertMayAssignGroup('staff-security', ALT, SECURITY))).toMatchObject({ statusCode: 403, code: 'staff_group_super_admin_only' })
-    expect(await refusal(assertGrantWithinOwn('staff-security', SECURITY))).toMatchObject({ code: 'staff_group_super_admin_only' })
+  it('are never redefined through the API, not even by a super admin', async () => {
+    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'staff-security', after: { jinbe: ['security', 'ops'] } }, ROOT))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
   })
 })
 
 describe('a super admin', () => {
-  it('still may do all of it', async () => {
-    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { global: ['security'] } }, ROOT))).toBeNull()
-    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'staff-security', after: { global: ['security', 'ops'] } }, ROOT))).toBeNull()
-    expect(await refusal(assertMayAssignGroup('staff-security', ALT, ROOT))).toBeNull()
-    expect(await refusal(assertGrantWithinOwn('staff-security', ROOT))).toBeNull()
+  it('passes by holding everything', async () => {
+    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, ROOT))).toBeNull()
+    expect(await refusal(assertMayAssignGroup('staff-security', ROOT))).toBeNull()
+    expect(await refusal(assertMayAssignGroup('super_admins', ROOT))).toBeNull()
   })
 })
 
 describe('fails closed', () => {
   it('answers 401 without an identified actor, 503 when OPA cannot be asked', async () => {
-    expect((await refusal(assertGrantWithinOwn('desk')))?.statusCode).toBe(401)
+    expect((await refusal(assertMayAssignGroup('desk')))?.statusCode).toBe(401)
     opaWorld.down = true
-    expect((await refusal(assertGrantWithinOwn('staff-viewers', SUPPORT)))?.statusCode).toBe(503)
-    expect((await refusal(assertMayAssignGroup('staff-viewers', ALT, SUPPORT)))?.statusCode).toBe(503)
+    expect((await refusal(assertMayAssignGroup('staff-viewers', SUPPORT)))?.statusCode).toBe(503)
   })
 })
 
 describe('grantedBy', () => {
-  it('lists the groups whose roles hold the permission, staff included, the wildcard last', async () => {
+  it('lists the groups whose roles hold the permission, the narrowest first', async () => {
     expect(await grantedBy(['users:reset_second_factor'])).toEqual(['staff-security', 'super_admins'])
-    expect(await grantedBy(['sites:read'])).toEqual(['staff-auditors', 'staff-developers', 'staff-ops', 'staff-security', 'staff-support', 'staff-viewers', 'super_admins'])
+    expect(await grantedBy(['sites:read'])).toEqual(['staff-viewers', 'staff-developers', 'staff-auditors', 'staff-ops', 'staff-support', 'staff-security', 'super_admins'])
   })
 
   it('answers an empty list, never an error, when the model cannot be read', async () => {

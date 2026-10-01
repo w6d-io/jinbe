@@ -7,8 +7,8 @@ import { assertOrgParams } from '../policy/route-org-param.js'
 import type { Rendered } from './render.js'
 
 /**
- * A site's permissions in the keys OPA is fed from (route_map, roles, services, groups,
- * org_service_map) — written BEFORE its gateway rules, so a new route fails closed until its
+ * A site's permissions in the keys OPA is fed from (route_map, roles, services, groups, the orgs
+ * entitled to it in org_sites) — written BEFORE its gateway rules, so a new route fails closed until its
  * permission exists — and taken out again after its rules are gone.
  *
  * Reconciling, not diffing: every group and org entry naming the site is brought to exactly what
@@ -86,16 +86,16 @@ async function reconcileGroups(name: string, perms: Permissions): Promise<void> 
 }
 
 async function reconcileOrgs(name: string, perms: Permissions): Promise<void> {
-  await withRedisLock('org_service_map', async () => {
-    const map = await redisRbacRepository.getOrgServiceMap()
+  await withRedisLock('org_sites', async () => {
+    const map = await redisRbacRepository.getOrgSites()
     const wanted = new Set(Object.keys(perms.orgServiceMap))
     for (const org of wanted) {
       const bundle = map[org] ?? []
-      if (!bundle.includes(name)) await redisRbacRepository.setOrgServiceMapping(org, [...bundle, name])
+      if (!bundle.includes(name)) await redisRbacRepository.setOrgSites(org, [...bundle, name])
     }
     for (const [org, bundle] of Object.entries(map)) {
       if (!wanted.has(org) && bundle.includes(name)) {
-        await redisRbacRepository.setOrgServiceMapping(org, bundle.filter((s) => s !== name))
+        await redisRbacRepository.setOrgSites(org, bundle.filter((s) => s !== name))
       }
     }
   })

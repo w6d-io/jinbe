@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { declaredRoute } from '../policy/declared-routes.js'
-import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
+import { scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
 import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
 import { scopeRefusalFields } from '../services/permission-refusal.js'
@@ -129,7 +129,7 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
   }
   const required = permission ?? declaredRoute(method, pattern)?.permission
   // The catalogue's verdict first: it names the permission a token may never use.
-  if (required && (required === EVERYTHING || specOf(required)?.delegable === 'never')) return `delegation_ineligible:${required}`
+  if (required && specOf(required)?.delegable === 'never') return `delegation_ineligible:${required}`
   const why = ineligibleWhy(method, pattern)
   if (why) return `delegation_ineligible:${why}`
   if (targetsSelf(request, method, pattern)) return 'delegation_ineligible:self_change'

@@ -1,7 +1,6 @@
 import { redisRbacRepository, type GroupDefinition } from '../services/redis-rbac.repository.js'
 import { opalPublisher } from '../services/opal-publisher.js'
 import { withRedisLock } from '../services/redis-lock.js'
-import { EVERYTHING } from '../policy/catalog.js'
 import { flatten, groupGrants, loadRoles, type RolesByScope } from '../services/grant-subset.js'
 
 /**
@@ -76,7 +75,7 @@ export function parseFlags(raw: string | undefined): Record<string, boolean> {
 /** The default: on for a group that can change anything or holds `*`, off for a read-only one. */
 export function defaultRequired(name: string, definition: GroupDefinition | undefined, roles: RolesByScope): boolean {
   if (READ_ONLY_GROUPS.includes(name)) return false
-  return flatten(groupGrants(definition, roles)).some((p) => p === EVERYTHING || !READ_VERBS.has(p.split(':')[1] ?? ''))
+  return flatten(groupGrants(definition, roles)).some((p) => !READ_VERBS.has(p.split(':')[1] ?? ''))
 }
 
 async function compute(): Promise<{ flags: Map<string, GroupFlag>; stored: Record<string, boolean> }> {

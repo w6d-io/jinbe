@@ -1,19 +1,19 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { holds, manageableOrgs, rights } from '../../authz/opa.js'
+import { holds, orgPermissionsByOrg, rights } from '../../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../../authz/policy-unavailable.js'
 import { enforcing, scopedBy } from '../../policy/declared-routes.js'
-import { isV2 } from '../../authz-v2/model.js'
 
 /**
  * Who may read which part of the audit trail (audit-tab.md §4.4, CONTROL C8).
  *
- *   - `audit:read` (`audit:export` for exports; `admin:read` still passes as a legacy alias) across the platform:
- *     every event, every org, platform events included.
- *   - an org admin: the events of the organisations they administer, and nothing else — the org
- *     filter is injected into the query HERE, never taken from the client.
+ *   - `audit:read` (`audit:export` for exports) across the platform: every event, every org, platform
+ *     events included.
+ *   - `org.audit:read` in some organisations (an org role there, or the every-org map): the events of
+ *     those organisations, and nothing else — the org filter is injected into the query HERE, never
+ *     taken from the client.
  *   - anyone else: 403.
  *
- * Both asked of OPA (`rbac.user_info` for jinbe, `rbac.delegation.manageable_orgs`). "Holds nothing"
+ * Both asked of OPA (`rbac.user_info` for jinbe, `rbac.org_permissions_by_org`). "Holds nothing"
  * and "cannot tell" stay apart, as in the other gates: OPA unreachable is a 503, never a quiet
  * narrowing.
  */
@@ -42,16 +42,8 @@ export async function resolveAuditScope(request: FastifyRequest, permission: str
   const held = (await tell(() => rights(email))).permissions
   if (holds(held, permission)) return { platform: true, orgs: [] }
 
-  // authz v2: the orgs where the caller holds org.audit:read (an assigned org role, or every-org).
-  if (isV2()) {
-    const orgs = await tell(async () => {
-      const [{ loadDataV2 }, { orgsHolding }] = await Promise.all([import('../../authz-v2/service.js'), import('../../authz-v2/resolve.js')])
-      return orgsHolding(await loadDataV2(), email, 'org.audit:read', 'jinbe')
-    })
-    return { platform: false, orgs }
-  }
-  const administered = await tell(() => manageableOrgs(email))
-  return { platform: false, orgs: [...new Set(administered)].sort() }
+  const byOrg = await tell(() => orgPermissionsByOrg(email))
+  return { platform: false, orgs: Object.entries(byOrg).filter(([, perms]) => perms.includes('org.audit:read')).map(([org]) => org).sort() }
 }
 
 /**

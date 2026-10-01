@@ -17,7 +17,7 @@ vi.mock('../../../services/organisation-store.js', () => ({
 
 
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
-  redisRbacRepository: { getOrgServiceMap: vi.fn().mockResolvedValue({}) },
+  redisRbacRepository: { getOrgSites: vi.fn().mockResolvedValue({}) },
 }))
 
 import { meRoutes } from '../../../routes/me.routes.js'
@@ -69,7 +69,7 @@ describe('meRoutes — GET /me/organizations', () => {
     mockState.env.DEV_BYPASS_AUTH = false
     mockState.env.NODE_ENV = 'test'
     vi.mocked(organisationsForSubject).mockResolvedValue([])
-    vi.mocked(redisRbacRepository.getOrgServiceMap).mockResolvedValue({})
+    vi.mocked(redisRbacRepository.getOrgSites).mockResolvedValue({})
     const fastify = createMockFastify()
     await meRoutes(fastify)
     handler = fastify.registeredRoutes.find((r) => r.path === '/organizations')!

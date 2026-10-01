@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/env.js'
-import { holds, isSuperAdmin, manageableOrgs, rights } from '../authz/opa.js'
-import { isV2 } from '../authz-v2/model.js'
+import { holds, manageableOrgs, rights } from '../authz/opa.js'
+import { ROLES } from '../policy/roles.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { secondFactorIsFresh } from '../services/step-up.js'
 import type { HomeModuleName } from './types.js'
 
 /**
  * Who sees which part of the Home (home-data §3.2–3.3), resolved ONCE per request and entirely from
- * OPA — `rbac.user_info` for what the caller holds in jinbe, `rbac.delegation.manageable_orgs` for
+ * OPA — `rbac.user_info` for what the caller holds in jinbe, `rbac.delegation.manageable_orgs` (orgs where they hold org.members:write) for
  * the orgs they administer, `rbac.super_admin` — like every other gate in jinbe. Nothing here reads
  * a roster, a ConfigMap or the client's own claim.
  *
@@ -26,8 +26,9 @@ export interface HomeScope {
   stepUpFresh: boolean
   roles: string[]
   permissions: string[]
-  /** Holds `admin:read` (super_admin, admin): the platform-wide modules. */
+  /** Holds `stats:read` (every staff role): the platform-wide modules. */
   platform: boolean
+  /** Holds what the platform-health items are about (audit:read and settings:read). */
   superAdmin: boolean
   /** Holds `sites:apply`: may decide apply requests. */
   canApply: boolean
@@ -50,9 +51,9 @@ declare module 'fastify' {
   }
 }
 
-// Every staff role holds it (policy/roles.ts), and the legacy admin:read still passes as an alias.
+// Every staff role holds it (policy/roles.ts).
 const PLATFORM_READ = 'stats:read'
-const DEV_PERMISSIONS = ['admin:read', 'admin:write', 'sites:apply']
+const DEV_PERMISSIONS = [...ROLES.super_admin.permissions]
 
 export class HomeScopeUnknown extends Error {}
 
@@ -81,10 +82,9 @@ export async function resolveHomeScope(request: FastifyRequest): Promise<HomeSco
     return { ...base, roles: ['platform-admin'], permissions: DEV_PERMISSIONS, platform: true, superAdmin: true, canApply: true, people: true, sessions: true, orgs: [] }
   }
 
-  const [held, administered, superAdmin] = await Promise.all([
+  const [held, administered] = await Promise.all([
     tell(() => rights(ctx.email)),
     tell(() => manageableOrgs(ctx.email)),
-    tell(() => isSuperAdmin(ctx.email)),
   ])
   const permissions = held.permissions
   return {
@@ -92,9 +92,9 @@ export async function resolveHomeScope(request: FastifyRequest): Promise<HomeSco
     roles: held.roles,
     permissions,
     platform: holds(permissions, PLATFORM_READ),
-    // authz v2 has no super-admin flag: the platform-health items go to who holds what they are about
-    // (the audit outbox and failures → audit:read, dead notifications → settings:read).
-    superAdmin: isV2() ? holds(permissions, 'audit:read') && holds(permissions, 'settings:read') : superAdmin,
+    // No super-admin flag: the platform-health items go to who holds what they are about (the audit
+    // outbox and failures → audit:read, dead notifications → settings:read).
+    superAdmin: holds(permissions, 'audit:read') && holds(permissions, 'settings:read'),
     canApply: holds(permissions, 'sites:apply'),
     people: holds(permissions, 'users:read'),
     sessions: holds(permissions, 'sessions:read'),

@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerRights } from '../middleware/require-permission.js'
-import { rights as opaRights } from '../authz/opa.js'
+import { orgPermissionsByOrg } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
@@ -50,22 +50,17 @@ async function ownSecondFactor(request: FastifyRequest, groups: string[], permis
 }
 
 /**
- * The full org universe a global super_admin administers. The union of three sources, because each
- * one alone hides organisations the others hold:
+ * Every organisation, for local development's bypass (its user acts as super_admin, which holds every
+ * org permission in every org). The union of three sources, because each alone hides some:
  *   0. the records this service owns, where it owns them — the only source that knows about an
- *      organisation nobody belongs to yet, which is exactly the one somebody is about to assign,
- *   1. org_service_map keys (orgs that have a service mapping), and
- *   2. the org ids identities carry (native organization_id + any
- *      metadata_admin.organizations).
- * A super_admin can reach ANY org (their global "*" passes every gateway +
- * guard), so discovery must reflect the union of both — listing only mapped
- * orgs hid every org that has members but no service mapping yet.
- * FAIL-SOFT: if the Kratos scan fails we still return the mapped orgs rather
- * than erroring the whole endpoint.
+ *      organisation nobody belongs to yet,
+ *   1. the orgs entitled to a site (rbac:org_sites), and
+ *   2. the org ids identities carry (native organization_id + any metadata_admin.organizations).
+ * FAIL-SOFT: a source that cannot answer costs its own entries and never the rest of the list.
  */
 async function allOrganizations(): Promise<string[]> {
   const orgs = new Set<string>(
-    Object.keys(await redisRbacRepository.getOrgServiceMap()),
+    Object.keys(await redisRbacRepository.getOrgSites()),
   )
   // The records this service owns, first: since it took ownership of organisations, an organisation
   // with members but no service mapping and nobody carrying it on their identity existed only here.
@@ -94,17 +89,8 @@ async function allOrganizations(): Promise<string[]> {
  * Self-service ("me") routes — scoped to the authenticated caller.
  *
  * GET /me/organizations
- *   The organisations the caller may administer, with a `scope`:
- *     - global super_admin → `scope: "all"` + EVERY org (the union of
- *       org_service_map keys and identity-derived org ids, see
- *       allOrganizations). Super admins already pass the gateway + guard for
- *       any org via their global "*", so the list must reflect that (they
- *       aren't members of every org, so manageable_orgs would wrongly return
- *       few/none, and mapped-orgs-only would hide unmapped ones).
- *     - delegated org admin → `scope: "delegated"` + `manageable_orgs` (orgs
- *       they are a member of AND administer), resolved by OPA from email.
- *   Requires a valid session (401 otherwise). FAIL-CLOSED: OPA error → empty
- *   list (the UI then offers nothing).
+ *   The organisations the caller belongs to (the directory, or the token's claim), with their names.
+ *   What they may do in each is `orgPermissions` on GET /me/permissions. Requires a valid session.
  */
 /**
  * What to call each organisation on screen.
@@ -132,8 +118,9 @@ export async function meRoutes(fastify: FastifyInstance) {
    * shown exactly when its request would pass. A console must still expect a 403: this is a hint for
    * what to draw, never the decision.
    *
-   * Answered by OPA, the engine the gateway decides with: `permissions`/`roles` are jinbe's (global
-   * roles included), `apps.kuma` the console's own.
+   * Answered by OPA, the engine the gateway decides with: `permissions`/`roles` are jinbe's platform
+   * ones; `orgPermissions` what the caller holds in each organisation (org roles assigned there, and
+   * the every-org map) — what the org routes decide with.
    */
   fastify.get(
     '/permissions',
@@ -153,17 +140,8 @@ export async function meRoutes(fastify: FastifyInstance) {
               roles: { type: 'array', items: { type: 'string' } },
               permissions: { type: 'array', items: { type: 'string' } },
               actions: { type: 'object', additionalProperties: { type: 'boolean' } },
+              orgPermissions: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
               secondFactor: userSecondFactorJsonSchema,
-              apps: {
-                type: 'object',
-                additionalProperties: {
-                  type: 'object',
-                  properties: {
-                    roles: { type: 'array', items: { type: 'string' } },
-                    permissions: { type: 'array', items: { type: 'string' } },
-                  },
-                },
-              },
             },
           },
           401: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
@@ -174,14 +152,13 @@ export async function meRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const rights = await callerRights(request, reply)
       if (!rights) return reply
-      let kuma: { roles: string[]; permissions: string[] } = { roles: [], permissions: [] }
+      let orgPermissions: Record<string, string[]> = {}
       if (!(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
         try {
-          const held = await opaRights(rights.email, 'kuma')
-          kuma = { roles: held.roles, permissions: held.permissions }
+          orgPermissions = await orgPermissionsByOrg(rights.email)
         } catch (err) {
-          // Same rule as jinbe's own: "could not tell" is not "holds nothing".
-          request.log.warn({ err: (err as Error).message }, '[me/permissions] OPA could not answer for kuma')
+          // Same rule as the platform ones: "could not tell" is not "holds nothing".
+          request.log.warn({ err: (err as Error).message }, '[me/permissions] OPA could not answer for the organisations')
           return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
         }
       }
@@ -191,7 +168,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         roles: rights.roles,
         permissions: rights.permissions,
         actions: userActions(rights.permissions),
-        apps: { jinbe: { roles: rights.roles, permissions: rights.permissions }, kuma },
+        orgPermissions,
         secondFactor: await ownSecondFactor(request, rights.groups, rights.permissions),
       })
     },
@@ -225,10 +202,8 @@ export async function meRoutes(fastify: FastifyInstance) {
       },
     },
     async (request: FastifyRequest, reply) => {
-      // DEV MODE: mirror the whoami/requireServiceAdmin bypass — no OPA. The
-      // dev user is effectively a super_admin, so show the full org universe
-      // (scope: 'all') rather than an empty delegated list, which was hiding
-      // every org from the local console.
+      // DEV MODE: mirror the whoami bypass — no OPA. The dev user acts as super_admin, which holds
+      // every org permission in every org, so show the full org universe (scope: 'all').
       if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
         const organizations = await allOrganizations()
         return reply.send({ organizations, names: await namesFor(organizations), scope: 'all' })

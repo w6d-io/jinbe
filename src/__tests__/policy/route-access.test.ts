@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 import { attachRouteAccess, installRouteAccess, RouteAccessError } from '../../policy/route-access.js'
 import { declaredRoute, enforcedBy, enforcing, resetDeclaredRoutes } from '../../policy/declared-routes.js'
-import { requireGlobalSuperAdmin, requireRecentMfa } from '../../middleware/require-admin.js'
+import { requireRecentMfa } from '../../middleware/require-admin.js'
 
 const open = (p: string) => p === '/api/health'
 const route = (over: Record<string, unknown>) => ({ method: 'GET', url: '/api/x', ...over }) as Parameters<typeof attachRouteAccess>[0]
@@ -57,10 +57,8 @@ describe('it attaches the gate the declaration names', () => {
     expect(chain(extra)[1]).toBe(requireRecentMfa)
   })
 
-  it('`*` is the super-admin gate', () => {
-    const r = route({ config: { permission: '*' } })
-    attachRouteAccess(r, open)
-    expect(chain(r)).toEqual([requireGlobalSuperAdmin])
+  it('`*` is no permission at all: the boot refuses it', () => {
+    expect(() => attachRouteAccess(route({ config: { permission: '*' } }), open)).toThrow(/not in the catalogue/)
   })
 
   it('a route with its own guard for the same permission keeps it and gets no second one', () => {
@@ -70,10 +68,13 @@ describe('it attaches the gate the declaration names', () => {
     expect(chain(r)).toEqual([own])
   })
 
-  it('an org-scoped route gets no platform guard: its plugin decides per organisation', () => {
+  it('an org-scoped route gets the org gate, never a platform guard; scope must match the shape', () => {
     const r = route({ url: '/api/organizations/:organizationId/x', config: { permission: 'org.members:read', org: 'organizationId' } })
     attachRouteAccess(r, open)
-    expect(chain(r)).toEqual([])
+    expect(chain(r)).toHaveLength(1)
+    expect(enforcedBy(chain(r)[0])).toBeNull()
+    expect(() => attachRouteAccess(route({ url: '/api/y', config: { permission: 'org.members:read' } }), open)).toThrow(/org permission/)
+    expect(() => attachRouteAccess(route({ url: '/api/organizations/:organizationId/z', config: { permission: 'users:read', org: 'organizationId' } }), open)).toThrow(/platform permission/)
     expect(declaredRoute('GET', '/api/organizations/:organizationId/x')).toMatchObject({ permission: 'org.members:read', org: 'organizationId' })
   })
 

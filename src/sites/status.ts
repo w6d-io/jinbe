@@ -97,10 +97,10 @@ async function permissionItems(name: string, rendered: Rendered): Promise<DriftI
   for (const [g, def] of Object.entries(groups)) {
     if (!wanted[g] && name in def) items.push({ artefact: `group/${g}`, field: name, expected: null, actual: def[name] })
   }
-  const orgMap = await redisRbacRepository.getOrgServiceMap()
+  const orgMap = await redisRbacRepository.getOrgSites()
   const liveOrgs = Object.entries(orgMap).filter(([, svcs]) => svcs.includes(name)).map(([o]) => o).sort()
   const wantedOrgs = Object.keys(rendered.orgServiceMap).sort()
-  if (!same(liveOrgs, wantedOrgs)) items.push({ artefact: 'org_service_map', field: name, expected: wantedOrgs, actual: liveOrgs })
+  if (!same(liveOrgs, wantedOrgs)) items.push({ artefact: 'org_sites', field: name, expected: wantedOrgs, actual: liveOrgs })
   return items
 }
 
@@ -155,7 +155,7 @@ export async function acceptDrift(name: string, actor: Actor): Promise<{ draft: 
     site.groups = { ...site.groups, platform }
     folded.push('groups.platform')
   }
-  const orgMap = await redisRbacRepository.getOrgServiceMap()
+  const orgMap = await redisRbacRepository.getOrgSites()
   const orgs = Object.entries(orgMap).filter(([, svcs]) => svcs.includes(name)).map(([o]) => o)
   if (stableStringify([...orgs].sort()) !== stableStringify([...site.orgs].sort())) {
     site.orgs = orgs

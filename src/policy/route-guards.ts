@@ -3,8 +3,8 @@
  * (POST /api/admin/rbac/explain-route), which runs them in a dry run.
  *
  * Fastify builds a route's hooks at ready from the hooks of the instance the route was registered on
- * (global ones such as the delegation gate, and a plugin's own such as requireServiceAdmin on the org
- * user routes) followed by the route's `preHandler` option. Recorded here: that instance and those
+ * (global ones such as the delegation gate, and a plugin's own such as a scope guard on the audit
+ * routes) followed by the route's `preHandler` option. Recorded here: that instance and those
  * options, as the onRoute hook sees them (route-access.ts), so the chain read back later is the one
  * Fastify runs — never a list kept beside it by hand.
  *

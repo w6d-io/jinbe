@@ -38,9 +38,9 @@ describe("requirePermission('sites:apply')", () => {
     expect(enforcedBy(requireSitesApply)).toBe('sites:apply')
   })
 
-  it('lets a holder of "*" through', async () => {
+  it('a wildcard or a retired name is no longer a way through', async () => {
     m.held = ['*', 'admin:write']
-    expect(await run()).toBe(0)
+    expect(await run()).toBe(403)
   })
 
   it('lets an explicit sites:apply through', async () => {
@@ -48,8 +48,8 @@ describe("requirePermission('sites:apply')", () => {
     expect(await run()).toBe(0)
   })
 
-  it('refuses admin:write alone', async () => {
-    m.held = ['admin:read', 'admin:write']
+  it('refuses sites:write alone', async () => {
+    m.held = ['sites:read', 'sites:write']
     expect(await run()).toBe(403)
   })
 

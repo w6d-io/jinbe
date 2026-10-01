@@ -44,7 +44,6 @@ export type AccessCheckResult = {
   groups: string[]
   roles: string[]
   permissions: string[]
-  superAdmin: boolean
   /** The level asked at, when one was given. */
   aal?: 'aal1' | 'aal2'
   stepUp?: StepUp
@@ -58,7 +57,6 @@ type Simulation = {
   matching_rules?: AccessCheckResult['matchingRules']
   roles?: string[]
   permissions?: string[]
-  super_admin?: boolean
 }
 
 export async function checkAccess(input: AccessCheckInput): Promise<AccessCheckResult> {
@@ -110,7 +108,6 @@ export async function checkAccess(input: AccessCheckInput): Promise<AccessCheckR
     groups: decision.groups ?? [],
     roles: simulation.roles ?? [],
     permissions: simulation.permissions ?? [],
-    superAdmin: simulation.super_admin === true,
     ...(input.aal ? { aal: input.aal } : {}),
     ...(stepUp ? { stepUp } : {}),
   }

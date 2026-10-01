@@ -1,15 +1,14 @@
 import type { FastifyInstance } from 'fastify'
-import { decisionInput, isSuperAdmin, manageableOrgs, memberOrgs, rights } from '../../authz/opa.js'
+import { decisionInput, memberOrgs, orgPermissionsByOrg, rights } from '../../authz/opa.js'
 import { queryOpa } from '../opa-client.js'
-import { ALIASES, grants, isCatalogPermission, specOf } from '../../policy/catalog.js'
+import { grants, isCatalogPermission, specOf } from '../../policy/catalog.js'
 import { declaredRoute, type DeclaredRoute } from '../../policy/declared-routes.js'
 import { patternFor, routeChain } from '../../policy/route-guards.js'
 import { delegationOf, isClient } from '../../middleware/require-service-admin.js'
 import { delegationRefusal } from '../../middleware/delegation-gate.js'
 import type { UserContext } from '../../middleware/identity-extractor.js'
 import { redisRbacRepository, type RouteRule } from '../redis-rbac.repository.js'
-import { orgGrantsRepository } from '../org-grants.repository.js'
-import { orgAdminView, type OrgAdminView } from '../org-admin.js'
+import { orgRolesRepository } from '../org-roles.repository.js'
 import { dryRequest, dryRunChain, type ChainVerdict } from './guard-dry-run.js'
 import { findDisagreements, type Disagreement } from './disagreements.js'
 
@@ -18,13 +17,13 @@ import { findDisagreements, type Disagreement } from './disagreements.js'
  * read and what it answered (POST /api/admin/rbac/explain-route):
  *
  *   route       → the pattern, its declaration, the guards Fastify runs for it
- *   catalogue   → the permission's spec (delegable, step-up, the legacy names that grant it)
+ *   catalogue   → the permission's spec (scope, delegable, step-up)
  *   delegation  → the delegation gate's verdict for a user through a client
- *   platform    → what the subject holds in jinbe across the platform (OPA user_info, super_admin)
+ *   platform    → what the subject holds in jinbe on platform routes (OPA user_info)
  *   opa         → rbac.decision with EXACTLY the guard's input, rbac.explain (which clause fired;
  *                 optional — absent on a policy that predates it) and the matching route rows
- *   org         → for an org route: membership, the roster in Redis vs in OPA, manageable_orgs,
- *                 org grants, the org's services, and get_user_access's `admin` for it
+ *   org         → for an org route: membership, the org roles assigned there, the org permissions
+ *                 OPA says they hold there (assigned ∪ every-org) and the org's entitled sites
  *   guard       → the route's real guards run in a dry run: the status and body the caller gets
  *
  * Nothing is replayed in JS: every verdict is the policy's or the guard's own. A step that could not
@@ -68,8 +67,6 @@ export interface PolicyExplain {
   is_client: boolean
   session_aal: number
   second_factor_required: boolean
-  super_admin: boolean
-  orgs: Array<{ org: string; member: boolean; rostered: boolean; services: string[]; org_grants: string[] }>
 }
 
 async function attempt<T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
@@ -155,8 +152,7 @@ export async function explainRoute(fastify: FastifyInstance, subject: UserContex
       ? {
           permission,
           inCatalogue: Boolean(spec),
-          ...(spec ? { delegable: spec.delegable, stepUp: spec.stepUp, sensitivity: spec.sensitivity } : {}),
-          grantedAlsoBy: Object.entries(ALIASES).filter(([, to]) => (to as readonly string[]).includes(permission)).map(([from]) => from).sort(),
+          ...(spec ? { scope: spec.scope, delegable: spec.delegable, stepUp: spec.stepUp, sensitivity: spec.sensitivity } : {}),
         }
       : { message: 'The route requires no permission' },
   })
@@ -176,15 +172,12 @@ export async function explainRoute(fastify: FastifyInstance, subject: UserContex
 
   // ── platform ──
   const held = await attempt(() => rights(email))
-  const superAdmin = await attempt(() => isSuperAdmin(email))
   const holder = held.ok && permission && isCatalogPermission(permission) ? grants(held.value.permissions, permission) : false
   steps.push({
     step: 'platform',
-    verdict: !held.ok ? 'unavailable' : holder || (superAdmin.ok && superAdmin.value) ? 'pass' : 'info',
+    verdict: !held.ok ? 'unavailable' : holder ? 'pass' : 'info',
     input: { email, app: 'jinbe' },
-    detail: held.ok
-      ? { ...held.value, superAdmin: superAdmin.ok ? superAdmin.value : null, holdsRoutePermissionGlobally: holder }
-      : { error: held.error },
+    detail: held.ok ? { ...held.value, holdsRoutePermission: holder } : { error: held.error },
   })
 
   // ── opa ──
@@ -223,49 +216,24 @@ export async function explainRoute(fastify: FastifyInstance, subject: UserContex
 
   // ── org ──
   const org = orgOf(row, pattern, params)
-  let userAccess: OrgAdminView | null = null
-  let orgAdminFamily: boolean | null = null
-  let redisRostered: boolean | null = null
-  let opaRostered: boolean | null = null
   if (org) {
-    const [members, manageable, roster, orgGrants, services, opaRoster] = await Promise.all([
+    const [members, byOrg, assigned, entitled] = await Promise.all([
       attempt(() => memberOrgs(email)),
-      attempt(() => manageableOrgs(email)),
-      attempt(() => redisRbacRepository.getOrgAdmins(org)),
-      attempt(() => orgGrantsRepository.getForMember(org, email)),
-      attempt(async () => (await redisRbacRepository.getOrgServiceMap())[org] ?? []),
-      // OPA's own copy of the roster (data.org_admin_map[org]), as OPAL delivered it.
-      attempt(async () => (await queryOpa<string[]>(`org_admin_map/${encodeURIComponent(org)}`, {})) ?? []),
+      attempt(() => orgPermissionsByOrg(email)),
+      attempt(async () => (subject.id ? orgRolesRepository.getForMember(org, subject.id) : [])),
+      attempt(async () => (await redisRbacRepository.getOrgSites())[org] ?? []),
     ])
-    const opaOrg = policy?.orgs.find((o) => o.org === org)
-    // rbac.explain compares as the policy does; without it, the copy is read as the unpatched
-    // policy compares (exactly).
-    opaRostered = opaOrg ? opaOrg.rostered : opaRoster.ok ? opaRoster.value.includes(email) : null
-    redisRostered = roster.ok ? roster.value.includes(email.toLowerCase()) : null
-    if (members.ok && manageable.ok && roster.ok) {
-      userAccess = orgAdminView(email, org, {
-        manageable: manageable.value,
-        memberOrgs: members.value,
-        roster: roster.value,
-        ...(opaRoster.ok ? { opaRoster: opaRoster.value } : {}),
-      })
-    }
-    if (manageable.ok && superAdmin.ok) orgAdminFamily = superAdmin.value || holder || manageable.value.includes(org)
     steps.push({
       step: 'org',
-      verdict: members.ok && manageable.ok ? 'info' : 'unavailable',
+      verdict: members.ok && byOrg.ok ? 'info' : 'unavailable',
       input: { org },
       detail: {
         org,
         member: members.ok ? members.value.includes(org) : null,
-        rosteredInRedis: redisRostered,
-        rosteredInOpa: opaRostered,
-        opaRosterSpellings: opaRoster.ok ? opaRoster.value.filter((e) => e.toLowerCase() === email.toLowerCase()) : null,
-        manageable: manageable.ok ? manageable.value.includes(org) : null,
-        orgGrants: orgGrants.ok ? orgGrants.value : null,
-        services: services.ok ? services.value : null,
-        userAccess,
-        requireOrgAdminWouldAllow: orgAdminFamily,
+        roles: assigned.ok ? assigned.value : null,
+        permissions: byOrg.ok ? byOrg.value[org] ?? [] : null,
+        holdsRoutePermissionHere: byOrg.ok && permission ? (byOrg.value[org] ?? []).includes(permission) : null,
+        sites: entitled.ok ? ['jinbe', ...entitled.value] : null,
       },
     })
   } else {
@@ -291,14 +259,8 @@ export async function explainRoute(fastify: FastifyInstance, subject: UserContex
     opaReason,
     guardAllowed: allowed,
     guardDecidedBy: run.decidedBy,
-    holder,
     policy,
     decisionFromPolicy: decision.ok ? decision.value ?? null : null,
-    org,
-    redisRostered,
-    opaRostered,
-    userAccess,
-    orgAdminFamily,
     storedRows: storedRows.ok ? storedRows.value : null,
     matchingRules: matching,
     stepUpBy: stepUpBy ?? [],

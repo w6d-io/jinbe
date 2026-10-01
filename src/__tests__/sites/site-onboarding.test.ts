@@ -274,9 +274,9 @@ describe('publishing refuses unconfirmed findings', () => {
 describe('POST /:name/verify', () => {
   const verify = (body: Record<string, unknown> = {}) => app.inject({ method: 'POST', url: '/sites/payroll/verify', payload: body })
   /** OPA answering `data.rbac.decision` per case: admins (and the admin role) everywhere, nobody else. */
-  const opaAnswers = () => h.opa.mockImplementation(async (_query: string, input: { cases: Record<string, { membership: Record<string, string[]>; emails: Record<string, Record<string, string[]>> }> }) =>
+  const opaAnswers = () => h.opa.mockImplementation(async (_query: string, input: { cases: Record<string, { membership: Record<string, string[]>; probeBinding: Record<string, string[]> }> }) =>
     Object.fromEntries(Object.entries(input.cases).map(([k, c]) => {
-      const admin = (c.membership[PROBE_EMAIL] ?? []).includes('admins') || (c.emails[PROBE_EMAIL]?.payroll ?? []).includes('admin')
+      const admin = (c.membership[PROBE_EMAIL] ?? []).includes('admins') || (c.probeBinding.payroll ?? []).includes('admin')
       return [k, { allow: admin, reason: admin ? 'ok' : 'forbidden' }]
     })))
   const publish = async () => {
@@ -325,18 +325,20 @@ describe('POST /:name/verify', () => {
     expect(body.probe.results.map((r: { route: string; expect: string; status: number; verdict: string }) => [r.route, r.expect, r.status, r.verdict])).toEqual([
       ['health', 'public', 200, 'ok'], ['payslips', 'protected', 401, 'ok'], ['create', 'protected', 401, 'ok'], ['catch-all', 'protected', 401, 'ok'],
     ])
-    expect(body.access.subjects.map((s: { key: string }) => s.key)).toEqual(['group:admins', 'org-group:payroll-editors', 'role:admin', 'role:editor', 'role:viewer', 'signed-in'])
+    // Org roles join the subjects once the site intent declares them (wave V4).
+    expect(body.access.subjects.map((s: { key: string }) => s.key)).toEqual(['group:admins', 'role:admin', 'role:editor', 'role:viewer', 'signed-in'])
     expect(body.access.rows[1]).toEqual({
       route: 'payslips', method: 'GET', path: '/api/orgs/:orgId/payslips', access: 'payslips:read',
-      answers: { 'group:admins': 'ok', 'org-group:payroll-editors': 'forbidden', 'role:admin': 'ok', 'role:editor': 'forbidden', 'role:viewer': 'forbidden', 'signed-in': 'forbidden' },
+      answers: { 'group:admins': 'ok', 'role:admin': 'ok', 'role:editor': 'forbidden', 'role:viewer': 'forbidden', 'signed-in': 'forbidden' },
     })
     // One query for the whole matrix, about a synthetic caller in the route's organization, at aal2.
     expect(h.opa).toHaveBeenCalledTimes(1)
     const cases = h.opa.mock.calls[0][1].cases
-    expect(Object.keys(cases)).toHaveLength(4 * 6)
+    expect(Object.keys(cases)).toHaveLength(4 * 5)
     expect(cases['1:1']).toEqual({
       input: { email: PROBE_EMAIL, action: 'GET', object: `/api/orgs/${PROBE_ORG}/payslips`, app: 'payroll', aal: 'aal2' },
-      membership: {}, emails: {}, orgs: { [PROBE_EMAIL]: [PROBE_ORG] }, orgGrants: { [PROBE_ORG]: { [PROBE_EMAIL]: ['payroll-editors'] } },
+      membership: { [PROBE_EMAIL]: ['site_verify_probe'] }, probeBinding: { payroll: ['admin'] }, orgs: { [PROBE_EMAIL]: [PROBE_ORG] },
+      assignments: {}, entitled: ['jinbe', 'payroll'],
     })
     expect(body.curl[2]).toEqual({
       route: 'create', method: 'POST', url: 'https://payroll.dev.example.com/api/orgs/x1/payslips',

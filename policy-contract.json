@@ -2,271 +2,13 @@
   "version": 1,
   "app": "jinbe",
   "catalogue": {
-    "access:check": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "access:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "audit:export": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "audit:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "gateway:apply": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": "prod"
-    },
-    "gateway:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "groups:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "groups:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "direct",
-      "four_eyes": "prod"
-    },
-    "groups.members:revoke": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "groups.members:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "direct",
-      "four_eyes": "prod"
-    },
-    "groups.mfa:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": "prod"
-    },
-    "org.audit:read": {
-      "scope": "org",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "org.keys:read": {
-      "scope": "org",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "org.keys:revoke": {
-      "scope": "org",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "org.keys:write": {
-      "scope": "org",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "org.members:read": {
-      "scope": "org",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "org.members:write": {
-      "scope": "org",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "orgs:delete": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "orgs:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "orgs:write": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "orgs.members:write": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "orgs.owners:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": "prod"
-    },
-    "policy.bundle:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "policy.bundle:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": "prod"
-    },
-    "recert:delete": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "recert:manage": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "recert:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "sessions:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "sessions:revoke": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "settings:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "settings.mcp:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "settings.signin:write": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": "prod"
-    },
-    "sites:apply": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "direct",
-      "four_eyes": "prod"
-    },
-    "sites:delete": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "sites:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "sites:write": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "sites.requests:approve": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "stats:read": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "users:create": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "users:delete": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "users:disable": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
     "users:read": {
       "scope": "platform",
       "step_up": false,
       "delegable": "direct",
       "four_eyes": false
     },
-    "users:recovery": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
-    "users:reset_second_factor": {
-      "scope": "platform",
-      "step_up": true,
-      "delegable": "never",
-      "four_eyes": false
-    },
-    "users:send_login_link": {
+    "users:create": {
       "scope": "platform",
       "step_up": false,
       "delegable": "direct",
@@ -284,19 +26,193 @@
       "delegable": "direct",
       "four_eyes": false
     },
-    "users:verify": {
-      "scope": "platform",
-      "step_up": false,
-      "delegable": "direct",
-      "four_eyes": false
-    },
     "users.metadata:write": {
       "scope": "platform",
       "step_up": false,
       "delegable": "direct",
       "four_eyes": false
     },
-    "zones:delete": {
+    "users:disable": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "users:recovery": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:verify": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:send_login_link": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:reset_second_factor": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "sessions:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sessions:revoke": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "access:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "access:check": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "groups:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "groups:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "groups.members:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "groups.members:revoke": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "groups.mfa:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "orgs:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "orgs.members:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs.owners:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "org.members:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.members:write": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.keys:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.keys:write": {
+      "scope": "org",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "org.keys:revoke": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.audit:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sites:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sites:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sites:apply": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "sites:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "sites.requests:approve": {
       "scope": "platform",
       "step_up": true,
       "delegable": "never",
@@ -312,6 +228,90 @@
       "scope": "platform",
       "step_up": true,
       "delegable": "never",
+      "four_eyes": false
+    },
+    "zones:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "gateway:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "gateway:apply": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "settings:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "settings.signin:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "settings.mcp:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "policy.bundle:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "policy.bundle:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "audit:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "audit:export": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "recert:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "recert:manage": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "recert:delete": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "stats:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
       "four_eyes": false
     }
   },
@@ -3805,8 +3805,25 @@
           }
         },
         {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/users/:id/membership",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
           "method": "GET",
-          "path": "/api/organizations/:organizationId/users/:id/groups",
+          "path": "/api/organizations/:organizationId/users/:id/roles",
           "permission": "org.members:read",
           "org_param": "organizationId",
           "reach": {
@@ -3821,23 +3838,6 @@
             "everyOrg": [
               "auditor",
               "security",
-              "super_admin",
-              "support"
-            ]
-          }
-        },
-        {
-          "method": "PUT",
-          "path": "/api/organizations/:organizationId/users/:id/membership",
-          "permission": "org.members:write",
-          "org_param": "organizationId",
-          "reach": {
-            "kind": "org",
-            "orgRoles": [
-              "member_manager",
-              "owner"
-            ],
-            "everyOrg": [
               "super_admin",
               "support"
             ]

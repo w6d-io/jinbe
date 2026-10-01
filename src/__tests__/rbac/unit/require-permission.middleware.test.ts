@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { PLATFORM_PERMISSIONS } from '../../../policy/catalog.js'
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import type { UserRbacInfo } from '../../../services/authorization-resolution.js'
 
@@ -96,7 +97,7 @@ describe("requirePermission('users:read')", () => {
       // Should set rbacInfo with admin groups
       expect(request.rbacInfo).toBeDefined()
       // What the bypass stamps must PASS the gate it skips: a permission, not a group name.
-      expect(request.rbacInfo?.permissions).toEqual(['*'])
+      expect(request.rbacInfo?.permissions).toEqual([...PLATFORM_PERMISSIONS])
     })
 
     it('stamps the super_admin role by default', async () => {
@@ -112,7 +113,7 @@ describe("requirePermission('users:read')", () => {
         email: 'dev@example.com',
         groups: ['super_admins'],
         roles: ['super_admin'],
-        permissions: ['*'],
+        permissions: [...PLATFORM_PERMISSIONS],
       })
     })
 
@@ -219,7 +220,7 @@ describe("requirePermission('users:read')", () => {
       expect(request.rbacInfo).toBeDefined()
     })
 
-    it('grants access through a legacy alias for one release (admin:read)', async () => {
+    it('a retired name (admin:read) grants nothing', async () => {
       mockState.opalUserInfo = {
         email: 'superadmin@example.com',
         groups: ['platform-admin'],
@@ -232,21 +233,21 @@ describe("requirePermission('users:read')", () => {
 
       await requireAdmin(request, reply)
 
-      expect(reply.send).not.toHaveBeenCalled()
-    })
-
-    it('never through a dotted ancestor: org:write does not open org.admins:write', async () => {
-      mockState.opalUserInfo = { email: 'o@example.com', groups: [], roles: [], permissions: ['org:write'] }
-      const reply = createMockReply()
-      await requirePermission('org.admins:write')(createMockRequest('o@example.com'), reply)
       expect(reply._statusCode).toBe(403)
     })
 
-    it('the wildcard passes every catalogue permission', async () => {
+    it('never through a dotted ancestor: orgs:write does not open orgs.owners:write', async () => {
+      mockState.opalUserInfo = { email: 'o@example.com', groups: [], roles: [], permissions: ['orgs:write'] }
+      const reply = createMockReply()
+      await requirePermission('orgs.owners:write')(createMockRequest('o@example.com'), reply)
+      expect(reply._statusCode).toBe(403)
+    })
+
+    it('a wildcard grants nothing: the permission itself is required', async () => {
       mockState.opalUserInfo = { email: 'root@example.com', groups: [], roles: [], permissions: ['*'] }
       const reply = createMockReply()
       await requirePermission('users:reset_second_factor')(createMockRequest('root@example.com'), reply)
-      expect(reply.send).not.toHaveBeenCalled()
+      expect(reply.status).toHaveBeenCalledWith(403)
     })
 
     it('refuses a group named like an admin group that grants nothing', async () => {

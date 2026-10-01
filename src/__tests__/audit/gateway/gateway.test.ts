@@ -12,8 +12,8 @@ const h = vi.hoisted(() => ({
 }))
 vi.mock('../../../authz/opa.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
-  rights: vi.fn(async (email: string) => ({ groups: [], roles: [], permissions: h.platform.has(email.split('@')[0]) ? ['admin:read'] : [] })),
-  manageableOrgs: vi.fn(async (email: string) => h.admins[email.split('@')[0]] ?? []),
+  rights: vi.fn(async (email: string) => ({ groups: [], roles: [], permissions: h.platform.has(email.split('@')[0]) ? ['audit:read'] : [] })),
+  orgPermissionsByOrg: vi.fn(async (email: string) => Object.fromEntries((h.admins[email.split('@')[0]] ?? []).map((o) => [o, ['org.audit:read']]))),
 }))
 vi.mock('../../../services/redis-client.service.js', async () => {
   const { MemoryRedis } = await import('../query/mocks.js')

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { PLATFORM_PERMISSIONS } from '../../policy/catalog.js'
 import { installRouteAccess } from '../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
@@ -39,10 +40,9 @@ beforeEach(() => {
   resetLabels()
   resetHomeCacheState()
   redisHolder.redis = new MemoryRedis()
-  // root: super admin · admin: admin:read without apply · support · org admins · nobody
-  opaWorld.permissions[email('root')] = ['*']
-  opaWorld.superAdmins.add(email('root'))
-  opaWorld.permissions[email('admin')] = ['admin:read', 'admin:write']
+  // root: super admin (every permission) · admin: reads and writes without apply · support · org admins · nobody
+  opaWorld.permissions[email('root')] = [...PLATFORM_PERMISSIONS]
+  opaWorld.permissions[email('admin')] = PLATFORM_PERMISSIONS.filter((p) => !['sites:apply', 'sites.requests:approve', 'settings:read'].includes(p))
   opaWorld.permissions[email('support')] = ['users:read', 'sessions:read', 'sessions:revoke', 'users:recovery']
   opaWorld.manageable[email('orga')] = [ORG_A]
   opaWorld.manageable[email('orgab')] = [ORG_A, ORG_B]

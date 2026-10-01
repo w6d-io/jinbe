@@ -53,19 +53,20 @@ vi.mock('../../services/organisation-store.js', () => ({
   organisationStoreConfigured: () => false,
 }))
 vi.mock('../../services/redis-rbac.repository.js', () => ({
-  redisRbacRepository: { getOrgAdmins: vi.fn(async () => ['acme-admin@example.com', 'super@example.com']) },
+  redisRbacRepository: { getGroups: vi.fn(async () => ({})), getRoles: vi.fn(async () => null) },
 }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
 
 // ── the world OPA holds (Redis → OPAL), as the stand-in answers it ──
 const JINBE: Record<string, string[]> = {
-  super: ['*'],
-  admin: ['admin:read', 'admin:write'],
+  super: ['groups:write', 'groups.members:write', 'orgs:read', 'sites:apply', 'stats:read', 'users:read'],
+  admin: ['groups:write', 'groups.members:write', 'orgs:read', 'stats:read', 'users:read'],
   support: ['sessions:read', 'sessions:revoke', 'users:read', 'users:recovery', 'users:send_login_link', 'users:update', 'users:update_email'],
   'acme-admin': [],
   nobody: [],
 }
-const MANAGEABLE: Record<string, string[]> = { 'acme-admin': ['acme'], super: [] }
+/** Who holds anything in which org: an owner of Acme; super_admin everywhere (the every-org map). */
+const IN_ORG: Record<string, string[] | '*'> = { 'acme-admin': ['acme'], super: '*' }
 const MEMBER: Record<string, string[]> = { 'acme-admin': ['acme'], super: [] }
 const who = (email: unknown) => String(email).split('@')[0]
 
@@ -73,18 +74,16 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
   switch (rule) {
     case 'rbac/user_info':
       return { email: input.email, app: input.app, groups: [], roles: [], permissions: JINBE[who(input.email)] ?? [] }
-    case 'rbac/super_admin':
-      return who(input.email) === 'super'
-    case 'rbac/delegation/manageable_orgs':
-      return MANAGEABLE[who((input.actor as { email: string }).email)] ?? []
     case 'rbac/caller_organizations':
       return MEMBER[who(input.email)] ?? []
     case 'rbac/decision': {
-      // The org layer: super_admin, or the roster admin of the org named in the path. Platform 2FA
-      // (§ 8c): super_admins need aal2 on a permission route unless the caller is an OAuth2 client.
+      // The org clause: grants in the org named in the path (an owner there, or super_admin's
+      // every-org reach). Platform 2FA (§ 8c): super_admins need aal2 on a permission route unless
+      // the caller is an OAuth2 client.
       const u = who(input.email)
       const org = String(input.object).split('/')[3]
-      const granted = u === 'super' || (MANAGEABLE[u] ?? []).includes(org)
+      const reach = IN_ORG[u]
+      const granted = reach === '*' || (reach ?? []).includes(org)
       const needs2fa = granted && u === 'super' && input.client !== true && input.aal !== 'aal2'
       const allow = granted && !needs2fa
       return { allow, groups: [], organizations: MEMBER[u] ?? [], reason: needs2fa ? 'needs_2fa' : allow ? 'ok' : 'forbidden' }
@@ -94,9 +93,7 @@ function answer(rule: string, input: Record<string, unknown>): unknown {
 }
 
 import { requirePermission } from '../../middleware/require-permission.js'
-import { requireServiceAdmin } from '../../middleware/require-service-admin.js'
-import { requireManageableOrg } from '../../middleware/require-manageable-org.js'
-import { requireOrgAdmin, requireOrgPermission } from '../../middleware/require-org-permission.js'
+import { requireOrgPermission } from '../../middleware/require-org-permission.js'
 import { clearAuthzCache } from '../../authz/opa.js'
 
 let app: FastifyInstance
@@ -125,18 +122,17 @@ beforeAll(async () => {
   })
   const ok = async (request: { rbacInfo?: unknown }) => ({ ok: true, rbacInfo: request.rbacInfo ?? null })
   await app.register(async (api) => {
-    // The catalogue gates the route-access hook attaches; admin:read / admin:write reach them as aliases.
+    // The catalogue gates the route-access hook attaches: exact names, nothing else.
     api.get('/t/admin', { preHandler: requirePermission('stats:read') }, ok)
     api.post('/t/super', { preHandler: requirePermission('groups:write') }, ok)
     api.post('/t/sites', { preHandler: requirePermission('sites:apply') }, ok)
-    api.get('/t/platform', { preHandler: requirePermission('org:read') }, ok)
+    api.get('/t/platform', { preHandler: requirePermission('orgs:read') }, ok)
     api.get('/t/users', { preHandler: requirePermission('users:read') }, ok)
     api.put('/t/groups', { preHandler: requirePermission('groups.members:write') }, ok)
     await api.register(async (org) => {
-      org.get('/users', { preHandler: [requireServiceAdmin('organizationId', { orgAdmin: true }), requireManageableOrg()] }, ok)
-      org.get('/grants', { preHandler: requireOrgAdmin('organizationId') }, ok)
-      org.get('/api-keys', { preHandler: requireOrgPermission('org:manage_api_keys') }, ok)
-      org.get('/members', { preHandler: requireOrgPermission('org:manage_users') }, ok)
+      org.get('/users', { preHandler: requireOrgPermission('org.members:read') }, ok)
+      org.get('/api-keys', { preHandler: requireOrgPermission('org.keys:read') }, ok)
+      org.get('/members', { preHandler: requireOrgPermission('org.members:write') }, ok)
     }, { prefix: '/organizations/:organizationId' })
   }, { prefix: '/api' })
   await app.ready()
@@ -163,7 +159,6 @@ const GUARDED: Array<['GET' | 'POST' | 'PUT', string]> = [
   ['GET', '/api/t/users'],
   ['PUT', '/api/t/groups'],
   ['GET', '/api/organizations/acme/users'],
-  ['GET', '/api/organizations/acme/grants'],
   ['GET', '/api/organizations/acme/api-keys'],
 ]
 
@@ -179,7 +174,7 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
     }
   })
 
-  it('the org member-management guard asks rbac/decision for the request itself', async () => {
+  it('the org gate asks rbac/decision for the request itself — and nothing else', async () => {
     await call('GET', '/api/organizations/acme/users?limit=5', 'acme-admin')
     expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toEqual({
       email: 'acme-admin@example.com',
@@ -189,14 +184,7 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
       aal: 'aal2',
       client: false,
     })
-  })
-
-  it('the org-admin guard asks super_admin and manageable_orgs', async () => {
-    await call('GET', '/api/organizations/acme/grants', 'acme-admin')
-    expect(s.calls.map((c) => [c.rule, c.input])).toEqual([
-      ['rbac/super_admin', { email: 'acme-admin@example.com', app: 'jinbe' }],
-      ['rbac/delegation/manageable_orgs', { actor: { email: 'acme-admin@example.com' } }],
-    ])
+    expect(s.calls.map((c) => c.rule)).toEqual(['rbac/decision'])
   })
 
   it('never reads the ConfigMap model', async () => {
@@ -214,18 +202,16 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
     }
   })
 
-  it('super_admin (`*`) passes every guard', async () => {
+  it('super_admin passes every guard by holding what each asks', async () => {
     for (const [method, url] of GUARDED) {
       const res = await call(method, url, 'super')
       expect(res.statusCode, `${method} ${url}`).toBe(200)
     }
   })
 
-  it('org admin of Acme manages Acme members and is refused Globex — OPA decides', async () => {
+  it('the owner of Acme manages Acme members and is refused Globex — OPA decides', async () => {
     expect((await call('GET', '/api/organizations/acme/users', 'acme-admin')).statusCode).toBe(200)
     expect((await call('GET', '/api/organizations/globex/users', 'acme-admin')).statusCode).toBe(403)
-    expect((await call('GET', '/api/organizations/acme/grants', 'acme-admin')).statusCode).toBe(200)
-    expect((await call('GET', '/api/organizations/globex/grants', 'acme-admin')).statusCode).toBe(403)
     expect((await call('GET', '/api/organizations/acme/api-keys', 'acme-admin')).statusCode).toBe(200)
     expect((await call('GET', '/api/organizations/globex/api-keys', 'acme-admin')).statusCode).toBe(403)
     // Holding nothing on the platform: the admin surfaces stay shut.
@@ -241,7 +227,7 @@ describe('AZ-1 — app-layer guards decide on OPA only', () => {
     expect((await call('GET', '/api/organizations/acme/users', 'support')).statusCode).toBe(403)
   })
 
-  it('an administrator holding admin:read/admin:write passes the admin guards but not sites:apply', async () => {
+  it('an administrator passes the guards for what they hold, and not sites:apply they do not', async () => {
     expect((await call('GET', '/api/t/admin', 'admin')).statusCode).toBe(200)
     expect((await call('POST', '/api/t/super', 'admin')).statusCode).toBe(200)
     expect((await call('GET', '/api/t/platform', 'admin')).statusCode).toBe(200)
@@ -259,11 +245,11 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
     app.inject({ url, headers: { 'x-test-user': user, 'x-test-scopes': scopes } })
 
   it('asks OPA about the USER, with the scopes the token carries (bound to no org)', async () => {
-    const res = await asClient('/api/organizations/acme/members', 'acme-admin', 'org:manage_users')
+    const res = await asClient('/api/organizations/acme/members', 'acme-admin', 'org.members:write')
     expect(res.statusCode).toBe(200)
     expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toEqual({
       email: 'acme-admin@example.com', object: '/api/organizations/acme/members', action: 'GET', app: 'jinbe', client: true,
-      delegated: true, scopes: ['org:manage_users'], client_id: 'claude',
+      delegated: true, scopes: ['org.members:write'], client_id: 'claude',
     })
   })
 
@@ -274,29 +260,29 @@ describe('requireOrgPermission — a user through a client (delegated token)', (
   })
 
   it('which org a call may touch is decided for the USER by the normal rules, not by the token', async () => {
-    expect((await asClient('/api/organizations/globex/members', 'super', 'org:manage_users')).statusCode).toBe(200)
-    expect((await asClient('/api/organizations/globex/members', 'acme-admin', 'org:manage_users')).statusCode).toBe(403)
+    expect((await asClient('/api/organizations/globex/members', 'super', 'org.members:write')).statusCode).toBe(200)
+    expect((await asClient('/api/organizations/globex/members', 'acme-admin', 'org.members:write')).statusCode).toBe(403)
   })
 
   it('the scope never widens the user: OPA refusing the user is still a 403', async () => {
-    expect((await asClient('/api/organizations/acme/members', 'nobody', 'org:manage_users')).statusCode).toBe(403)
+    expect((await asClient('/api/organizations/acme/members', 'nobody', 'org.members:write')).statusCode).toBe(403)
   })
 })
 
-describe('requireServiceAdmin — the org user routes through a client (MCP list_org_users)', () => {
+describe('the org gate — the org user routes through a client (MCP list_org_users)', () => {
   const asClient = (url: string, user: string, scopes: string) =>
     app.inject({ url, headers: { 'x-test-user': user, 'x-test-scopes': scopes } })
 
-  it('a delegated token is a client to OPA: no AAL to hold it to, so super_admin (*) is not refused as needs_2fa', async () => {
-    const res = await asClient('/api/organizations/acme/users', 'super', 'admin:read users:read')
+  it('a delegated token is a client to OPA: no AAL to hold it to, so super_admin is not refused as needs_2fa', async () => {
+    const res = await asClient('/api/organizations/acme/users', 'super', 'org.members:read users:read')
     expect(res.statusCode).toBe(200)
     expect(s.calls.find((c) => c.rule === 'rbac/decision')?.input).toMatchObject({ client: true, delegated: true, object: '/api/organizations/acme/users' })
   })
 
-  it("the org's roster admin passes for their org and is refused a sibling org, as in a session", async () => {
-    expect((await asClient('/api/organizations/acme/users', 'acme-admin', 'org:manage_users')).statusCode).toBe(200)
-    expect((await asClient('/api/organizations/globex/users', 'acme-admin', 'org:manage_users')).statusCode).toBe(403)
-    expect((await asClient('/api/organizations/acme/users', 'nobody', 'org:manage_users')).statusCode).toBe(403)
+  it("the org's owner passes for their org and is refused a sibling org, as in a session", async () => {
+    expect((await asClient('/api/organizations/acme/users', 'acme-admin', 'org.members:read')).statusCode).toBe(200)
+    expect((await asClient('/api/organizations/globex/users', 'acme-admin', 'org.members:read')).statusCode).toBe(403)
+    expect((await asClient('/api/organizations/acme/users', 'nobody', 'org.members:read')).statusCode).toBe(403)
   })
 
   it('a browser session is still held to the second factor: super_admin at aal1 is refused', async () => {

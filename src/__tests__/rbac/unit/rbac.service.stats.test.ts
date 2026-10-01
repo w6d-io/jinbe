@@ -106,8 +106,10 @@ describe('RbacService.getDirectoryStats — who is "in no group and can reach no
       ['orgadmin@x.io', binding('i-4', ['users'])],
       ['admin@x.io', binding('i-5', ['users', 'super_admins'])],
     ]))
-    redisMock.hashes.set('rbac:org_grants', { 'org-1': JSON.stringify({ 'Granted@X.io': ['fleet_pilots'] }) })
-    redisMock.hashes.set('rbac:org_admins', { 'org-2': JSON.stringify(['orgadmin@x.io']) })
+    redisMock.hashes.set('rbac:org_assignments', {
+      'org-1': JSON.stringify({ 'i-3': ['payroll:clerk'] }),
+      'org-2': JSON.stringify({ 'i-4': ['jinbe:owner'] }),
+    })
     const stats = await new RbacService().getDirectoryStats()
     expect(stats).toMatchObject({ total: 5, active: 4, unassigned: 1 })
   })

@@ -71,7 +71,7 @@ describe('RbacService - getBindingsFromKratos', () => {
     )
     const result = await service.getBindingsFromKratos()
     expect(result).toEqual({
-      emails: {},
+      org_assignments: {},
       group_membership: {
         'admin@example.com': ['admins', 'users'],
         'dev@example.com': ['devs', 'users'],
@@ -85,7 +85,7 @@ describe('RbacService - getBindingsFromKratos', () => {
     vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(new Map())
     const result = await service.getBindingsFromKratos()
     expect(result).toEqual({
-      emails: {},
+      org_assignments: {},
       group_membership: {},
       user_organizations: {},
       user_organization_primary: {},
@@ -191,12 +191,12 @@ describe('RbacService - getBindingsFromKratos', () => {
     await expect(service.getBindingsFromKratos()).rejects.toThrow('Kratos unavailable')
   })
 
-  it('should always include an empty emails object', async () => {
+  it('should always include org_assignments, empty without org roles', async () => {
     vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
       new Map([['user@example.com', binding(['users'])]])
     )
     const result = await service.getBindingsFromKratos()
-    expect(result.emails).toEqual({})
-    expect(Object.keys(result.emails)).toHaveLength(0)
+    expect(result.org_assignments).toEqual({})
+    expect(result).not.toHaveProperty("emails")
   })
 })

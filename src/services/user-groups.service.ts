@@ -1,6 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
-import { assertGrantWithinOwn, assertMayAssignGroup } from './rbac-escalation-guard.js'
+import { assertMayAssignGroup } from './rbac-escalation-guard.js'
 import { auditEventService } from './audit-event.service.js'
 import type { AuditAct } from './audit-types.js'
 import { diffUserGroups } from './audit-diff.js'
@@ -34,7 +34,7 @@ export type GroupUpdateActor = {
   /**
    * A personal MCP key standing on the second factor proven at its creation (delegated-step-up.ts —
    * owner decisions 2026-09-29 (c) and 2026-09-30: group assignment is normal work through a key).
-   * The escalation guard still runs: no `*` group, no super admins, never the caller.
+   * The holding rule still runs.
    */
   stepUpViaKey?: boolean
 }
@@ -51,31 +51,6 @@ export type ResolvedIdentity = {
   organizationId: string | null
 }
 
-/**
- * Discriminated policy for the privilege-escalation gate.
- *
- * - `super_admin_required` — global admin endpoint. Refuses unless the
- *   actor holds the global super_admin role (queried via OPA inside
- *   rbacService.assertSuperAdmin).
- * - `wildcard_in_org` — org-scoped endpoint. EVERY newly-added group (except
- *   the base `users` group, which confers nothing) is put to OPA
- *   `data.rbac.delegation.can_grant`, which is the SOLE authority. The rego
- *   re-resolves the actor's permissions from `email` (via the same
- *   `data.rbac.user_permissions` resolver the request authorizer uses, so the
- *   two cannot drift) and enforces the tenant boundary for everyone —
- *   delegated org admins AND service/super admins alike:
- *     • the group must be non-global and confined to the target org's single
- *       service (multi-service and global groups are NEVER grantable here — they
- *       go through the global admin endpoint), and
- *     • the actor must either administer the org and contain the group's
- *       permissions (delegated org admin), or hold `*` for the service
- *       (service/super admin).
- *   No permission set is carried in this policy; OPA always re-resolves it.
- */
-export type ActorPrivilegePolicy =
-  | { kind: 'super_admin_required' }
-  | { kind: 'wildcard_in_org'; orgId: string }
-
 export type ApplyGroupUpdateInput = {
   identity: ResolvedIdentity
   newGroups: string[]
@@ -87,7 +62,6 @@ export type ApplyGroupUpdateInput = {
   // `aal` / `secondFactorAt` carry the actor's second-factor state for the R2
   // step-up gate; sourced from the Kratos-validated session (request.userContext).
   actor: GroupUpdateActor
-  privilegePolicy: ActorPrivilegePolicy
   auditEventType: string
   auditExtraDetails?: Record<string, unknown>
 }
@@ -100,17 +74,6 @@ export type ApplyGroupUpdateResult =
 // assigning it is never a privilege change and is exempt from the delegation
 // gate (the rego would deny it anyway — it enforces "no vacuous grant").
 const BASE_GROUP = 'users'
-
-// The single service-agnostic org-admin flag group. Its authority is POSITIONAL
-// (granted in policy: rbac.is_org_admin + delegation.manageable_orgs), so it
-// carries an EMPTY binding and therefore does NOT register as admin-power. On the
-// global endpoint the priv gate keys on isAdminPowerGroup, which would SKIP this
-// group — letting a non-super platform admin mint an org admin. We force it
-// through the super_admin gate below. On the org-scoped endpoint it is already
-// gated (it is not the base group, so it goes to can_grant, which denies it —
-// 0 perms → not bundle-containable). Name must match the rego constant
-// rbac.org_admin_group.
-const ORG_ADMIN_FLAG_GROUP = 'org_admins'
 
 // R2 — a privilege-gated group assignment requires the ACTOR to have proven a
 // second factor (AAL2) within this window. Time-boxed step-up: a long-lived
@@ -131,7 +94,7 @@ const ORG_ADMIN_FLAG_GROUP = 'org_admins'
  */
 class UserGroupsService {
   async applyGroupUpdate(input: ApplyGroupUpdateInput): Promise<ApplyGroupUpdateResult> {
-    const { identity, newGroups, addGroups, actor, privilegePolicy, auditEventType, auditExtraDetails } = input
+    const { identity, newGroups, addGroups, actor, auditEventType, auditExtraDetails } = input
 
     // Serialize all group updates for THIS user under a per-user lock. The
     // removal privilege gate is computed from the oldGroups pre-image (read
@@ -190,39 +153,11 @@ class UserGroupsService {
     // store that decides it is simply the absence of a row.
     const finalGroups = addGroups ? [...oldGroups, ...addGroups.filter((g, i) => !oldGroups.includes(g) && addGroups.indexOf(g) === i)] : newGroups
     const newlyAdded = finalGroups.filter(g => !oldGroups.includes(g))
-    // Groups this (replace-semantics) update REMOVES. Containment must be
-    // SYMMETRIC — an org admin may only remove a group they could also grant.
-    // Without gating removals, a delegated admin could STRIP a more-privileged
-    // co-tenant: a replace PUT of {groups:["users"]} on a super_admin silently
-    // drops super_admins, because only *added* groups were ever checked. A
-    // removal the actor could not grant is refused (422), which preserves it.
+    // Groups this (replace-semantics) update REMOVES. Taking power away never escalates: the route
+    // already demanded groups.members:revoke, and nothing more is asked here (design §2.5).
     const removed = oldGroups.filter(g => !finalGroups.includes(g))
 
-    // Per-group privilege gate. Org-scoped (`wildcard_in_org`) is SYMMETRIC —
-    // both adds and removes go through can_grant. Global (`super_admin_required`)
-    // gates only *added* admin-power groups: that endpoint is already
-    // super_admin-gated at the route, and a super_admin may freely remove.
-    const toCheck: Array<{ group: string; op: 'add' | 'remove' }> = [
-      ...newlyAdded.map((group) => ({ group, op: 'add' as const })),
-      ...(privilegePolicy.kind === 'wildcard_in_org'
-        ? removed.map((group) => ({ group, op: 'remove' as const }))
-        : []),
-    ]
-
-    // Which changes must clear the privilege gate:
-    //  - org-scoped (`wildcard_in_org`): EVERY group except a genuinely empty
-    //    base group. The rego enforces single-service containment for ALL
-    //    groups, not just `*`-bearing ones, so gating on isAdminPowerGroup here
-    //    would let a multi-service read group (e.g. a cross-service `viewers`)
-    //    slip the tenant boundary. The base-group exemption is keyed on the
-    //    group actually conferring nothing (isEmptyGroup), not its name, so a
-    //    redefined base group is still put to can_grant — on add AND remove.
-    //  - global (`super_admin_required`): only admin-power groups need the
-    //    super_admin authority check; the endpoint is super_admin-gated.
-    // ONE read of the model, for every question the gates below ask of it. What this replaces asked
-    // Redis — the retired model — and got `false` for exactly the groups that had become the
-    // powerful ones, so the escalation gate, the target's second factor and the actor's step-up all
-    // quietly decided they were not needed.
+    // ONE read of the model, for every question the gates below ask of it.
     let facts: Map<string, GroupFacts>
     try {
       facts = await groupFacts([...newlyAdded, ...removed])
@@ -243,7 +178,7 @@ class UserGroupsService {
       }
     }
     const factsFor = (group: string): GroupFacts =>
-      facts.get(group) ?? { declared: false, everyOrganisation: false, empty: true }
+      facts.get(group) ?? { declared: false, platform: false, empty: true }
 
     // A group the model does not declare confers nothing, so recording it would write a membership
     // the engine never reads — an assignment that looks applied and grants nothing. Only ADDITIONS
@@ -264,35 +199,15 @@ class UserGroupsService {
       }
     }
 
-    const gated: Array<{ group: string; op: 'add' | 'remove' }> = []
-    for (const { group: g, op } of toCheck) {
-      const mustCheck = privilegePolicy.kind === 'wildcard_in_org'
-        ? !(g === BASE_GROUP && factsFor(g).empty)
-        : factsFor(g).everyOrganisation || g === ORG_ADMIN_FLAG_GROUP
-      if (mustCheck) gated.push({ group: g, op })
-    }
-
-    for (const { group: g, op } of gated) {
-      const denial = await this.checkPrivilegeEscalation(g, identity.email, actor, privilegePolicy, op, factsFor(g).everyOrganisation)
+    // THE HOLDING RULE, for every group added: the actor holds every permission it confers — what it
+    // carries into every org included (rbac-escalation-guard.ts). A super admin passes by holding
+    // everything; nobody passes by a flag.
+    const gated = newlyAdded.filter((g) => !(g === BASE_GROUP && factsFor(g).empty))
+    for (const g of gated) {
+      const denial = await this.checkGrantWithinOwn(g, identity.email, actor)
       if (denial) {
-        // Emit the currently-silent denied write (highest-signal audit event).
-        // checkPrivilegeEscalation only ever returns the ok:false variant.
-        this.emitDenied(denial.ok ? 'privilege_escalation_blocked' : String(denial.body.error ?? 'privilege_escalation_blocked'), identity, actor, g, denial.ok ? 422 : denial.status)
+        this.emitDenied(String(denial.body.error), identity, actor, g, denial.status)
         return denial
-      }
-    }
-
-    // GRANT ONLY WHAT YOU HOLD, for the groups the gate above does not cover (bound to one app, not
-    // platform-wide): nothing the actor lacks, never a staff group (rbac-escalation-guard.ts). Only on
-    // the global endpoint — the org endpoint refuses every such grant already.
-    if (privilegePolicy.kind === 'super_admin_required') {
-      for (const g of newlyAdded) {
-        if (gated.some((x) => x.group === g) || (g === BASE_GROUP && factsFor(g).empty)) continue
-        const denial = await this.checkGrantWithinOwn(g, identity.email, actor)
-        if (denial) {
-          this.emitDenied(String(denial.body.error), identity, actor, g, denial.status)
-          return denial
-        }
       }
     }
 
@@ -346,7 +261,7 @@ class UserGroupsService {
       const stale = this.stepUpDenial(actor, identity.email)
       if (stale) {
         const body = stale.ok ? {} : (stale.body as { error?: string; stepUp?: { observed?: unknown } })
-        this.emitDenied(body.error || 'reauth_required', identity, actor, gated[0]?.group, 422, body.stepUp?.observed)
+        this.emitDenied(body.error || 'reauth_required', identity, actor, gated[0], 422, body.stepUp?.observed)
         return stale
       }
     }
@@ -527,14 +442,14 @@ class UserGroupsService {
     return null
   }
 
-  /** The subset and staff rules for one added group: a 403 refusal, or null. */
+  /** The holding rule for one added group: a refusal, or null. */
   private async checkGrantWithinOwn(
     groupName: string,
     targetEmail: string,
     actor: { id?: string | null; email?: string | null; ip?: string | null },
   ): Promise<ApplyGroupUpdateResult & { ok: false } | null> {
     try {
-      await assertGrantWithinOwn(groupName, { id: actor.id, email: actor.email, ip: actor.ip })
+      await assertMayAssignGroup(groupName, { id: actor.id, email: actor.email, ip: actor.ip })
       return null
     } catch (e) {
       const within = grantRefusal(e, groupName, targetEmail)
@@ -547,100 +462,13 @@ class UserGroupsService {
       }
     }
   }
-
-  private async checkPrivilegeEscalation(
-    groupName: string,
-    targetEmail: string,
-    actor: { id?: string | null; email?: string | null; ip?: string | null },
-    policy: ActorPrivilegePolicy,
-    op: 'add' | 'remove' = 'add',
-    platformWide = false,
-  ): Promise<ApplyGroupUpdateResult | null> {
-    if (policy.kind === 'super_admin_required') {
-      try {
-        await rbacService.assertSuperAdmin(
-          `assign group '${groupName}' (grants admin privileges)`,
-          { id: actor.id, email: actor.email },
-        )
-        // A group granting '*', or any platform group to oneself: a super admin only.
-        if (op === 'add') await assertMayAssignGroup(groupName, targetEmail, { id: actor.id, email: actor.email, ip: actor.ip })
-        return null
-      } catch (e) {
-        const within = grantRefusal(e, groupName, targetEmail)
-        if (within) return within
-        const err = e as Error & { statusCode?: number }
-        return {
-          ok: false,
-          status: err.statusCode === 401 ? 401 : err.statusCode === 503 ? 503 : 422,
-          body: {
-            error: 'privilege_escalation_blocked',
-            message: err.message,
-            targetEmail,
-            blockingGroup: groupName,
-            hint: 'Only an existing super_admin can grant admin or super_admin groups.',
-            // A missing permission names it and who grants it (the hint above stays as it was).
-            ...refusalFacts(e),
-          },
-        }
-      }
-    }
-
-    // Org-scoped grant. NOT AVAILABLE in this model, and refused with a reason that says so rather
-    // than through a query that answers nothing: `strada.authz` has no delegation concept — no
-    // permission expresses "may hand out this group here", so there is nothing to check against.
-    // Assignment therefore goes through the global gate above until that permission is designed.
-    //
-    // Below is what it asked before, kept for what it documents about the intent.
-    //
-    // Org-scoped grant. OPA `can_grant` is the SOLE authority: it enforces the
-    // single-service tenant boundary (non-global, confined to the org's service)
-    // and the authority tier (delegated org admin with containment, OR a
-    // service-`*` admin), re-resolving the actor's permissions from `email` — so
-    // we pass ONLY the email, never a caller-supplied permission set. Fail-closed:
-    // canGrant returns false on any OPA error, and we require an actor email.
-    const blocked: ApplyGroupUpdateResult = {
-      ok: false,
-      status: 422,
-      body: {
-        error: 'privilege_escalation_blocked',
-        message:
-          op === 'remove'
-            ? `Cannot remove group '${groupName}' — removal is bounded by the same authority as granting, so you may only remove a group scoped to your organization's service whose permissions you already hold (an org admin cannot strip a more-privileged user)`
-            : `Cannot assign group '${groupName}' — on this endpoint you may only grant a group scoped to your organization's service whose permissions you already hold`,
-        targetEmail,
-        blockingGroup: groupName,
-        operation: op,
-        hint: 'Global or multi-service groups are not managed here — use the global admin endpoint (super_admin only).',
-      },
-    }
-
-    // J1: an org-scoped actor must never mint a platform-wide grant. Both branches refuse, so this
-    // only decides WHICH refusal the caller reads — but the two say different things, and a screen
-    // that reports "not managed here" for a global group is telling the operator where to go.
-    if (platformWide) return blocked
-
-    return {
-      ok: false,
-      status: 422,
-      body: {
-        applied: false,
-        error: 'delegation_not_defined',
-        message:
-          'This model defines no delegated authority to assign a group within one organisation. ' +
-          'A group granting in every organisation can make this change.',
-        targetEmail,
-        blockingGroup: groupName,
-        hint: 'Use the global assignment endpoint, or define a permission that expresses this delegation.',
-      },
-    }
-  }
 }
 
 /**
  * The two refusals of "grant only what you hold" answer 403 under their own code, with what is
  * missing and who grants it (rbac-escalation-guard.ts); every other refusal keeps its 422 above.
  */
-const WITHIN_OWN = new Set(['grant_exceeds_own', 'staff_group_super_admin_only'])
+const WITHIN_OWN = new Set(['grant_exceeds_own', 'defined_in_code'])
 
 function grantRefusal(e: unknown, groupName: string, targetEmail: string): (ApplyGroupUpdateResult & { ok: false }) | null {
   const err = e as Error & { code?: string; refusal?: Record<string, unknown> }
@@ -650,14 +478,6 @@ function grantRefusal(e: unknown, groupName: string, targetEmail: string): (Appl
     status: 403,
     body: { applied: false, ...err.refusal, error: err.code, code: err.code, message: err.message, targetEmail, blockingGroup: groupName },
   }
-}
-
-/** The permission facts a guard's refusal carries, for a body that keeps its own error and hint. */
-function refusalFacts(e: unknown): Record<string, unknown> {
-  const r = (e as { refusal?: Record<string, unknown> }).refusal
-  if (!r) return {}
-  const { permission, missing, grantedBy } = r
-  return { ...(permission ? { permission } : {}), ...(missing ? { missing } : {}), ...(grantedBy ? { grantedBy } : {}) }
 }
 
 export const userGroupsService = new UserGroupsService()

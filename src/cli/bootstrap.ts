@@ -1,10 +1,9 @@
 /**
  * Jinbe bootstrap CLI.
  *
- * Run as a Helm post-install/post-upgrade Job. Seeds RBAC defaults,
- * upserts Oathkeeper rules, merges built-in route_map, creates the
- * default admin identity (first run only), and writes a marker into
- * Redis so subsequent runs short-circuit.
+ * Run as a Helm post-install/post-upgrade Job: converges what jinbe owns in the RBAC store (its roles,
+ * route map, org roles, staff groups), upserts the built-in Oathkeeper rules, creates the default
+ * admin identity (first run only) and writes a marker into Redis.
  *
  * Exit codes:
  *   0 — success (including no-op and lock-held paths)
@@ -13,23 +12,41 @@
  *   3 — bootstrap failed (after passing env + dependency checks)
  *   4 — schema downgrade detected
  *   5 — marker corruption
+ *   6 — the stored RBAC is the previous model's and no reviewed plan approves moving it (nothing changed)
+ *   7 — break-glass refused
  *
- * `--plan [--out DIR] [--opa]` (authz v2, wave V0): READ-ONLY. Takes no lock, writes no marker and
- * no RBAC key (only the shared identity-directory cache may refresh); reads the live v1 RBAC state with jinbe's own credentials and writes the v2 review
- * list (plan.json, plan.md) to DIR (default /tmp/jinbe-authz-plan). `--opa` also checks every listed
- * person's v1 platform permissions against OPA. Run it inside the jinbe pod:
- *   kubectl exec deploy/jinbe -- node dist/cli/bootstrap.js --plan --out /tmp/plan --opa
- *   kubectl cp <pod>:/tmp/plan ./plan
+ * Commands, run inside the jinbe pod (`kubectl exec deploy/jinbe -- node dist/cli/bootstrap.js …`):
+ *
+ *   --plan [--out DIR] [--opa]          READ-ONLY review list (plan.json, plan.md, planHash): today's
+ *                                       state, every rule after the apply, each person's gains and
+ *                                       losses, orphans, the migration map. `--opa` checks today's
+ *                                       platform permissions against OPA. No lock, no RBAC write.
+ *   --apply --expect HASH [--out DIR]   the reviewed move: mandatory store snapshot (file + S3), wipe,
+ *                                       reseed from code and the applied sites; refused unless the
+ *                                       live state still gives HASH.
+ *   --restore-snapshot FILE|S3KEY       puts the store back exactly as a snapshot holds it (rollback:
+ *                                       then redeploy the previous release).
+ *   --break-glass --email A --reason R [--minutes N] [--dry-run]
+ *                                       the one emergency path (bootstrap/break-glass.ts); the offline
+ *                                       code is read from stdin.
  */
 
 import pino from 'pino'
 import { env } from '../config/env.js'
 import { redisClientService } from '../services/redis-client.service.js'
-import { runBootstrap, SchemaDowngradeError } from '../bootstrap/index.js'
+import { runBootstrap, SchemaDowngradeError, MigrationNotApprovedError, SCHEMA_VERSION } from '../bootstrap/index.js'
 import { readMarker, MarkerCorruptError } from '../bootstrap/marker.js'
 import { waitForRedis, waitForKratos, DependencyTimeoutError } from '../bootstrap/wait-deps.js'
 import { buildBuiltInRules, OPTIONAL_BUILT_IN_RULE_IDS } from '../bootstrap/build-rules.js'
-import { runPlan } from '../authz-v2/plan/run.js'
+import { runPlan } from '../bootstrap/plan/run.js'
+import { applyModel, PlanMismatchError } from '../bootstrap/apply.js'
+import { loadSnapshot, restoreSnapshot } from '../bootstrap/snapshot.js'
+import { breakGlass, BreakGlassError } from '../bootstrap/break-glass.js'
+import { acquireLock, releaseLock, generateHolderId } from '../bootstrap/lock.js'
+import { writeMarker } from '../bootstrap/marker.js'
+import { canonicalHash } from '../bootstrap/hash.js'
+import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
+import { getRedisClient } from '../services/redis-client.service.js'
 import type { BootstrapConfig } from '../bootstrap/types.js'
 
 const EXIT = {
@@ -39,6 +56,8 @@ const EXIT = {
   BOOTSTRAP_FAILED: 3,
   SCHEMA_DOWNGRADE: 4,
   MARKER_CORRUPT: 5,
+  NOT_APPROVED: 6,
+  BREAK_GLASS_REFUSED: 7,
 } as const
 
 function argValue(name: string): string | undefined {
@@ -68,7 +87,7 @@ function configFromEnv(): BootstrapConfig {
   }
 }
 
-/** `--plan`: the read-only v2 review list. */
+/** `--plan`: the read-only review list. */
 async function plan(logger: pino.Logger): Promise<number> {
   try {
     await waitForRedis({ logger })
@@ -85,10 +104,113 @@ async function plan(logger: pino.Logger): Promise<number> {
     logger.warn({ err: (err as Error).message }, 'plan: built-in rules could not be built from the environment — every rule id is listed')
   }
   try {
-    await runPlan({ logger, outDir: argValue('--out') ?? '/tmp/jinbe-authz-plan', opa: process.argv.includes('--opa'), docs: env.ENABLE_SWAGGER, builtInRuleIds })
+    await runPlan({ logger, outDir: argValue('--out') ?? '/tmp/jinbe-authz-plan', opa: process.argv.includes('--opa'), builtInRuleIds })
     return EXIT.SUCCESS
   } catch (err) {
     logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'plan failed')
+    return EXIT.BOOTSTRAP_FAILED
+  }
+}
+
+/** `--apply --expect HASH`: the reviewed move, under the bootstrap lock, marker written last. */
+async function apply(logger: pino.Logger): Promise<number> {
+  const expect = argValue('--expect')
+  if (!expect) {
+    logger.error('--apply needs --expect <planHash> from a reviewed --plan')
+    return EXIT.NOT_APPROVED
+  }
+  try {
+    await waitForRedis({ logger })
+    await waitForKratos({ url: env.KRATOS_ADMIN_URL, token: env.KRATOS_ADMIN_TOKEN, logger })
+  } catch (err) {
+    if (err instanceof DependencyTimeoutError) return EXIT.DEPENDENCY_TIMEOUT
+    throw err
+  }
+  const holder = generateHolderId()
+  if (!(await acquireLock(holder))) {
+    logger.error('The bootstrap lock is held by another runner — retry when it is done')
+    return EXIT.BOOTSTRAP_FAILED
+  }
+  try {
+    const config = configFromEnv()
+    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer })
+    const previous = await readMarker()
+    const result = await applyModel({
+      logger, expect, firstRun: false, builtInRules, gitSha: env.COMMIT_SHA || 'unknown',
+      snapshotDir: env.JINBE_SNAPSHOT_DIR, planDir: argValue('--out'),
+    })
+    const now = new Date().toISOString()
+    await writeMarker({
+      version: env.APP_VERSION || 'unknown',
+      schemaVersion: SCHEMA_VERSION,
+      gitSha: env.COMMIT_SHA || 'unknown',
+      bootstrappedAt: previous?.bootstrappedAt ?? now,
+      lastUpgradeAt: now,
+      previousSchemaVersion: previous?.schemaVersion ?? null,
+      manualMigration: previous?.manualMigration,
+      migrations: [...(previous?.migrations ?? []), { from: previous?.schemaVersion ?? null, to: SCHEMA_VERSION, appliedAt: now, gitSha: env.COMMIT_SHA || 'unknown' }],
+      builtInsHash: { rules: canonicalHash(builtInRules), routeMap: canonicalHash(GENERATED_ROUTE_MAP) },
+    })
+    logger.info({ ...result }, 'Applied. Rollback: --restore-snapshot <snapshot>, then redeploy the previous release')
+    return EXIT.SUCCESS
+  } catch (err) {
+    if (err instanceof PlanMismatchError) {
+      logger.error({ actual: err.actual, expected: err.expected }, err.message)
+      return EXIT.NOT_APPROVED
+    }
+    logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'apply failed')
+    return EXIT.BOOTSTRAP_FAILED
+  } finally {
+    await releaseLock(holder).catch(() => undefined)
+  }
+}
+
+/** `--restore-snapshot FILE|S3KEY`: the store exactly as the snapshot holds it. */
+async function restore(logger: pino.Logger): Promise<number> {
+  const from = argValue('--restore-snapshot')
+  if (!from) {
+    logger.error('--restore-snapshot needs a file path or an S3 key')
+    return EXIT.INVALID_ENV
+  }
+  try {
+    await waitForRedis({ logger })
+    const snapshot = await loadSnapshot(from)
+    const result = await restoreSnapshot(getRedisClient(), snapshot)
+    logger.warn({ from, takenAt: snapshot.takenAt, ...result }, 'RBAC store restored from the snapshot — now redeploy the release that wrote it')
+    return EXIT.SUCCESS
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, 'restore failed')
+    return EXIT.BOOTSTRAP_FAILED
+  }
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8').trim()
+}
+
+/** `--break-glass`: restore one super_admin membership, time-bounded and alerted. */
+async function breakGlassCommand(logger: pino.Logger): Promise<number> {
+  try {
+    await waitForRedis({ logger })
+    const result = await breakGlass({
+      email: argValue('--email') ?? '',
+      reason: argValue('--reason') ?? '',
+      code: await readStdin(),
+      expectedSha256: env.JINBE_BREAK_GLASS_CODE_SHA256,
+      minutes: Number(argValue('--minutes') ?? '60'),
+      dryRun: process.argv.includes('--dry-run'),
+      logger,
+    })
+    logger.warn({ result }, process.argv.includes('--dry-run') ? 'break-glass dry run: everything is in place' : 'break-glass applied')
+    return EXIT.SUCCESS
+  } catch (err) {
+    if (err instanceof BreakGlassError) {
+      logger.error({ err: err.message }, 'break-glass refused')
+      return EXIT.BREAK_GLASS_REFUSED
+    }
+    logger.error({ err: (err as Error).message }, 'break-glass failed')
     return EXIT.BOOTSTRAP_FAILED
   }
 }
@@ -104,6 +226,9 @@ async function main(): Promise<number> {
   })
 
   if (process.argv.includes('--plan')) return plan(logger)
+  if (process.argv.includes('--apply')) return apply(logger)
+  if (process.argv.includes('--restore-snapshot')) return restore(logger)
+  if (process.argv.includes('--break-glass')) return breakGlassCommand(logger)
 
   logger.info({ schemaTarget: 1 }, 'Bootstrap CLI starting')
 
@@ -181,10 +306,16 @@ async function main(): Promise<number> {
       version: env.APP_VERSION || 'unknown',
       force,
       config: configFromEnv(),
+      expectPlan: env.JINBE_RBAC_APPLY_EXPECT ?? null,
+      snapshotDir: env.JINBE_SNAPSHOT_DIR,
     })
     logger.info({ outcome: result.outcome }, 'Bootstrap CLI finished')
     return EXIT.SUCCESS
   } catch (err) {
+    if (err instanceof MigrationNotApprovedError || err instanceof PlanMismatchError) {
+      logger.error({ err: err.message }, 'The stored RBAC was not moved: review --plan, then --apply --expect <planHash>')
+      return EXIT.NOT_APPROVED
+    }
     if (err instanceof SchemaDowngradeError) {
       logger.error(
         { markerVersion: err.markerVersion, codeVersion: err.codeVersion },

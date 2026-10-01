@@ -79,7 +79,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/organizations',
     {
-      ...needs('org:write'),
+      ...needs('orgs:write'),
       schema: {
         description:
           'Create an organisation from a name. No service bundle is required. Needs org:write.',
@@ -161,7 +161,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/organizations/:id',
     {
-      ...needs('org:write'),
+      ...needs('orgs:write'),
       schema: {
         description:
           'Change an organisation: name, tenant, and/or the whole set of applications it has. Needs org:write.',
@@ -225,7 +225,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/organizations/:id',
     {
-      ...needs('org:delete'),
+      ...needs('orgs:delete'),
       schema: {
         description: 'Delete an organisation that has no members left. Needs org:delete and a recent second factor.',
         tags: ['admin'],

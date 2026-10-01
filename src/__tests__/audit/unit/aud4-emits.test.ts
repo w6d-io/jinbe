@@ -87,29 +87,6 @@ describe('recert campaign create and delete are audited', () => {
   })
 })
 
-describe('org roster and service map changes carry a diff', () => {
-  beforeEach(() => h.emit.mockClear())
-
-  it('setOrgAdmins → org.admins.changed with added/removed', async () => {
-    await rbacService.setOrgAdmins('org-1', ['b@example.com', 'c@example.com'], ACTOR)
-    await settle()
-    // Legacy type → org.admins.changed through the v1 legacy map.
-    expect(lastEvent()).toMatchObject({
-      type: 'rbac.org_admins_set',
-      changes: { resource: 'org_admin_map', id: 'org-1', added: ['c@example.com'], removed: ['a@example.com'] },
-    })
-  })
-
-  it('setOrgServiceMapping / delete → org.services.changed with added/removed', async () => {
-    await rbacService.setOrgServiceMapping('org-1', ['kuma', 'grafana'], ACTOR)
-    await settle()
-    expect(lastEvent()).toMatchObject({ type: 'rbac.org_service_mapping_set', changes: { added: ['grafana'], removed: [] } })
-    await rbacService.deleteOrgServiceMapping('org-1', ACTOR)
-    await settle()
-    expect(lastEvent()).toMatchObject({ type: 'rbac.org_service_mapping_deleted', changes: { added: [], removed: ['kuma', 'grafana'] } })
-  })
-})
-
 describe('access check, API-key use, sites', () => {
   beforeEach(() => { h.emit.mockClear(); h.kv.clear() })
 

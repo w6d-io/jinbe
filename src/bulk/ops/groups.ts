@@ -7,9 +7,6 @@ import { isSelf, may, notFound, resolveUser, type BulkOp, type Outcome } from '.
 
 type Add = { user: string; groups: string[] }
 
-/** The flag group whose authority is positional; the grant gate forces it through super_admin. */
-const ORG_ADMIN_FLAG_GROUP = 'org_admins'
-
 /**
  * Add people to platform groups, like PUT /admin/users/:email/groups with the adds only: the route
  * carries groups.members:write and its step-up, and each item goes through the same grant gate
@@ -44,15 +41,14 @@ export const groupsMembersAdd: BulkOp<Add, Record<string, never>, Map<string, Gr
     const held = (await groupsForSubjects([identity.id])).get(identity.id) ?? []
     const adds = item.groups.filter((g) => !held.includes(g))
     if (adds.length === 0) return { status: 'skip', reason: 'already_member' }
-    const privileged = adds.find((g) => facts.get(g)?.everyOrganisation || g === ORG_ADMIN_FLAG_GROUP)
+    const privileged = adds.find((g) => facts.get(g)?.platform)
     // A key stands on its creation-time second factor for group grants (owner decision 2026-09-30);
     // without that proof (key created without protected actions, or too old) a platform-wide grant is refused.
     if (privileged && caller.delegated && !caller.groupActor.stepUpViaKey) return { status: 'refused', reason: `step_up_unavailable:${privileged}` }
-    // The escalation guard as the run will ask it: no `*`, no staff group, nothing the caller lacks.
-    const target = typeof identity.traits?.email === 'string' ? identity.traits.email : ''
+    // The holding rule as the run will ask it: nothing the caller does not hold.
     for (const g of adds) {
       try {
-        await assertMayAssignGroup(g, target, { id: caller.id, email: caller.audit.email ?? null, ip: caller.audit.ip ?? null })
+        await assertMayAssignGroup(g, { id: caller.id, email: caller.audit.email ?? null, ip: caller.audit.ip ?? null })
       } catch (e) {
         const err = e as { statusCode?: number; code?: string }
         if (err.statusCode === 401 || err.statusCode === 503) return { status: 'refused', reason: 'unavailable' }
@@ -75,7 +71,6 @@ export const groupsMembersAdd: BulkOp<Add, Record<string, never>, Map<string, Gr
       newGroups: [],
       addGroups: item.groups,
       actor: caller.groupActor,
-      privilegePolicy: { kind: 'super_admin_required' },
       auditEventType: 'user.groups_changed',
       auditExtraDetails: { bulk: ctx.jobId },
     })

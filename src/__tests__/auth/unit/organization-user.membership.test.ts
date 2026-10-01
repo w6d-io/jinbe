@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { orgRolesRepository } from '../../../services/org-roles.repository.js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 // Stories 8 and 9. Removing somebody from an organisation is about that organisation: the person,
@@ -93,6 +94,8 @@ vi.mock('../../../services/kratos.service.js', () => ({
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: { notifyBindingsChanged: vi.fn().mockResolvedValue(undefined) },
 }))
+vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetMember: vi.fn(async () => {}), setForMember: vi.fn(async () => {}) } }))
+vi.mock('../../../services/org-role-grants.js', () => ({ orgRoleRefusals: vi.fn(async () => []) }))
 vi.mock('../../../services/user-groups.service.js', () => ({ userGroupsService: {} }))
 vi.mock('../../../services/group-catalogue.js', () => ({
   declaredGroups: vi.fn(),
@@ -172,6 +175,8 @@ describe('removing somebody from an organisation (story 8)', () => {
 
     expect(removeMemberEverywhere).not.toHaveBeenCalled()
     expect(state.memberships.get(BOB)).toEqual([GLOBEX])
+    // Their org roles in Acme go with the membership; Globex's stay.
+    expect(orgRolesRepository.forgetMember).toHaveBeenCalledWith(ACME, BOB)
   })
 
   it('takes the organisation off the identity too, so the next console edit does not put it back', async () => {

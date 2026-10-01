@@ -147,9 +147,16 @@ export const notificationsDeadLettered = new Counter({
   labelNames: ['reason'] as const,
 })
 
-// authz v2: a code-owned rbac2 key found changed by hand and rewritten (authz-v2/store.ts converge).
+// RBAC owned by jinbe found changed by hand and rewritten (bootstrap/owned-keys.ts converge).
 export const rbacOwnedDrift = new Counter({
   name: 'jinbe_rbac_owned_drift_total',
-  help: 'Code-owned authz v2 keys found edited outside jinbe and converged back, by key',
+  help: 'RBAC slots owned by jinbe found edited outside jinbe and converged back, by slot',
   labelNames: ['key'] as const,
+})
+
+// Break-glass (bootstrap/break-glass.ts): every use and every expiry, alerting material.
+export const breakGlassUses = new Counter({
+  name: 'jinbe_break_glass_total',
+  help: 'Break-glass super_admin restorations, by event (used, expired)',
+  labelNames: ['event'] as const,
 })

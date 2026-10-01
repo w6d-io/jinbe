@@ -107,7 +107,7 @@ describe('rbacOpalRoutes — /bindings', () => {
   describe('GET /bindings', () => {
     it('returns the full bindings shape including org membership and groups (all of data.bindings)', async () => {
       const bindings = {
-        emails: {},
+        org_assignments: {},
         group_membership: { 'user@example.com': ['users'] },
         user_organizations: { 'user@example.com': ['org-1', 'org-2'] },
         user_organization_primary: { 'user@example.com': 'org-1' },
@@ -123,7 +123,7 @@ describe('rbacOpalRoutes — /bindings', () => {
     })
 
     it('answers 503 when the group store fails, so OPAL keeps the last good bindings (groups included)', async () => {
-      mocks.getBindingsFromKratos.mockResolvedValueOnce({ emails: {}, group_membership: {}, user_organizations: {}, user_organization_primary: {} })
+      mocks.getBindingsFromKratos.mockResolvedValueOnce({ org_assignments: {}, group_membership: {}, user_organizations: {}, user_organization_primary: {} })
       mocks.getGroups.mockRejectedValueOnce(new Error('redis down'))
 
       const reply = createMockReply()

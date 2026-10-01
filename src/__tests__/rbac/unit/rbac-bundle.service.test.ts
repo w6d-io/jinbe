@@ -54,17 +54,23 @@ import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 
 const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
 
+/** ADMIN holds billing's admin role before importing (the holding rule reads the store as it is). */
+async function adminHoldsBilling() {
+  await redisRbacRepository.setRoles('billing', { admin: ['billing:write'] })
+  await redisRbacRepository.setGroup('admins', { billing: ['admin'] })
+  opaWorld.groups[ADMIN.email] = ['admins']
+}
+
 function makeBundle(overrides: Partial<AuthBundle['rbac']> = {}): AuthBundle {
   return {
     version: '1',
     exportedAt: new Date().toISOString(),
     rbac: {
-      services: ['jinbe'],
-      groups: { admins: { jinbe: ['admin'] } },
-      roles: { jinbe: { admin: ['*'] } },
-      routeMaps: { jinbe: { rules: [] } },
-      oathkeeperRules: [createOathkeeperRule('jinbe') as OathkeeperRule],
-      orgServiceMap: {},
+      services: ['billing'],
+      groups: { admins: { billing: ['admin'] } },
+      roles: { billing: { admin: ['billing:write'] } },
+      routeMaps: { billing: { rules: [] } },
+      oathkeeperRules: [createOathkeeperRule('billing') as OathkeeperRule],
       ...overrides,
     },
   }
@@ -75,7 +81,6 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     vi.clearAllMocks()
     redisMock.clear()
     resetOpaWorld()
-    opaWorld.superAdmins.add(ADMIN.email)
   })
 
   // Fail-closed: with the default enabled sets (cookie_session,noop /
@@ -85,7 +90,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     it('rejects a bundle with a rule using a disabled handler (jwt) — nothing written', async () => {
       // Pre-existing state that must survive the rejected import untouched.
       await redisRbacRepository.setAccessRules([createOathkeeperRule('existing') as OathkeeperRule])
-      await redisRbacRepository.setGroup('old-group', { jinbe: ['viewer'] })
+      await redisRbacRepository.setGroup('old-group', { billing: ['viewer'] })
 
       const bad = makeBundle({
         oathkeeperRules: [
@@ -106,7 +111,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       // nothing was written: rules, groups and services untouched, no history entry
       const rules = await redisRbacRepository.getAccessRules()
       expect(rules.map((r) => r.id)).toEqual(['existing'])
-      expect(await redisRbacRepository.getGroups()).toEqual({ 'old-group': { jinbe: ['viewer'] } })
+      expect(await redisRbacRepository.getGroups()).toEqual({ 'old-group': { billing: ['viewer'] } })
       expect(await redisRbacRepository.getServices()).toEqual([])
       expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
     })
@@ -124,13 +129,13 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       const result = await rbacBundleService.import(makeBundle())
       expect(result.rbac.oathkeeperRules).toBe(1)
       const rules = await redisRbacRepository.getAccessRules()
-      expect(rules.map((r) => r.id)).toEqual(['jinbe'])
+      expect(rules.map((r) => r.id)).toEqual(['billing'])
     })
   })
 
   describe('group bindings (group-bindings.ts)', () => {
-    it('rejects 422 a group binding super_admin outside global, or a role its service will not define — nothing written', async () => {
-      for (const groups of [{ alt: { jinbe: ['super_admin'] } }, { desk: { jinbe: ['support'] } }]) {
+    it('rejects 422 a group binding a role its service will not define — nothing written', async () => {
+      for (const groups of [{ desk: { billing: ['support'] } }]) {
         const err = await rbacBundleService.import(makeBundle({ groups })).catch((e) => e)
         expect(err.statusCode).toBe(422)
       }
@@ -139,10 +144,10 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     })
 
     it('reads a groups-only import against the roles already stored', async () => {
-      await redisRbacRepository.setRoles('jinbe', { admin: ['*'], viewer: ['read'] })
-      const ok = await rbacBundleService.import(makeBundle({ groups: { v: { jinbe: ['viewer'] } } }), undefined, ['groups']).catch((e) => e)
+      await redisRbacRepository.setRoles('billing', { admin: ['billing:write'], viewer: ['billing:read'] })
+      const ok = await rbacBundleService.import(makeBundle({ groups: { v: { billing: ['viewer'] } } }), undefined, ['groups']).catch((e) => e)
       expect(ok.statusCode).toBeUndefined()
-      const err = await rbacBundleService.import(makeBundle({ groups: { v: { jinbe: ['editor'] } } }), undefined, ['groups']).catch((e) => e)
+      const err = await rbacBundleService.import(makeBundle({ groups: { v: { billing: ['editor'] } } }), undefined, ['groups']).catch((e) => e)
       expect(err.statusCode).toBe(422)
     })
   })
@@ -150,60 +155,64 @@ describe('RbacBundleService — import validation, history, rollback', () => {
   describe('route ties across services', () => {
     it('rejects a bundle where two services own one route at the same rank — nothing written', async () => {
       const bad = makeBundle({
-        services: ['jinbe', 'billing'],
+        services: ['billing', 'shop'],
         routeMaps: {
-          jinbe: { rules: [{ method: 'GET', path: '/api/clusters/:id', permission: 'clusters:read' }] },
-          billing: { rules: [{ method: 'GET', path: '/api/clusters/:clusterId' }] },
+          billing: { rules: [{ method: 'GET', path: '/api/clusters/:id', permission: 'clusters:read' }] },
+          shop: { rules: [{ method: 'GET', path: '/api/clusters/:clusterId' }] },
         },
       })
       const err = await rbacBundleService.import(bad).catch((e) => e)
       expect(err.statusCode).toBe(409)
-      expect(err.message).toMatch(/jinbe.*\/api\/clusters\/:id.*billing|billing.*jinbe/)
+      expect(err.message).toMatch(/billing|shop/)
       expect(await redisRbacRepository.getServices()).toEqual([])
       expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
     })
 
     it('a routeMaps-only import is checked against the services it leaves in place', async () => {
-      await redisRbacRepository.addService('kuma')
-      await redisRbacRepository.addService('jinbe')
-      await redisRbacRepository.setRouteMap('kuma', { rules: [{ method: 'GET', path: '/api/x' }] })
-      const bad = makeBundle({ routeMaps: { jinbe: { rules: [{ method: 'GET', path: '/api/x' }] } } })
+      await redisRbacRepository.addService('shop')
+      await redisRbacRepository.addService('billing')
+      await redisRbacRepository.setRouteMap('shop', { rules: [{ method: 'GET', path: '/api/x' }] })
+      const bad = makeBundle({ routeMaps: { billing: { rules: [{ method: 'GET', path: '/api/x' }] } } })
       const err = await rbacBundleService.import(bad, undefined, ['routeMaps']).catch((e) => e)
       expect(err.statusCode).toBe(409)
-      expect(await redisRbacRepository.getRouteMap('jinbe')).toBeNull()
+      expect(await redisRbacRepository.getRouteMap('billing')).toBeNull()
     })
   })
 
   describe('route org_param (J-1)', () => {
     it('rejects a route whose org_param names no :param of its path — nothing written', async () => {
       const bad = makeBundle({
-        routeMaps: { jinbe: { rules: [{ method: 'GET', path: '/api/fleet/orgs/:id', permission: 'r', org_param: 'orgId' }] } },
+        routeMaps: { billing: { rules: [{ method: 'GET', path: '/api/fleet/orgs/:id', permission: 'r', org_param: 'orgId' }] } },
       })
       const err = await rbacBundleService.import(bad).catch((e) => e)
       expect(err.statusCode).toBe(400)
-      expect(err.message).toMatch(/jinbe.*org_param/)
+      expect(err.message).toMatch(/billing.*org_param/)
       expect(await redisRbacRepository.getServices()).toEqual([])
       expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
     })
 
     it('keeps a valid org_param through the import', async () => {
       const rules = [{ method: 'GET', path: '/api/fleet/orgs/:orgId', permission: 'r', org_param: 'orgId' }]
-      await rbacBundleService.import(makeBundle({ routeMaps: { jinbe: { rules } } }))
-      expect(await redisRbacRepository.getRouteMap('jinbe')).toEqual({ rules })
+      await rbacBundleService.import(makeBundle({ routeMaps: { billing: { rules } } }))
+      expect(await redisRbacRepository.getRouteMap('billing')).toEqual({ rules })
     })
   })
 
   describe('import history (rbac:import:history)', () => {
     it('pushes a pre-import snapshot on every import, newest first, with actor + reason', async () => {
+      await rbacBundleService.import(makeBundle())
+      await adminHoldsBilling()
+      redisMock.clear()
+      await adminHoldsBilling()
       await rbacBundleService.import(makeBundle(), ADMIN)
-      await rbacBundleService.import(makeBundle({ services: ['jinbe', 'kuma'] }))
+      await rbacBundleService.import(makeBundle({ services: ['billing', 'shop'] }))
 
       const history = await redisRbacRepository.getImportHistory()
       expect(history).toHaveLength(2)
       // newest first: the second import's snapshot captured the FIRST bundle's state
       expect(history[0].reason).toBe('pre-import')
       expect(history[0].actor).toBeNull()
-      expect((history[0].bundle as AuthBundle).rbac.services).toEqual(['jinbe'])
+      expect((history[0].bundle as AuthBundle).rbac.services).toEqual(['billing'])
       // the first import's snapshot captured the empty pre-state
       expect(history[1].actor).toBe('admin@example.com')
       expect((history[1].bundle as AuthBundle).rbac.services).toEqual([])
@@ -211,7 +220,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
     it('caps the history at 10 entries (LTRIM)', async () => {
       for (let i = 0; i < 12; i++) {
-        await rbacBundleService.import(makeBundle({ groups: { [`g${i}`]: { jinbe: ['viewer'] } } }))
+        await rbacBundleService.import(makeBundle({ groups: { [`g${i}`]: { billing: ['viewer'] } } }))
       }
       const history = await redisRbacRepository.getImportHistory()
       expect(history).toHaveLength(10)
@@ -221,7 +230,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
     it('lists history without the bundle payload but with per-section counts', async () => {
       await rbacBundleService.import(makeBundle())
-      await rbacBundleService.import(makeBundle({ services: ['jinbe', 'kuma'] }))
+      await rbacBundleService.import(makeBundle({ services: ['billing', 'shop'] }))
 
       const list = await rbacBundleService.listImportHistory()
       expect(list).toHaveLength(2)
@@ -235,31 +244,35 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
   describe('rollback', () => {
     it('restores the previous state from a history entry and snapshots pre-rollback state', async () => {
-      const bundleA = makeBundle({ groups: { 'team-a': { jinbe: ['admin'] } } })
+      const bundleA = makeBundle({ groups: { 'team-a': { billing: ['admin'] } } })
       const bundleB = makeBundle({
-        services: ['jinbe', 'kuma'],
-        groups: { 'team-b': { kuma: ['viewer'] } },
-        oathkeeperRules: [createOathkeeperRule('jinbe') as OathkeeperRule, createOathkeeperRule('kuma') as OathkeeperRule],
+        services: ['billing', 'shop'],
+        groups: { 'team-b': { shop: ['viewer'] } },
+        oathkeeperRules: [createOathkeeperRule('billing') as OathkeeperRule, createOathkeeperRule('shop') as OathkeeperRule],
       })
       await rbacBundleService.import(bundleA)
       await rbacBundleService.import(bundleB)
 
       // head of history = snapshot taken before B was applied → state A
       const [preB] = await rbacBundleService.listImportHistory()
+      // The actor holds what state A grants (the holding rule reads the store as it is).
+      await redisRbacRepository.setGroup('admins', { billing: ['admin'] })
+      await redisRbacRepository.setRoles('billing', { admin: ['billing:write'] })
+      opaWorld.groups[ADMIN.email] = ['admins']
       const { entry, result } = await rbacBundleService.rollback(preB.id, ADMIN)
       expect(entry.id).toBe(preB.id)
       expect(result.rbac.services).toBe(1)
 
       // state A is back (full restore: kuma pruned, team-b gone)
-      expect(await redisRbacRepository.getServices()).toEqual(['jinbe'])
-      expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { jinbe: ['admin'] } })
-      expect((await redisRbacRepository.getAccessRules()).map((r) => r.id)).toEqual(['jinbe'])
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+      expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { billing: ['admin'] } })
+      expect((await redisRbacRepository.getAccessRules()).map((r) => r.id)).toEqual(['billing'])
 
       // and the rollback itself snapshotted state B first (reason pre-rollback)
       const history = await redisRbacRepository.getImportHistory()
       expect(history[0].reason).toBe('pre-rollback')
       expect(history[0].actor).toBe('admin@example.com')
-      expect((history[0].bundle as AuthBundle).rbac.services).toEqual(['jinbe', 'kuma'])
+      expect((history[0].bundle as AuthBundle).rbac.services).toEqual(['billing', 'shop'])
     })
 
     it('throws 404 for an unknown history entry id', async () => {
@@ -269,35 +282,52 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
   describe('compensation on mid-way failure', () => {
     it('restores the pre-import snapshot when a Redis write throws mid-way', async () => {
-      await rbacBundleService.import(makeBundle({ groups: { 'team-a': { jinbe: ['admin'] } } }))
+      await rbacBundleService.import(makeBundle({ groups: { 'team-a': { billing: ['admin'] } } }))
 
       // Fail the rules write of the NEXT import only; the compensating
       // applyBundle falls through to the real implementation.
       const spy = vi.spyOn(redisRbacRepository, 'setAccessRules').mockRejectedValueOnce(new Error('redis down'))
 
-      const bundleB = makeBundle({ services: ['jinbe', 'kuma'], groups: { 'team-b': { kuma: ['viewer'] } } })
+      const bundleB = makeBundle({ services: ['billing', 'shop'], groups: { 'team-b': { shop: ['viewer'] } } })
       await expect(rbacBundleService.import(bundleB)).rejects.toThrow('redis down')
 
       // pre-import state was restored (kuma pruned back out, team-a back)
-      expect(await redisRbacRepository.getServices()).toEqual(['jinbe'])
-      expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { jinbe: ['admin'] } })
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+      expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { billing: ['admin'] } })
       spy.mockRestore()
     })
   })
 
-  // Grant only what you hold: a non-super-admin's import changes no group beyond what they hold.
-  describe('an import by somebody short of a super admin', () => {
+  describe('what code defines is never imported', () => {
+    it("drops jinbe's roles and route map, the staff groups, and a previous model's global and kuma", async () => {
+      await rbacBundleService.import(makeBundle({
+        services: ['billing', 'jinbe', 'kuma'],
+        groups: { super_admins: { global: ['super_admin'] }, team: { billing: ['admin'], jinbe: ['viewer'], kuma: ['admin'] } },
+        roles: { billing: { admin: ['billing:write'] }, jinbe: { viewer: ['users:read'] }, global: { super_admin: ['*'] } },
+        routeMaps: { billing: { rules: [] }, jinbe: { rules: [] } },
+        orgServiceMap: { acme: ['billing', 'kuma', 'jinbe'] },
+      }))
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+      expect(await redisRbacRepository.getGroups()).toEqual({ team: { billing: ['admin'] } })
+      expect(await redisRbacRepository.getRoles('jinbe')).toBeNull()
+      expect(await redisRbacRepository.getRoles('global')).toBeNull()
+      expect(await redisRbacRepository.getOrgSites()).toEqual({ acme: ['billing'] })
+    })
+  })
+
+  // Grant only what you hold: an import changes no group beyond what its importer holds.
+  describe('an import by a person', () => {
     const OPS = { id: 'id-ops', email: 'ops@example.com' }
     const seed = async () => {
       await rbacBundleService.import({
         ...makeBundle(),
         rbac: {
           ...makeBundle().rbac,
-          groups: { 'staff-ops': { global: ['ops'] }, 'staff-security': { global: ['security'] }, readers: { jinbe: ['viewer'] } },
-          roles: { global: { ops: ['zones:write', 'sites:read'], security: ['users:reset_second_factor'] }, jinbe: { admin: ['*'], viewer: ['sites:read'] } },
+          groups: { 'ops-team': { billing: ['ops'] }, 'sec-team': { billing: ['security'] }, readers: { billing: ['viewer'] } },
+          roles: { billing: { ops: ['zones:write', 'sites:read'], security: ['users:reset_second_factor'], viewer: ['sites:read'] } },
         },
-      }, ADMIN)
-      opaWorld.groups[OPS.email] = ['staff-ops']
+      })
+      opaWorld.groups[OPS.email] = ['ops-team']
     }
     const bundleWith = async (groups: Record<string, Record<string, string[]>>) => {
       const current = await rbacBundleService.export()
@@ -307,34 +337,22 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
     it('refuses a group granting what they do not hold — nothing written', async () => {
       await seed()
-      const err = await refusal(rbacBundleService.import(await bundleWith({ helpdesk: { global: ['security'] } }), OPS))
+      const err = await refusal(rbacBundleService.import(await bundleWith({ helpdesk: { billing: ['security'] } }), OPS))
       expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
       expect(err?.refusal).toMatchObject({ missing: ['users:reset_second_factor'] })
       expect(await redisRbacRepository.getGroup('helpdesk')).toBeNull()
     })
 
-    it('refuses a change to a staff group, even within what they hold', async () => {
-      await seed()
-      const err = await refusal(rbacBundleService.import(await bundleWith({ 'staff-security': { global: ['ops'] } }), OPS))
-      expect(err).toMatchObject({ statusCode: 403, code: 'staff_group_super_admin_only' })
-    })
-
-    it("refuses a group granting '*'", async () => {
-      await seed()
-      const err = await refusal(rbacBundleService.import(await bundleWith({ roots: { jinbe: ['admin'] } }), OPS))
-      expect(err).toMatchObject({ statusCode: 403, code: 'grants_everything' })
-    })
-
     it('lets through an import that changes nothing beyond what they hold', async () => {
       await seed()
-      await rbacBundleService.import(await bundleWith({ edge: { global: ['ops'] } }), OPS)
-      expect(await redisRbacRepository.getGroup('edge')).toEqual({ global: ['ops'] })
+      await rbacBundleService.import(await bundleWith({ edge: { billing: ['ops'] } }), OPS)
+      expect(await redisRbacRepository.getGroup('edge')).toEqual({ billing: ['ops'] })
     })
 
     it('reads what a group grants off the roles the import leaves: widening a bound role is widening the group', async () => {
       await seed()
       const current = await rbacBundleService.export()
-      const bundle = { ...current, rbac: { ...current.rbac, roles: { ...current.rbac.roles, jinbe: { ...current.rbac.roles.jinbe, viewer: ['sites:read', 'users:delete'] } } } }
+      const bundle = { ...current, rbac: { ...current.rbac, roles: { ...current.rbac.roles, billing: { ...current.rbac.roles.billing, viewer: ['sites:read', 'users:delete'] } } } }
       const err = await refusal(rbacBundleService.import(bundle, OPS))
       expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
       expect(err?.refusal).toMatchObject({ missing: ['users:delete'] })
@@ -343,7 +361,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     it('fails closed when OPA cannot be asked', async () => {
       await seed()
       opaWorld.down = true
-      const err = await refusal(rbacBundleService.import(await bundleWith({ edge: { global: ['ops'] } }), OPS))
+      const err = await refusal(rbacBundleService.import(await bundleWith({ edge: { billing: ['ops'] } }), OPS))
       expect(err?.statusCode).toBe(503)
     })
   })

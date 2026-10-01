@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { PERMISSIONS } from '../../../policy/catalog.js'
 import { installRouteAccess } from '../../../policy/route-access.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 
@@ -47,8 +48,8 @@ afterAll(async () => { await app.close() })
 
 beforeEach(() => {
   resetOpaWorld()
-  opaWorld.permissions['reader@example.com'] = ['admin:read']
-  opaWorld.permissions['root@example.com'] = ['*']
+  opaWorld.permissions['reader@example.com'] = ['policy.bundle:read', 'settings:read']
+  opaWorld.permissions['root@example.com'] = [...PERMISSIONS]
 })
 
 const WRITES: Array<[string, string, unknown]> = [

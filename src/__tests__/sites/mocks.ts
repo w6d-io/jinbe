@@ -44,10 +44,10 @@ export class InlineRedisMock {
 /** The RBAC keys the Sites apply path writes, in memory, with a write log for ordering assertions. */
 export function makeRbacStore() {
   const s = {
-    services: new Set<string>(['jinbe', 'kuma']),
+    services: new Set<string>(['jinbe']),
     routeMaps: {} as Record<string, RouteMap>,
     roles: {} as Record<string, Record<string, string[]>>,
-    groups: { admins: { kuma: ['admin'] }, super_admins: { global: ['super_admin'] } } as Record<string, Record<string, string[]>>,
+    groups: { admins: {}, super_admins: { jinbe: ['super_admin'] } } as Record<string, Record<string, string[]>>,
     groupMeta: {} as Record<string, unknown>,
     serviceMeta: {} as Record<string, unknown>,
     orgMap: {} as Record<string, string[]>,
@@ -74,20 +74,20 @@ export function makeRbacStore() {
     getServiceMetadata: async (n: string) => s.serviceMeta[n] ?? null,
     setServiceMetadata: async (n: string, m: unknown) => { s.serviceMeta[n] = m },
     deleteServiceMetadata: async (n: string) => { delete s.serviceMeta[n] },
-    getOrgServiceMap: async () => structuredClone(s.orgMap),
-    setOrgServiceMapping: async (o: string, svcs: string[]) => {
-      s.log.push(`setOrgServiceMapping:${o}`)
-      if (svcs.length === 0) delete s.orgMap[o]
-      else s.orgMap[o] = svcs
+    getOrgSites: async () => structuredClone(s.orgMap),
+    setOrgSites: async (o: string, sites: string[]) => {
+      s.log.push(`setOrgSites:${o}`)
+      if (sites.length === 0) delete s.orgMap[o]
+      else s.orgMap[o] = sites
     },
     getAccessRules: async () => s.accessRules,
     setAccessRules: async (rules: OathkeeperRule[]) => { s.log.push('setAccessRules'); s.accessRules = rules },
   }
   const reset = () => {
-    s.services = new Set(['jinbe', 'kuma'])
+    s.services = new Set(['jinbe'])
     s.routeMaps = {}
     s.roles = {}
-    s.groups = { admins: { kuma: ['admin'] }, super_admins: { global: ['super_admin'] } }
+    s.groups = { admins: {}, super_admins: { jinbe: ['super_admin'] } }
     s.groupMeta = {}
     s.serviceMeta = {}
     s.orgMap = {}

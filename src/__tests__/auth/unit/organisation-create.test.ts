@@ -116,7 +116,7 @@ describe('POST /api/admin/organizations', () => {
     const [route] = await mount()
 
     expect(route.path).toBe('/organizations')
-    expect((route.opts as { config?: { permission?: string } }).config?.permission).toBe('org:write')
+    expect((route.opts as { config?: { permission?: string } }).config?.permission).toBe('orgs:write')
     expect(route.opts.schema).toMatchObject({ tags: ['admin'], body: { required: ['name'] } })
   })
 

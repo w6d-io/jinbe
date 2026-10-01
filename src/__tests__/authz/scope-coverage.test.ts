@@ -1,20 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { clientGranted, isGrantableScope, scopeCovers } from '../../services/authorization-resolution.js'
+import { clientGranted, isGrantableScope } from '../../services/authorization-resolution.js'
 
-describe('scopeCovers — scope ⊆ permission, the covers rule and nothing wider', () => {
-  it('equal or a dotted ancestor, same verb', () => {
-    expect(scopeCovers(['payroll:read'], 'payroll.runs:read')).toBe(true)
-    expect(scopeCovers(['payroll.runs:read'], 'payroll.runs:read')).toBe(true)
-    expect(scopeCovers(['payroll:read'], 'payroll.runs:write')).toBe(false)
-    expect(scopeCovers(['payroll.run:read'], 'payroll.runs:read')).toBe(false)
-  })
-
-  it('a wildcard in a token covers nothing', () => {
+describe('isGrantableScope — a token carries exact names only', () => {
+  it('a wildcard is never a grantable scope', () => {
+    expect(isGrantableScope('payroll.runs:read')).toBe(true)
     expect(isGrantableScope('*')).toBe(false)
     expect(isGrantableScope('payroll:*')).toBe(false)
-    expect(scopeCovers(['*'], 'payroll:read')).toBe(false)
-    expect(scopeCovers(['payroll:*'], 'payroll:read')).toBe(false)
-    expect(scopeCovers(['mcp', 'offline_access'], 'payroll:read')).toBe(false)
   })
 })
 

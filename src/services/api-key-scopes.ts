@@ -1,21 +1,20 @@
 import { env } from '../config/index.js'
-import { isSuperAdmin, rights } from '../authz/opa.js'
+import { orgPermissionsByOrg, rights } from '../authz/opa.js'
 import { redisRbacRepository } from './redis-rbac.repository.js'
-import { orgGrantsRepository } from './org-grants.repository.js'
-import { covers, isGrantableScope } from './authorization-resolution.js'
+import { isGrantableScope } from './authorization-resolution.js'
 
 /**
  * The scopes an API key of ONE organization may be given: a scope is a permission (`resource:verb`),
  * and the catalog is derived per org, never written down.
  *
  * A permission is offered when ALL hold:
- *   - a route of a site the organization runs requires it (data.org_service_map[org] → each site's
- *     route_map). A permission no route asks for would open nothing;
- *   - the person creating the key holds it there — the set the org layer decides with: site grants
- *     (their groups' roles in that site) ∪ org_grants[org] in that site, or a global/site `*` — matched
- *     exactly, as the gateway matches a site route. A key never carries more than its creator could do;
- *   - API_KEY_ALLOWED_SCOPES, when set, covers it (a ceiling, never a widening);
- *   - it is grantable: no `*`, no wildcard verb.
+ *   - a route of a site the organization is entitled to requires it (data.org_sites[org] → each
+ *     site's route_map). A permission no route asks for would open nothing;
+ *   - the person creating the key holds it there — their platform roles in that site ∪ the org roles
+ *     assigned to them in that org for that site (OPA) — matched exactly, as the gateway matches a
+ *     site route. A key never carries more than its creator could do;
+ *   - API_KEY_ALLOWED_SCOPES, when set, lists it (a ceiling, never a widening);
+ *   - it is grantable: a plain `resource:verb`.
  *
  * Grouped by permission, listing the sites whose routes ask for it, so a console can show what each
  * scope opens.
@@ -26,23 +25,15 @@ export interface ScopeCatalogEntry {
   sites: string[]
 }
 
-/** What `email` holds in one site: site grants ∪ the granted groups' roles there (org_permissions). */
-export async function heldIn(email: string, site: string, grantedGroups: readonly string[]): Promise<string[]> {
-  const held = new Set((await rights(email, site)).permissions)
-  if (grantedGroups.length > 0) {
-    // org_permissions(email, org, svc) in org.rego: the granted groups' roles IN THIS SITE only.
-    const groups = await redisRbacRepository.getGroups()
-    const roles = (await redisRbacRepository.getRoles(site)) ?? {}
-    for (const group of grantedGroups) {
-      for (const role of groups[group]?.[site] ?? []) for (const p of roles[role] ?? []) held.add(p)
-    }
-  }
-  return [...held]
+/** What `email` holds in one site for one org: platform roles there ∪ org roles in that org (OPA). */
+export async function heldIn(email: string, site: string, organizationId: string): Promise<string[]> {
+  const [platform, byOrg] = await Promise.all([rights(email, site), orgPermissionsByOrg(email, site)])
+  return [...new Set([...platform.permissions, ...(byOrg[organizationId] ?? [])])]
 }
 
 function withinCeiling(scope: string): boolean {
   const ceiling = env.API_KEY_ALLOWED_SCOPES
-  return ceiling.length === 0 || ceiling.some((c) => covers(c, scope))
+  return ceiling.length === 0 || ceiling.includes(scope)
 }
 
 /**
@@ -50,11 +41,8 @@ function withinCeiling(scope: string): boolean {
  * AuthzUnavailableError when OPA cannot be asked — "could not tell" is never an empty catalog.
  */
 export async function scopeCatalog(organizationId: string, email: string): Promise<ScopeCatalogEntry[]> {
-  const sites = (await redisRbacRepository.getOrgServiceMap())[organizationId] ?? []
+  const sites = (await redisRbacRepository.getOrgSites())[organizationId] ?? []
   if (sites.length === 0) return []
-
-  const everything = await isSuperAdmin(email)
-  const granted = everything ? [] : await orgGrantsRepository.getForMember(organizationId, email.toLowerCase())
 
   const bySite = new Map<string, Set<string>>()
   for (const site of [...new Set(sites)].sort()) {
@@ -65,13 +53,10 @@ export async function scopeCatalog(organizationId: string, email: string): Promi
         .filter((p): p is string => typeof p === 'string' && isGrantableScope(p) && withinCeiling(p)),
     )
     if (asked.size === 0) continue
-    const held = everything ? ['*'] : await heldIn(email, site, granted)
-    const star = held.includes('*')
+    const held = await heldIn(email, site, organizationId)
     for (const permission of asked) {
-      // Exactly as the gateway grants a site route (rbac.rego user_has_permission): the permission
-      // itself or `*` — no dotted ancestry there, so none here, or the catalog would offer a scope
-      // the user could not use.
-      if (!star && !held.includes(permission)) continue
+      // Exactly as the gateway grants a site route: the permission itself, nothing else.
+      if (!held.includes(permission)) continue
       const entry = bySite.get(permission) ?? new Set<string>()
       entry.add(site)
       bySite.set(permission, entry)

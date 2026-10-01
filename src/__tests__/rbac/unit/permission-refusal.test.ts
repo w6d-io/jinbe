@@ -10,7 +10,6 @@ const h = vi.hoisted(() => ({ held: [] as string[] }))
 vi.mock('../../../authz/opa.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: h.held })),
-  isSuperAdmin: vi.fn(async () => false),
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => null) } }))
 vi.mock('../../../audit/deny.js', () => ({ denyAudit: vi.fn() }))
@@ -19,19 +18,19 @@ vi.mock('../../../services/redis-client.service.js', () => ({
   getRedisClient: () => ({ incr: async () => 1, expire: async () => 1, ttl: async () => 60 }),
 }))
 vi.mock('../../../services/redis-rbac.repository.js', async () => {
-  const { globalRoleDefinitions, ROLES, STAFF_ROLES } = await import('../../../policy/roles.js')
-  const roles: Record<string, Record<string, string[]>> = { global: globalRoleDefinitions(), jinbe: {} }
-  const groups = { ...Object.fromEntries(STAFF_ROLES.map((r) => [ROLES[r].group, { global: [r] }])), 'helpdesk-members': { jinbe: ['member'] } }
+  const { roleDefinitions, everyOrgDefinitions, staffGroups } = await import('../../../policy/roles.js')
+  const roles: Record<string, Record<string, string[]>> = { jinbe: { ...roleDefinitions(), member: ['users:read'] } }
+  const groups = { ...staffGroups(), 'helpdesk-members': { jinbe: ['member'] } }
   return {
     redisRbacRepository: {
       getGroups: vi.fn(async () => groups),
       getRoles: vi.fn(async (s: string) => roles[s] ?? null),
+      getEveryOrg: vi.fn(async (s: string) => (s === 'jinbe' ? everyOrgDefinitions() : null)),
     },
   }
 })
 
 import { requirePermission } from '../../../middleware/require-permission.js'
-import { requireGlobalSuperAdmin } from '../../../middleware/require-admin.js'
 import { delegationGate } from '../../../middleware/delegation-gate.js'
 import { forbiddenResponseSchema } from '../../../schemas/response-schemas.js'
 import { recordRoute, resetDeclaredRoutes } from '../../../policy/declared-routes.js'
@@ -57,11 +56,11 @@ beforeAll(async () => {
   // The response schema every guarded route declares for 403: the fields must survive it.
   const schema = { response: { 403: forbiddenResponseSchema } }
   app.post('/api/admin/users/:id/second-factor/reset', { schema, preHandler: requirePermission('users:reset_second_factor') }, async () => ({ ok: true }))
-  app.get('/api/clusters', { schema, preHandler: requireGlobalSuperAdmin }, async () => ({ ok: true }))
+  app.delete('/api/admin/users/:id', { schema, preHandler: requirePermission('users:delete') }, async () => ({ ok: true }))
   app.setErrorHandler(errorHandler)
   // What POST /api/admin/rbac/groups does with the guard's refusal (rbac.service createGroup).
   app.post('/api/admin/rbac/groups', { schema }, async (request) => {
-    await assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { global: ['security'] } }, { id: 'u-1', email: 'ops@example.com' })
+    await assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, { id: 'u-1', email: 'ops@example.com' })
     return { ok: true }
   })
   app.put('/api/admin/users/:id/state', { schema, preHandler: requirePermission('users:disable') }, async () => ({ ok: true }))
@@ -70,7 +69,7 @@ beforeAll(async () => {
 afterAll(() => app.close())
 
 describe('a 403 for a missing permission', () => {
-  it('names the permission, the groups granting it (the wildcard last), and who to ask', async () => {
+  it('names the permission, the groups granting it (the narrowest first), and who to ask', async () => {
     h.held = ['zones:write']
     const res = await app.inject({ method: 'POST', url: '/api/admin/users/u-2/second-factor/reset' })
     expect(res.statusCode).toBe(403)
@@ -84,10 +83,10 @@ describe('a 403 for a missing permission', () => {
     })
   })
 
-  it("a super-admin-only route names '*' and super_admins", async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/clusters' })
+  it('a permission only super_admin holds names super_admins — a permission like any other', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/admin/users/u-2' })
     expect(res.statusCode).toBe(403)
-    expect(res.json()).toMatchObject({ error: 'Forbidden', code: 'permission_required', permission: '*', grantedBy: ['super_admins'] })
+    expect(res.json()).toMatchObject({ error: 'Forbidden', code: 'permission_required', permission: 'users:delete', grantedBy: ['super_admins'] })
   })
 
   it('a key missing the scope keeps insufficient_scope and its reason, and says what grants the permission', async () => {
@@ -103,7 +102,7 @@ describe('a 403 for a missing permission', () => {
   })
 
   it('a key refused outright (never delegable) carries no permission facts to act on', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/clusters', headers: { 'x-scopes': 'users:read' } })
+    const res = await app.inject({ method: 'DELETE', url: '/api/admin/users/u-2', headers: { 'x-scopes': 'users:read' } })
     expect(res.statusCode).toBe(403)
     expect(res.json()).toMatchObject({ code: 'delegation_refused' })
     expect(res.json().grantedBy).toBeUndefined()
@@ -119,7 +118,7 @@ describe("the escalation guard's refusal, through the error handler", () => {
     expect(body).toMatchObject({
       code: 'grant_exceeds_own',
       missing: expect.arrayContaining(['users:reset_second_factor']),
-      missingByScope: { global: expect.arrayContaining(['users:reset_second_factor']) },
+      missingByScope: { jinbe: expect.arrayContaining(['users:reset_second_factor']), 'every_org:jinbe': ['org.audit:read', 'org.keys:read', 'org.members:read'] },
       grantedBy: ['staff-security', 'super_admins'],
       hint: 'Ask an administrator to add you to one of: staff-security, super_admins.',
     })

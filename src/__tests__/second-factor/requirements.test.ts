@@ -68,9 +68,10 @@ describe('permissions', () => {
     expect(stepUpRule('not:real')).toBeNull()
   })
 
-  it('which held permissions need a recent second factor (aliases and * resolved)', () => {
+  it('which held permissions need a recent second factor (exact names; `*` is none)', () => {
     expect(stepUpPermissionsOf(['sites:read', 'sites:apply'])).toEqual(['sites:apply'])
-    expect(stepUpPermissionsOf(['*'])).toContain('settings.signin:write')
+    expect(stepUpPermissionsOf(['*'])).toEqual([])
+    expect(stepUpPermissionsOf(['settings.signin:write'])).toEqual(['settings.signin:write'])
   })
 })
 
