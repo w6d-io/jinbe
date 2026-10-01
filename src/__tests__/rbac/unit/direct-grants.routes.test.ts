@@ -24,8 +24,14 @@ vi.mock('../../../services/redis-client.service.js', () => ({
 vi.mock('../../../services/redis-lock.js', () => ({ withRedisLock: async (_n: string, fn: () => Promise<unknown>) => fn() }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async (e: Record<string, unknown>) => { s.emitted.push(e) }) } }))
 vi.mock('../../../services/rbac.service.js', () => ({ rbacService: { notifyBindingsChanged: vi.fn(async () => { s.notified++ }) } }))
+const twoFa = vi.hoisted(() => ({ enrolled: new Set<string>(), required: ['super_admins', 'staff-security'] }))
+vi.mock('../../../second-factor/settings.js', () => ({ getSecondFactorGroups: vi.fn(async () => twoFa.required) }))
+vi.mock('../../../services/redis-rbac.repository.js', () => ({
+  redisRbacRepository: { getGroups: vi.fn(async () => ({ 'staff-security': { jinbe: ['security'] }, 'staff-viewers': { jinbe: ['viewer'] } })) },
+}))
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
+    hasMFA: vi.fn(async (id: string) => twoFa.enrolled.has(id)),
     getIdentity: vi.fn(async (id: string) => {
       if (id === ANN) return { id, organization_id: ORG, metadata_admin: {}, traits: { email: 'ann@acme.io' } }
       if (id === BOB) return { id, organization_id: null, metadata_admin: {}, traits: { email: 'bob@acme.io' } }
@@ -144,6 +150,26 @@ describe('platform side', () => {
     expect(gone.statusCode).toBe(200)
     expect(gone.json().grants).toEqual([])
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${ANN}/grants/${ann.grants[0].id}` })).statusCode).toBe(404)
+  })
+})
+
+describe('jinbe-side rules', () => {
+  it('super_admin is never given directly: 403 never_direct, before the policy is asked', async () => {
+    const res = await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'super_admin' }])
+    expect(res.statusCode).toBe(403)
+    expect(res.json().refused).toEqual([{ grant: { scope: 'platform', app: 'jinbe', kind: 'role', name: 'super_admin' }, reasons: ['never_direct'], missing: [], grantedBy: ['super_admins'] }])
+    expect(grantVerdict).not.toHaveBeenCalled()
+  })
+
+  it('a role a 2FA-required group binds needs the person enrolled first (mfa_required, 422); a role no such group binds does not', async () => {
+    const res = await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'security' }])
+    expect(res.statusCode).toBe(422)
+    expect(res.json()).toMatchObject({ error: 'mfa_required', targetEmail: 'ann@acme.io', targetGroups: ['staff-security'], secondFactor: { rule: 'enrol_before_joining' } })
+    expect(s.hash.size).toBe(0)
+    expect((await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'viewer' }])).statusCode).toBe(200)
+    twoFa.enrolled.add(ANN)
+    expect((await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'security' }])).statusCode).toBe(200)
+    twoFa.enrolled.clear()
   })
 })
 

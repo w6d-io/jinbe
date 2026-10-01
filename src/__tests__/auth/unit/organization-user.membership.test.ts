@@ -94,8 +94,8 @@ vi.mock('../../../services/kratos.service.js', () => ({
 vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: { notifyBindingsChanged: vi.fn().mockResolvedValue(undefined) },
 }))
-vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetMember: vi.fn(async () => {}), setForMember: vi.fn(async () => {}) } }))
-vi.mock('../../../services/direct-grants.repository.js', () => ({ directGrantsRepository: { forgetOrg: vi.fn(async () => []) } }))
+vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetMember: vi.fn(async () => {}), setForMember: vi.fn(async () => {}), getForOrg: vi.fn(async () => ({ 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb': ['jinbe:viewer'] })) } }))
+vi.mock('../../../services/direct-grants.repository.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../../services/direct-grants.repository.js')>()), directGrantsRepository: { forgetOrg: vi.fn(async () => []) } }))
 vi.mock('../../../services/org-role-grants.js', () => ({ orgRoleRefusals: vi.fn(async () => []) }))
 vi.mock('../../../services/user-groups.service.js', () => ({ userGroupsService: {} }))
 vi.mock('../../../services/group-catalogue.js', () => ({
@@ -215,6 +215,8 @@ describe('somebody in two organisations (story 9)', () => {
 
     const ids = (r.body as { data: { id: string }[] }).data.map((i) => i.id)
     expect(ids).toEqual([BOB])
+    // Each member carries their org roles here (no call per member).
+    expect((r.body as { data: { roles: string[] }[] }).data[0].roles).toEqual(['jinbe:viewer'])
   })
 
   it('does not list the same person twice', async () => {

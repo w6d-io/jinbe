@@ -4,6 +4,10 @@ import { auditEventService, type AuditActorInput } from './audit-event.service.j
 import { rbacService } from './rbac.service.js'
 import { kratosService } from './kratos.service.js'
 import { flatten } from './grant-subset.js'
+import { redisRbacRepository } from './redis-rbac.repository.js'
+import { getSecondFactorGroups } from '../second-factor/settings.js'
+import { secondFactorRefusal } from '../second-factor/requirements.js'
+import { JINBE, ROLES } from '../policy/roles.js'
 import {
   APP_NAME, directGrantsRepository, grantKey, isActive, type DirectGrant, type GrantRequest, type GrantScope,
 } from './direct-grants.repository.js'
@@ -89,6 +93,20 @@ function refusalOf(g: Pick<DirectGrant, 'scope' | 'app' | 'kind' | 'name'> & { i
 /** A grant as answered by the API: stored fields and whether it still counts. */
 export const view = (g: DirectGrant, now = Date.now()) => ({ ...g, active: isActive(g, now) })
 
+/** A role a second-factor group binds, given to somebody with no second factor (the mfa_required shape). */
+export class GrantNeedsSecondFactorError extends Error {
+  constructor(readonly email: string, readonly role: string, readonly groups: string[]) {
+    super(`Role '${role}' is bound by ${groups.join(', ')}, whose members must use two-step sign-in; ${email} must enroll a second factor (TOTP, security key, or backup codes) before being given it.`)
+  }
+  body() {
+    return {
+      error: 'mfa_required', message: this.message, targetEmail: this.email, targetGroups: this.groups,
+      hint: 'Have the user complete /settings → Authenticator app, then retry.',
+      ...secondFactorRefusal('enrol_before_joining', { groups: this.groups }),
+    }
+  }
+}
+
 export class GrantsRefusedError extends Error {
   constructor(public readonly refused: GrantRefusal[]) {
     super(`Not allowed: ${refused.map((r) => `${r.grant.kind} ${r.grant.app}:${r.grant.name} (${r.grant.scope})`).join(', ')}`)
@@ -101,24 +119,44 @@ function audit(type: string, subjectId: string, actor: AuditActorInput, details:
   }).catch(() => {})
 }
 
+interface ReplaceOptions {
+  subjectId: string
+  granteeEmail: string
+  wanted: readonly GrantRequest[]
+  actor: AuditActorInput & { email: string }
+  within?: (scope: GrantScope) => boolean
+  /** The grantee is being created into the org by this very request: the policy cannot see the membership yet. */
+  joining?: boolean
+}
+
 class DirectGrantsService {
   /**
    * Replaces one person's grants in the scopes `within` covers (the admin route: every scope; the org
    * route: that org only) after the policy allows every change. Returns the person's grants after.
    */
-  async replace(opts: {
-    subjectId: string
-    granteeEmail: string
-    wanted: readonly GrantRequest[]
-    actor: AuditActorInput & { email: string }
-    within?: (scope: GrantScope) => boolean
-  }): Promise<DirectGrant[]> {
+  async replace(opts: ReplaceOptions): Promise<DirectGrant[]> {
+    const { subjectId, granteeEmail, actor } = opts
+    const within = opts.within ?? (() => true)
+    await this.check(opts)
+    const result = await directGrantsRepository.replace(subjectId, opts.wanted, actor.email, within)
+    for (const g of result.added) audit('user.grant_granted', subjectId, actor, { email: granteeEmail, grant: g })
+    for (const g of result.removed) audit('user.grant_revoked', subjectId, actor, { email: granteeEmail, grant: g })
+    if (result.added.length || result.removed.length) await this.changed('direct_grants_changed', actor)
+    return result.after
+  }
+
+  /**
+   * Everything `replace` would refuse, without writing: grants outside the scope (400), super_admin
+   * (never directly), a second factor the grantee lacks (422), and every policy verdict (403). For a
+   * person not created yet, `subjectId` may be empty: they hold nothing, so every grant is added.
+   */
+  async check(opts: ReplaceOptions): Promise<void> {
     const { subjectId, granteeEmail, actor } = opts
     const within = opts.within ?? (() => true)
     const outside = opts.wanted.filter((g) => !within(g.scope))
     if (outside.length) throw Object.assign(new Error(`Grants outside this organisation: ${outside.map((g) => g.scope).join(', ')}`), { statusCode: 400 })
 
-    const before = (await directGrantsRepository.getFor(subjectId)).filter((g) => within(g.scope))
+    const before = subjectId ? (await directGrantsRepository.getFor(subjectId)).filter((g) => within(g.scope)) : []
     const current = new Map(before.map((g) => [grantKey(g), g]))
     const added = opts.wanted.filter((w) => {
       const same = current.get(grantKey(w))
@@ -127,25 +165,41 @@ class DirectGrantsService {
     const wantedKeys = new Set(opts.wanted.map(grantKey))
     const removed = before.filter((g) => !wantedKeys.has(grantKey(g)))
 
+    const refuse = (refused: GrantRefusal[]): never => {
+      audit('user.grant_refused', subjectId || granteeEmail, actor, { email: granteeEmail, refused }, 'denied')
+      throw new GrantsRefusedError(refused)
+    }
+    // Never directly: super_admin is held through super_admins alone (its 2FA, its review, break-glass).
+    const never = added.filter((g) => g.scope === 'platform' && g.app === JINBE && g.kind === 'role' && g.name === 'super_admin')
+    if (never.length) refuse(never.map((g) => ({ grant: what(g), reasons: ['never_direct'], missing: [], grantedBy: [ROLES.super_admin.group] })))
+    await this.assertSecondFactorFor(subjectId, granteeEmail, added)
+
     const refused: GrantRefusal[] = []
     for (const g of added) {
       const v = await grantVerdict({ kind: 'grant_direct', actor: actor.email, grantee: granteeEmail, scope: g.scope, app: g.app, grantKind: g.kind, name: g.name })
-      if (!v.allow) refused.push(refusalOf(g, v))
+      const reasons = opts.joining ? v.reasons.filter((r) => r !== 'grantee_not_member') : v.reasons
+      if (!v.allow && reasons.length > 0) refused.push(refusalOf(g, { ...v, reasons }))
     }
     for (const scope of new Set(removed.map((g) => g.scope))) {
       const v = await grantVerdict({ kind: 'revoke_direct', actor: actor.email, scope })
       if (!v.allow) refused.push(...removed.filter((g) => g.scope === scope).map((g) => refusalOf(g, v)))
     }
-    if (refused.length) {
-      audit('user.grant_refused', subjectId, actor, { email: granteeEmail, refused }, 'denied')
-      throw new GrantsRefusedError(refused)
-    }
+    if (refused.length) refuse(refused)
+  }
 
-    const result = await directGrantsRepository.replace(subjectId, opts.wanted, actor.email, within)
-    for (const g of result.added) audit('user.grant_granted', subjectId, actor, { email: granteeEmail, grant: g })
-    for (const g of result.removed) audit('user.grant_revoked', subjectId, actor, { email: granteeEmail, grant: g })
-    if (result.added.length || result.removed.length) await this.changed('direct_grants_changed', actor)
-    return result.after
+  /**
+   * A platform role that a "members must use 2FA" group binds needs the same of whoever holds it
+   * directly: enrolled before it is given (the policy then holds them to aal2, as it does members).
+   */
+  private async assertSecondFactorFor(subjectId: string, email: string, added: readonly GrantRequest[]): Promise<void> {
+    const roles = added.filter((g) => g.scope === 'platform' && g.kind === 'role')
+    if (roles.length === 0) return
+    const [groups, required] = await Promise.all([redisRbacRepository.getGroups(), getSecondFactorGroups()])
+    for (const g of roles) {
+      const binding = required.filter((name) => (groups[name]?.[g.app] ?? []).includes(g.name))
+      if (binding.length === 0) continue
+      if (!subjectId || !(await kratosService.hasMFA(subjectId).catch(() => false))) throw new GrantNeedsSecondFactorError(email, `${g.app}:${g.name}`, binding)
+    }
   }
 
   /** Takes one grant away (its scope must pass `within`); null when there is no such grant there. */

@@ -1022,6 +1022,32 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/admin/organizations/:id",
+          "permission": "orgs:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "PATCH",
           "path": "/api/admin/organizations/:id",
           "permission": "orgs:write",

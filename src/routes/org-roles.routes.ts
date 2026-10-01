@@ -57,6 +57,7 @@ export const orgRoleRefusedSchema = {
         type: 'object',
         properties: {
           role: { type: 'string' }, reason: { type: 'string' },
+          grant: { type: 'object', properties: { id: { type: 'string' }, scope: { type: 'string' }, app: { type: 'string' }, kind: { type: 'string' }, name: { type: 'string' } } },
           reasons: { type: 'array', items: { type: 'string' } },
           missing: { type: 'array', items: { type: 'string' } },
           grantedBy: { type: 'array', items: { type: 'string' } },

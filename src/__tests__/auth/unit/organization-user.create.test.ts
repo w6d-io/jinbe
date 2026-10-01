@@ -20,6 +20,10 @@ vi.mock('../../../services/org-roles.repository.js', () => ({
   orgRolesRepository: { setForMember: vi.fn(async () => {}), forgetMember: vi.fn(async () => {}) },
 }))
 vi.mock('../../../services/org-role-grants.js', () => ({ orgRoleRefusals: vi.fn(async () => []) }))
+vi.mock('../../../services/direct-grants.service.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../services/direct-grants.service.js')>()
+  return { ...real, directGrantsService: { check: vi.fn(async () => {}), replace: vi.fn(async () => []) } }
+})
 vi.mock('../../../services/organisation-store.js', () => ({
   addMember: vi.fn(async () => {}),
   membershipRowsKept: () => true,
@@ -32,6 +36,7 @@ import { organizationUserController } from '../../../controllers/organization-us
 import { kratosService } from '../../../services/kratos.service.js'
 import { orgRolesRepository } from '../../../services/org-roles.repository.js'
 import { orgRoleRefusals } from '../../../services/org-role-grants.js'
+import { directGrantsService, GrantsRefusedError } from '../../../services/direct-grants.service.js'
 
 const ORG = '11111111-1111-1111-1111-111111111111'
 
@@ -103,5 +108,23 @@ describe('OrganizationUserController.createUser — org roles', () => {
     await organizationUserController.createUser(req({ email: 'new@example.com', groups: ['super_admins'] }) as never, reply)
 
     expect(kratosService.createIdentity).toHaveBeenCalledWith(expect.objectContaining({ metadata_admin: { groups: ['users'] } }))
+  })
+
+  it('direct grants in this org, checked before anybody is created (the new member joining), written after', async () => {
+    const grant = { scope: ORG, app: 'jinbe', kind: 'role' as const, name: 'viewer' }
+    const reply = createReply()
+    await organizationUserController.createUser(req({ email: 'new@example.com', grants: [grant] }) as never, reply)
+    expect(directGrantsService.check).toHaveBeenCalledWith(expect.objectContaining({ subjectId: '', granteeEmail: 'new@example.com', wanted: [grant], joining: true }))
+    expect(directGrantsService.replace).toHaveBeenCalledWith(expect.objectContaining({ subjectId: 'new-user-1', joining: true }))
+    expect(reply._statusCode).toBe(201)
+  })
+
+  it('a refused grant: 403 with what was refused, nobody created', async () => {
+    vi.mocked(directGrantsService.check).mockRejectedValueOnce(new GrantsRefusedError([{ grant: { scope: ORG, app: 'jinbe', kind: 'role', name: 'owner' }, reasons: ['missing_permissions'], missing: ['org.keys:write'], grantedBy: ['jinbe:owner'] }]))
+    const reply = createReply()
+    await organizationUserController.createUser(req({ email: 'new@example.com', grants: [{ scope: ORG, app: 'jinbe', kind: 'role', name: 'owner' }] }) as never, reply)
+    expect(reply._statusCode).toBe(403)
+    expect(reply._body).toMatchObject({ code: 'grant_exceeds_own', refused: [{ grant: { name: 'owner' } }] })
+    expect(kratosService.createIdentity).not.toHaveBeenCalled()
   })
 })

@@ -17,9 +17,11 @@ vi.mock('../../../services/organisation-store.js', async (importOriginal) => ({
   organisationStoreConfigured: () => true,
   allOrganisations: vi.fn(async () => [{ id: ORG, name: 'Acme', tenant: 'acme' }, { id: OTHER, name: 'Globex', tenant: 'globex' }]),
   allEntitlements: vi.fn(async () => new Map([[ORG, ['billing']]])),
+  organisationsById: vi.fn(async (ids: string[]) => (ids[0] === ORG ? [{ id: ORG, name: 'Acme', tenant: 'acme' }] : [])),
+  deploymentsOf: vi.fn(async () => [{ application: 'billing', enabled: true }, { application: 'old', enabled: false }]),
 }))
 vi.mock('../../../services/org-roles.repository.js', () => ({
-  orgRolesRepository: { getAll: vi.fn(async () => ({ [ORG]: { 'id-b': ['jinbe:owner'], 'id-a': ['jinbe:owner', 'payroll:clerks'], 'id-c': ['jinbe:viewer'] } })) },
+  orgRolesRepository: { holdersOf: vi.fn(async () => ['id-a', 'id-b']), getAll: vi.fn(async () => ({ [ORG]: { 'id-b': ['jinbe:owner'], 'id-a': ['jinbe:owner', 'payroll:clerks'], 'id-c': ['jinbe:viewer'] } })) },
 }))
 vi.mock('../../../services/redis-rbac.repository.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../services/redis-rbac.repository.js')>()
@@ -44,8 +46,16 @@ describe('GET /api/admin/organizations', () => {
     const res = await app.inject({ url: '/api/admin/organizations' })
     expect(res.statusCode).toBe(200)
     expect(res.json().organizations).toEqual([
-      { id: ORG, name: 'Acme', tenant: 'acme', applications: ['billing'], owners: ['id-a', 'id-b'], sites: ['payroll'] },
-      { id: OTHER, name: 'Globex', tenant: 'globex', applications: [], owners: [], sites: [] },
+      { id: ORG, name: 'Acme', tenant: 'acme', applications: ['billing'], owners: ['id-a', 'id-b'], sites: ['jinbe', 'payroll'] },
+      { id: OTHER, name: 'Globex', tenant: 'globex', applications: [], owners: [], sites: ['jinbe'] },
     ])
+  })
+})
+
+describe('GET /api/admin/organizations/:id', () => {
+  it('one organisation with its owners and entitled sites; 404 for none', async () => {
+    const res = await app.inject({ url: `/api/admin/organizations/${ORG}` })
+    expect(res.json()).toEqual({ id: ORG, name: 'Acme', tenant: 'acme', applications: ['billing'], owners: ['id-a', 'id-b'], sites: ['jinbe', 'payroll'] })
+    expect((await app.inject({ url: `/api/admin/organizations/${OTHER}` })).statusCode).toBe(404)
   })
 })

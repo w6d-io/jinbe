@@ -568,7 +568,30 @@ paths:
       description: "The caller's effective permissions across the platform, which
         user-management actions they allow, and their second-factor picture
         (secondFactor: requiredBecause groups, enrolled, currentAal,
-        factorAgeMin, stepUpFresh, stepUpPermissions)."
+        factorAgeMin, stepUpFresh, stepUpPermissions). `orgPermissions` lists
+        every organisation in which the caller holds at least one org
+        permission, keyed by org id: roles assigned there, direct grants there,
+        and the every-org reach of their platform roles — so an every-org holder
+        sees every organisation. Orgs where they hold nothing are left out.
+        Sorted by org id and paged: at most `orgLimit` (default 200, max 1000)
+        per answer; `orgPermissionsPage.next` is the `orgCursor` for the next
+        page (absent on the last)."
+      parameters:
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+          in: query
+          name: orgLimit
+          required: false
+        - schema:
+            type: string
+            maxLength: 64
+          in: query
+          name: orgCursor
+          required: false
+          description: The org id after which to continue (orgPermissionsPage.next).
       x-access: self
       responses:
         "200":
@@ -601,6 +624,13 @@ paths:
                     additionalProperties:
                       type: array
                       items:
+                        type: string
+                  orgPermissionsPage:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      next:
                         type: string
                   secondFactor:
                     type: object
@@ -4636,10 +4666,11 @@ paths:
     get:
       tags:
         - admin
-      description: Every organisation the directory holds, with its owners (identity
-        ids holding jinbe:owner there), the sites it is entitled to (org_sites,
-        from the site intents) and the applications the directory records for
-        it. Needs orgs:read.
+      description: "Every organisation the directory holds, with its owners (identity
+        ids holding jinbe:owner there), the sites it is entitled to (org_sites:
+        jinbe and the sites whose intent lists it) and `applications`, what the
+        directory records as deployed for it (organisation_deployments — not an
+        access entitlement). Needs orgs:read."
       x-permission: orgs:read
       x-scope: platform
       responses:
@@ -4910,6 +4941,148 @@ paths:
                   message:
                     type: string
   /api/admin/organizations/{id}:
+    get:
+      tags:
+        - admin
+      description: "One organisation: its owners (identity ids holding jinbe:owner
+        there), the sites it is entitled to (org_sites: jinbe and the sites
+        whose intent lists it) and `applications`, what the organisation
+        directory records as deployed for it (organisation_deployments — not an
+        access entitlement). Needs orgs:read."
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: orgs:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  tenant:
+                    type: string
+                  applications:
+                    type: array
+                    items:
+                      type: string
+                  owners:
+                    type: array
+                    items:
+                      type: string
+                  sites:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
     patch:
       tags:
         - admin
@@ -5200,6 +5373,9 @@ paths:
                   error:
                     type: string
                     example: Conflict
+                  code:
+                    type: string
+                    example: defined_in_code
                   message:
                     type: string
                   members:
@@ -10507,6 +10683,9 @@ paths:
                   error:
                     type: string
                     example: Conflict
+                  code:
+                    type: string
+                    example: defined_in_code
                   message:
                     type: string
   /api/admin/rbac/groups/{name}:
@@ -11571,6 +11750,9 @@ paths:
                   error:
                     type: string
                     example: Conflict
+                  code:
+                    type: string
+                    example: defined_in_code
                   message:
                     type: string
   /api/admin/rbac/oathkeeper/handlers:
@@ -11946,6 +12128,9 @@ paths:
                   error:
                     type: string
                     example: Conflict
+                  code:
+                    type: string
+                    example: defined_in_code
                   message:
                     type: string
   /api/admin/rbac/bundle/backups:
@@ -15349,7 +15534,8 @@ paths:
     get:
       tags:
         - organization-users
-      description: List users belonging to this organization
+      description: 'List users belonging to this organization, each with `roles`:
+        their org roles here ("svc:role").'
       parameters:
         - schema:
             type: string
@@ -15451,7 +15637,6 @@ paths:
                           type: array
                           items:
                             type: string
-                          description: User roles from OPAL RBAC
                         permissions:
                           type: array
                           items:
@@ -15573,6 +15758,39 @@ paths:
                   items:
                     type: string
                     pattern: ^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$
+                grants:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: object
+                    required:
+                      - scope
+                      - app
+                      - kind
+                      - name
+                    additionalProperties: false
+                    properties:
+                      scope:
+                        type: string
+                        description: '"platform" or an organisation id'
+                      app:
+                        type: string
+                        pattern: ^[a-z0-9][a-z0-9_-]*$
+                      kind:
+                        type: string
+                        enum:
+                          - role
+                          - permission
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 120
+                      reason:
+                        type: string
+                        maxLength: 500
+                      expiresAt:
+                        type: string
+                        format: date-time
               additionalProperties: false
       parameters:
         - schema:
@@ -15762,6 +15980,19 @@ paths:
                           type: string
                         reason:
                           type: string
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
                         reasons:
                           type: array
                           items:
@@ -17910,6 +18141,19 @@ paths:
                           type: string
                         reason:
                           type: string
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
                         reasons:
                           type: array
                           items:

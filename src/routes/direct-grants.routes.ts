@@ -5,7 +5,7 @@ import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { kratosService } from '../services/kratos.service.js'
 import { directGrantsRepository } from '../services/direct-grants.repository.js'
 import {
-  directGrantsService, grantJsonSchema, grantRequestJsonSchema, grantsBodySchema, GrantsRefusedError, view,
+  directGrantsService, grantJsonSchema, grantRequestJsonSchema, grantsBodySchema, GrantNeedsSecondFactorError, GrantsRefusedError, view,
 } from '../services/direct-grants.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 import { memberOf } from './org-roles.routes.js'
@@ -64,6 +64,7 @@ const errors = { 400: badRequestResponseSchema, 401: unauthorizedResponseSchema,
 
 /** A refusal, an unreadable policy, or the error handler's turn. */
 function answer(reply: FastifyReply, err: unknown) {
+  if (err instanceof GrantNeedsSecondFactorError) return reply.status(422).send(err.body())
   if (err instanceof GrantsRefusedError) return reply.status(403).send({ error: 'Forbidden', code: 'grant_exceeds_own', message: err.message, refused: err.refused })
   if (err instanceof AuthzUnavailableError) return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${err.message}` })
   if ((err as { statusCode?: number }).statusCode === 400) return reply.status(400).send({ error: 'Bad Request', message: (err as Error).message })

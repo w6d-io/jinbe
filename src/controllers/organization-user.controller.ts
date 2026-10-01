@@ -6,6 +6,16 @@ import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { directGrantsRepository } from '../services/direct-grants.repository.js'
 import { orgRoleRefusals } from '../services/org-role-grants.js'
 import { AuthzUnavailableError } from '../authz/opa.js'
+import { directGrantsService, GrantNeedsSecondFactorError, GrantsRefusedError } from '../services/direct-grants.service.js'
+
+/** A grant refusal at creation, as PUT …/users/:id/grants answers it. */
+function grantRefusal(reply: FastifyReply, err: unknown) {
+  if (err instanceof GrantsRefusedError) return reply.status(403).send({ error: 'Forbidden', code: 'grant_exceeds_own', message: err.message, refused: err.refused })
+  if (err instanceof GrantNeedsSecondFactorError) return reply.status(422).send(err.body())
+  if (err instanceof AuthzUnavailableError) return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${err.message}` })
+  if ((err as { statusCode?: number }).statusCode === 400) return reply.status(400).send({ error: 'Bad Request', message: (err as Error).message })
+  throw err
+}
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
@@ -99,7 +109,10 @@ export class OrganizationUserController {
       credentialsIdentifier: credentials_identifier,
     })
 
-    return reply.send({ data: identities, total: identities.length })
+    // Each member's org roles here, in the same answer (one read of the org's assignments, no N+1).
+    const roles = await orgRolesRepository.getForOrg(organizationId)
+    const data = identities.map((i) => ({ ...i, roles: roles[i.id] ?? [] }))
+    return reply.send({ data, total: data.length })
   }
 
   /**
@@ -128,9 +141,15 @@ export class OrganizationUserController {
     reply: FastifyReply
   ) {
     const { organizationId } = request.params
-    const { email, name, sendInvite, roles } = organizationUserCreateBodySchema.parse(
+    const { email, name, sendInvite, roles, grants } = organizationUserCreateBodySchema.parse(
       request.body
     )
+    const grantsWanted = grants ?? []
+    const grantOpts = {
+      granteeEmail: email, wanted: grantsWanted, joining: true,
+      actor: { ...auditActor(request), email: request.userContext?.email ?? '' },
+      within: (scope: string) => scope === organizationId,
+    }
 
     // Org roles given at creation clear the same holding rule as PUT …/users/:id/roles, BEFORE
     // anything is created: a refused role never leaves a half-provisioned person behind.
@@ -144,6 +163,14 @@ export class OrganizationUserController {
     }
     if (refused.length > 0) {
       return reply.status(403).send({ error: 'Forbidden', message: `Not allowed to assign: ${refused.map((r) => r.role).join(', ')}`, refused })
+    }
+    // Direct grants given at creation (this org's only): the same verdicts as PUT …/users/:id/grants, up front.
+    if (grantsWanted.length > 0) {
+      try {
+        await directGrantsService.check({ subjectId: '', ...grantOpts })
+      } catch (err) {
+        return grantRefusal(reply, err)
+      }
     }
 
     const kratosBody: KratosIdentityCreate = {
@@ -161,6 +188,15 @@ export class OrganizationUserController {
     // privilege never leaves a membership behind the rollback.
     await recordMembership(organizationId, identity.id, request)
     if (wanted.length > 0) await orgRolesRepository.setForMember(organizationId, identity.id, wanted)
+    if (grantsWanted.length > 0) {
+      try {
+        await directGrantsService.replace({ subjectId: identity.id, ...grantOpts })
+      } catch (err) {
+        // Allowed a moment ago: the person exists and is a member; say what did not land.
+        request.log.warn({ err: (err as Error).message, id: identity.id }, 'Created the member, but the direct grants were refused on write')
+        return grantRefusal(reply, err)
+      }
+    }
 
     if (sendInvite) {
       try {

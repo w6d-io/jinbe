@@ -20,7 +20,7 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
-import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
+import { allEntitlements, allOrganisations, deploymentsOf, organisationsById, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
@@ -138,7 +138,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       schema: {
         description:
           'Every organisation the directory holds, with its owners (identity ids holding jinbe:owner there), the sites it is ' +
-          'entitled to (org_sites, from the site intents) and the applications the directory records for it. Needs orgs:read.',
+          'entitled to (org_sites: jinbe and the sites whose intent lists it) and `applications`, what the directory records as ' +
+          'deployed for it (organisation_deployments — not an access entitlement). Needs orgs:read.',
         tags: ['admin'],
         response: {
           200: {
@@ -185,7 +186,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
             tenant,
             applications: entitlements.get(id) ?? [],
             owners: Object.entries(assignments[id] ?? {}).filter(([, roles]) => roles.includes(owner)).map(([subject]) => subject).sort(),
-            sites: orgSites[id] ?? [],
+            sites: [...new Set([JINBE, ...(orgSites[id] ?? [])])],
           })),
         })
       } catch (err) {
@@ -197,6 +198,52 @@ export async function adminRoutes(fastify: FastifyInstance) {
           message: 'The organisation directory could not be read.',
         })
       }
+    },
+  )
+
+  // One organisation, from the platform: who owns it, which sites it is entitled to.
+  fastify.get(
+    '/organizations/:id',
+    {
+      ...needs('orgs:read'),
+      schema: {
+        description:
+          'One organisation: its owners (identity ids holding jinbe:owner there), the sites it is entitled to (org_sites: jinbe ' +
+          'and the sites whose intent lists it) and `applications`, what the organisation directory records as deployed for it ' +
+          '(organisation_deployments — not an access entitlement). Needs orgs:read.',
+        tags: ['admin'],
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' }, name: { type: 'string' }, tenant: { type: 'string' },
+              applications: { type: 'array', items: { type: 'string' } },
+              owners: { type: 'array', items: { type: 'string' } },
+              sites: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          401: unauthorizedResponseSchema,
+          403: forbiddenResponseSchema,
+          404: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+          503: serviceUnavailableResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!organisationStoreConfigured()) return reply.status(503).send(organisationStoreNotConfigured())
+      const { id } = request.params as { id: string }
+      const [org] = await organisationsById([id])
+      if (!org) return reply.status(404).send({ error: 'organisation_not_found', message: `No organisation ${id} is held.` })
+      const [deployments, owners, orgSites] = await Promise.all([
+        deploymentsOf(id), orgRolesRepository.holdersOf(id, qualified(JINBE, 'owner')), redisRbacRepository.getOrgSites(),
+      ])
+      return reply.send({
+        id, name: org.name, tenant: org.tenant,
+        applications: deployments.filter((d) => d.enabled).map((d) => d.application),
+        owners,
+        sites: [...new Set([JINBE, ...(orgSites[id] ?? [])])],
+      })
     },
   )
 

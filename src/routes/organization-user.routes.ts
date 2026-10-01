@@ -43,7 +43,7 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
     {
       ...needs('org.members:read', ORG),
       schema: {
-        description: 'List users belonging to this organization',
+        description: "List users belonging to this organization, each with `roles`: their org roles here (\"svc:role\").",
         tags: ['organization-users'],
         params: organizationIdParamJsonSchema,
         querystring: {
@@ -57,7 +57,10 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
           200: {
             type: 'object',
             properties: {
-              data: { type: 'array', items: kratosIdentityJsonSchema },
+              data: {
+                type: 'array',
+                items: { ...kratosIdentityJsonSchema, properties: { ...kratosIdentityJsonSchema.properties, roles: { type: 'array', items: { type: 'string' } } } },
+              },
               total: { type: 'number' },
             },
           },

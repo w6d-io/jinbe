@@ -63,6 +63,10 @@ vi.mock('../../services/user-groups.service.js', () => ({
   userGroupsService: { applyGroupUpdate: vi.fn(async (input: Record<string, unknown>) => { h.grants.push(input); return { ok: true, response: {} } }) },
 }))
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { invalidateDirectoryStats: vi.fn(async () => {}) } }))
+vi.mock('../../services/direct-grants.service.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../services/direct-grants.service.js')>()
+  return { ...real, directGrantsService: { check: vi.fn(async () => {}), replace: vi.fn(async () => []) } }
+})
 vi.mock('../../services/rbac-escalation-guard.js', () => ({
   assertMayAssignGroup: vi.fn(async (group: string) => {
     if (h.guard[group]) throw Object.assign(new Error('refused'), { statusCode: 403, code: h.guard[group] })
@@ -97,6 +101,8 @@ beforeAll(async () => {
     const perms = String(request.headers['x-test-perms'] ?? '').split(',').filter(Boolean)
     request.userContext = {
       id: String(request.headers['x-user'] ?? ME), email: 'me@x.test', name: 'Me',
+      // A second factor proven just now, when the test says so (what step-up gates read).
+      ...(request.headers['x-test-mfa'] ? { aal: 'aal2', secondFactorAt: new Date().toISOString() } : {}),
       ...(scopes !== undefined
         ? { authVia: 'delegated' as const, delegation: { clientId: 'claude', scopes: scopes.split(' ').filter(Boolean), kind: 'personal' as const, via: 'auth-mcp', ...(request.headers['x-key-step-up'] ? { keyStepUpAt: String(request.headers['x-key-step-up']) } : {}) } }
         : { authVia: 'session' as const }),
@@ -271,6 +277,22 @@ describe('users.invite', () => {
     expect(h.created).toEqual([{ schema_id: 'default', state: 'active', traits: { email: 'new@x.test', name: 'New' } }])
     const refused = (await post('users.invite/plan', { items: [{ email: 'b@x.test' }], params: { sendInvite: true } }, H)).json()
     expect(refused.items[0].outcome).toEqual({ status: 'refused', reason: 'missing:users:recovery' })
+  })
+
+  it('optionally gives each invited person platform groups and direct grants, each checked up front', async () => {
+    const { directGrantsService } = await import('../../services/direct-grants.service.js')
+    const grant = { scope: 'platform', app: 'payroll', kind: 'role', name: 'viewer' }
+    const H = { 'x-test-perms': 'users:create,users:read,groups.members:write,users.grants:write', 'x-test-mfa': '1' }
+    const { plan, job } = await planAndRun('users.invite', { items: [{ email: 'g@x.test' }], params: { groups: ['billing'], grants: [grant] } }, H)
+    expect(plan.items[0].outcome).toEqual({ status: 'ok', action: 'create' })
+    expect(job.items[0]).toMatchObject({ status: 'done', action: 'create' })
+    expect(h.grants.at(-1)).toMatchObject({ addGroups: ['billing'], newGroups: [] })
+    expect(directGrantsService.replace).toHaveBeenCalledWith(expect.objectContaining({ granteeEmail: 'g@x.test', wanted: [grant] }))
+    // Without the grant permission, or for an org-scoped grant, the plan refuses before anybody is created.
+    const noPerm = (await post('users.invite/plan', { items: [{ email: 'h@x.test' }], params: { grants: [grant] } }, { 'x-test-perms': 'users:create', 'x-test-mfa': '1' })).json()
+    expect(noPerm.items[0].outcome).toEqual({ status: 'refused', reason: 'missing:users.grants:write' })
+    const orgScoped = await post('users.invite/plan', { items: [{ email: 'h@x.test' }], params: { grants: [{ ...grant, scope: '11111111-1111-4111-8111-111111111111' }] } }, H)
+    expect(orgScoped.statusCode).toBe(400)
   })
 })
 

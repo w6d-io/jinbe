@@ -1,3 +1,4 @@
+import { grantRequestJsonSchema, grantRequestSchema } from '../services/direct-grants.service.js'
 import { z } from 'zod'
 
 // Organization ID param
@@ -18,6 +19,8 @@ export const organizationUserCreateBodySchema = z.object({
   sendInvite: z.boolean().optional().default(false),
   // Optional initial org roles (`svc:role`), each under the holding rule (services/org-role-grants.ts).
   roles: z.array(z.string().regex(/^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$/)).max(32).optional(),
+  // Optional direct grants in this organisation (scope = its id), each under the policy's verdict.
+  grants: z.array(grantRequestSchema).max(32).optional(),
 })
 
 // Update user in organization
@@ -74,6 +77,7 @@ export const organizationUserCreateBodyJsonSchema = {
     name: { type: 'string' },
     sendInvite: { type: 'boolean', default: false },
     roles: { type: 'array', maxItems: 32, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$' } },
+    grants: { type: 'array', maxItems: 32, items: grantRequestJsonSchema },
   },
   additionalProperties: false,
 }

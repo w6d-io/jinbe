@@ -92,6 +92,8 @@ export const conflictResponseSchema = {
     type: 'object',
     properties: {
         error: { type: 'string', example: 'Conflict' },
+        // `defined_in_code` for what code defines (a staff group, super_admins, jinbe's roles or routes).
+        code: { type: 'string', example: 'defined_in_code' },
         message: { type: 'string' },
     },
 }

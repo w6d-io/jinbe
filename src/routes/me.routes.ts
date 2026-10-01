@@ -129,8 +129,19 @@ export async function meRoutes(fastify: FastifyInstance) {
       schema: {
         description:
           "The caller's effective permissions across the platform, which user-management actions they allow, and their " +
-          'second-factor picture (secondFactor: requiredBecause groups, enrolled, currentAal, factorAgeMin, stepUpFresh, stepUpPermissions).',
+          'second-factor picture (secondFactor: requiredBecause groups, enrolled, currentAal, factorAgeMin, stepUpFresh, stepUpPermissions). ' +
+          '`orgPermissions` lists every organisation in which the caller holds at least one org permission, keyed by org id: ' +
+          'roles assigned there, direct grants there, and the every-org reach of their platform roles — so an every-org holder ' +
+          'sees every organisation. Orgs where they hold nothing are left out. Sorted by org id and paged: at most `orgLimit` ' +
+          '(default 200, max 1000) per answer; `orgPermissionsPage.next` is the `orgCursor` for the next page (absent on the last).',
         tags: ['me'],
+        querystring: {
+          type: 'object',
+          properties: {
+            orgLimit: { type: 'integer', minimum: 1, maximum: 1000, default: 200 },
+            orgCursor: { type: 'string', maxLength: 64, description: 'The org id after which to continue (orgPermissionsPage.next).' },
+          },
+        },
         response: {
           200: {
             type: 'object',
@@ -141,6 +152,7 @@ export async function meRoutes(fastify: FastifyInstance) {
               permissions: { type: 'array', items: { type: 'string' } },
               actions: { type: 'object', additionalProperties: { type: 'boolean' } },
               orgPermissions: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+              orgPermissionsPage: { type: 'object', properties: { total: { type: 'integer' }, next: { type: 'string' } } },
               secondFactor: userSecondFactorJsonSchema,
             },
           },
@@ -153,9 +165,17 @@ export async function meRoutes(fastify: FastifyInstance) {
       const rights = await callerRights(request, reply)
       if (!rights) return reply
       let orgPermissions: Record<string, string[]> = {}
+      let orgPermissionsPage: { total: number; next?: string } = { total: 0 }
       if (!(env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development')) {
         try {
-          orgPermissions = await orgPermissionsByOrg(rights.email)
+          const all = await orgPermissionsByOrg(rights.email)
+          const { orgLimit = 200, orgCursor } = (request.query ?? {}) as { orgLimit?: number; orgCursor?: string }
+          const ids = Object.keys(all).sort()
+          const from = orgCursor ? ids.findIndex((id) => id > orgCursor) : 0
+          const page = from < 0 ? [] : ids.slice(from, from + orgLimit)
+          orgPermissions = Object.fromEntries(page.map((id) => [id, all[id]]))
+          const last = page[page.length - 1]
+          orgPermissionsPage = { total: ids.length, ...(last && ids.indexOf(last) < ids.length - 1 ? { next: last } : {}) }
         } catch (err) {
           // Same rule as the platform ones: "could not tell" is not "holds nothing".
           request.log.warn({ err: (err as Error).message }, '[me/permissions] OPA could not answer for the organisations')
@@ -169,6 +189,7 @@ export async function meRoutes(fastify: FastifyInstance) {
         permissions: rights.permissions,
         actions: userActions(rights.permissions),
         orgPermissions,
+        orgPermissionsPage,
         secondFactor: await ownSecondFactor(request, rights.groups, rights.permissions),
       })
     },

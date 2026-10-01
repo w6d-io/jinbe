@@ -109,6 +109,11 @@ export function errorHandler(
   // Handle custom HTTP errors with statusCode property. A permission refusal (the escalation guard)
   // carries what the caller can act on — code, what is missing, the groups granting it, a hint —
   // beside the message it always sent as `error`.
+  // Something defined in code (the staff groups, super_admins, jinbe's roles and route map): a machine
+  // code a console can match, unlike a 409 "already exists".
+  if (error.code === 'defined_in_code') {
+    return reply.status(error.statusCode ?? 409).send({ error: 'defined_in_code', code: 'defined_in_code', message: error.message })
+  }
   if ((error as any).statusCode) {
     const refusal = (error as any).statusCode === 403 && (error as any).refusal && typeof (error as any).refusal === 'object'
       ? (error as any).refusal as Record<string, unknown>

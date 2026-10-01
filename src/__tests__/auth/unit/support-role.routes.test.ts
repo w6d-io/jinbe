@@ -80,7 +80,8 @@ beforeAll(async () => {
     const url = String(input)
     if (url.startsWith('http://opal-client:8181/v1/data/rbac/org_permissions_by_org')) {
       if (s.opaDown) throw new TypeError('fetch failed')
-      return Response.json({ result: {} })
+      const body = JSON.parse(String(init?.body ?? '{}')) as { input: { email: string } }
+      return Response.json({ result: String(body.input.email).startsWith('everyorg@') ? { 'org-c': ['org.members:read'], 'org-a': ['org.members:read'], 'org-b': ['org.members:read'] } : {} })
     }
     if (url.startsWith('http://opal-client:8181/v1/data/rbac/user_info')) {
       const body = JSON.parse(init!.body as string) as { input: Record<string, unknown> }
@@ -331,6 +332,16 @@ describe('GET /api/me/permissions', () => {
       'users:delete': false, 'users:create': false, 'groups.members:write': false, 'users:reset_second_factor': false,
     })
     expect(actions['admin:read']).toBeUndefined()
+  })
+
+  it('orgPermissions lists every org with a permission (an every-org holder: all), sorted and paged', async () => {
+    s.rights.everyorg = ['users:read']
+    const first = (await app.inject({ url: '/api/me/permissions?orgLimit=2', headers: as('everyorg') })).json()
+    expect(Object.keys(first.orgPermissions)).toEqual(['org-a', 'org-b'])
+    expect(first.orgPermissionsPage).toEqual({ total: 3, next: 'org-b' })
+    const second = (await app.inject({ url: '/api/me/permissions?orgLimit=2&orgCursor=org-b', headers: as('everyorg') })).json()
+    expect(Object.keys(second.orgPermissions)).toEqual(['org-c'])
+    expect(second.orgPermissionsPage).toEqual({ total: 3 })
   })
 
   it('an administrator is offered every action', async () => {
