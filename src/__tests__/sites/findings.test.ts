@@ -222,3 +222,28 @@ describe('siteSecondFactor', () => {
     expect(siteSecondFactor(tidy())).toMatchObject({ enforced: null, minAal: 'aal1' })
   })
 })
+
+describe('a sign-in gate that passes no identity', () => {
+  const site = (over: Partial<Gate>) => tidy({ gates: [gate({ id: 'web', ...over })] })
+
+  it('signed-in + Gets nothing (noop): warned, with the gate, the fix and gates.N.mutators', () => {
+    const f = run(site({ mutators: [{ handler: 'noop' }] }))
+    expect(f).toEqual([{
+      code: 'gate_passes_no_identity', level: 'warn', path: 'gates.0.mutators',
+      message: "gate 'web' signs people in but passes nothing on: the app receives the X-User-* headers (id, email, groups, AAL…) empty",
+      fix: "Set Gets to identity headers (or enrich) on gate 'web'",
+    }])
+    expect(publishState(f)).toEqual({ blocked: false, acknowledge: [] })
+  })
+
+  it('optional sign-in (cookie_session + anonymous) identifies people too', () => {
+    expect(codes(run(site({ authenticators: WHO.optional, mutators: [{ handler: 'noop' }] })))).toEqual(['gate_passes_no_identity'])
+  })
+
+  it('no finding for a public gate (noop), identity headers, enrich, or a signed token', () => {
+    expect(codes(run(tidy({ gates: [...tidy().gates, gate({ id: 'pub', authenticators: WHO.anyone, authorizer: { handler: 'allow' }, mutators: [{ handler: 'noop' }] })] })))).toEqual([])
+    expect(codes(run(site({ mutators: [{ handler: 'header' }] })))).toEqual([])
+    expect(codes(run(site({ mutators: [{ handler: 'hydrator' }, { handler: 'header' }] })))).toEqual([])
+    expect(codes(run(site({ mutators: [{ handler: 'id_token' }] })))).toEqual([])
+  })
+})

@@ -42,6 +42,8 @@ export interface FindingContext {
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+/** Mutators that hand the caller's identity to the app: headers, an enrichment, or a signed token/cookie. */
+const IDENTITY_MUTATORS = new Set(['header', 'hydrator', 'id_token', 'cookie'])
 const presetList = (Object.keys(WHO) as WhoPreset[]).map((k) => `${k} (${WHO[k].map((h) => h.handler).join(' → ')})`).join('; ')
 
 /** The permissions of a role that grant everything on the site, or everything on one resource. */
@@ -93,6 +95,12 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
     if (!anonymous && gate.authorizer !== 'policy' && gate.authorizer.handler === 'allow') {
       add('confirm', 'gate_signed_in_only', `gate '${gate.id}': any signed-in person passes, no permission or two-step sign-in check (authorizer allow)`,
         `Set Who may pass to the policy on gate '${gate.id}' to check permissions and the site's two-step sign-in; acknowledge gate_signed_in_only if every signed-in account may use what it serves`, `gates.${i}.authorizer`)
+    }
+    // Identifies people, passes none of it on: the gateway blanks every identity header (anti-spoofing).
+    const identifies = gate.authenticators.some((h) => h.handler !== 'noop' && h.handler !== 'anonymous')
+    if (identifies && !gate.mutators.some((m) => IDENTITY_MUTATORS.has(m.handler))) {
+      add('warn', 'gate_passes_no_identity', `gate '${gate.id}' signs people in but passes nothing on: the app receives the X-User-* headers (id, email, groups, AAL…) empty`,
+        `Set Gets to identity headers (or enrich) on gate '${gate.id}'`, `gates.${i}.mutators`)
     }
   })
   for (const gap of secondFactorGaps(site)) {
