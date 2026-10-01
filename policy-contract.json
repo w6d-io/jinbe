@@ -1,0 +1,4058 @@
+{
+  "version": 1,
+  "app": "jinbe",
+  "catalogue": {
+    "access:check": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "access:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "audit:export": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "audit:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "gateway:apply": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "gateway:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "groups:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "groups:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "groups.members:revoke": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "groups.members:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "groups.mfa:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "org.audit:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.keys:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.keys:revoke": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.keys:write": {
+      "scope": "org",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "org.members:read": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "org.members:write": {
+      "scope": "org",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "orgs:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs.members:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "orgs.owners:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "policy.bundle:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "policy.bundle:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "recert:delete": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "recert:manage": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "recert:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sessions:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sessions:revoke": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "settings:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "settings.mcp:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "settings.signin:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
+    "sites:apply": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": "prod"
+    },
+    "sites:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "sites:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sites:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "sites.requests:approve": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "stats:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:create": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "users:disable": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:recovery": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:reset_second_factor": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "users:send_login_link": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:update": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:update_email": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users:verify": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users.metadata:write": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "zones:delete": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "zones:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "zones:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    }
+  },
+  "roles": {
+    "jinbe": {
+      "viewer": [
+        "gateway:read",
+        "groups:read",
+        "orgs:read",
+        "settings:read",
+        "sites:read",
+        "stats:read",
+        "zones:read"
+      ],
+      "support": [
+        "access:check",
+        "access:read",
+        "audit:read",
+        "gateway:read",
+        "groups:read",
+        "orgs.members:write",
+        "orgs:read",
+        "sessions:read",
+        "sessions:revoke",
+        "settings:read",
+        "sites:read",
+        "stats:read",
+        "users:create",
+        "users:read",
+        "users:recovery",
+        "users:send_login_link",
+        "users:update",
+        "users:verify",
+        "zones:read"
+      ],
+      "ops": [
+        "access:check",
+        "audit:read",
+        "gateway:apply",
+        "gateway:read",
+        "groups:read",
+        "orgs:read",
+        "settings:read",
+        "sites.requests:approve",
+        "sites:apply",
+        "sites:delete",
+        "sites:read",
+        "sites:write",
+        "stats:read",
+        "zones:delete",
+        "zones:read",
+        "zones:write"
+      ],
+      "developer": [
+        "access:check",
+        "gateway:read",
+        "groups:read",
+        "orgs:read",
+        "settings:read",
+        "sites:read",
+        "sites:write",
+        "stats:read",
+        "zones:read"
+      ],
+      "auditor": [
+        "access:check",
+        "access:read",
+        "audit:export",
+        "audit:read",
+        "gateway:read",
+        "groups:read",
+        "orgs:read",
+        "policy.bundle:read",
+        "recert:read",
+        "sessions:read",
+        "settings:read",
+        "sites:read",
+        "stats:read",
+        "users:read",
+        "zones:read"
+      ],
+      "security": [
+        "access:check",
+        "access:read",
+        "audit:export",
+        "audit:read",
+        "gateway:read",
+        "groups.members:revoke",
+        "groups:read",
+        "orgs:read",
+        "policy.bundle:read",
+        "recert:delete",
+        "recert:manage",
+        "recert:read",
+        "sessions:read",
+        "sessions:revoke",
+        "settings:read",
+        "sites:read",
+        "stats:read",
+        "users:disable",
+        "users:read",
+        "users:reset_second_factor",
+        "users:update_email",
+        "users:verify",
+        "zones:read"
+      ],
+      "super_admin": [
+        "access:check",
+        "access:read",
+        "audit:export",
+        "audit:read",
+        "gateway:apply",
+        "gateway:read",
+        "groups.members:revoke",
+        "groups.members:write",
+        "groups.mfa:write",
+        "groups:read",
+        "groups:write",
+        "orgs.members:write",
+        "orgs.owners:write",
+        "orgs:delete",
+        "orgs:read",
+        "orgs:write",
+        "policy.bundle:read",
+        "policy.bundle:write",
+        "recert:delete",
+        "recert:manage",
+        "recert:read",
+        "sessions:read",
+        "sessions:revoke",
+        "settings.mcp:write",
+        "settings.signin:write",
+        "settings:read",
+        "sites.requests:approve",
+        "sites:apply",
+        "sites:delete",
+        "sites:read",
+        "sites:write",
+        "stats:read",
+        "users.metadata:write",
+        "users:create",
+        "users:delete",
+        "users:disable",
+        "users:read",
+        "users:recovery",
+        "users:reset_second_factor",
+        "users:send_login_link",
+        "users:update",
+        "users:update_email",
+        "users:verify",
+        "zones:delete",
+        "zones:read",
+        "zones:write"
+      ]
+    }
+  },
+  "groups": {
+    "staff-viewers": {
+      "jinbe": [
+        "viewer"
+      ]
+    },
+    "staff-support": {
+      "jinbe": [
+        "support"
+      ]
+    },
+    "staff-ops": {
+      "jinbe": [
+        "ops"
+      ]
+    },
+    "staff-developers": {
+      "jinbe": [
+        "developer"
+      ]
+    },
+    "staff-auditors": {
+      "jinbe": [
+        "auditor"
+      ]
+    },
+    "staff-security": {
+      "jinbe": [
+        "security"
+      ]
+    },
+    "super_admins": {
+      "jinbe": [
+        "super_admin"
+      ]
+    }
+  },
+  "org_roles": {
+    "jinbe": {
+      "owner": [
+        "org.audit:read",
+        "org.keys:read",
+        "org.keys:revoke",
+        "org.keys:write",
+        "org.members:read",
+        "org.members:write"
+      ],
+      "member_manager": [
+        "org.members:read",
+        "org.members:write"
+      ],
+      "key_manager": [
+        "org.keys:read",
+        "org.keys:revoke",
+        "org.keys:write",
+        "org.members:read"
+      ],
+      "auditor": [
+        "org.audit:read",
+        "org.members:read"
+      ],
+      "viewer": [
+        "org.keys:read",
+        "org.members:read"
+      ]
+    }
+  },
+  "every_org": {
+    "jinbe": {
+      "super_admin": [
+        "org.audit:read",
+        "org.keys:read",
+        "org.keys:revoke",
+        "org.keys:write",
+        "org.members:read",
+        "org.members:write"
+      ],
+      "support": [
+        "org.members:read",
+        "org.members:write"
+      ],
+      "auditor": [
+        "org.audit:read",
+        "org.keys:read",
+        "org.members:read"
+      ],
+      "security": [
+        "org.audit:read",
+        "org.keys:read",
+        "org.members:read"
+      ]
+    }
+  },
+  "route_map": {
+    "jinbe": {
+      "rules": [
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-authorization-server",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/access-review",
+          "permission": "access:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/auth/methods",
+          "permission": "settings:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/auth/methods",
+          "permission": "settings.signin:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/groups.members.add/execute",
+          "permission": "groups.members:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/groups.members.add/plan",
+          "permission": "groups.members:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/bulk/jobs/:id",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/sites.routes.upsert/execute",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/sites.routes.upsert/plan",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/users.invite/execute",
+          "permission": "users:create",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/users.invite/plan",
+          "permission": "users:create",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/users.verification/execute",
+          "permission": "users:verify",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/bulk/users.verification/plan",
+          "permission": "users:verify",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/events",
+          "permission": "stats:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/gateway",
+          "permission": "gateway:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/gateway",
+          "permission": "gateway:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/gateway/preview",
+          "permission": "gateway:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/gateway/rollback",
+          "permission": "gateway:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/gateway/rollout",
+          "permission": "gateway:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/gateway/rollout/events",
+          "permission": "gateway:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/organizations",
+          "permission": "orgs:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/organizations",
+          "permission": "orgs:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/organizations/:id",
+          "permission": "orgs:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/admin/organizations/:id",
+          "permission": "orgs:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/organizations/:organizationId/owners",
+          "permission": "orgs.owners:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/access-check",
+          "permission": "access:check",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/bundle/backups",
+          "permission": "policy.bundle:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/bundle/backups/now",
+          "permission": "policy.bundle:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/bundle/backups/restore",
+          "permission": "policy.bundle:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/bundle/export",
+          "permission": "policy.bundle:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/bundle/history",
+          "permission": "policy.bundle:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/bundle/history/:id/rollback",
+          "permission": "policy.bundle:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/bundle/import",
+          "permission": "policy.bundle:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/explain-route",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/groups",
+          "permission": "groups:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/rbac/groups",
+          "permission": "groups:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/rbac/groups/:name",
+          "permission": "groups:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/rbac/groups/:name",
+          "permission": "groups:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/rbac/groups/:name/second-factor",
+          "permission": "groups.mfa:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/oathkeeper/handlers",
+          "permission": "gateway:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/second-factor-map",
+          "permission": "groups:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/services",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/services/:name/favicon",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/services/:name/permissions",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/services/:name/roles",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/rbac/services/:name/roles",
+          "permission": "groups:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/services/:name/routes",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/rbac/services/:name/routes",
+          "permission": "groups:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/rbac/users",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/recert/campaigns",
+          "permission": "recert:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/recert/campaigns",
+          "permission": "recert:manage",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/recert/campaigns/:id",
+          "permission": "recert:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/recert/campaigns/:id",
+          "permission": "recert:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/recert/campaigns/:id/activate",
+          "permission": "recert:manage",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/recert/campaigns/:id/close",
+          "permission": "recert:manage",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/recert/campaigns/:id/items",
+          "permission": "recert:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/recert/campaigns/:id/report",
+          "permission": "recert:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/recert/items/:campaignId/:itemId/decision",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sessions/:sessionId",
+          "permission": "sessions:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/settings/mcp",
+          "permission": "settings:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/settings/mcp",
+          "permission": "settings.mcp:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/settings/second-factor",
+          "permission": "settings:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/settings/second-factor",
+          "permission": "groups.mfa:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/settings/sign-in-protection",
+          "permission": "settings:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/settings/sign-in-protection",
+          "permission": "settings.signin:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/:name",
+          "permission": "sites:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/sites/:name",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/applies/:id",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/applies/:id/events",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/apply",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/blast-radius",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/deletion-requests",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/diff",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/:name/draft",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/draft",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/sites/:name/draft",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/drift",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/drift/accept",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/import/commit",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/import/preview",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/:name/logo",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/sites/:name/logo",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/pause",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/requests",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/restore",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/resume",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/rollback",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/status",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/ttl",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/:name/verify",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/versions",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/versions/:v",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/check-host",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/deleted",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/deletion-requests",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/deletion-requests/:id/approve",
+          "permission": "sites:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/deletion-requests/:id/reject",
+          "permission": "sites:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/deletion-requests/pending",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/gateways",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/match",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/migration",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/migration/cutover",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/migration/dualrun",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/migration/dualrun",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/migration/parity",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/migration/preview",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/migration/rollback",
+          "permission": "sites:apply",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/platform",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/preview",
+          "permission": "sites:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/render",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/requests",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/requests/:id/approve",
+          "permission": "sites.requests:approve",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/requests/:id/reject",
+          "permission": "sites.requests:approve",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/zones",
+          "permission": "zones:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/zones",
+          "permission": "zones:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/zones/:name",
+          "permission": "zones:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/zones/:name",
+          "permission": "zones:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/admin/sites/zones/:name",
+          "permission": "zones:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/sites/zones/suggest",
+          "permission": "zones:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/stats",
+          "permission": "stats:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "developer",
+              "ops",
+              "security",
+              "super_admin",
+              "support",
+              "viewer"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-developers",
+              "staff-ops",
+              "staff-security",
+              "staff-support",
+              "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users",
+          "permission": "users:create",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:email/groups",
+          "permission": "access:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/users/:email/groups",
+          "permission": "groups.members:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/users/:email/groups",
+          "permission": "groups.members:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/users/:id",
+          "permission": "users:delete",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:id",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/users/:id",
+          "permission": "users:update",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/users/:id",
+          "permission": "users:update_email",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:id/access",
+          "permission": "access:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/email",
+          "permission": "users:update_email",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/login-link",
+          "permission": "users:send_login_link",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/users/:id/mcp-connections",
+          "permission": "sessions:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/admin/users/:id/metadata",
+          "permission": "users.metadata:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/admin/users/:id/organization",
+          "permission": "orgs.members:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/recovery-email",
+          "permission": "users:recovery",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:id/second-factors",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/second-factors/reset",
+          "permission": "users:reset_second_factor",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/users/:id/sessions",
+          "permission": "sessions:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:id/sessions",
+          "permission": "sessions:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/admin/users/:id/state",
+          "permission": "users:disable",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/verification",
+          "permission": "users:verify",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/lookup",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/search",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/access",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/events",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/events/:eventId",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/audit/exports",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/exports/:id",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/exports/:id/download",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/facets",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/me/logins",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/saved-queries",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/audit/saved-queries",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/audit/saved-queries/:id",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/summary",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/tail",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit/users/:id/timeline",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/catalog",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/health",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/home",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/home/:module",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/mcp/status",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/api-keys",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/me/api-keys",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/me/api-keys/:clientId",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/api-keys/scopes",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/me/mcp/connections",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/mcp/connections",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/me/mcp/connections/:clientId",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/me/mcp/step-up-requests",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/organizations",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/permissions",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/api-key-policy",
+          "permission": "org.keys:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/api-key-policy",
+          "permission": "org.keys:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/api-keys",
+          "permission": "org.keys:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/organizations/:organizationId/api-keys",
+          "permission": "org.keys:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/organizations/:organizationId/api-keys/:clientId",
+          "permission": "org.keys:revoke",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/api-keys/:clientId",
+          "permission": "org.keys:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/api-keys/scopes",
+          "permission": "org.keys:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "key_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/roles",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/users",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/organizations/:organizationId/users",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/organizations/:organizationId/users/:id",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/users/:id",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/users/:id",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/users/:id/groups",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/users/:id/membership",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/users/:id/roles",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/oauth2/consent",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/public/oauth2/consent",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/oauth2/login",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/oauth2/step-up",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/public/oauth2/step-up",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/second-factor",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/sign-in-protection",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/public/sign-in-protection/gate/self-service/:flow",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/sites/:name/access-reason",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/sites/:name/logo",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/sites/by-host/:host",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/sites/mine",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/telemetry",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/whoami",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/oauth2/register",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/scim/v2/ResourceTypes",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/scim/v2/Schemas",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/scim/v2/ServiceProviderConfig",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/scim/v2/Users",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/scim/v2/Users",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/scim/v2/Users/:id",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/scim/v2/Users/:id",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "PATCH",
+          "path": "/scim/v2/Users/:id",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/scim/v2/Users/:id",
+          "public": true,
+          "reach": {
+            "kind": "public"
+          }
+        }
+      ]
+    }
+  }
+}
