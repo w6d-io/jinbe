@@ -97,6 +97,9 @@ function inventory(): Inventory {
       { clientId: 'pk-1', kind: 'personal', owner: 'u-1', name: null, scopes: ['org:manage_api_keys'] },
       { clientId: 'pk-2', kind: 'personal', owner: 'u-2', name: null, scopes: ['org:read', 'users:read'] },
       { clientId: 'ok-1', kind: 'org', owner: ACME, name: 'ci', scopes: ['payroll:read'] },
+      // MCP clients jinbe registered: one a person consented to (bound), one nobody ever did.
+      { clientId: 'mcp-bound', kind: 'mcp', owner: 'id-1', name: 'Claude', scopes: ['mcp', 'org:read'], registeredAt: '2026-09-30T10:00:00Z' },
+      { clientId: 'mcp-unbound', kind: 'mcp', owner: null, name: 'Claude', scopes: ['mcp', 'org:read'], registeredAt: '2026-09-30T11:00:00Z' },
     ],
     unavailable: [],
   }
@@ -196,7 +199,12 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(plan.orphans.clients).toEqual([
       expect.objectContaining({ clientId: 'pk-1', retired: ['org:manage_api_keys'], proposed: 'revoke', rescopedTo: [] }),
       expect.objectContaining({ clientId: 'pk-2', retired: ['org:read'], proposed: 'rescope', rescopedTo: ['orgs:read', 'users:read'] }),
+      expect.objectContaining({ clientId: 'mcp-bound', kind: 'mcp', owner: 'id-1', ownerEmail: 'root@x.io', proposed: 'rescope', rescopedTo: ['mcp', 'orgs:read'] }),
+      expect.objectContaining({ clientId: 'mcp-unbound', kind: 'mcp', owner: null, ownerEmail: null, proposed: 'revoke', rescopedTo: [] }),
     ])
+    const md = renderPlanMarkdown(plan)
+    expect(md).toContain('| mcp-bound | mcp | root@x.io |')
+    expect(md).toContain('| mcp-unbound | mcp | (never consented) |')
   })
 
   it('people who hold nothing either way are not listed', () => {
@@ -224,5 +232,16 @@ describe('the v2 plan over a v1 inventory', () => {
     for (const h of ['## Losses to approve', '## 1. Today', '## 2. Rule by rule', '## 3. People', '## 4. Orphans', '## 5. Migration map']) expect(md).toContain(h)
     expect(md).toContain(plan.planHash)
     expect(md).toContain('| [ ] | jinbe | DELETE | /api/admin/users/:id |')
+  })
+})
+
+describe('clientFacts (Hydra client → the review)', () => {
+  it('an MCP client jinbe registered is kind mcp, owned by the person it is bound to; never consented: no owner', async () => {
+    const { clientFacts } = await import('../../bootstrap/plan/run.js')
+    expect(clientFacts({ client_id: 'c1', scope: 'org:read mcp', metadata: { kind: 'mcp_oauth', bound_subject: 'id-1', registered_at: '2026-09-30T10:00:00Z' } }))
+      .toEqual({ clientId: 'c1', kind: 'mcp', owner: 'id-1', name: null, scopes: ['mcp', 'org:read'], registeredAt: '2026-09-30T10:00:00Z' })
+    expect(clientFacts({ client_id: 'c2', scope: 'mcp', metadata: { kind: 'mcp_oauth' } })).toMatchObject({ kind: 'mcp', owner: null, registeredAt: null })
+    expect(clientFacts({ client_id: 'c3', metadata: { kind: 'personal', subject: 's' } })).toMatchObject({ kind: 'personal', owner: 's' })
+    expect(clientFacts({ client_id: 'c4', metadata: {} })).toMatchObject({ kind: 'other', owner: null })
   })
 })

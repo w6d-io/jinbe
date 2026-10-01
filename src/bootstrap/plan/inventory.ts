@@ -11,10 +11,12 @@ import type { OrgAssignments } from '../../services/org-roles.repository.js'
 import type { DirectGrant } from '../../services/direct-grants.repository.js'
 export interface OAuthClientFacts {
   clientId: string
-  /** `personal` (a person's key), `org` (an org's key), `other` (MCP or a registered client). */
-  kind: 'personal' | 'org' | 'other'
-  /** The org of an org key, the subject of a personal key. */
+  /** `personal` (a person's key), `org` (an org's key), `mcp` (an MCP client jinbe registered, DCR), `other`. */
+  kind: 'personal' | 'org' | 'mcp' | 'other'
+  /** The org of an org key, the subject of a personal key, the person an MCP client is bound to (null: never consented). */
   owner: string | null
+  /** When an MCP client was registered (Hydra metadata), when known. */
+  registeredAt?: string | null
   name: string | null
   scopes: string[]
 }

@@ -8,6 +8,7 @@ import { hydraService } from '../../services/hydra.service.js'
 import { kratosService } from '../../services/kratos.service.js'
 import { rolesByOrganisation } from '../../services/organisation-store/membership.js'
 import { allOrganisations, organisationStoreConfigured } from '../../services/organisation-store.js'
+import { MCP_CLIENT_KIND } from '../../oauth/register.js'
 import { renderAppliedSites } from '../../sites/republish.js'
 import { rights } from '../../authz/opa.js'
 import { readMarker } from '../marker.js'
@@ -79,12 +80,7 @@ export async function readInventory(logger: Logger, builtInRuleIds: ReadonlySet<
     identities.set(email, { id: b.id ?? null, groups: b.groups, organizations, organizationRoles: rolesByOrganisation(b.organizationRoles) })
   }
   const clients = await attempt<OAuthClientFacts[] | null>('OAuth clients (Hydra)', unavailable, logger, async () =>
-    (await hydraService.listAllClients()).map((c) => {
-      const m = (c.metadata ?? {}) as Record<string, unknown>
-      const kind = m.kind === 'personal' ? 'personal' : typeof m.organization_id === 'string' ? 'org' : 'other'
-      const owner = kind === 'personal' ? (typeof m.subject === 'string' ? m.subject : null) : kind === 'org' ? (m.organization_id as string) : null
-      return { clientId: c.client_id, kind, owner, name: c.client_name ?? null, scopes: (c.scope ?? '').split(' ').filter(Boolean).sort() } as OAuthClientFacts
-    }), null)
+    (await hydraService.listAllClients()).map(clientFacts), null)
   const marker = await attempt('bootstrap marker', unavailable, logger, async () => {
     const m = await readMarker()
     return m ? { schemaVersion: m.schemaVersion, gitSha: m.gitSha } : null
@@ -166,4 +162,19 @@ export async function runPlan(opts: { logger: Logger; outDir: string; opa: boole
   await writePlan(plan, opts.outDir, extra)
   opts.logger.info({ outDir: opts.outDir, planHash: plan.planHash, rules: plan.rules.length, people: plan.people.length }, 'plan written (read-only: nothing was changed)')
   return plan
+}
+
+/** What the review needs of one Hydra client: its kind, its owner, its scopes. */
+export function clientFacts(c: { client_id: string; client_name?: string; scope?: string; metadata?: unknown }): OAuthClientFacts {
+  const m = (c.metadata ?? {}) as Record<string, unknown>
+  // An MCP client jinbe registered (DCR) carries the same marker the consent flow reads (isMcpClient),
+  // and the person it is bound to once they consented (bound_subject).
+  const kind = m.kind === MCP_CLIENT_KIND ? 'mcp' : m.kind === 'personal' ? 'personal' : typeof m.organization_id === 'string' ? 'org' : 'other'
+  const owner = kind === 'personal' ? (typeof m.subject === 'string' ? m.subject : null)
+    : kind === 'org' ? (m.organization_id as string)
+      : kind === 'mcp' ? (typeof m.bound_subject === 'string' && m.bound_subject ? m.bound_subject : null) : null
+  return {
+    clientId: c.client_id, kind, owner, name: c.client_name ?? null, scopes: (c.scope ?? '').split(' ').filter(Boolean).sort(),
+    ...(kind === 'mcp' ? { registeredAt: typeof m.registered_at === 'string' ? m.registered_at : null } : {}),
+  }
 }

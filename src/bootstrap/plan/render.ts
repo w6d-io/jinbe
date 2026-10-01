@@ -90,7 +90,9 @@ export function renderPlanMarkdown(plan: Plan): string {
   out.push('### Org grants with no equivalent (the group is no site\'s org role; carried ones are in section 5)', '')
   out.push(table(['org', 'person', 'groups'], plan.orphans.orgGrants.map((m) => [m.org, m.email, m.groups.join(', ')])))
   out.push('### OAuth clients with retired scopes', '')
-  out.push(table(['client', 'kind', 'owner', 'retired', 'proposed', 're-scoped to'], plan.orphans.clients.map((c) => [c.clientId, c.kind, c.owner, c.retired.join(', '), c.proposed, c.rescopedTo.join(', ')])))
+  out.push(table(['client', 'kind', 'owner', 'retired', 'proposed', 're-scoped to'], plan.orphans.clients.map((c) => [
+    c.clientId, c.kind, c.ownerEmail ?? c.owner ?? (c.kind === 'mcp' ? '(never consented)' : ''), c.retired.join(', '), c.proposed, c.rescopedTo.join(', '),
+  ])))
 
   out.push('## 5. Migration map (proposed, owner-editable)', '')
   out.push('### Org roles the apply writes', '')

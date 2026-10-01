@@ -71,7 +71,8 @@ export interface Plan {
     orgRoles: Array<{ email: string; org: string; role: string; why: string }>
     roster: Array<{ org: string; email: string; member: boolean }>
     orgGrants: Array<{ org: string; email: string; groups: string[] }>
-    clients: Array<{ clientId: string; kind: string; owner: string | null; scopes: string[]; retired: string[]; proposed: 'keep' | 'rescope' | 'revoke'; rescopedTo: string[] }>
+    /** owner: org id, or the person's identity id; ownerEmail: that person's address when known. */
+    clients: Array<{ clientId: string; kind: string; owner: string | null; ownerEmail: string | null; registeredAt?: string | null; scopes: string[]; retired: string[]; proposed: 'keep' | 'rescope' | 'revoke'; rescopedTo: string[] }>
   }
   migration: {
     /** Org roles the apply writes, and where each comes from. */
@@ -250,6 +251,7 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
   // Org grants the migration does not carry (no site org role behind the group).
   const orgGrants = Object.entries(inv.orgGrants).flatMap(([org, byEmail]) =>
     Object.entries(byEmail).map(([email, gs]) => ({ org, email, groups: sorted(gs.filter((g) => !siteOrgRoleOf(inv, g))) })).filter((g) => g.groups.length))
+  const emailOf = new Map([...inv.identities.entries()].filter(([, f]) => f.id).map(([email, f]) => [f.id as string, email]))
   const clients = (inv.clients ?? []).map((c) => {
     const retired = c.scopes.filter((s) => legacyName(s) !== null)
     const rescopedTo = sorted(c.scopes.flatMap((s) => {
@@ -257,8 +259,14 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
       const renamed = renamedTo(s)
       return renamed ? [renamed] : []
     }))
-    const proposed: 'keep' | 'rescope' | 'revoke' = retired.length === 0 ? 'keep' : rescopedTo.length > 0 ? 'rescope' : 'revoke'
-    return { clientId: c.clientId, kind: c.kind, owner: c.owner, scopes: c.scopes, retired, proposed, rescopedTo }
+    // An MCP client nobody ever consented to (no bound person) is not re-scoped: it is revoked.
+    const unboundMcp = c.kind === 'mcp' && !c.owner
+    const proposed: 'keep' | 'rescope' | 'revoke' = retired.length === 0 ? 'keep' : unboundMcp ? 'revoke' : rescopedTo.length > 0 ? 'rescope' : 'revoke'
+    const ownerEmail = c.kind === 'personal' || c.kind === 'mcp' ? (c.owner ? emailOf.get(c.owner) ?? null : null) : null
+    return {
+      clientId: c.clientId, kind: c.kind, owner: c.owner, ownerEmail, ...(c.registeredAt !== undefined ? { registeredAt: c.registeredAt } : {}),
+      scopes: c.scopes, retired, proposed, rescopedTo: unboundMcp ? [] : rescopedTo,
+    }
   }).filter((c) => c.proposed !== 'keep')
 
   const body: Omit<Plan, 'generatedAt' | 'planHash'> = {
