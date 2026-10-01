@@ -12,7 +12,9 @@ export const SYSTEM_SITES = ['jinbe', 'kuma', 'global'] as const
 
 export const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const
 
-const name = z.string().regex(/^[a-z][a-z0-9-]{1,39}$/, 'lowercase letters, digits and dashes, 2-40 characters')
+/** A site name: also its RBAC service name, so it always matches SERVICE_NAME_PATTERN (rbac.service). */
+export const SITE_NAME_PATTERN = /^[a-z][a-z0-9-]{1,39}$/
+const name = z.string().regex(SITE_NAME_PATTERN, 'lowercase letters, digits and dashes, 2-40 characters')
 const id = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/, 'lowercase letters, digits and dashes')
 // Gate ids become Site CR gate names (≤ 32 chars, `<id>-preflight` included).
 const gateId = z.string().regex(/^[a-z]([a-z0-9-]{0,20}[a-z0-9])?$/, 'lowercase letters, digits and dashes, at most 22 characters')

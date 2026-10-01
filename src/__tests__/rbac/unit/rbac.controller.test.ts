@@ -37,6 +37,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
     createAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     updateAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     deleteAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
+    setOrgServiceMapping: vi.fn().mockResolvedValue(undefined),
   },
 }))
 

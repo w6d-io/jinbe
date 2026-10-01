@@ -16,7 +16,8 @@ import { sha256 } from './render.js'
  *   rbac:sites:deleted           → Set: names with a snapshot (members whose snapshot expired are dropped on read)
  *
  * Every save is a new version with its own etag; a save names the etag it was based on (If-Match),
- * so two editors cannot silently overwrite each other.
+ * so two editors cannot silently overwrite each other. A draft has an etag too, the hash of its
+ * content (the base etag an OpenAPI import pins): an autosave naming an older one is refused.
  */
 
 export interface SiteRecord {
@@ -51,6 +52,8 @@ export interface SiteDraft {
   baseVersion: number
   updatedBy: string
   updatedAt?: string
+  /** Computed on read (draftEtagOf), never stored. */
+  etag?: string
 }
 
 const SITES = 'rbac:sites'
@@ -64,6 +67,9 @@ export const DELETED_TTL_SECONDS = 30 * 24 * 3600
 const status = (message: string, statusCode: number, code: string) => Object.assign(new Error(message), { statusCode, code })
 
 export const etagOf = (site: Site, version: number) => sha256({ site, version }).slice(0, 16)
+export const draftEtagOf = (site: unknown) => sha256(site).slice(0, 16)
+/** An If-Match value as sent (`W/"abc"`, `"abc"`) → the bare etag. */
+export const bareEtag = (ifMatch: string | undefined) => ifMatch?.replace(/^W\//, '').replace(/"/g, '').trim() || undefined
 
 class SitesRepository {
   private get redis() {
@@ -84,7 +90,7 @@ class SitesRepository {
   async save(site: Site, opts: { by: string; note?: string; ifMatch: string | undefined; kind?: SiteVersion['kind'] }): Promise<SiteRecord> {
     return withRedisLock(`sites:${site.name}`, async () => {
       const current = await this.get(site.name)
-      const ifMatch = opts.ifMatch?.replace(/^W\//, '').replace(/"/g, '')
+      const ifMatch = bareEtag(opts.ifMatch)
       if (current) {
         if (!ifMatch) throw status('This site exists: send If-Match with the etag you edited', 428, 'precondition_required')
         if (ifMatch !== current.etag && ifMatch !== '*') {
@@ -148,14 +154,38 @@ class SitesRepository {
 
   async getDraft(name: string): Promise<SiteDraft | null> {
     const raw = await this.redis.get(draftKey(name))
-    return raw ? (JSON.parse(raw) as SiteDraft) : null
+    if (!raw) return null
+    const { etag: _stored, ...draft } = JSON.parse(raw) as SiteDraft
+    return { ...draft, etag: draftEtagOf(draft.site) }
   }
 
-  async putDraft(name: string, draft: SiteDraft): Promise<SiteDraft> {
-    const stored = { ...draft, updatedAt: new Date().toISOString() }
-    await this.redis.set(draftKey(name), JSON.stringify(stored))
-    await this.redis.sadd(DRAFTS, name)
-    return stored
+  /**
+   * Write the draft. With `ifMatch`, the draft there now must carry that etag (or be gone: a save or
+   * a discard since is no conflict to keep); with `ifNoneMatch` (If-None-Match: *), there must be no
+   * draft at all (an editor that started from the saved version). Otherwise 412 `stale_draft` with
+   * the current etag and who wrote it. `requireIfMatch`: refuse (428) to overwrite an existing draft
+   * without either precondition.
+   */
+  async putDraft(name: string, draft: SiteDraft, opts: { ifMatch?: string; ifNoneMatch?: boolean; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
+    return withRedisLock(`sites:draft:${name}`, async () => {
+      const ifMatch = bareEtag(opts.ifMatch)
+      if (ifMatch !== '*' && (ifMatch || opts.ifNoneMatch || opts.requireIfMatch)) {
+        const current = await this.getDraft(name)
+        if (current && !ifMatch && !opts.ifNoneMatch) throw status('This site has a draft: send If-Match with the draft etag you edited', 428, 'precondition_required')
+        if (current && (opts.ifNoneMatch || current.etag !== ifMatch)) {
+          const by = current.updatedBy
+          throw Object.assign(status(`${by} saved this draft${current.updatedAt ? ` at ${current.updatedAt}` : ''} since you loaded it`, 412, 'stale_draft'), {
+            etag: current.etag,
+            current: { etag: current.etag, updatedBy: by, updatedAt: current.updatedAt ?? null, baseVersion: current.baseVersion },
+          })
+        }
+      }
+      const { etag: _etag, ...rest } = draft
+      const stored = { ...rest, updatedAt: new Date().toISOString() }
+      await this.redis.set(draftKey(name), JSON.stringify(stored))
+      await this.redis.sadd(DRAFTS, name)
+      return { ...stored, etag: draftEtagOf(stored.site) }
+    })
   }
 
   async deleteDraft(name: string): Promise<void> {
@@ -171,7 +201,10 @@ class SitesRepository {
     const raws = names.length ? await this.redis.mget(...names.map(draftKey)) : []
     for (const [i, name] of names.entries()) {
       const raw = raws[i]
-      if (raw) out.push({ name, draft: JSON.parse(raw) as SiteDraft })
+      if (raw) {
+        const draft = JSON.parse(raw) as SiteDraft
+        out.push({ name, draft: { ...draft, etag: draftEtagOf(draft.site) } })
+      }
       else await this.redis.srem(DRAFTS, name)
     }
     return out.sort((a, b) => a.name.localeCompare(b.name))

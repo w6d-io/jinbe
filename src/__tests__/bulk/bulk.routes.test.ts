@@ -85,6 +85,8 @@ import { delegationGate } from '../../middleware/delegation-gate.js'
 import { bulkRoutes } from '../../bulk/routes.js'
 import { running } from '../../bulk/engine.js'
 import { declaredRoutes } from '../../policy/declared-routes.js'
+import { sitesRepository } from '../../sites/repository.js'
+import { putDraft } from '../../sites/sites.service.js'
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -327,6 +329,16 @@ describe('sites.routes.upsert', () => {
     const items = (h.drafts[0].site.routes as { items: Array<{ id: string; access: { kind: string } }> }).items
     expect(items.map((r) => r.id)).toEqual(['home', 'locked', 'reports'])
     expect(items[0].access.kind).toBe('public')
+  })
+
+  it('writes the draft naming the etag it was loaded with, so an autosave since is not overwritten', async () => {
+    vi.mocked(sitesRepository.getDraft).mockResolvedValue({ site: structuredClone(h.site), baseVersion: 3, updatedBy: 'alex@x.test', etag: 'abcdef0123456789' })
+    try {
+      await planAndRun('sites.routes.upsert', { params: { site: 'payroll' }, items: [route('reports')] }, S)
+      expect(vi.mocked(putDraft)).toHaveBeenLastCalledWith('payroll', expect.anything(), expect.anything(), { ifMatch: 'abcdef0123456789' })
+    } finally {
+      vi.mocked(sitesRepository.getDraft).mockResolvedValue(null)
+    }
   })
 
   it('refuses a system site and an unknown one', async () => {

@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { rbacService } from '../services/rbac.service.js'
+import { rbacService, SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { faviconService } from '../services/favicon.service.js'
 import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
 import {
@@ -12,6 +12,9 @@ import { auditActor } from '../utils/audit-actor.js'
 import { getGroupSecondFactorFlags } from '../second-factor/settings.js'
 import { groupSecondFactor } from '../second-factor/requirements.js'
 import { z } from 'zod'
+
+// Built per request, not at import: SERVICE_NAME_PATTERN is read when it is used.
+const serviceName = () => z.string().min(1).regex(SERVICE_NAME_PATTERN, 'a site or service name: lowercase letters, digits, - and _')
 
 // =============================================================================
 // Controller — Redis-backed RBAC management
@@ -112,7 +115,7 @@ export class RbacController {
     reply: FastifyReply
   ) {
     const { name } = z
-      .object({ name: z.string().min(1).regex(/^[a-z0-9_-]+$/) })
+      .object({ name: serviceName() })
       .parse(request.params)
     const favicon = await faviconService.getFavicon(name)
     if (!favicon) {

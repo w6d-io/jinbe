@@ -152,6 +152,27 @@ describe('preview', () => {
   })
 })
 
+describe('preview size', () => {
+  it('reads a 1.5 MB spec over HTTP (far above the 200 KB the MCP tool sends), capped by operations, not bytes', async () => {
+    await save()
+    const doc = 'x'.repeat(4000)
+    const paths = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`/api/things${i}`, { get: { operationId: `thing${i}`, description: doc, responses: { '200': { description: 'ok' } } } }]))
+    const content = JSON.stringify({ openapi: '3.0.0', info: { title: 'Big', version: '1' }, paths })
+    expect(Buffer.byteLength(content)).toBeGreaterThan(1_200_000)
+    const res = await preview(content)
+    expect(res.statusCode).toBe(200)
+    expect(res.json().spec.counts).toMatchObject({ operations: 300 })
+  })
+
+  it('refuses more operations than the parse cap with its code', async () => {
+    await save()
+    const paths = Object.fromEntries(Array.from({ length: 2001 }, (_, i) => [`/p${i}`, { get: { responses: {} } }]))
+    const res = await preview(JSON.stringify({ openapi: '3.0.0', info: { title: 'Many', version: '1' }, paths }))
+    expect(res.statusCode).toBe(422)
+    expect(['too_many_paths', 'too_many_operations']).toContain(res.json().error)
+  })
+})
+
 describe('commit', () => {
   it('409 for a sha that was not previewed', async () => {
     await save()

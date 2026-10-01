@@ -193,11 +193,12 @@ export async function commitImport(name: string, body: ImportCommitBody, actor: 
       return { changed: false, counts: out.p.counts, etag: out.base.etag }
     }
     if (JSON.stringify(out.candidate).length > draftMaxBytes()) throw siteError(413, 'draft_too_large', `the draft would exceed ${Math.round(draftMaxBytes() / 1024)} KiB`)
-    const draft = await sitesRepository.putDraft(name, { site: out.candidate, baseVersion: out.base.baseVersion, updatedBy: actor.email ?? 'unknown' })
+    // The base etag is the draft etag when the base is the draft: an autosave since is 412, not lost.
+    const draft = await sitesRepository.putDraft(name, { site: out.candidate, baseVersion: out.base.baseVersion, updatedBy: actor.email ?? 'unknown' }, { ifMatch: out.base.from === 'draft' ? out.base.etag : undefined })
     const riskFlags = [...new Set(out.risk.flags.filter((f) => f.level !== 'low').map((f) => f.code))]
     auditSite('import', name, actor, `imported ${spec.title} ${spec.version} into the draft: +${out.p.counts.added} ~${out.p.counts.changed} −${out.p.counts.removed}`.trim(), {
       sha256: body.specSha256, counts: out.p.counts, risk: out.risk.level, riskFlags, overrides: out.p.counts.overrides,
     })
-    return { changed: true, counts: out.p.counts, risk: out.risk, etag: sha256(out.candidate).slice(0, 16), draft: { updatedAt: draft.updatedAt, updatedBy: draft.updatedBy, baseVersion: draft.baseVersion } }
+    return { changed: true, counts: out.p.counts, risk: out.risk, etag: draft.etag, draft: { updatedAt: draft.updatedAt, updatedBy: draft.updatedBy, baseVersion: draft.baseVersion } }
   })
 }
