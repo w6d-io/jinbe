@@ -35,10 +35,7 @@ export type SecondFactorRule = 'group_sign_in' | 'step_up' | 'enrol_before_joini
 
 export const STEP_UP_MAX_AGE_MIN = STEP_UP_MAX_AGE_MS / 60_000
 export const PERSONAL_KEY_MAX_AGE_DAYS = KEY_STEP_UP_MAX_AGE_MS / 86_400_000
-/**
- * The default of the MCP setting `oauth.protectedActionsHours` (src/mcp/settings.ts on the OAuth branch).
- * A local copy until that branch merges; then read it from getMcpSettings() so a changed window shows.
- */
+/** The fallback when the MCP settings cannot be read (oauthGrantWindowHours reads the live window). */
 export const OAUTH_GRANT_MAX_AGE_HOURS = 12
 export const OAUTH_GRANT_SETTING = 'mcp.oauth.protectedActionsHours'
 
@@ -105,7 +102,7 @@ export function stepUpRule(permission: string, oauthHours: number | null = OAUTH
     required: spec.stepUp,
     maxAgeMin: spec.stepUp ? STEP_UP_MAX_AGE_MIN : null,
     viaPersonalKey: keyStandsIn ? { maxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS } : null,
-    // Same permissions as a personal key (delegatedStepUpVerdict on the OAuth branch).
+    // Same permissions as a personal key (delegatedStepUpVerdict).
     viaOAuthGrant: keyStandsIn && oauthHours !== null ? { maxAgeHours: oauthHours, setting: OAUTH_GRANT_SETTING, requiresConsentOptIn: true } : null,
     fourEyes: spec.fourEyes,
   }

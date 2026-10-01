@@ -34,11 +34,12 @@ const stringList = { type: 'array', items: { type: 'string' } }
  * their permissions need a recent one. Nothing about a session (they may have none, or several).
  * Each part is best effort; the whole is null only when the setting itself cannot be read.
  */
-async function secondFactorOf(id: string, email: string, groups: string[]): Promise<UserSecondFactor | null> {
+async function secondFactorOf(id: string, address: string, groups: string[]): Promise<UserSecondFactor | null> {
   const [setting, methods, held] = await Promise.all([
     getSecondFactorSetting().catch(() => null),
     (async () => kratosService.mfaMethodsOf(id))().catch(() => null),
-    (async () => (email ? rights(email) : null))().catch(() => null),
+    // As the RBAC bindings key it, like every other OPA question here: never lowercased.
+    (async () => (address ? rights(address) : null))().catch(() => null),
   ])
   if (!setting) return null
   return userSecondFactor({ groups, permissions: held?.permissions ?? null, setting, methods, session: null })
@@ -103,9 +104,8 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       }
       throw err
     }
-    // As the RBAC bindings key it (OPA is asked with this), and lowercased for the stores.
+    // As the RBAC bindings key it: OPA is asked with this, never a lowercased copy.
     const address = String(identity.traits?.email ?? '')
-    const email = address.toLowerCase()
     const metadata = identity.metadata_admin as { groups?: unknown } | null | undefined
     // Same default the bindings apply to an identity carrying no groups.
     const groups = Array.isArray(metadata?.groups)
@@ -140,6 +140,6 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       permissions: held[orgId] ?? [],
     }))
 
-    return reply.send({ site: { groups, byService }, orgs, secondFactor: await secondFactorOf(id, email, groups) })
+    return reply.send({ site: { groups, byService }, orgs, secondFactor: await secondFactorOf(id, address, groups) })
   })
 }

@@ -18,6 +18,7 @@ const s = vi.hoisted(() => ({
   inOrg: {} as Record<string, Record<string, string[]>>,
   opaDown: false,
   asked: [] as string[],
+  askedRights: [] as string[],
 }))
 
 vi.mock('../../../authz/opa.js', () => ({
@@ -26,7 +27,10 @@ vi.mock('../../../authz/opa.js', () => ({
     if (s.opaDown) throw new Error('OPA unreachable')
     return s.inOrg[email] ?? {}
   }),
-  rights: vi.fn(async () => ({ groups: [], roles: [], permissions: ['sites:read', 'groups:write'] })),
+  rights: vi.fn(async (address: string) => {
+    s.askedRights.push(address)
+    return { groups: [], roles: [], permissions: ['sites:read', 'groups:write'] }
+  }),
 }))
 
 vi.mock('../../../services/kratos.service.js', () => ({
@@ -139,6 +143,13 @@ describe('GET /api/admin/users/:id/access', () => {
     })
     // OPA is asked with the address as the bindings key it (as typed), not a lowercased copy.
     expect(s.asked).toEqual(['Bob@acme.test'])
+  })
+
+  it('the second-factor picture asks OPA with the mixed-case address as bound, not a lowercased copy', async () => {
+    s.askedRights = []
+    const res = await app.inject({ url: '/api/admin/users/id-bob/access' })
+    expect(res.json().secondFactor.stepUpPermissions).toEqual(['groups:write'])
+    expect(s.askedRights).toEqual(['Bob@acme.test'])
   })
 
   it('503 when OPA cannot be asked — never an org view it could not decide', async () => {
