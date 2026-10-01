@@ -38,6 +38,7 @@ paths:
       tags:
         - health
       description: Health check endpoint
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -46,6 +47,8 @@ paths:
       tags:
         - scim
       description: SCIM 2.0 service provider configuration (RFC 7643 §5).
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -59,6 +62,8 @@ paths:
       tags:
         - scim
       description: SCIM 2.0 resource types (RFC 7643 §6). Users only in phase 1.
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -72,6 +77,8 @@ paths:
       tags:
         - scim
       description: SCIM 2.0 schema definitions (RFC 7643 §7).
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -102,6 +109,8 @@ paths:
           in: query
           name: count
           required: false
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -122,6 +131,8 @@ paths:
             schema:
               type: object
               additionalProperties: true
+      x-access: machine
+      x-edge: true
       responses:
         "201":
           description: Default Response
@@ -141,6 +152,8 @@ paths:
           in: path
           name: id
           required: true
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -166,6 +179,8 @@ paths:
           in: path
           name: id
           required: true
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -192,6 +207,8 @@ paths:
           in: path
           name: id
           required: true
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -211,6 +228,8 @@ paths:
           in: path
           name: id
           required: true
+      x-access: machine
+      x-edge: true
       responses:
         "200":
           description: Default Response
@@ -221,6 +240,7 @@ paths:
       description: RFC 8414 authorization-server metadata for MCP clients, on the
         Hydra host only (MCP_OAUTH_ISSUER). The issuer is Hydra's verbatim; PKCE
         S256 only, public clients, registration at <issuer>/oauth2/register.
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -235,6 +255,7 @@ paths:
         registration access token are issued. 403 access_denied when MCP or
         browser sign-in is off; 429 over the per-network or daily limit; 503
         when too many registrations await consent.
+      x-access: public
       responses:
         "201":
           description: Default Response
@@ -325,6 +346,7 @@ paths:
       tags:
         - health
       description: Browser telemetry settings. Empty when none is configured.
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -347,6 +369,7 @@ paths:
         - auth
       description: Return the current user identity (from Kratos session) and RBAC
         info (groups, roles, permissions) from OPAL
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -411,6 +434,7 @@ paths:
       description: The permission catalogue (labels, sensitivity, step-up and its
         rule, four-eyes, delegable, routes), the staff roles and the legacy
         aliases.
+      x-access: authenticated
       responses:
         "200":
           description: Default Response
@@ -527,6 +551,7 @@ paths:
         user-management actions they allow, and their second-factor picture
         (secondFactor: requiredBecause groups, enrolled, currentAal,
         factorAgeMin, stepUpFresh, stepUpPermissions)."
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -631,6 +656,7 @@ paths:
       tags:
         - me
       description: List the organizations the current user may administer
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -668,6 +694,7 @@ paths:
       tags:
         - api-keys
       description: Your personal API keys (no secrets).
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -842,6 +869,7 @@ paths:
                   description: At most the maximum an administrator set (30 days or less); absent
                     = that maximum
               additionalProperties: false
+      x-access: self
       responses:
         "201":
           description: Returned ONCE on creation. Copy the key now — it cannot be
@@ -1038,6 +1066,7 @@ paths:
         expanded to the permissions the routes declare, never offered as such —
         and never one that only opens routes a key may not use. Grouped by
         resource. 403 when your groups may not use MCP."
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -1199,6 +1228,7 @@ paths:
           in: path
           name: clientId
           required: true
+      x-access: self
       responses:
         "204":
           description: Default Response
@@ -1289,6 +1319,7 @@ paths:
         protected_actions_not_allowed when the key or the sign-in was given none
         (reconnect / new key); 403 protected_actions_off | mcp_disabled; 429
         with Retry-After past 5 links per 10 minutes."
+      x-access: self
       responses:
         "201":
           description: Default Response
@@ -1379,6 +1410,7 @@ paths:
         - oauth
       description: "Your signed-in AI apps (MCP browser sign-ins): name (unverified),
         permissions mode, protected actions, dates, last use."
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -1524,6 +1556,7 @@ paths:
         - oauth
       description: "Disconnect every AI app you signed in with a browser: their tokens
         stop within 30 seconds and their registrations are deleted."
+      x-access: self
       responses:
         "204":
           description: Default Response
@@ -1631,6 +1664,7 @@ paths:
           in: path
           name: clientId
           required: true
+      x-access: self
       responses:
         "204":
           description: Default Response
@@ -1745,6 +1779,8 @@ paths:
           in: query
           name: credentials_identifier
           required: false
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -1985,6 +2021,8 @@ paths:
                                 password:
                                   type: string
                                   minLength: 8
+      x-permission: users:create
+      x-permission-v2: users:create
       responses:
         "201":
           description: Default Response
@@ -2172,6 +2210,8 @@ paths:
           in: query
           name: limit
           required: false
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -2284,6 +2324,8 @@ paths:
           in: query
           name: limit
           required: false
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -2419,6 +2461,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -2625,6 +2669,10 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:update
+      x-permission-v2: users:update
+      x-also-accepts:
+        - users:update_email
       responses:
         "200":
           description: Default Response
@@ -2806,6 +2854,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:delete
+      x-permission-v2: users:delete
+      x-step-up: true
       responses:
         "204":
           description: User deleted successfully
@@ -2898,6 +2949,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:recovery
+      x-permission-v2: users:recovery
       responses:
         "204":
           description: Recovery email sent
@@ -3003,6 +3056,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:send_login_link
+      x-permission-v2: users:send_login_link
       responses:
         "200":
           description: Default Response
@@ -3107,6 +3162,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -3236,6 +3293,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:reset_second_factor
+      x-permission-v2: users:reset_second_factor
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -3343,6 +3403,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: sessions:read
+      x-permission-v2: sessions:read
       responses:
         "200":
           description: Default Response
@@ -3440,6 +3502,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: sessions:revoke
+      x-permission-v2: sessions:revoke
       responses:
         "204":
           description: Default Response
@@ -3530,6 +3594,8 @@ paths:
           in: path
           name: sessionId
           required: true
+      x-permission: sessions:revoke
+      x-permission-v2: sessions:revoke
       responses:
         "204":
           description: Default Response
@@ -3642,6 +3708,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:update_email
+      x-permission-v2: users:update_email
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -3776,6 +3845,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:verify
+      x-permission-v2: users:verify
       responses:
         "202":
           description: Default Response
@@ -3877,6 +3948,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: sessions:revoke
+      x-permission-v2: sessions:revoke
       responses:
         "204":
           description: Default Response
@@ -3986,6 +4059,8 @@ paths:
                 params:
                   type: object
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -4014,6 +4089,8 @@ paths:
                   type: string
                   maxLength: 64
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -4040,6 +4117,8 @@ paths:
                 params:
                   type: object
               additionalProperties: false
+      x-permission: users:create
+      x-permission-v2: users:create
       responses:
         "200":
           description: Default Response
@@ -4068,6 +4147,8 @@ paths:
                   type: string
                   maxLength: 64
               additionalProperties: false
+      x-permission: users:create
+      x-permission-v2: users:create
       responses:
         "200":
           description: Default Response
@@ -4095,6 +4176,8 @@ paths:
                 params:
                   type: object
               additionalProperties: false
+      x-permission: users:verify
+      x-permission-v2: users:verify
       responses:
         "200":
           description: Default Response
@@ -4123,6 +4206,8 @@ paths:
                   type: string
                   maxLength: 64
               additionalProperties: false
+      x-permission: users:verify
+      x-permission-v2: users:verify
       responses:
         "200":
           description: Default Response
@@ -4150,6 +4235,9 @@ paths:
                 params:
                   type: object
               additionalProperties: false
+      x-permission: groups.members:write
+      x-permission-v2: groups.members:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -4178,6 +4266,9 @@ paths:
                   type: string
                   maxLength: 64
               additionalProperties: false
+      x-permission: groups.members:write
+      x-permission-v2: groups.members:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -4193,11 +4284,14 @@ paths:
           in: path
           name: id
           required: true
+      x-access: self
       responses:
         "200":
           description: Default Response
   /api/admin/events:
     get:
+      x-permission: stats:read
+      x-permission-v2: stats:read
       responses:
         "200":
           description: Default Response
@@ -4206,6 +4300,8 @@ paths:
       tags:
         - admin
       description: Directory statistics (cached; total/active/per-group/per-org counts)
+      x-permission: stats:read
+      x-permission-v2: stats:read
       responses:
         "200":
           description: Default Response
@@ -4259,6 +4355,8 @@ paths:
         - admin
       description: "Access review: privileged identities across all services, tiered +
         ranked, with grant paths, MFA, last-active and provenance."
+      x-permission: access:read
+      x-permission-v2: access:read
       responses:
         "200":
           description: Default Response
@@ -4339,6 +4437,8 @@ paths:
       tags:
         - admin
       description: Every organisation the directory holds. Needs org:read.
+      x-permission: org:read
+      x-permission-v2: orgs:read
       responses:
         "200":
           description: Default Response
@@ -4466,6 +4566,8 @@ paths:
                   pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
                   description: Namespace-shaped label; derived from the name when omitted.
               additionalProperties: false
+      x-permission: org:write
+      x-permission-v2: orgs:write
       responses:
         "201":
           description: Default Response
@@ -4612,6 +4714,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: org:write
+      x-permission-v2: orgs:write
       responses:
         "200":
           description: Default Response
@@ -4747,6 +4851,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: org:delete
+      x-permission-v2: orgs:delete
+      x-step-up: true
       responses:
         "204":
           description: Default Response
@@ -4884,6 +4991,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: access:read
+      x-permission-v2: access:read
       responses:
         "200":
           description: Default Response
@@ -5067,6 +5176,8 @@ paths:
       description: "List sites with their status and two-step sign-in bar
         (secondFactor: scope, routes, clients, minAal, summary — of the saved
         version)"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -5515,6 +5626,8 @@ paths:
               required:
                 - site
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -5523,6 +5636,8 @@ paths:
       tags: *a2
       description: The admin-defined wildcard zones a site host can live under, with
         SSO (login cookie) coverage
+      x-permission: zones:read
+      x-permission-v2: zones:read
       responses:
         "200":
           description: Default Response
@@ -5594,6 +5709,9 @@ paths:
               required:
                 - domain
               additionalProperties: false
+      x-permission: zones:write
+      x-permission-v2: zones:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -5602,6 +5720,8 @@ paths:
       tags: *a2
       description: "A zone: spec, operator status (IngressReady, CertificateReady,
         DomainTaken), the sites it serves"
+      x-permission: zones:read
+      x-permission-v2: zones:read
       parameters:
         - schema:
             type: string
@@ -5672,6 +5792,9 @@ paths:
                 acknowledgeNoWaf:
                   type: boolean
               additionalProperties: false
+      x-permission: zones:write
+      x-permission-v2: zones:write
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -5685,6 +5808,9 @@ paths:
       tags: *a2
       description: Delete a zone; refused (409, with the sites) while a saved site has
         a host under it
+      x-permission: zones:delete
+      x-permission-v2: zones:delete
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -5700,6 +5826,8 @@ paths:
       description: "The Gateway API Gateways a zone may be attached to
         (SITES_GATEWAYS): listeners, addresses, and whether their WAF and IP
         reputation policies are in force"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -5725,6 +5853,8 @@ paths:
               required:
                 - host
               additionalProperties: false
+      x-permission: zones:read
+      x-permission-v2: zones:read
       responses:
         "200":
           description: Default Response
@@ -5755,6 +5885,8 @@ paths:
               required:
                 - host
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -5763,6 +5895,8 @@ paths:
       tags: *a2
       description: "This environment: name, production flag, four-eyes mode, expected
         rule-load time, zones"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -5770,6 +5904,8 @@ paths:
     get:
       tags: *a2
       description: Deleted sites whose snapshot is kept (30 days)
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -6227,6 +6363,8 @@ paths:
                 - method
                 - url
               additionalProperties: false
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -6298,6 +6436,8 @@ paths:
                 - kind
                 - sample
               additionalProperties: false
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -6313,6 +6453,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -6778,6 +6920,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -6792,6 +6936,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:delete
+      x-permission-v2: sites:delete
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -6806,6 +6953,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -6820,6 +6970,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -6845,6 +6997,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -6858,6 +7012,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -7307,6 +7463,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -7343,6 +7501,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -7357,6 +7518,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -7364,6 +7527,8 @@ paths:
     get:
       tags: *a2
       description: One version, with its intent
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7405,6 +7570,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -7420,6 +7588,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -7434,6 +7605,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -7448,6 +7622,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -7458,6 +7634,8 @@ paths:
       description: "One apply: its stages (Saved → Permissions published → Site
         accepted → Rules synced → Rules loaded → Address/HTTPS for vanity sites
         → Verified) with timings"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7477,6 +7655,8 @@ paths:
       tags: *a3
       description: "Server-sent events: `apply` with the whole record on every change,
         `done` at the end"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7496,6 +7676,8 @@ paths:
       tags: *a3
       description: "The Site CR as the operator reports it: generation, conditions,
         children"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7514,6 +7696,8 @@ paths:
         access matrix per group and role from the policy, one WAF check when
         {waf: true}, and curl commands per route. Once per site per 30 s (429
         verify_rate_limited, Retry-After)"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7528,6 +7712,8 @@ paths:
       tags: *a3
       description: "What differs from what kuma applied: Site CR spec and conditions,
         route map, roles, groups, org map"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       parameters:
         - schema:
             type: string
@@ -7541,6 +7727,9 @@ paths:
     post:
       tags: *a3
       description: Fold the live values the intent can hold into a draft for review
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -7557,6 +7746,8 @@ paths:
         another super admin when required). Body {version, note?, acknowledge?}:
         422 unconfirmed_findings while a security finding is an error or a
         confirm finding is not acknowledged"
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -7570,6 +7761,8 @@ paths:
     get:
       tags: *a3
       description: Apply requests, newest first
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -7579,6 +7772,9 @@ paths:
       description: "Approve a request: applies the version, as the approver. The
         findings are checked again with the request's acknowledgements plus the
         optional body {acknowledge}"
+      x-permission: sites.requests:approve
+      x-permission-v2: sites.requests:approve
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -7592,6 +7788,9 @@ paths:
     post:
       tags: *a3
       description: Reject a request, with an optional reason
+      x-permission: sites.requests:approve
+      x-permission-v2: sites.requests:approve
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -7606,6 +7805,8 @@ paths:
       tags: *a3
       description: "Upload the login-page logo: PNG or WebP bytes (Content-Type
         image/png|image/webp), at most 256 KB; SVG refused"
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -7618,6 +7819,8 @@ paths:
     delete:
       tags: *a3
       description: Remove the login-page logo
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -7648,6 +7851,8 @@ paths:
                     - type: string
                       pattern: ^\d{1,5}[mhd]$
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -7674,6 +7879,8 @@ paths:
                   type: string
                   maxLength: 280
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -7688,6 +7895,8 @@ paths:
       tags: *a4
       description: Deletion requests, newest first
         (?state=pending|approved|rejected|cancelled, ?site=)
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -7696,6 +7905,8 @@ paths:
       tags: *a4
       description: "The deletion inbox: pending requests, oldest first, with
         requestedByYou (the requester cannot approve their own)"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -7705,6 +7916,9 @@ paths:
       description: "Approve a deletion request: deletes the site as the approver
         (rules first, then its permissions; a 30-day snapshot). Four-eyes: 403
         second_approver_required for the requester. Never through a key"
+      x-permission: sites:delete
+      x-permission-v2: sites:delete
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -7729,6 +7943,9 @@ paths:
                   type: string
                   maxLength: 280
               additionalProperties: false
+      x-permission: sites:delete
+      x-permission-v2: sites:delete
+      x-step-up: true
       parameters:
         - schema:
             type: string
@@ -7889,6 +8106,8 @@ paths:
               required:
                 - source
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -8032,6 +8251,8 @@ paths:
                 - specSha256
                 - baseEtag
               additionalProperties: false
+      x-permission: sites:write
+      x-permission-v2: sites:write
       parameters:
         - schema:
             type: string
@@ -8047,6 +8268,8 @@ paths:
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -8055,6 +8278,8 @@ paths:
       tags: *a5
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -8063,6 +8288,8 @@ paths:
       tags: *a5
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -8070,12 +8297,16 @@ paths:
     get:
       tags: *a5
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
     post:
       tags: *a5
       description: Start or stop the dual run
+      x-permission: sites:write
+      x-permission-v2: sites:write
       responses:
         "200":
           description: Default Response
@@ -8084,6 +8315,9 @@ paths:
       tags: *a5
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -8092,6 +8326,9 @@ paths:
       tags: *a5
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
+      x-permission: sites:apply
+      x-permission-v2: sites:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -8103,6 +8340,8 @@ paths:
         defaults, the sites using it, form fields; plus rollout status.
         managed=false when no Gateway resource exists yet (live config,
         read-only)"
+      x-permission: gateway:read
+      x-permission-v2: gateway:read
       responses:
         "200":
           description: Default Response
@@ -8154,6 +8393,9 @@ paths:
               required:
                 - spec
               additionalProperties: false
+      x-permission: gateway:apply
+      x-permission-v2: gateway:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -8206,6 +8448,8 @@ paths:
               required:
                 - spec
               additionalProperties: false
+      x-permission: gateway:read
+      x-permission-v2: gateway:read
       responses:
         "200":
           description: Default Response
@@ -8213,6 +8457,8 @@ paths:
     get:
       tags: *a6
       description: Rollout progress of the last gateway change (from the Gateway status)
+      x-permission: gateway:read
+      x-permission-v2: gateway:read
       responses:
         "200":
           description: Default Response
@@ -8220,6 +8466,8 @@ paths:
     get:
       tags: *a6
       description: Rollout progress as Server-Sent Events, until it settles
+      x-permission: gateway:read
+      x-permission-v2: gateway:read
       responses:
         "200":
           description: Default Response
@@ -8240,6 +8488,9 @@ paths:
                   maxLength: 500
               additionalProperties: false
               default: {}
+      x-permission: gateway:apply
+      x-permission-v2: gateway:apply
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -8269,6 +8520,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users.metadata:write
+      x-permission-v2: users.metadata:write
       responses:
         "200":
           description: Default Response
@@ -8415,6 +8668,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: users:disable
+      x-permission-v2: users:disable
       responses:
         "200":
           description: Default Response
@@ -8561,6 +8816,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: org.members:write
+      x-permission-v2: orgs.members:write
       responses:
         "200":
           description: Default Response
@@ -8693,6 +8950,8 @@ paths:
           in: path
           name: email
           required: true
+      x-permission: access:read
+      x-permission-v2: access:read
       responses:
         "200":
           description: Default Response
@@ -8767,6 +9026,10 @@ paths:
           in: path
           name: email
           required: true
+      x-permission: groups.members:revoke
+      x-permission-v2: groups.members:revoke
+      x-also-accepts:
+        - groups.members:write
       responses:
         "200":
           description: Default Response
@@ -8891,6 +9154,8 @@ paths:
         membership (Kratos) and group → service → roles (`groups`, Redis). 503
         when either cannot be read, so OPAL keeps the bindings OPA already holds
         instead of replacing them with an empty or partial set."
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -8913,6 +9178,8 @@ paths:
       description: "OPAL data source (older manifests only — now part of /bindings):
         group → service → roles. 503 when the store cannot be read, so OPAL
         keeps the groups OPA already holds."
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -8930,11 +9197,15 @@ paths:
                     type: string
   /api/admin/rbac/opal/org_service_map:
     get:
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
   /api/admin/rbac/opal/org_admin_map:
     get:
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -8945,6 +9216,8 @@ paths:
       description: "OPAL data source: groups handed out per org by its admins
         (data.org_grants). 503 when the store cannot be read, so OPAL keeps the
         org grants OPA already holds."
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -8967,6 +9240,8 @@ paths:
       description: "OPAL data source: per-site sign-in strength (data.site_login). 503
         when the store cannot be read, so OPAL keeps the 2FA requirements OPA
         already holds."
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -8990,6 +9265,8 @@ paths:
         by client_id — organization, registered scopes, expiry
         (data.api_clients). 503 when Hydra cannot be read, so OPAL keeps the
         last good data."
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -9012,6 +9289,8 @@ paths:
       description: 'OPAL data source: groups switched to "Members must use 2FA"
         (data.second_factor). 503 when the store cannot be read, so OPAL keeps
         the requirement OPA already holds.'
+      x-access: machine
+      x-edge: false
       responses:
         "503":
           description: Default Response
@@ -9029,16 +9308,22 @@ paths:
                     type: string
   /api/admin/rbac/opal/roles:
     get:
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
   /api/admin/rbac/opal/route_maps:
     get:
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
   /api/admin/rbac/opal/roles/{service}:
     get:
+      x-access: machine
+      x-edge: false
       parameters:
         - schema:
             type: string
@@ -9050,6 +9335,8 @@ paths:
           description: Default Response
   /api/admin/rbac/opal/route_map/{service}:
     get:
+      x-access: machine
+      x-edge: false
       parameters:
         - schema:
             type: string
@@ -9059,8 +9346,58 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/rbac/opal/v2:
+    get:
+      tags:
+        - rbac
+      description: "OPAL data source (authz v2): all of data.v2 — roles, groups,
+        memberships, org roles and assignments, the every-org map, org
+        entitlements, route maps and the catalogue. 503 when any source cannot
+        be read, so OPAL keeps the last good copy."
+      x-access: machine
+      x-edge: false
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/rbac/opal/authz:
+    get:
+      tags:
+        - rbac
+      description: 'OPAL data source (authz v2): which authorization model is active,
+        {"active":"v1"|"v2"} (data.authz).'
+      x-access: machine
+      x-edge: false
+      responses:
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/admin/rbac/opal-datasource:
     get:
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -9104,6 +9441,8 @@ paths:
                     - aal2
                   description: "Sign-in level to judge at: aal1 (password) or aal2 (second
                     factor). Unset: no level"
+      x-permission: access:check
+      x-permission-v2: access:check
       responses:
         "200":
           description: Default Response
@@ -9350,6 +9689,7 @@ paths:
                   type: object
                   additionalProperties: true
                   description: The request body, for guards that read it (a create, an edit)
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -9555,6 +9895,8 @@ paths:
       tags:
         - rbac
       description: List all users with their group assignments.
+      x-permission: users:read
+      x-permission-v2: users:read
       responses:
         "200":
           description: Default Response
@@ -9640,6 +9982,8 @@ paths:
       tags:
         - rbac
       description: List all group definitions.
+      x-permission: groups:read
+      x-permission-v2: groups:read
       responses:
         "200":
           description: Default Response
@@ -9780,6 +10124,9 @@ paths:
               required:
                 - name
                 - services
+      x-permission: groups:write
+      x-permission-v2: groups:write
+      x-step-up: true
       responses:
         "201":
           description: Default Response
@@ -9912,6 +10259,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: groups:write
+      x-permission-v2: groups:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -10024,6 +10374,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: groups:write
+      x-permission-v2: groups:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -10119,6 +10472,8 @@ paths:
       tags:
         - rbac
       description: List all configured services.
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -10210,6 +10565,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -10314,6 +10671,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "400":
           description: Default Response
@@ -10405,6 +10764,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -10518,6 +10879,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: groups:write
+      x-permission-v2: groups:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -10619,6 +10983,8 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: sites:read
+      x-permission-v2: sites:read
       responses:
         "200":
           description: Default Response
@@ -10750,6 +11116,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: groups:write
+      x-permission-v2: groups:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -10872,6 +11241,8 @@ paths:
         grouped by pipeline stage, each with guided field descriptors. Drives
         the admin UI handler pickers/forms so it only offers handlers the
         gateway will accept.
+      x-permission: gateway:read
+      x-permission-v2: gateway:read
       responses:
         "200":
           description: Default Response
@@ -11150,6 +11521,8 @@ paths:
         - rbac
       description: List all organization → service bundle mappings (each org maps to
         an array of service names).
+      x-permission: org:read
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -11255,6 +11628,9 @@ paths:
                   items:
                     type: string
                     pattern: ^[a-z0-9_-]+$
+      x-permission: groups:write
+      x-step-up: true
+      x-model: v1
       responses:
         "201":
           description: Default Response
@@ -11352,6 +11728,8 @@ paths:
         - rbac
       description: List all organization → admin roster mappings (each org maps to an
         array of admin emails).
+      x-permission: org:read
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -11457,6 +11835,9 @@ paths:
                   items:
                     type: string
                     format: email
+      x-permission: org.admins:write
+      x-step-up: true
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -11572,6 +11953,9 @@ paths:
           in: path
           name: organizationId
           required: true
+      x-permission: groups:write
+      x-step-up: true
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -11673,6 +12057,8 @@ paths:
           in: query
           name: sections
           required: false
+      x-permission: policy.bundle:read
+      x-permission-v2: policy.bundle:read
       responses:
         "200":
           description: Default Response
@@ -11704,6 +12090,9 @@ paths:
           in: query
           name: sections
           required: false
+      x-permission: policy.bundle:write
+      x-permission-v2: policy.bundle:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -11747,6 +12136,8 @@ paths:
         - rbac
         - backup
       description: List RBAC bundle backups in S3.
+      x-permission: policy.bundle:read
+      x-permission-v2: policy.bundle:read
       responses:
         "200":
           description: Default Response
@@ -11767,6 +12158,9 @@ paths:
               properties:
                 key:
                   type: string
+      x-permission: policy.bundle:write
+      x-permission-v2: policy.bundle:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -11776,6 +12170,9 @@ paths:
         - rbac
         - backup
       description: Export current RBAC config and upload it to S3 now.
+      x-permission: policy.bundle:write
+      x-permission-v2: policy.bundle:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -11786,6 +12183,8 @@ paths:
         - backup
       description: List pre-import/restore/rollback snapshots (newest first, cap 10).
         Entries carry per-section counts, not the bundle payload.
+      x-permission: policy.bundle:read
+      x-permission-v2: policy.bundle:read
       responses:
         "200":
           description: Default Response
@@ -11831,6 +12230,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: policy.bundle:write
+      x-permission-v2: policy.bundle:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -11853,6 +12255,8 @@ paths:
         - auth-config
       description: Current Kratos self-service auth method state (enabled/configured
         per method) and the self-registration switch, read from kratos.yml.
+      x-permission: settings:read
+      x-permission-v2: settings:read
       responses:
         "200":
           description: Default Response
@@ -12056,6 +12460,9 @@ paths:
                   properties:
                     enabled:
                       type: boolean
+      x-permission: settings.signin:write
+      x-permission-v2: settings.signin:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -12171,6 +12578,8 @@ paths:
         - second-factor
       description: Groups whose members must set up a second factor at sign-in and
         hold aal2 on every permission-carrying route.
+      x-permission: settings:read
+      x-permission-v2: settings:read
       responses:
         "200":
           description: Default Response
@@ -12211,6 +12620,9 @@ paths:
                   items:
                     type: string
                     maxLength: 100
+      x-permission: groups.mfa:write
+      x-permission-v2: groups.mfa:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -12249,6 +12661,8 @@ paths:
         four-eyes), staff roles, each site's two-step bar (site_login).
         groups:read or sites:read; groups need groups:read and sites
         sites:read."
+      x-permission: groups:read
+      x-permission-v2: groups:read
       responses:
         "200":
           description: Default Response
@@ -12473,6 +12887,9 @@ paths:
           in: path
           name: name
           required: true
+      x-permission: groups.mfa:write
+      x-permission-v2: groups.mfa:write
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -12534,6 +12951,8 @@ paths:
         - sign-in-protection
       description: Bot check per sign-in flow, the provider status (never the secret),
         the sign-up mode and its allow and deny lists.
+      x-permission: settings:read
+      x-permission-v2: settings:read
       responses:
         "200":
           description: Default Response
@@ -12692,6 +13111,9 @@ paths:
                         type: string
                     blockDisposable:
                       type: boolean
+      x-permission: settings.signin:write
+      x-permission-v2: settings.signin:write
+      x-step-up: true
       responses:
         "400":
           description: Default Response
@@ -12720,6 +13142,8 @@ paths:
       description: The AI assistants (MCP) setting, the deployment ceiling
         (DELEGATED_TOKENS_ENABLED) and whether MCP is effectively on (ceiling
         AND switch).
+      x-permission: settings:read
+      x-permission-v2: settings:read
       responses:
         "200":
           description: Default Response
@@ -12882,6 +13306,9 @@ paths:
                       type: integer
                       description: Hours after the consent-time second factor during which protected
                         actions are allowed, 1–720
+      x-permission: settings.mcp:write
+      x-permission-v2: settings.mcp:write
+      x-step-up: true
       responses:
         "400":
           description: Default Response
@@ -12905,21 +13332,33 @@ paths:
                           type: string
   /api/audit/events:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/facets:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/summary:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/events/{eventId}:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       parameters:
         - schema:
             type: string
@@ -12931,6 +13370,9 @@ paths:
           description: Default Response
   /api/audit/users/{id}/timeline:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       parameters:
         - schema:
             type: string
@@ -12942,26 +13384,41 @@ paths:
           description: Default Response
   /api/audit/me/logins:
     get:
+      x-access: self
       responses:
         "200":
           description: Default Response
   /api/audit/tail:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/access:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/exports:
     post:
+      x-permission: audit:export
+      x-permission-v2: audit:export
+      x-step-up: true
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/exports/{id}:
     get:
+      x-permission: audit:export
+      x-permission-v2: audit:export
+      x-step-up: true
+      x-scoped-by: audit
       parameters:
         - schema:
             type: string
@@ -12973,6 +13430,10 @@ paths:
           description: Default Response
   /api/audit/exports/{id}/download:
     get:
+      x-permission: audit:export
+      x-permission-v2: audit:export
+      x-step-up: true
+      x-scoped-by: audit
       parameters:
         - schema:
             type: string
@@ -12984,15 +13445,24 @@ paths:
           description: Default Response
   /api/audit/saved-queries:
     get:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
     post:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       responses:
         "200":
           description: Default Response
   /api/audit/saved-queries/{id}:
     delete:
+      x-permission: audit:read
+      x-permission-v2: audit:read
+      x-scoped-by: audit
       parameters:
         - schema:
             type: string
@@ -13026,6 +13496,7 @@ paths:
           in: query
           name: org
           required: false
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -14319,6 +14790,7 @@ paths:
           in: path
           name: module
           required: true
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -14652,6 +15124,8 @@ paths:
                   enum:
                     - revoke
                     - flag
+      x-permission: recert:manage
+      x-permission-v2: recert:manage
       responses:
         "201":
           description: Default Response
@@ -14664,6 +15138,8 @@ paths:
       tags:
         - recert
       description: List recertification campaigns with item progress (newest first).
+      x-permission: recert:read
+      x-permission-v2: recert:read
       responses:
         "200":
           description: Default Response
@@ -14688,6 +15164,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:read
+      x-permission-v2: recert:read
       responses:
         "200":
           description: Default Response
@@ -14715,6 +15193,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:delete
+      x-permission-v2: recert:delete
       responses:
         "200":
           description: Default Response
@@ -14730,6 +15210,9 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:manage
+      x-permission-v2: recert:manage
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -14756,6 +15239,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:manage
+      x-permission-v2: recert:manage
       responses:
         "200":
           description: Default Response
@@ -14808,6 +15293,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:read
+      x-permission-v2: recert:read
       responses:
         "200":
           description: Default Response
@@ -14843,6 +15330,8 @@ paths:
           in: path
           name: id
           required: true
+      x-permission: recert:read
+      x-permission-v2: recert:read
       responses:
         "200":
           description: Default Response
@@ -14886,6 +15375,7 @@ paths:
           in: path
           name: itemId
           required: true
+      x-access: self
       responses:
         "200":
           description: Default Response
@@ -14936,6 +15426,8 @@ paths:
             schema:
               type: object
               additionalProperties: true
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -14974,6 +15466,8 @@ paths:
             schema:
               type: object
               additionalProperties: true
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -15000,6 +15494,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.members:read
+      x-permission-v2: org.members:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -15202,6 +15699,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.members:write
+      x-permission-v2: org.members:write
+      x-org-param: organizationId
       responses:
         "201":
           description: Default Response
@@ -15383,6 +15883,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:read
+      x-permission-v2: org.members:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -15592,6 +16095,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:write
+      x-permission-v2: org.members:write
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -15783,6 +16289,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:write
+      x-permission-v2: org.members:write
+      x-org-param: organizationId
       responses:
         "204":
           description: Membership removed
@@ -15897,6 +16406,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:write
+      x-permission-v2: org.members:write
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -16101,6 +16613,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:read
+      x-permission-v2: org.members:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -16212,6 +16727,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.members:read
+      x-org-param: organizationId
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -16343,6 +16861,9 @@ paths:
           name: id
           required: true
           description: User ID
+      x-permission: org.members:write
+      x-org-param: organizationId
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -16485,6 +17006,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.members:read
+      x-org-param: organizationId
+      x-model: v1
       responses:
         "200":
           description: Default Response
@@ -16645,6 +17169,10 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.keys:write
+      x-permission-v2: org.keys:write
+      x-org-param: organizationId
+      x-step-up: true
       responses:
         "201":
           description: Returned ONCE on creation. Copy the client_secret now — it cannot
@@ -16784,6 +17312,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.keys:read
+      x-permission-v2: org.keys:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -16914,6 +17445,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.keys:read
+      x-permission-v2: org.keys:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -17031,6 +17565,9 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.keys:read
+      x-permission-v2: org.keys:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -17152,6 +17689,10 @@ paths:
           name: organizationId
           required: true
           description: Organization identifier
+      x-permission: org.keys:write
+      x-permission-v2: org.keys:write
+      x-org-param: organizationId
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -17263,6 +17804,9 @@ paths:
           name: clientId
           required: true
           description: Hydra OAuth2 client_id
+      x-permission: org.keys:read
+      x-permission-v2: org.keys:read
+      x-org-param: organizationId
       responses:
         "200":
           description: Default Response
@@ -17397,6 +17941,9 @@ paths:
           name: clientId
           required: true
           description: Hydra OAuth2 client_id
+      x-permission: org.keys:revoke
+      x-permission-v2: org.keys:revoke
+      x-org-param: organizationId
       responses:
         "204":
           description: Key revoked
@@ -17476,6 +18023,443 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/organizations/{organizationId}/roles:
+    get:
+      tags:
+        - organization-users
+      description: The org roles of this organization (jinbe's and its entitled
+        sites'), each with its permissions and whether the caller may assign it
+        (holding rule). authz v2 only.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      x-permission: org.members:read
+      x-permission-v2: org.members:read
+      x-org-param: organizationId
+      x-model: v2
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:
+                          type: string
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+                        assignable:
+                          type: boolean
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+                  code:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/users/{id}/roles:
+    put:
+      tags:
+        - organization-users
+      description: "Replace one member's org roles in this organization. Every role
+        being ADDED must pass the holding rule: the caller holds
+        org.members:write here and every permission of the role here. Removing a
+        role needs nothing more. authz v2 only."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - roles
+              additionalProperties: false
+              properties:
+                roles:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: string
+                    pattern: ^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+          description: User ID
+      x-permission: org.members:write
+      x-permission-v2: org.members:write
+      x-org-param: organizationId
+      x-model: v2
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:
+                          type: string
+                        reason:
+                          type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+                  code:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/organizations/{organizationId}/owners:
+    put:
+      tags:
+        - organizations
+      description: "Name this organization's owners (jinbe:owner) by identity id: each
+        joins the org if needed and holds jinbe:owner; everyone else loses it.
+        Step-up; four-eyes in prod. authz v2 only (the v1 roster is PUT
+        /admin/rbac/org-admin-map)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - owners
+              additionalProperties: false
+              properties:
+                owners:
+                  type: array
+                  maxItems: 16
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      x-permission: org.admins:write
+      x-permission-v2: orgs.owners:write
+      x-step-up: true
+      x-model: v2
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  owners:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+                  code:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/mcp/token-info:
     post:
       tags:
@@ -17487,6 +18471,8 @@ paths:
         Caller: an allowed ServiceAccount in X-Actor-Token. 403 mcp_disabled
         when an administrator turned MCP off or the person's groups may not use
         it."
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -17725,6 +18711,8 @@ paths:
         unknown, wrong secret, expired or the holder is gone; 403 mcp_disabled
         when an administrator turned MCP off or the holder's groups may not use
         it. Caller: an allowed ServiceAccount in X-Actor-Token."
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -17907,6 +18895,7 @@ paths:
         - mcp
       description: Whether AI assistants (MCP) are on, the MCP server address, and why
         not when off. Any signed-in person.
+      x-access: authenticated
       responses:
         "200":
           description: Default Response
@@ -17994,6 +18983,8 @@ paths:
       tags:
         - oathkeeper
       description: Get Oathkeeper access rules. Polled by Oathkeeper.
+      x-access: machine
+      x-edge: false
       responses:
         "200":
           description: Default Response
@@ -18003,6 +18994,7 @@ paths:
         - sites
       description: Login branding and 2FA bar of the site served on exactly this host;
         404 otherwise
+      x-access: public
       parameters:
         - schema:
             type: string
@@ -18019,6 +19011,7 @@ paths:
       description: "The sites the signed-in visitor (own Kratos session cookie) can
         open: [{name, displayName, url, logoUrl, accent}]; 401 without a
         session"
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18027,6 +19020,7 @@ paths:
       tags:
         - sites
       description: The site login-page logo (PNG or WebP)
+      x-access: public
       parameters:
         - schema:
             type: string
@@ -18043,6 +19037,7 @@ paths:
       description: "Why the signed-in visitor (own Kratos session cookie) was refused
         GET <url> on this site: {reason: needs_2fa|forbidden|ok|not_found,
         minAal}"
+      x-access: public
       parameters:
         - schema:
             type: string
@@ -18060,6 +19055,7 @@ paths:
         prove a second factor before continuing? {secondFactorRequired,
         hasSecondFactor, methods, aal}; 401 without a session; 503
         policy_unavailable | identity_unavailable.
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18080,6 +19076,7 @@ paths:
           in: query
           name: login_challenge
           required: true
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18159,6 +19156,7 @@ paths:
           in: query
           name: consent_challenge
           required: true
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18334,6 +19332,7 @@ paths:
                     maxLength: 128
                 protected_actions:
                   type: boolean
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18425,6 +19424,7 @@ paths:
           in: query
           name: req
           required: true
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18553,6 +19553,7 @@ paths:
                   minLength: 16
                   maxLength: 64
                   pattern: ^[A-Za-z0-9_-]+$
+      x-access: public
       responses:
         "200":
           description: Default Response
@@ -18665,6 +19666,7 @@ paths:
         mode (with the allowed domains when sign-up is limited), and the
         identity traits only an administrator sets (never shown as form fields).
         Never the secret, never the listed addresses."
+      x-access: public
       responses:
         "200":
           description: Default Response

@@ -3,6 +3,7 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import { env } from '../config/index.js'
 import { FastifyPluginAsync } from 'fastify'
+import { withDeclaration } from '../policy/openapi-extensions.js'
 
 /**
  * Swagger documentation plugin
@@ -15,6 +16,8 @@ const swaggerPlugin: FastifyPluginAsync = fp(async (fastify) => {
   }
 
   await fastify.register(swagger, {
+    // Each operation carries its route's declaration (x-permission, x-access, …): the published contract.
+    transform: withDeclaration as never,
     openapi: {
       openapi: '3.1.0',
       info: {
