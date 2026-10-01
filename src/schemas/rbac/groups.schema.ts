@@ -93,6 +93,9 @@ export const groupJsonSchema = {
       },
     },
     secondFactor: groupSecondFactorJsonSchema,
+    // Defined in code (the staff groups, super_admins) or by a site intent: writes answer 409 defined_in_code.
+    system: { type: 'boolean' },
+    description: { type: 'string' },
   },
   required: ['name', 'services'],
 }

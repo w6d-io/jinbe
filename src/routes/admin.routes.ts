@@ -22,6 +22,9 @@ import {
 } from '../schemas/response-schemas.js'
 import { allEntitlements, allOrganisations, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
+import { orgRolesRepository } from '../services/org-roles.repository.js'
+import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { JINBE, qualified } from '../policy/roles.js'
 import { userAccessRoutes } from './user-access.routes.js'
 import { sitesRoutes } from '../sites/routes.js'
 import { gatewayRoutes } from '../gateway/routes.js'
@@ -133,7 +136,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
     {
       ...needs('orgs:read'),
       schema: {
-        description: 'Every organisation the directory holds. Needs org:read.',
+        description:
+          'Every organisation the directory holds, with its owners (identity ids holding jinbe:owner there), the sites it is ' +
+          'entitled to (org_sites, from the site intents) and the applications the directory records for it. Needs orgs:read.',
         tags: ['admin'],
         response: {
           200: {
@@ -148,6 +153,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     name: { type: 'string' },
                     tenant: { type: 'string' },
                     applications: { type: 'array', items: { type: 'string' } },
+                    owners: { type: 'array', items: { type: 'string' } },
+                    sites: { type: 'array', items: { type: 'string' } },
                   },
                 },
               },
@@ -167,13 +174,18 @@ export async function adminRoutes(fastify: FastifyInstance) {
         // Which applications each one has, alongside who it is. The screen showing this read a map
         // from Redis that nothing populates any more and reported "no services bundled" for every
         // organisation — while the directory held the answer in `organisation_deployments` all along.
-        const [organizations, entitlements] = await Promise.all([allOrganisations(), allEntitlements()])
+        const [organizations, entitlements, assignments, orgSites] = await Promise.all([
+          allOrganisations(), allEntitlements(), orgRolesRepository.getAll(), redisRbacRepository.getOrgSites(),
+        ])
+        const owner = qualified(JINBE, 'owner')
         return reply.send({
           organizations: organizations.map(({ id, name, tenant }) => ({
             id,
             name,
             tenant,
             applications: entitlements.get(id) ?? [],
+            owners: Object.entries(assignments[id] ?? {}).filter(([, roles]) => roles.includes(owner)).map(([subject]) => subject).sort(),
+            sites: orgSites[id] ?? [],
           })),
         })
       } catch (err) {

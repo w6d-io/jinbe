@@ -4636,7 +4636,10 @@ paths:
     get:
       tags:
         - admin
-      description: Every organisation the directory holds. Needs org:read.
+      description: Every organisation the directory holds, with its owners (identity
+        ids holding jinbe:owner there), the sites it is entitled to (org_sites,
+        from the site intents) and the applications the directory records for
+        it. Needs orgs:read.
       x-permission: orgs:read
       x-scope: platform
       responses:
@@ -4659,6 +4662,14 @@ paths:
                         tenant:
                           type: string
                         applications:
+                          type: array
+                          items:
+                            type: string
+                        owners:
+                          type: array
+                          items:
+                            type: string
+                        sites:
                           type: array
                           items:
                             type: string
@@ -10273,6 +10284,10 @@ paths:
                               type: boolean
                             defaultRequired:
                               type: boolean
+                        system:
+                          type: boolean
+                        description:
+                          type: string
                       required:
                         - name
                         - services
