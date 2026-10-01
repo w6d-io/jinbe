@@ -144,6 +144,38 @@ export function twoFactorOn(site: Pick<Site, 'login'>): boolean {
   return !!tf && (tf.scope !== 'none' || (tf.routes?.length ?? 0) > 0)
 }
 
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
+
+/** A gate of a 2FA site that never asks the policy, so the second factor is never checked there. */
+export interface SecondFactorGap { gate: string; why: 'anonymous' | 'authorizer'; authorizer: string }
+
+/**
+ * Where a site's two-step sign-in is configured but cannot be enforced: per-site 2FA is decided by
+ * the policy (data.site_login, rbac.rego), and only a gate whose authorizer is the policy asks it. A
+ * gate covering a route the 2FA applies to whose authorizer is anything else (allow, remote…; deny lets nobody) lets
+ * every caller it admits through without it — anyone at all when it also admits anonymous callers. [] when the
+ * site asks for no 2FA, or every gate it needs asks the policy.
+ */
+export function secondFactorGaps(site: Pick<Site, 'login' | 'gates' | 'routes'>): SecondFactorGap[] {
+  if (!twoFactorOn(site)) return []
+  const tf = site.login!.twoFactor
+  const chosen = new Set(tf.routes ?? [])
+  const applies = (id: string, methods: readonly string[]) =>
+    chosen.has(id) || tf.scope === 'all' || (tf.scope === 'writes' && methods.some((m) => WRITE_METHODS.includes(m)))
+  const covered = new Set<string>()
+  for (const r of site.routes.items) {
+    if ((r.access.kind === 'signed-in' || r.access.kind === 'permission') && applies(r.id, r.methods)) covered.add(r.gate)
+  }
+  const ca = site.routes.catchAll
+  if ((ca.access.kind === 'signed-in' || ca.access.kind === 'permission') && applies('catch-all', WRITE_METHODS)) covered.add(ca.gate)
+  return site.gates.filter((g) => covered.has(g.id)).flatMap((g): SecondFactorGap[] => {
+    // A policy gate enforces it even when anonymous callers come in: the policy refuses them on
+    // every non-public row, and checks the sign-in level of everybody else.
+    if (g.authorizer === 'policy' || g.authorizer.handler === 'deny') return []
+    return [{ gate: g.id, why: allowsAnonymous(g) ? 'anonymous' : 'authorizer', authorizer: g.authorizer.handler }]
+  })
+}
+
 /** The URL the operator renders for an upstream — jinbe builds the same one only for gatekit. */
 export function upstreamUrl(u: Site['upstream']): string {
   return `${u.scheme ?? 'http'}://${u.service}.${u.namespace}.svc.cluster.local:${u.port}`

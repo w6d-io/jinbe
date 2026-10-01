@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { GatewaySpec } from '../../gateway/kube-gateway.js'
-import { PLATFORM_IDENTITY_HEADERS, gatewayIdentity } from '../../sites/identity-headers.js'
+import { PLATFORM_IDENTITY_HEADERS, SESSION_HEADERS, gatewayIdentity } from '../../sites/identity-headers.js'
 import { render } from '../../sites/render.js'
 import type { Site } from '../../sites/schemas.js'
 import { payrollSite, platform } from './fixtures.js'
 
-const blanks = (names: readonly string[]) => Object.fromEntries(names.map((n) => [n, '']))
+const blanks = (names: readonly string[]) => Object.fromEntries([...names, 'x-user-aal', 'x-user-2fa-at'].map((n) => [n, '']))
 const gate = (r: ReturnType<typeof render>, name: string) => r.siteCr.spec.gates.find((g) => g.name === name)!
 
 describe('identity headers on gates that set none', () => {
@@ -27,7 +27,7 @@ describe('identity headers on gates that set none', () => {
 
   it('keeps the gateway config\'s spellings, so the rule key replaces each global key', () => {
     const r = render(payrollSite(), { ...platform, identityHeaders: ['x-User-Email', 'x-user-email'] })
-    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '' } } }])
+    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', 'x-user-aal': '', 'x-user-2fa-at': '' } } }])
   })
 
   it('leaves the headers the gate\'s authorizer forwards from its decision', () => {
@@ -85,9 +85,24 @@ describe('identity headers on gates that set none', () => {
 })
 
 describe('gates with their own header mutator', () => {
-  it('are rendered as written: each header they name is set, overwriting the client\'s', () => {
+  it('are rendered as written, plus the sign-in strength headers (X-User-AAL, X-User-2FA-At)', () => {
     const r = render(payrollSite(), platform)
-    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header' }])
+    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: SESSION_HEADERS } }])
+    expect(SESSION_HEADERS['x-user-aal']).toContain('.Extra.authenticator_assurance_level')
+    expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.Extra.authentication_methods')
+    expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.completed_at')
+  })
+
+  it('a header the site names itself is kept as written, whatever its case; only the first header mutator gets them', () => {
+    const site = payrollSite()
+    site.gates[0] = { ...site.gates[0], mutators: [
+      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}' } } },
+      { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
+    ] }
+    expect(gate(render(site, platform), 'web').mutators).toEqual([
+      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'] } } },
+      { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
+    ])
   })
 })
 

@@ -251,6 +251,46 @@ describe('S-4 — logo', () => {
   })
 })
 
+describe('per-site 2FA enforced end to end (jinbe\'s part)', () => {
+  it('a policy gate asks OPA with the sign-in level; a needs_2fa refusal (403 → forbidden) sends a browser to login-ui /access, which hears needs_2fa', async () => {
+    await saveAndApply(twoFactor('all'))
+    const cr = h.kube.apply.mock.calls.at(-1)![0] as import('../../sites/render.js').SiteCr
+    const web = cr.spec.gates.find((g) => g.name === 'web')!
+    // 1. The gate asks the policy, telling it the session's sign-in level and the site.
+    expect(web.authorizer.handler).toBe('remote_json')
+    const payload = String((web.authorizer.config as { payload: string }).payload)
+    expect(payload).toContain('"aal": "{{ if .Extra }}{{ print .Extra.authenticator_assurance_level }}{{ end }}"')
+    expect(payload).toContain('"app": "payroll"')
+    // 2. OPA answers needs_2fa for an aal1 session; the authz proxy turns it into 403, Oathkeeper's
+    //    `forbidden`. For a browser exactly one rule handler answers it: the redirect to /access.
+    const { whenMatches } = await import('../../sites/error-handlers.js')
+    const chrome = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+    const answering = web.errors!.filter((e) => whenMatches(e.config?.when, 'forbidden', chrome))
+    expect(answering).toEqual([{ handler: 'redirect', config: expect.objectContaining({ to: 'https://auth.dev.example.com/access?site=payroll', return_to_query_param: 'return_to' }) }])
+    // An API client gets JSON, never a redirect.
+    expect(web.errors!.filter((e) => whenMatches(e.config?.when, 'forbidden', 'application/json')).map((e) => e.handler)).toEqual(['json'])
+    // 3. /access asks jinbe why, with the visitor's own session: needs_2fa, so it offers step-up / enrolment.
+    h.session.mockResolvedValue({ session: { email: 'klavem@x.test', aal: 'aal1' } })
+    h.opa.mockResolvedValue({ allow: false, reason: 'needs_2fa', groups: [], organizations: [] })
+    const res = await app.inject({ method: 'GET', url: `/api/public/sites/payroll/access-reason?url=${encodeURIComponent('https://payroll.dev.example.com/api/orgs/1/payslips')}`, headers: { cookie: 'ory_kratos_session=abc' } })
+    expect(res.json()).toEqual({ reason: 'needs_2fa', minAal: 'aal2' })
+  })
+
+  it('a gate that never asks the policy is refused at publish: second_factor_not_enforced', async () => {
+    const site = twoFactor('all')
+    site.gates[0] = { ...site.gates[0], authorizer: { handler: 'allow' } }
+    const put = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: W, payload: { site } })
+    expect(put.statusCode).toBe(200)
+    const res = await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: W, payload: { version: 1, acknowledge: [...ACK, 'gate_signed_in_only', 'second_factor_not_enforced'] } })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().findings).toEqual([expect.objectContaining({ code: 'second_factor_not_enforced', level: 'error', fix: "Set Who may pass to the policy on gate 'web'" })])
+    // And the site says so instead of claiming 2FA is on.
+    const got = (await app.inject({ method: 'GET', url: '/sites/payroll' })).json()
+    expect(got.secondFactor).toMatchObject({ scope: 'all', enforced: false, notEnforcedOn: ['web'], minAal: 'aal1', summary: expect.stringContaining('NOT enforced') })
+    expect((await app.inject({ method: 'GET', url: '/sites' })).json()[0].secondFactor).toMatchObject({ enforced: false })
+  })
+})
+
 describe('access-reason (login-ui /access)', () => {
   const ask = (url: string, cookie = 'ory_kratos_session=abc') =>
     app.inject({ method: 'GET', url: `/api/public/sites/payroll/access-reason?url=${encodeURIComponent(url)}`, headers: cookie ? { cookie } : {} })
