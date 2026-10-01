@@ -22,6 +22,7 @@ import { EPHEMERAL_TTL } from './schemas.js'
 import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 import { handlerDefaults } from '../gateway/service.js'
 import { resolveGates, type ResolvedGate } from './resolved-gates.js'
+import { organisationsById } from '../services/organisation-store.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -229,8 +230,24 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
 
 /** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
 export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>): Promise<Finding[]> {
-  const [groups, protectionOf] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup()])
-  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host) })
+  const [groups, protectionOf, orgsRemoved] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site)])
+  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved })
+}
+
+/**
+ * The orgs publishing would take the site from (publish.ts reconcileOrgs): those whose bundle has it
+ * now but that the intent's `orgs` does not list. Named when the directory answers; never fails.
+ */
+async function orgsLeaving(site: Site): Promise<Array<{ id: string; name?: string }>> {
+  try {
+    const map = await redisRbacRepository.getOrgServiceMap()
+    const ids = Object.entries(map).filter(([org, bundle]) => bundle.includes(site.name) && !site.orgs.includes(org)).map(([org]) => org).sort()
+    if (ids.length === 0) return []
+    const named = new Map((await organisationsById(ids).catch(() => [])).map((o) => [o.id, o.name]))
+    return ids.map((id) => (named.get(id) ? { id, name: named.get(id) } : { id }))
+  } catch {
+    return []
+  }
 }
 
 /**

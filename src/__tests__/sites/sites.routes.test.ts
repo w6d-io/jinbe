@@ -320,6 +320,33 @@ describe('apply', () => {
     expect(h.emit).toHaveBeenCalled()
   })
 
+  it('an org given the site outside its intent: preview warns, and the publish that removes it is audited', async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222'
+    store.s.orgMap[OTHER] = ['kuma', 'payroll']
+    const preview = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(preview.findings).toContainEqual(expect.objectContaining({ code: 'publish_removes_orgs', level: 'warn', path: 'orgs', message: `publishing removes this site from: ${OTHER}` }))
+    expect(preview.publish.blocked).toBe(false)
+    await save()
+    h.emit.mockClear()
+    expect((await apply()).statusCode).toBe(200)
+    // The model is unchanged (the site's orgs win); every bundle it changed is now on the trail.
+    expect(store.s.orgMap[OTHER]).toEqual(['kuma'])
+    await new Promise((r) => setImmediate(r))
+    const orgEvents = h.emit.mock.calls.map((c) => c[0] as { type?: string; target?: { id?: string }; changes?: { added?: string[]; removed?: string[] }; details?: { via?: string } })
+      .filter((e) => e.type === 'rbac.org_service_mapping_set')
+    expect(orgEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: expect.objectContaining({ id: OTHER }), changes: expect.objectContaining({ removed: ['payroll'], added: [] }), details: expect.objectContaining({ via: 'site.publish' }) }),
+      expect.objectContaining({ target: expect.objectContaining({ id: ACME }), changes: expect.objectContaining({ added: ['payroll'] }) }),
+    ]))
+    expect(orgEvents).toHaveLength(2)
+  })
+
+  it('no warning when every org that has the site is in its orgs', async () => {
+    store.s.orgMap[ACME] = ['payroll']
+    const preview = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(preview.findings.map((f: { code: string }) => f.code)).not.toContain('publish_removes_orgs')
+  })
+
   it('refuses to apply a version that is not the saved one', async () => {
     await save()
     expect((await apply(2)).statusCode).toBe(409)

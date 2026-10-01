@@ -37,6 +37,8 @@ export interface FindingContext {
   groups: Record<string, GroupDefinition>
   /** Whether the site's host is behind the WAF; null when the cluster cannot say. */
   protection: ProtectionStatus | null
+  /** Orgs that have the site now (org_service_map) but are not in its `orgs`: publishing takes it from them. */
+  orgsRemoved?: ReadonlyArray<{ id: string; name?: string }>
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -123,6 +125,13 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
     const { service, namespace } = site.upstream
     add('info', 'preserve_host_off', `the service sees the internal host name (${service}.${namespace}.svc.cluster.local), not ${site.address.host}`,
       'Turn on Preserve host so redirects, absolute links and cookies use the public host; keep it off only for a service that answers on its Service name', 'upstream.preserveHost')
+  }
+
+  // ── organizations ───────────────────────────────────────────
+  if (ctx.orgsRemoved?.length) {
+    const names = ctx.orgsRemoved.map((o) => (o.name ? `${o.name} (${o.id})` : o.id))
+    add('warn', 'publish_removes_orgs', `publishing removes this site from: ${names.join(', ')}`,
+      'These organizations have the site (given in Settings → Organization sites) but the site\'s Organizations do not list them: add them to the site before publishing to keep their access', 'orgs')
   }
 
   // ── edge ────────────────────────────────────────────────────

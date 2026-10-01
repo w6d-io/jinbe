@@ -121,6 +121,12 @@ describe('securityFindings', () => {
     }
   })
 
+  it('orgs that would lose the site on publish are warned, by name when known', () => {
+    const f = securityFindings(tidy(), { roles: expandRoles(tidy()) }, { groups: {}, protection: WAF, orgsRemoved: [{ id: 'o-1', name: 'Test org' }, { id: 'o-2' }] })
+    expect(f).toEqual([expect.objectContaining({ code: 'publish_removes_orgs', level: 'warn', message: 'publishing removes this site from: Test org (o-1), o-2' })])
+    expect(publishState(f).blocked).toBe(false)
+  })
+
   it('the WAF: off is warned with the reason, unknown is warned as unknown', () => {
     const off: ProtectionStatus = { ...WAF, state: 'none', reason: 'no_gateway', message: 'Served by the nginx Ingress: no WAF, no IP bans' }
     expect(run(tidy(), {}, off)).toEqual([expect.objectContaining({ code: 'waf_off', level: 'warn', message: expect.stringContaining('nginx Ingress') })])
