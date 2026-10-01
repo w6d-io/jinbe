@@ -21,6 +21,7 @@ import { userAddressRoutes } from './routes/user-address.routes.js'
 import { bulkRoutes } from './bulk/routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgGrantsRoutes } from './routes/org-grants.routes.js'
+import { orgOwnersRoutes, orgRolesRoutes } from './routes/org-roles.routes.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
 import { startSitesBackground } from './sites/sync.js'
@@ -193,6 +194,8 @@ export async function buildServer() {
       await api.register(organizationUserRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(orgGrantsRoutes, { prefix: '/organizations/:organizationId' }) // org admin; OPA can_grant
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
+      await api.register(orgRolesRoutes, { prefix: '/organizations/:organizationId' }) // authz v2 org roles (404 under v1)
+      await api.register(orgOwnersRoutes, { prefix: '/admin/organizations/:organizationId' }) // authz v2 owners (404 under v1)
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })

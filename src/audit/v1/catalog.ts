@@ -50,6 +50,10 @@ export const AUDIT_EVENTS = {
   'org.grants.changed': ['authz', 'update'],
   'org.grants.refused': ['authz', 'update', 'warn'],
   'org.admins.changed': ['authz', 'update'],
+  // authz v2: org roles on the identity, and an org's owners named from the platform.
+  'org.roles.changed': ['authz', 'update'],
+  'org.roles.refused': ['authz', 'update', 'warn'],
+  'org.owners.changed': ['authz', 'update', 'warn'],
   'org.services.changed': ['authz', 'update'],
 
   'rbac.group.created': ['authz', 'create'],

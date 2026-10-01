@@ -67,6 +67,8 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'DELETE /api/organizations/:organizationId/users/:id': by('org.member.removed'),
   'PUT /api/organizations/:organizationId/users/:id/membership': by(['org.member.added', 'org.member.removed']),
   'PUT /api/organizations/:organizationId/users/:id/grants': by(['org.grants.changed', 'org.grants.refused']),
+  'PUT /api/organizations/:organizationId/users/:id/roles': by(['org.roles.changed', 'org.roles.refused']),
+  'PUT /api/admin/organizations/:organizationId/owners': by('org.owners.changed'),
   'POST /api/organizations/:organizationId/api-keys': by('apikey.created'),
   'DELETE /api/organizations/:organizationId/api-keys/:clientId': by('apikey.revoked'),
   'PUT /api/organizations/:organizationId/api-key-policy': by('apikey.policy_changed'),

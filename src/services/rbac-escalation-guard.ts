@@ -7,7 +7,12 @@ import {
 } from './grant-subset.js'
 import { refusalDetails } from './permission-refusal.js'
 import { isV2 } from '../authz-v2/model.js'
-import { assertV2Assign, assertV2Change } from '../authz-v2/grant-guard.js'
+
+// Loaded on use: grant-guard reads the identity directory, which imports this module's importers.
+const assertV2Change = async (...args: Parameters<typeof import('../authz-v2/grant-guard.js')['assertV2Change']>) =>
+  (await import('../authz-v2/grant-guard.js')).assertV2Change(...args)
+const assertV2Assign = async (...args: Parameters<typeof import('../authz-v2/grant-guard.js')['assertV2Assign']>) =>
+  (await import('../authz-v2/grant-guard.js')).assertV2Assign(...args)
 
 /**
  * No administrator rewrites the model in their own favour.
