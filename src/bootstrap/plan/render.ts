@@ -37,11 +37,18 @@ export function renderPlanMarkdown(plan: Plan): string {
     ['OAuth clients with retired scopes', plan.orphans.clients.length],
     ['stale jinbe rows in Redis', plan.before.staleJinbeRows.length],
     ['applied sites that cannot be rendered (left unpublished)', plan.before.siteFailures.length],
+    ['sites whose stored roles hold a wildcard (a new, explicit version is saved)', plan.before.sitesMadeExplicit.length],
   ]))
 
   if (plan.before.siteFailures.length) {
     out.push('## Sites the apply cannot republish', '', 'Fix and publish each again before applying, or its people lose access to it.', '')
     out.push(table(['site', 'error'], plan.before.siteFailures.map((f) => [f.site, f.error])))
+  }
+
+  if (plan.before.sitesMadeExplicit.length) {
+    out.push('## Sites saved again with explicit roles', '',
+      "Each stored intent below still holds a wildcard (`*`, `resource:*`). The apply saves a new version with it made explicit — the permissions the site's routes declare, exactly what is published — noted \"roles made explicit by the authz release (was '*')\", so the first edit after the release saves. Nothing published changes.", '')
+    out.push(plan.before.sitesMadeExplicit.map((s) => `- ${s}`).join('\n'), '')
   }
 
   out.push('## Losses to approve', '',

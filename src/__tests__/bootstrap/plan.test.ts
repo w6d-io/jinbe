@@ -79,6 +79,7 @@ function inventory(): Inventory {
       },
     },
     siteFailures: [],
+    sitesMadeExplicit: ['simulation-api'],
     oathkeeperRuleIds: ['custom-legacy'],
     marker: { schemaVersion: 7, gitSha: 'abc' },
     identities: new Map([
@@ -177,6 +178,13 @@ describe('the v2 plan over a v1 inventory', () => {
 
   it("an org grant of a site's org-grantable group becomes that site's org role there (V4)", () => {
     expect(plan.migration.orgRoles).toContainEqual({ org: ACME, email: 'grantee@acme.io', id: 'id-8', role: 'payroll:clerks', from: 'org_grant' })
+  })
+
+  it('lists the sites whose stored roles hold a wildcard: the apply saves each an explicit version', () => {
+    expect(plan.before.sitesMadeExplicit).toEqual(['simulation-api'])
+    const md = renderPlanMarkdown(plan)
+    expect(md).toContain('## Sites saved again with explicit roles')
+    expect(md).toContain('- simulation-api')
   })
 
   it('the after model is what the applied intents render, not what is stored', () => {

@@ -9,6 +9,7 @@ import { canonicalHash } from './hash.js'
 import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
 import { convergeJinbe } from './converge.js'
 import { applyModel } from './apply.js'
+import { persistExplicitRoles } from '../sites/republish.js'
 import { sweepBreakGlass } from './break-glass.js'
 import type { RunBootstrapOptions, BootstrapLogger } from './types.js'
 import { backupStore } from '../services/backup-store.service.js'
@@ -26,6 +27,7 @@ import { rbacBundleService } from '../services/rbac-bundle.service.js'
  *     hash (`--apply --expect`, or JINBE_RBAC_APPLY_EXPECT for the release's own bootstrap run), after
  *     a mandatory store snapshot.
  */
+
 export const SCHEMA_VERSION = 8
 
 export type BootstrapOutcome =
@@ -114,10 +116,12 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       logger.info('Built-in content changed — re-upserting rules and converging the route map')
       await upsertBuiltInRules(builtInRules, logger)
       await convergeJinbe(logger)
+      await makeSiteRolesExplicit(logger)
     } else {
       outcome = 'no-op'
       logger.info({ schemaVersion: existing.schemaVersion }, 'Bootstrap marker present and current — converging what jinbe owns')
       await convergeJinbe(logger)
+      await makeSiteRolesExplicit(logger)
       await pinSecondFactorDefaults(logger)
       await sweepBreakGlass(logger).catch(() => null)
       return { outcome, marker: existing }
@@ -228,3 +232,17 @@ export class MigrationNotApprovedError extends Error {
 
 export type { RunBootstrapOptions, BootstrapLogger } from './types.js'
 export { MARKER_KEY, type BootstrapMarker } from './marker.js'
+
+/**
+ * A site intent stored with a wildcard before they were refused gets its explicit version on every
+ * boot too (installs that moved before this ran): idempotent, best effort — a failure leaves the site
+ * as it was and is logged, it never fails the bootstrap.
+ */
+async function makeSiteRolesExplicit(logger: BootstrapLogger): Promise<void> {
+  try {
+    const made = await persistExplicitRoles({ email: 'jinbe (bootstrap)' })
+    if (made.length) logger.info({ made }, 'site roles made explicit in a new version')
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'could not make stored site roles explicit; edit them by hand or retry')
+  }
+}

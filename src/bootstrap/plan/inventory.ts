@@ -75,6 +75,8 @@ export interface Inventory {
    */
   siteModels: Record<string, SiteModel>
   siteFailures: Array<{ site: string; error: string }>
+  /** Sites whose stored intent holds a wildcard: the apply saves each a new version with it made explicit. */
+  sitesMadeExplicit?: string[]
   /** Custom (non built-in) Oathkeeper rule ids in rbac:oathkeeper:rules. */
   oathkeeperRuleIds: string[]
   /** The bootstrap marker, as stored (schema, gitSha). */

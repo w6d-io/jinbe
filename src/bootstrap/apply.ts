@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis'
 import { getRedisClient } from '../services/redis-client.service.js'
 import { redisRbacRepository, type OathkeeperRule } from '../services/redis-rbac.repository.js'
-import { republishAppliedSites } from '../sites/republish.js'
+import { persistExplicitRoles, republishAppliedSites } from '../sites/republish.js'
 import { readInventory, writePlan } from './plan/run.js'
 import { buildPlan } from './plan/review.js'
 import { migrationOf, orgsWithoutJinbe } from './plan/migration.js'
@@ -132,6 +132,10 @@ export async function applyModel(opts: {
   for (const [org, members] of Object.entries(migration.assignments)) tx.hset('rbac:org_assignments', org, JSON.stringify(members))
   await tx.exec()
   const sites = await republishAppliedSites({ email: 'jinbe (bootstrap apply)' })
+  // The stored intents follow what was just published: a wildcard saved before they were refused
+  // becomes explicit in a new version, so the first edit after the release saves.
+  const madeExplicit = await persistExplicitRoles({ email: 'jinbe (bootstrap apply)' })
+  if (madeExplicit.length) logger.info({ madeExplicit }, 'site roles made explicit in a new version')
   if (sites.failed.length) logger.warn({ failed: sites.failed }, 'some sites could not be republished — publish them again from their intent')
   await redisRbacRepository.invalidateBundleEtag()
   return { planHash: plan.planHash, snapshot, wiped: wiped.length, orgRoles: migration.added.length, sites }

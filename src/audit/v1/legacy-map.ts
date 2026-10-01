@@ -97,6 +97,8 @@ const SITE: Record<string, AuditEventType> = {
   resume: 'site.resumed',
   delete: 'site.deleted',
   sync: 'site.synced',
+  // A stored wildcard made explicit in a new version by the authz release (sites/republish.ts).
+  roles_made_explicit: 'site.roles_repaired',
   address_change: 'site.address_changed',
   request: 'site.apply_requested',
   approve: 'site.request_approved',

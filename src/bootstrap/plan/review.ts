@@ -57,6 +57,8 @@ export interface Plan {
     marker: Inventory['marker']
     /** Applied sites whose intent could not be rendered: the apply leaves them unpublished. */
     siteFailures: Inventory['siteFailures']
+    /** Sites whose stored intent holds a wildcard: the apply saves each a new version, made explicit. */
+    sitesMadeExplicit: string[]
   }
   rules: RuleRow[]
   people: PersonDiff[]
@@ -276,6 +278,7 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
       services, jinbeRows: count, staleJinbeRows, groups,
       roster: inv.orgAdmins, orgServiceMap: inv.orgServices, orgGrants: inv.orgGrants,
       customOathkeeperRules: inv.oathkeeperRuleIds, marker: inv.marker, siteFailures: inv.siteFailures,
+      sitesMadeExplicit: inv.sitesMadeExplicit ?? [],
     },
     rules: rulesOf(d, emails),
     people,

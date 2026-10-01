@@ -143,6 +143,7 @@ describe('access check, API-key use, sites', () => {
     expect(legacyToV1(rich('update')).event).toBe('site.saved')
     // What the sandbox trail showed as system.unmapped (7 days: 241 service.sync, 20 permissions_published).
     expect(legacyToV1(rich('sync')).event).toBe('site.synced')
+    expect(legacyToV1(rich('roles_made_explicit')).event).toBe('site.roles_repaired')
     expect(legacyToV1(rich('address_change')).event).toBe('site.address_changed')
     expect(legacyToV1(rich('request')).event).toBe('site.apply_requested')
     expect(legacyToV1(rich('approve')).event).toBe('site.request_approved')

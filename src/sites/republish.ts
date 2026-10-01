@@ -1,4 +1,5 @@
-import { explicitWildcards, render, type Rendered } from './render.js'
+import { explicitWildcards, render, stableStringify, type Rendered } from './render.js'
+import { auditSite } from './audit.js'
 import type { Site } from './schemas.js'
 import type { SiteRecord } from './repository.js'
 import { sitesRepository } from './repository.js'
@@ -60,4 +61,36 @@ export async function republishAppliedSites(actor: AuditActorInput): Promise<{ p
     }
   }
   return { published, failed }
+}
+
+/** The note on the version that makes a stored wildcard explicit. */
+export const EXPLICIT_ROLES_NOTE = "roles made explicit by the authz release (was '*')"
+
+/**
+ * The sites whose stored intent still holds a wildcard (`*` or `resource:*`) — saved before wildcards
+ * were refused. Each would refuse every edit (wildcard_permission) until made explicit.
+ */
+export function sitesWithWildcards(records: readonly SiteRecord[]): string[] {
+  return records.filter((r) => stableStringify(explicitWildcards(r.site)) !== stableStringify(r.site)).map((r) => r.site.name).sort()
+}
+
+/**
+ * Saves, for every site whose stored intent holds a wildcard, a new version with the wildcard made
+ * explicit (the permissions it stood for: explicitWildcards, the same expansion the reseed publishes),
+ * noted and audited — so the first edit after the release saves. What is published does not change:
+ * the new version renders exactly as the applied one already did. When the stored intent WAS the
+ * applied version, the new version is marked applied in its place (same rules). Idempotent.
+ */
+export async function persistExplicitRoles(actor: AuditActorInput): Promise<Array<{ site: string; from: number; to: number; applied: boolean }>> {
+  const out: Array<{ site: string; from: number; to: number; applied: boolean }> = []
+  for (const record of await sitesRepository.list()) {
+    const explicit = explicitWildcards(record.site)
+    if (stableStringify(explicit) === stableStringify(record.site)) continue
+    const saved = await sitesRepository.save(explicit, { by: actor.email ?? 'bootstrap', note: EXPLICIT_ROLES_NOTE, ifMatch: record.etag })
+    const wasApplied = record.applied?.version === record.version
+    if (wasApplied && record.applied) await sitesRepository.setApplied(record.site.name, { ...record.applied, version: saved.version })
+    auditSite('roles_made_explicit', record.site.name, actor, EXPLICIT_ROLES_NOTE, { from: record.version, to: saved.version, applied: wasApplied })
+    out.push({ site: record.site.name, from: record.version, to: saved.version, applied: wasApplied })
+  }
+  return out
 }
