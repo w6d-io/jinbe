@@ -53,6 +53,10 @@ export interface Delegation {
   /** Personal key: when its creator proved a second factor, and whether the key may use that proof. */
   keyStepUpAt?: string
   keyStepUpActions?: boolean
+  /** Browser sign-in: the consent-time second factor, whether protected actions were allowed, and until when. */
+  stepUpAt?: string
+  stepUpActions?: boolean
+  stepUpUntil?: string
 }
 
 declare module 'fastify' {
@@ -218,7 +222,7 @@ async function secondFactorFromSession(request: FastifyRequest, subject: string)
         id: p.subject,
         name: p.name,
         authVia: 'delegated',
-        delegation: { clientId: p.clientId, scopes: p.scopes, kind: p.kind, via: actor, ...(p.org ? { org: p.org } : {}), ...(p.keyStepUpAt ? { keyStepUpAt: p.keyStepUpAt } : {}), ...(p.keyStepUpActions !== undefined ? { keyStepUpActions: p.keyStepUpActions } : {}) },
+        delegation: { clientId: p.clientId, scopes: p.scopes, kind: p.kind, via: actor, ...(p.org ? { org: p.org } : {}), ...(p.keyStepUpAt ? { keyStepUpAt: p.keyStepUpAt } : {}), ...(p.keyStepUpActions !== undefined ? { keyStepUpActions: p.keyStepUpActions } : {}), ...(p.kind === 'oauth' ? { stepUpActions: p.stepUpActions === true, ...(p.stepUpAt ? { stepUpAt: p.stepUpAt } : {}), ...(p.stepUpUntil ? { stepUpUntil: p.stepUpUntil } : {}) } : {}) },
       }
       request.log.debug(
         { subject: p.subject, clientId: p.clientId, org: p.org, kind: p.kind, via: actor, path: request.url },

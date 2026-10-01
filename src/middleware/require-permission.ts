@@ -98,7 +98,7 @@ export async function demandPermissions(
  * route's `config.permission` (policy/route-access.ts); `*` and the legacy aliases pass (catalog.ts).
  */
 export function requirePermission(required: Permission) {
-  return enforcing(async function (request: FastifyRequest, reply: FastifyReply) {
+  return enforcing(async function requirePermission(request: FastifyRequest, reply: FastifyReply) {
     if (!(await demandPermissions(request, reply, [required]))) return reply
   }, required)
 }

@@ -1,6 +1,7 @@
 import type { FastifyRequest } from 'fastify'
 import { auditEventService, type AuditSeverity } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
+import { isDryRun } from '../authz/dry-run.js'
 
 /**
  * The one way a guard records a refusal (AUD-3): `access.denied`, keyed on the SUBJECT id.
@@ -18,6 +19,8 @@ export function denyAudit(
   reason: string,
   opts: { source?: string; statusCode?: number; severity?: AuditSeverity } = {},
 ): void {
+  // The explainer running a guard to see what it would answer: nothing was refused.
+  if (isDryRun(request)) return
   const path = (request.url || '').split('?')[0]
   // The target is what refusals are counted by (top denied routes): the matched route PATTERN, not the
   // raw path — some admin routes carry an address in the path (home-data J8). The raw path stays in

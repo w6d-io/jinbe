@@ -214,6 +214,112 @@ paths:
       responses:
         "200":
           description: Default Response
+  /.well-known/oauth-authorization-server:
+    get:
+      tags:
+        - oauth
+      description: RFC 8414 authorization-server metadata for MCP clients, on the
+        Hydra host only (MCP_OAUTH_ISSUER). The issuer is Hydra's verbatim; PKCE
+        S256 only, public clients, registration at <issuer>/oauth2/register.
+      responses:
+        "200":
+          description: Default Response
+  /oauth2/register:
+    post:
+      tags:
+        - oauth
+      description: Register an MCP client (RFC 7591 subset), on the Hydra host only.
+        Loopback http redirect URIs with an explicit port (localhost, 127.0.0.1,
+        [::1]), a public client (none), authorization_code + refresh_token. The
+        audience, lifetimes and metadata are forced; no secret and no
+        registration access token are issued. 403 access_denied when MCP or
+        browser sign-in is off; 429 over the per-network or daily limit; 503
+        when too many registrations await consent.
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id:
+                    type: string
+                  client_id_issued_at:
+                    type: integer
+                  client_name:
+                    type: string
+                  redirect_uris:
+                    type: array
+                    items:
+                      type: string
+                  grant_types:
+                    type: array
+                    items:
+                      type: string
+                  response_types:
+                    type: array
+                    items:
+                      type: string
+                  token_endpoint_auth_method:
+                    type: string
+                  scope:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "429":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
   /api/telemetry:
     get:
       tags:
@@ -302,9 +408,8 @@ paths:
     get:
       tags:
         - auth
-      description: The permission catalogue (labels, sensitivity, step-up and its
-        rule, four-eyes, delegable, routes), the staff roles and the legacy
-        aliases.
+      description: The permission catalogue (labels, sensitivity, step-up, four-eyes,
+        delegable, routes), the staff roles and the legacy aliases.
       responses:
         "200":
           description: Default Response
@@ -342,42 +447,6 @@ paths:
                           enum:
                             - direct
                             - never
-                        stepUpRule:
-                          type: object
-                          description: "required: a second factor proven within maxAgeMin minutes;
-                            viaPersonalKey: a personal key may stand in with the
-                            factor proven at its creation, up to maxAgeDays
-                            (null: it may not); viaOAuthGrant: an OAuth grant
-                            may stand in with the factor proven at consent when
-                            the user allowed protected actions, for maxAgeHours
-                            (the MCP setting named); fourEyes: a second person
-                            in prod."
-                          properties:
-                            required:
-                              type: boolean
-                            maxAgeMin:
-                              type: integer
-                              nullable: true
-                            viaPersonalKey:
-                              type: object
-                              nullable: true
-                              properties:
-                                maxAgeDays:
-                                  type: integer
-                            viaOAuthGrant:
-                              type: object
-                              nullable: true
-                              properties:
-                                maxAgeHours:
-                                  type: integer
-                                setting:
-                                  type: string
-                                requiresConsentOptIn:
-                                  type: boolean
-                            fourEyes:
-                              type:
-                                - string
-                                - boolean
                         routes:
                           type: array
                           items:
@@ -402,11 +471,6 @@ paths:
                           type: array
                           items:
                             type: string
-                        stepUpPermissions:
-                          type: array
-                          items:
-                            type: string
-                          description: Its permissions that need a recent second factor
                   aliases:
                     type: object
                     additionalProperties:
@@ -417,10 +481,8 @@ paths:
     get:
       tags:
         - me
-      description: "The caller's effective permissions across the platform, which
-        user-management actions they allow, and their second-factor picture
-        (secondFactor: requiredBecause groups, enrolled, currentAal,
-        factorAgeMin, stepUpFresh, stepUpPermissions)."
+      description: The caller's effective permissions across the platform, and which
+        user-management actions they allow.
       responses:
         "200":
           description: Default Response
@@ -447,44 +509,6 @@ paths:
                     type: object
                     additionalProperties:
                       type: boolean
-                  secondFactor:
-                    type: object
-                    nullable: true
-                    description: "required/requiredBecause: the groups that make two-step sign-in
-                      (aal2) mandatory; enrolled/methods: null when unread;
-                      currentAal, factorAgeMin, stepUpFresh: the caller's own
-                      session (null when describing somebody else);
-                      stepUpPermissions: their permissions that need a second
-                      factor proven within 15 minutes (null when unread)."
-                    properties:
-                      required:
-                        type: boolean
-                      requiredBecause:
-                        type: array
-                        items:
-                          type: string
-                      enrolled:
-                        type: boolean
-                        nullable: true
-                      methods:
-                        type: array
-                        nullable: true
-                        items:
-                          type: string
-                      currentAal:
-                        type: string
-                        nullable: true
-                      factorAgeMin:
-                        type: integer
-                        nullable: true
-                      stepUpFresh:
-                        type: boolean
-                        nullable: true
-                      stepUpPermissions:
-                        type: array
-                        nullable: true
-                        items:
-                          type: string
                   apps:
                     type: object
                     additionalProperties:
@@ -679,6 +703,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1151,6 +1181,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1158,6 +1194,357 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+  /api/me/mcp/connections/:
+    get:
+      tags:
+        - oauth
+      description: "Your signed-in AI apps (MCP browser sign-ins): name (unverified),
+        permissions mode, protected actions, dates, last use."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        client_id:
+                          type: string
+                        client_name:
+                          type: string
+                        redirect_host:
+                          type:
+                            - "null"
+                            - string
+                        granted_at:
+                          type:
+                            - "null"
+                            - string
+                        grant_expires_at:
+                          type:
+                            - "null"
+                            - string
+                        scope_mode:
+                          type: string
+                          enum:
+                            - all
+                            - chosen
+                        scopes:
+                          type: array
+                          items:
+                            type: string
+                        step_up_actions:
+                          type: boolean
+                        step_up_until:
+                          type:
+                            - "null"
+                            - string
+                        last_used_at:
+                          type:
+                            - "null"
+                            - string
+                  total:
+                    type: integer
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+    delete:
+      tags:
+        - oauth
+      description: "Disconnect every AI app you signed in with a browser: their tokens
+        stop within 30 seconds and their registrations are deleted."
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/me/mcp/connections/{clientId}:
+    delete:
+      tags:
+        - oauth
+      description: "Disconnect one of your signed-in AI apps: its tokens stop within
+        30 seconds and its registration is deleted."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          in: path
+          name: clientId
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/users:
@@ -1344,6 +1731,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1570,6 +1963,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1670,6 +2069,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1810,6 +2215,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -1986,6 +2397,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2186,6 +2603,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2270,6 +2693,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2356,6 +2785,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2466,6 +2901,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2570,6 +3011,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2692,6 +3139,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2784,6 +3237,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2868,6 +3327,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -2952,6 +3417,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3082,6 +3553,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3194,6 +3671,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -3201,6 +3684,104 @@ paths:
               schema:
                 type: object
                 properties:
+                  message:
+                    type: string
+  /api/admin/users/{id}/mcp-connections:
+    delete:
+      tags:
+        - oauth
+      description: Disconnect every AI app a person signed in with a browser (MCP).
+        Also done by revoking all their sessions. Needs sessions:revoke.
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          in: path
+          name: id
+          required: true
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
                   message:
                     type: string
   /api/admin/bulk/sites.routes.upsert/plan:
@@ -3570,6 +4151,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/organizations:
     get:
       tags:
@@ -3659,6 +4246,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -3788,6 +4381,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -3928,6 +4527,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -4041,6 +4646,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -4085,9 +4696,9 @@ paths:
       tags:
         - admin
       description: "A user's site access (groups → roles per service) and org access
-        (per org: admin flag and the groups granted there), and secondFactor
-        (requiredBecause, enrolled, stepUpPermissions; session fields null).
-        Needs access:read."
+        (per org: `admin` as OPA decides it (manageable_orgs), `rostered` as
+        jinbe's roster store says, `why` when they differ, and the groups
+        granted there). Needs access:read."
       parameters:
         - schema:
             type: string
@@ -4127,48 +4738,22 @@ paths:
                           type: string
                         admin:
                           type: boolean
+                          description: OPA would let them manage this org's people (manageable_orgs)
+                        rostered:
+                          type: boolean
+                          description: On the org's admin roster in jinbe's store
+                        why:
+                          type: string
+                          enum:
+                            - not_a_member_per_policy
+                            - email_case_mismatch
+                            - policy_not_yet_loaded
+                          description: "Only when rostered but not admin: what keeps them from
+                            administering"
                         grants:
                           type: array
                           items:
                             type: string
-                  secondFactor:
-                    type: object
-                    nullable: true
-                    description: "required/requiredBecause: the groups that make two-step sign-in
-                      (aal2) mandatory; enrolled/methods: null when unread;
-                      currentAal, factorAgeMin, stepUpFresh: the caller's own
-                      session (null when describing somebody else);
-                      stepUpPermissions: their permissions that need a second
-                      factor proven within 15 minutes (null when unread)."
-                    properties:
-                      required:
-                        type: boolean
-                      requiredBecause:
-                        type: array
-                        items:
-                          type: string
-                      enrolled:
-                        type: boolean
-                        nullable: true
-                      methods:
-                        type: array
-                        nullable: true
-                        items:
-                          type: string
-                      currentAal:
-                        type: string
-                        nullable: true
-                      factorAgeMin:
-                        type: integer
-                        nullable: true
-                      stepUpFresh:
-                        type: boolean
-                        nullable: true
-                      stepUpPermissions:
-                        type: array
-                        nullable: true
-                        items:
-                          type: string
         "401":
           description: Default Response
           content:
@@ -4230,6 +4815,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -4257,9 +4848,7 @@ paths:
     get:
       tags: &a2
         - sites
-      description: "List sites with their status and two-step sign-in bar
-        (secondFactor: scope, routes, clients, minAal, summary — of the saved
-        version)"
+      description: List sites with their status
       responses:
         "200":
           description: Default Response
@@ -5497,8 +6086,7 @@ paths:
   /api/admin/sites/{name}:
     get:
       tags: *a2
-      description: "A site: saved intent, its two-step sign-in bar (secondFactor),
-        version, etag, status"
+      description: "A site: saved intent, version, etag, status"
       parameters:
         - schema:
             type: string
@@ -5512,7 +6100,9 @@ paths:
     put:
       tags: *a2
       description: "Save the intent as a new version (If-Match: the etag you edited;
-        absent only for a new site)"
+        absent only for a new site). ephemeral {ttl?}: paused automatically when
+        the TTL passes (1 hour to 7 days, 24 hours by default), counted from
+        this save; null: permanent again; absent: unchanged"
       requestBody:
         required: true
         content:
@@ -5949,6 +6539,16 @@ paths:
                 note:
                   type: string
                   maxLength: 280
+                ephemeral:
+                  type: object
+                  properties:
+                    ttl:
+                      anyOf:
+                        - type: integer
+                        - type: string
+                          pattern: ^\d{1,5}[mhd]$
+                  additionalProperties: false
+                  nullable: true
               required:
                 - site
               additionalProperties: false
@@ -6808,6 +7408,117 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/ttl:
+    post:
+      tags: &a4
+        - sites
+      description: "Extend an ephemeral site: its expiry becomes now + ttl (seconds or
+        30m/12h/3d, 1 hour to 7 days; its own TTL when left out). An expired
+        site stays paused: resuming it is sites:apply. 409 not_ephemeral for a
+        permanent site"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl:
+                  anyOf:
+                    - type: integer
+                    - type: string
+                      pattern: ^\d{1,5}[mhd]$
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/deletion-requests:
+    post:
+      tags: *a4
+      description: Ask for the site to be deleted; a person holding sites:delete,
+        other than the requester, decides. 409 deletion_request_pending while
+        one is open
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 280
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests:
+    get:
+      tags: *a4
+      description: Deletion requests, newest first
+        (?state=pending|approved|rejected|cancelled, ?site=)
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/pending:
+    get:
+      tags: *a4
+      description: "The deletion inbox: pending requests, oldest first, with
+        requestedByYou (the requester cannot approve their own)"
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/{id}/approve:
+    post:
+      tags: *a4
+      description: "Approve a deletion request: deletes the site as the approver
+        (rules first, then its permissions; a 30-day snapshot). Four-eyes: 403
+        second_approver_required for the requester. Never through a key"
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/deletion-requests/{id}/reject:
+    post:
+      tags: *a4
+      description: Reject a deletion request, with an optional reason. Never through a key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 280
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: id
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/import/preview:
     post:
       tags:
@@ -7113,7 +7824,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration:
     get:
-      tags: &a4
+      tags: &a5
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
@@ -7122,7 +7833,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/preview:
     post:
-      tags: *a4
+      tags: *a5
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
       responses:
@@ -7130,7 +7841,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/parity:
     post:
-      tags: *a4
+      tags: *a5
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
       responses:
@@ -7138,20 +7849,20 @@ paths:
           description: Default Response
   /api/admin/sites/migration/dualrun:
     get:
-      tags: *a4
+      tags: *a5
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
       responses:
         "200":
           description: Default Response
     post:
-      tags: *a4
+      tags: *a5
       description: Start or stop the dual run
       responses:
         "200":
           description: Default Response
   /api/admin/sites/migration/cutover:
     post:
-      tags: *a4
+      tags: *a5
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
       responses:
@@ -7159,7 +7870,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/rollback:
     post:
-      tags: *a4
+      tags: *a5
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
       responses:
@@ -7167,7 +7878,7 @@ paths:
           description: Default Response
   /api/admin/gateway:
     get:
-      tags: &a5
+      tags: &a6
         - gateway
       description: "Every Oathkeeper handler: enabled, global config (secrets masked),
         defaults, the sites using it, form fields; plus rollout status.
@@ -7177,7 +7888,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a5
+      tags: *a6
       description: "Write the Gateway resource (If-Match: the etag you edited). The
         site-operator rolls the gateway pods"
       requestBody:
@@ -7229,7 +7940,7 @@ paths:
           description: Default Response
   /api/admin/gateway/preview:
     post:
-      tags: *a5
+      tags: *a6
       description: "Validate a proposed gateway configuration: handler schemas, in-use
         handlers, fallback, risk flags. Writes nothing"
       requestBody:
@@ -7281,21 +7992,21 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout:
     get:
-      tags: *a5
+      tags: *a6
       description: Rollout progress of the last gateway change (from the Gateway status)
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollout/events:
     get:
-      tags: *a5
+      tags: *a6
       description: Rollout progress as Server-Sent Events, until it settles
       responses:
         "200":
           description: Default Response
   /api/admin/gateway/rollback:
     post:
-      tags: *a5
+      tags: *a6
       description: Restore the configuration before the last change, re-checked
         against the sites using each handler
       requestBody:
@@ -7938,6 +8649,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8073,9 +8790,9 @@ paths:
     get:
       tags:
         - rbac
-      description: 'OPAL data source: groups switched to "Members must use 2FA"
+      description: "OPAL data source: groups whose members must hold a second factor
         (data.second_factor). 503 when the store cannot be read, so OPAL keeps
-        the requirement OPA already holds.'
+        the requirement OPA already holds."
       responses:
         "503":
           description: Default Response
@@ -8325,6 +9042,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "502":
           description: Default Response
           content:
@@ -8348,6 +9071,264 @@ paths:
                     example: Service Unavailable
                   reason:
                     type: string
+                  message:
+                    type: string
+  /api/admin/rbac/explain-route:
+    post:
+      tags:
+        - rbac
+      description: "Why jinbe accepts or refuses METHOD PATH for the caller (or
+        `subject`, which needs access:check): the route and its guards, the
+        catalogue permission, the delegation gate, platform holdings, OPA
+        rbac.decision with the guard's exact input (and rbac.explain: which
+        clause fired), the org trail (membership, the roster in Redis vs OPA,
+        manageable_orgs, org grants), and the real guards run in a dry run.
+        `disagreements` lists surfaces that answer the same question
+        differently."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+                - path
+              properties:
+                method:
+                  type: string
+                  description: GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS (any case)
+                path:
+                  type: string
+                  description: Absolute jinbe path, no query string, e.g.
+                    /api/organizations/3cb9…/users
+                subject:
+                  type: string
+                  description: Identity id or address; default the caller. Anybody else needs
+                    access:check
+                via:
+                  type: string
+                  enum:
+                    - session
+                    - delegated
+                    - machine
+                  description: Pose the question for this way in; default as the caller is calling
+                aal:
+                  type: string
+                  enum:
+                    - aal1
+                    - aal2
+                  description: Sign-in level for a session
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  description: A delegated caller's token scopes; default the caller's own, or
+                    what a personal key of the subject would carry
+                clientId:
+                  type: string
+                body:
+                  type: object
+                  additionalProperties: true
+                  description: The request body, for guards that read it (a create, an edit)
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                      via:
+                        type: string
+                      aal:
+                        type: string
+                      client:
+                        type: boolean
+                        description: What the guards pass OPA as `client` (a token, not a session)
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                  route:
+                    type: object
+                    properties:
+                      method:
+                        type: string
+                      path:
+                        type: string
+                      pattern:
+                        type:
+                          - "null"
+                          - string
+                      params:
+                        type: object
+                        additionalProperties:
+                          type: string
+                  verdict:
+                    type: object
+                    description: "What the caller gets from the guards: 200 when all pass (the
+                      handler may still refuse)"
+                    properties:
+                      status:
+                        type: integer
+                      allowed:
+                        type: boolean
+                      code:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                  decidedBy:
+                    type: string
+                    description: The guard that answered, or `handler`
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        step:
+                          type: string
+                          enum:
+                            - route
+                            - catalogue
+                            - delegation
+                            - platform
+                            - opa
+                            - org
+                            - guard
+                        verdict:
+                          type: string
+                          enum:
+                            - pass
+                            - refuse
+                            - info
+                            - skipped
+                            - unavailable
+                        input:
+                          type: object
+                          additionalProperties: true
+                        detail:
+                          type: object
+                          additionalProperties: true
+                      required:
+                        - step
+                        - verdict
+                        - detail
+                  disagreements:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        between:
+                          type: array
+                          items:
+                            type: string
+                        detail:
+                          type: string
+                required:
+                  - subject
+                  - route
+                  - verdict
+                  - decidedBy
+                  - steps
+                  - disagreements
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
                   message:
                     type: string
   /api/admin/rbac/users:
@@ -8429,6 +9410,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/groups:
     get:
       tags:
@@ -8457,28 +9444,6 @@ paths:
                             type: array
                             items:
                               type: string
-                        secondFactor:
-                          type: object
-                          description: "The group's \"Members must use 2FA\" switch. required: members
-                            need two-step sign-in (aal2) on every
-                            permission-carrying route, and nobody is added
-                            before enrolling a second factor
-                            (enrolBeforeJoining, always equal). source:
-                            group_setting (stored) | default (not stored yet: on
-                            for a group that can write or holds *).
-                            defaultRequired: what the default would be."
-                          properties:
-                            required:
-                              type: boolean
-                            source:
-                              type: string
-                              enum:
-                                - group_setting
-                                - default
-                            enrolBeforeJoining:
-                              type: boolean
-                            defaultRequired:
-                              type: boolean
                       required:
                         - name
                         - services
@@ -8543,6 +9508,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     post:
       tags:
         - rbac
@@ -8655,6 +9626,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "409":
           description: Default Response
           content:
@@ -8781,6 +9758,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8875,6 +9858,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -8963,6 +9952,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/services/{name}/permissions:
     get:
       tags:
@@ -9049,6 +10044,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9146,6 +10147,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/services/{name}/roles:
     get:
       tags:
@@ -9230,6 +10237,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9339,6 +10352,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9432,6 +10451,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9571,6 +10596,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -9866,6 +10897,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/org-service-map:
     get:
       tags:
@@ -9947,6 +10984,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     put:
       tags:
         - rbac
@@ -10056,6 +11099,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/admin/rbac/org-admin-map:
     get:
       tags:
@@ -10137,6 +11186,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     put:
       tags:
         - rbac
@@ -10246,6 +11301,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "422":
           description: Default Response
           content:
@@ -10343,6 +11404,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -10883,10 +11950,9 @@ paths:
       tags:
         - second-factor
       description: Replace the groups whose members must use two-step sign-in. Every
-        name must be an existing group; an empty list turns every group off.
-        Sets each group's "Members must use 2FA" switch (listed on, others off);
-        published to OPA as data.second_factor. groups.mfa:write (super admin
-        alone), with a second factor proven within 15 minutes.
+        name must be an existing group; an empty list requires nobody. Published
+        to OPA as data.second_factor. Requires settings.signin:write + a second
+        factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -10899,7 +11965,7 @@ paths:
               properties:
                 groups:
                   type: array
-                  maxItems: 200
+                  maxItems: 50
                   items:
                     type: string
                     maxLength: 100
@@ -10920,292 +11986,6 @@ paths:
                     items:
                       type: string
         "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-  /api/admin/rbac/second-factor-map:
-    get:
-      tags:
-        - second-factor
-      description: "Every second-factor rule and what it applies to: sign-in groups
-        (group_sign_in), groups that need enrolment before joining, permissions
-        needing a recent second factor (step_up, with personal-key stand-in and
-        four-eyes), staff roles, each site's two-step bar (site_login).
-        groups:read or sites:read; groups need groups:read and sites
-        sites:read."
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  rules:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id:
-                          type: string
-                        label:
-                          type: string
-                        status:
-                          type: string
-                          enum:
-                            - enforced
-                            - planned
-                  limits:
-                    type: object
-                    properties:
-                      stepUpMaxAgeMin:
-                        type: integer
-                      personalKeyMaxAgeDays:
-                        type: integer
-                      oauthGrantMaxAgeHours:
-                        type: integer
-                  signIn:
-                    type: object
-                    nullable: true
-                    description: The groups switched to "Members must use 2FA"; explicit false =
-                      some group still runs on its default (not pinned yet).
-                    properties:
-                      groups:
-                        type: array
-                        items:
-                          type: string
-                      explicit:
-                        type: boolean
-                  groups:
-                    type: array
-                    nullable: true
-                    description: Null without groups:read, or when the groups cannot be read (see
-                      unavailable).
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        secondFactor:
-                          type: object
-                          description: "The group's \"Members must use 2FA\" switch. required: members
-                            need two-step sign-in (aal2) on every
-                            permission-carrying route, and nobody is added
-                            before enrolling a second factor
-                            (enrolBeforeJoining, always equal). source:
-                            group_setting (stored) | default (not stored yet: on
-                            for a group that can write or holds *).
-                            defaultRequired: what the default would be."
-                          properties:
-                            required:
-                              type: boolean
-                            source:
-                              type: string
-                              enum:
-                                - group_setting
-                                - default
-                            enrolBeforeJoining:
-                              type: boolean
-                            defaultRequired:
-                              type: boolean
-                  permissions:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        label:
-                          type: string
-                        stepUpRule:
-                          type: object
-                          description: "required: a second factor proven within maxAgeMin minutes;
-                            viaPersonalKey: a personal key may stand in with the
-                            factor proven at its creation, up to maxAgeDays
-                            (null: it may not); viaOAuthGrant: an OAuth grant
-                            may stand in with the factor proven at consent when
-                            the user allowed protected actions, for maxAgeHours
-                            (the MCP setting named); fourEyes: a second person
-                            in prod."
-                          properties:
-                            required:
-                              type: boolean
-                            maxAgeMin:
-                              type: integer
-                              nullable: true
-                            viaPersonalKey:
-                              type: object
-                              nullable: true
-                              properties:
-                                maxAgeDays:
-                                  type: integer
-                            viaOAuthGrant:
-                              type: object
-                              nullable: true
-                              properties:
-                                maxAgeHours:
-                                  type: integer
-                                setting:
-                                  type: string
-                                requiresConsentOptIn:
-                                  type: boolean
-                            fourEyes:
-                              type:
-                                - string
-                                - boolean
-                  roles:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        group:
-                          type: string
-                        stepUpPermissions:
-                          type: array
-                          items:
-                            type: string
-                  sites:
-                    type: array
-                    nullable: true
-                    description: The applied version of each site (what visitors meet); null without
-                      sites:read or when unreadable.
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        displayName:
-                          type: string
-                        host:
-                          type: string
-                        applied:
-                          type: boolean
-                        secondFactor:
-                          type: object
-                          description: A site's own two-step sign-in bar (login.twoFactor), with a
-                            sentence for a person.
-                          properties:
-                            scope:
-                              type: string
-                              enum:
-                                - none
-                                - writes
-                                - all
-                                - routes
-                            routes:
-                              type: array
-                              items:
-                                type: string
-                            clients:
-                              type: string
-                              nullable: true
-                              enum:
-                                - exempt
-                                - refused
-                                - null
-                            minAal:
-                              type: string
-                              enum:
-                                - aal1
-                                - aal2
-                            summary:
-                              type: string
-                  organizations:
-                    type: object
-                    properties:
-                      rules:
-                        type: array
-                        items:
-                          type: string
-                      note:
-                        type: string
-                  unavailable:
-                    type: array
-                    items:
-                      type: string
-                    description: Sections that could not be read (signIn, groups, sites).
-  /api/admin/rbac/groups/{name}/second-factor:
-    put:
-      tags:
-        - second-factor
-      description: "Switch a group's \"Members must use 2FA\": on, its members need
-        two-step sign-in (aal2) on every permission-carrying route and nobody
-        joins it before enrolling a second factor. Published to OPA as
-        data.second_factor. groups.mfa:write (super admin alone), with a second
-        factor proven within 15 minutes."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - required
-              additionalProperties: false
-              properties:
-                required:
-                  type: boolean
-      parameters:
-        - schema:
-            type: string
-            maxLength: 64
-          in: path
-          name: name
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  name:
-                    type: string
-                  secondFactor:
-                    type: object
-                    description: "The group's \"Members must use 2FA\" switch. required: members
-                      need two-step sign-in (aal2) on every permission-carrying
-                      route, and nobody is added before enrolling a second
-                      factor (enrolBeforeJoining, always equal). source:
-                      group_setting (stored) | default (not stored yet: on for a
-                      group that can write or holds *). defaultRequired: what
-                      the default would be."
-                    properties:
-                      required:
-                        type: boolean
-                      source:
-                        type: string
-                        enum:
-                          - group_setting
-                          - default
-                      enrolBeforeJoining:
-                        type: boolean
-                      defaultRequired:
-                        type: boolean
-        "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-        "404":
           description: Default Response
           content:
             application/json:
@@ -11439,6 +12219,26 @@ paths:
                           - type: array
                             items:
                               type: string
+                      oauth:
+                        type: object
+                        additionalProperties: false
+                        description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                          MCP is on"
+                        properties:
+                          enabled:
+                            type: boolean
+                          maxDays:
+                            type: integer
+                            description: Absolute life of one sign-in, 1–30 days
+                          protectedActions:
+                            type: string
+                            enum:
+                              - off
+                              - window
+                          protectedActionsHours:
+                            type: integer
+                            description: Hours after the consent-time second factor during which protected
+                              actions are allowed, 1–720
                   defaults:
                     type: object
                     properties:
@@ -11461,6 +12261,26 @@ paths:
                           - type: array
                             items:
                               type: string
+                      oauth:
+                        type: object
+                        additionalProperties: false
+                        description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                          MCP is on"
+                        properties:
+                          enabled:
+                            type: boolean
+                          maxDays:
+                            type: integer
+                            description: Absolute life of one sign-in, 1–30 days
+                          protectedActions:
+                            type: string
+                            enum:
+                              - off
+                              - window
+                          protectedActionsHours:
+                            type: integer
+                            description: Hours after the consent-time second factor during which protected
+                              actions are allowed, 1–720
                   ceiling:
                     type: object
                     properties:
@@ -11511,6 +12331,26 @@ paths:
                     - type: array
                       items:
                         type: string
+                oauth:
+                  type: object
+                  additionalProperties: false
+                  description: "Browser sign-in (OAuth) for MCP clients: on by default whenever
+                    MCP is on"
+                  properties:
+                    enabled:
+                      type: boolean
+                    maxDays:
+                      type: integer
+                      description: Absolute life of one sign-in, 1–30 days
+                    protectedActions:
+                      type: string
+                      enum:
+                        - off
+                        - window
+                    protectedActionsHours:
+                      type: integer
+                      description: Hours after the consent-time second factor during which protected
+                        actions are allowed, 1–720
       responses:
         "400":
           description: Default Response
@@ -11633,7 +12473,7 @@ paths:
           description: Default Response
   /api/home:
     get:
-      tags: &a6
+      tags: &a7
         - home
       description: "The Home briefing: every module the caller may see, each with its
         own status, freshness and sources"
@@ -12912,7 +13752,7 @@ paths:
                       super_admins."
   /api/home/{module}:
     get:
-      tags: *a6
+      tags: *a7
       description: One Home module (retry after unavailable, or refresh a single
         tile). 403 with status "forbidden" for a module the caller may not see.
       parameters:
@@ -13791,6 +14631,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     post:
       tags:
         - organization-users
@@ -13980,6 +14826,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/organizations/{organizationId}/users/{id}:
     get:
       tags:
@@ -14155,6 +15007,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14358,6 +15216,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14452,6 +15316,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14651,6 +15521,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14776,6 +15652,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -14874,6 +15756,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -15148,6 +16036,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "502":
           description: Default Response
           content:
@@ -15341,6 +16235,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
     get:
       tags:
         - api-keys
@@ -15460,6 +16360,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
   /api/organizations/{organizationId}/api-keys/scopes:
     get:
       tags:
@@ -15559,6 +16465,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "503":
           description: Default Response
           content:
@@ -15665,6 +16577,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -15780,6 +16698,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -15908,6 +16832,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -16000,6 +16930,12 @@ paths:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
                       super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
         "404":
           description: Default Response
           content:
@@ -16068,6 +17004,21 @@ paths:
                         type: string
                       key_step_up_actions:
                         type: boolean
+                      scope_mode:
+                        type: string
+                        enum:
+                          - all
+                          - chosen
+                      client_name:
+                        type: string
+                      grant_expires_at:
+                        type: integer
+                      step_up_actions:
+                        type: boolean
+                      step_up_at:
+                        type: string
+                      step_up_until:
+                        type: string
         "401":
           description: Default Response
           content:
@@ -16460,6 +17411,13 @@ paths:
                       - boolean
                     description: Whether your groups may use MCP (allowedGroups); null when MCP is
                       off or it cannot be told
+                  oauth:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        description: "Browser sign-in (OAuth) is offered: MCP on, the OAuth switch on,
+                          and an authorization server configured"
         "401":
           description: Default Response
           content:
@@ -16574,6 +17532,349 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/public/oauth2/login:
+    get:
+      tags:
+        - oauth
+      description: "Hydra login provider for MCP clients, for login-ui (the visitor's
+        Kratos cookies). {action:'redirect', to}: Kratos login, aal2, aal2
+        refresh, 2FA enrolment, or Hydra after accepting; {action:'refused',
+        reason, to}: show why, then follow `to` (Hydra reject). 404
+        challenge_unknown when expired or used."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          in: query
+          name: login_challenge
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - redirect
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/public/oauth2/consent:
+    get:
+      tags:
+        - oauth
+      description: "The consent screen for an MCP client, for login-ui (the visitor's
+        Kratos cookies): the unverified client, the account, the permissions
+        asked that you hold (labels, sensitivity), whether protected actions are
+        offered and until when, and the sign-in's absolute end. Or
+        {action:'refused', reason, to}. 401 without a session, 403
+        wrong_account."
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+          in: query
+          name: consent_challenge
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - show
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+                  client:
+                    type: object
+                    properties:
+                      client_id:
+                        type: string
+                      name:
+                        type: string
+                      name_verified:
+                        type: boolean
+                      redirect_host:
+                        type:
+                          - "null"
+                          - string
+                      registered_at:
+                        type:
+                          - "null"
+                          - string
+                  account:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                      subject:
+                        type: string
+                  requested:
+                    type: array
+                    items:
+                      type: string
+                  offline_access:
+                    type: boolean
+                  catalog:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope:
+                          type: string
+                        group:
+                          type: string
+                        label:
+                          type: string
+                        sensitivity:
+                          type: string
+                        protected:
+                          type: boolean
+                  protectedActions:
+                    type: object
+                    properties:
+                      offered:
+                        type: boolean
+                      until:
+                        type:
+                          - "null"
+                          - string
+                      hours:
+                        type: integer
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                  grantExpiresAt:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+    post:
+      tags:
+        - oauth
+      description: Allow or deny an MCP client, for login-ui's server action (the
+        visitor's Kratos cookies, Origin = the auth host). mode 'all' follows
+        your permissions at each call; 'chosen' is the ticked subset of what you
+        hold. protected_actions only when offered. {action:'redirect', to} or
+        {action:'refused', reason, to}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - consent_challenge
+                - decision
+              additionalProperties: false
+              properties:
+                consent_challenge:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                decision:
+                  type: string
+                  enum:
+                    - allow
+                    - deny
+                mode:
+                  type: string
+                  enum:
+                    - all
+                    - chosen
+                scopes:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: string
+                    maxLength: 128
+                protected_actions:
+                  type: boolean
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - redirect
+                      - refused
+                  to:
+                    type: string
+                  reason:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/public/sign-in-protection/:
     get:
       tags:

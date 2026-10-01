@@ -26,12 +26,17 @@ const EXCEPTIONS: Record<string, string> = {
   'POST /api/admin/sites/render': 'renders a header/claims template as Oathkeeper would (gatekit); writes nothing',
   'POST /api/admin/sites/:name/verify': 'reads the rollout, asks the policy and sends anonymous GET/HEAD probes to the public URL; writes nothing (1 per site per 30 s)',
   'POST /api/admin/gateway/preview': 'validates a proposed gateway configuration; writes nothing',
+  'POST /api/admin/rbac/explain-route': "explains one route's verdict (guards run in a dry run); about anybody but the caller it needs access:check",
 
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────
   'POST /api/audit/saved-queries': "the caller's own saved query; a shared one is refused outside the caller's audit scope",
   'DELETE /api/audit/saved-queries/:id': "deletes only the caller's own saved query (keyed on the caller)",
   'POST /api/me/api-keys': "the caller's own personal key, scopes capped at what they hold; refused to delegated callers",
   'DELETE /api/me/api-keys/:clientId': "revokes the caller's own personal key; refused to delegated callers",
+  'DELETE /api/me/mcp/connections': "disconnects all of the caller's own MCP sign-ins; protective; refused to delegated callers (a token deletes one at most)",
+  'DELETE /api/me/mcp/connections/:clientId': "disconnects the caller's own MCP sign-in (consent + tokens); protective, the one call a token may make here",
+  'POST /api/public/oauth2/consent': "the visitor's own consent: their Kratos session must own the Hydra challenge, Origin = the auth host, scopes capped at what they hold",
+  'POST /oauth2/register': 'anonymous MCP client registration by design (RFC 7591): loopback redirects only, forced audience, rate limited, bound at first consent',
 
   // ── Decided in the handler, against the item ───────────────────────────────────────────────────
   'POST /api/admin/recert/items/:campaignId/:itemId/decision':
@@ -67,6 +72,8 @@ const NO_SESSION: Array<[RegExp, string]> = [
   [/^\/api\/oathkeeper\/rules$/, 'Oathkeeper rules sync (in-cluster; every upstream — owner decision pending)'],
   [/^\/api\/webhooks\/kratos(\/guard)?$/, 'Kratos hooks: shared webhook secret'],
   [/^\/scim\/v2\//, 'SCIM bearer token (scim-auth)'],
+  [/^\/\.well-known\/oauth-authorization-server$/, 'RFC 8414 metadata on the Hydra host (Host-checked): public by design, nothing private'],
+  [/^\/oauth2\/register$/, 'MCP client registration on the Hydra host (Host-checked): loopback only, brakes, bound at first consent'],
 ]
 
 const key = (r: DeclaredRoute) => `${r.method} ${r.path}`

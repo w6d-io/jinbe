@@ -10,6 +10,9 @@ import { rights } from '../authz/opa.js'
 import { platformScopes } from './platform-scopes.js'
 import { broadcastInvalidation, ensureBus, onInvalidate } from '../cache/swr.js'
 import { getStore } from '../cache/runtime.js'
+import { hydraFlows } from './hydra-flows.service.js'
+import { oauthStepUpUntil } from '../oauth/step-up-window.js'
+import { oauthAudit } from '../oauth/audit.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -17,15 +20,18 @@ const log = () => componentLogger('delegated-token')
  * A USER acting through a client, proven by an opaque Hydra access token (MCP prerequisite).
  *
  * Two ways in, one shape out:
- *   - an OAuth token (authorization code): `sub` is the user; `ext.org`, when the consent named one,
- *     is carried along for information only;
+ *   - an OAuth token (authorization code, browser sign-in — src/oauth/): `sub` is the user; the client
+ *     must be an MCP registration (`metadata.kind: mcp_oauth`) bound to that user, and the consent's
+ *     stamp (`ext`: scope mode, consent-time second factor, protected actions, absolute end) is read
+ *     like a personal key's metadata — past `grant_expires_at` the token is refused and the sign-in
+ *     revoked; `ext.org`, when present, is carried along for information only;
  *   - a personal key (client_credentials, `owner = user:<id>`): `sub` is the client, and the user is
  *     read from the client's own metadata, re-read on every introspection — so revoking the key or
  *     letting it expire stops it within the cache window.
  *
- * Bound to no organization: a personal key inherits its holder. Its scopes are recomputed on EVERY
- * call from what the holder holds now (platform-scopes.ts) — all of it for an "all my permissions" key,
- * the stored subset still held otherwise — and the holder's groups must still be allowed MCP
+ * Bound to no organization: a personal key or a sign-in inherits its holder. Its scopes are recomputed
+ * on EVERY call from what the holder holds now (platform-scopes.ts) — all of it for "all my
+ * permissions", the stored (granted) subset still held otherwise — and the holder's groups must still be allowed MCP
  * (mcp/settings.ts allowedGroups). A removed group narrows the very next call.
  *
  * An org machine key is NOT a user and never comes out of here.
@@ -60,6 +66,17 @@ export interface DelegatedPrincipal {
   /** Personal key: when its creator proved a second factor (ISO), and whether step-up actions are allowed. */
   keyStepUpAt?: string
   keyStepUpActions?: boolean
+  /** OAuth: 'all' follows the holder's rights at each call; 'chosen' is the granted subset still held. */
+  scopeMode?: 'all' | 'chosen'
+  /** OAuth: the consent-time second factor (ISO) and whether protected actions were allowed at consent. */
+  stepUpAt?: string
+  stepUpActions?: boolean
+  /** OAuth: until when protected actions are allowed (ISO), from the settings' window — absent: none. */
+  stepUpUntil?: string
+  /** OAuth: the sign-in's absolute end (ms since epoch). */
+  grantExpiresAt?: number
+  /** OAuth: the registration's (unverified) name. */
+  clientName?: string
 }
 
 export type DelegatedResult = { principal: DelegatedPrincipal } | { error: string }
@@ -133,20 +150,29 @@ export class DelegatedTokenService {
     const p = result.principal
     try {
       if (!groupAllowed(settings, (await rights(p.email)).groups)) return { error: 'mcp_group_not_allowed' }
-      if (p.kind !== 'personal') return result
+      if (p.kind === 'oauth' && !settings.oauth.enabled) return { error: 'oauth_disabled' }
       const held = new Set(await platformScopes(p.email))
-      const scopes = p.allPermissions ? [...held] : p.scopes.filter((s) => held.has(s))
+      const all = p.kind === 'personal' ? p.allPermissions : p.scopeMode === 'all'
+      const scopes = all ? [...held] : p.scopes.filter((s) => held.has(s))
       const extra = p.tokenScope.split(' ').filter((s) => s && !isGrantableScope(s))
-      return { principal: { ...p, scopes: scopes.sort(), tokenScope: [...scopes.sort(), ...extra].join(' ') } }
+      const stepUpUntil = p.kind === 'oauth'
+        ? oauthStepUpUntil(settings, { stepUpActions: p.stepUpActions === true, stepUpAt: p.stepUpAt, grantExpiresAt: p.grantExpiresAt })
+        : null
+      return {
+        principal: {
+          ...p, scopes: scopes.sort(), tokenScope: [...scopes.sort(), ...extra].join(' '),
+          ...(p.kind === 'oauth' ? (stepUpUntil ? { stepUpUntil } : { stepUpUntil: undefined }) : {}),
+        },
+      }
     } catch (err) {
       log().warn({ reason: (err as Error).message }, 'could not read what the holder holds (deny)')
       return { error: 'authz_unavailable' }
     }
   }
 
-  /** A personal key's token accepted: the key was used (throttled, never awaited). */
+  /** A token accepted: its key or sign-in was used (throttled, never awaited) — kuma's "last used". */
   private used(result: DelegatedResult, now: number): DelegatedResult {
-    if ('principal' in result && result.principal.kind === 'personal') touchApiKeyUse(result.principal.clientId, now)
+    if ('principal' in result) touchApiKeyUse(result.principal.clientId, now)
     return result
   }
 
@@ -182,7 +208,7 @@ export class DelegatedTokenService {
     if (!Array.isArray(intro.aud) || !intro.aud.includes(env.DELEGATED_TOKEN_AUDIENCE)) return { error: 'audience_mismatch' }
     if (!intro.client_id || !intro.sub) return { error: 'token_incomplete' }
 
-    const bound = intro.sub === intro.client_id ? await this.personalKey(intro.client_id, now) : this.oauth(intro)
+    const bound = intro.sub === intro.client_id ? await this.personalKey(intro.client_id, now) : await this.oauth(intro, now)
     if ('error' in bound) return bound
 
     let email = ''
@@ -214,13 +240,62 @@ export class DelegatedTokenService {
         tokenScope: intro.scope ?? '',
         aud: intro.aud,
         ...(bound.kind === 'personal' ? { keyExpiresAt: bound.expiresAt, keyStepUpAt: bound.keyStepUpAt, keyStepUpActions: bound.keyStepUpActions } : {}),
+        ...(bound.kind === 'oauth' ? bound.oauth : {}),
       },
     }
   }
 
-  private oauth(intro: HydraIntrospection): Bound {
-    const org = intro.ext?.org
-    return { subject: intro.sub as string, kind: 'oauth', ...(typeof org === 'string' && org ? { org } : {}) }
+  private async oauth(intro: HydraIntrospection, now: number): Promise<Bound> {
+    const subject = intro.sub as string
+    const clientId = intro.client_id as string
+    let client
+    try {
+      client = await hydraService.getClient(clientId)
+    } catch {
+      return { error: 'client_unknown' }
+    }
+    const meta = (client.metadata ?? {}) as Record<string, unknown>
+    // Only a browser sign-in of an MCP registration acts as a person through auth-mcp.
+    if (meta.kind !== 'mcp_oauth') return { error: 'not_an_mcp_client' }
+    if (typeof meta.bound_subject === 'string' && meta.bound_subject && meta.bound_subject !== subject) return { error: 'client_bound_elsewhere' }
+    const ext = intro.ext ?? {}
+    const grantEnd = typeof ext.grant_expires_at === 'string' ? Date.parse(ext.grant_expires_at) : NaN
+    // Mandatory absolute end, stamped at consent: a sign-in without one is refused, never eternal.
+    if (!(grantEnd > now)) {
+      this.expireGrant(subject, clientId, typeof client.client_name === 'string' ? client.client_name : null)
+      return { error: 'grant_expired' }
+    }
+    const org = ext.org
+    const stepUpAt = typeof ext.second_factor_at === 'string' && ext.second_factor_at ? ext.second_factor_at : undefined
+    return {
+      subject,
+      kind: 'oauth',
+      expiresAt: grantEnd,
+      ...(typeof org === 'string' && org ? { org } : {}),
+      oauth: {
+        scopeMode: ext.scope_mode === 'chosen' ? 'chosen' : 'all',
+        ...(stepUpAt ? { stepUpAt } : {}),
+        stepUpActions: ext.step_up_actions === true,
+        grantExpiresAt: grantEnd,
+        clientName: client.client_name || 'MCP client',
+      },
+    }
+  }
+
+  private expired = new Set<string>()
+
+  /** A sign-in past its absolute end: revoked at Hydra in the background, once per replica. */
+  private expireGrant(subject: string, clientId: string, clientName: string | null): void {
+    const key = `${subject}\0${clientId}`
+    if (this.expired.has(key)) return
+    if (this.expired.size >= MAX_ENTRIES) this.expired.clear()
+    this.expired.add(key)
+    void hydraFlows.revokeConsentSessions(subject, clientId).then(() => {
+      oauthAudit('mcp.oauth.grant_expired', { actor: { id: subject, email: null, type: 'system' }, targetId: clientId, details: { client_name: clientName } })
+    }).catch((err) => {
+      this.expired.delete(key)
+      log().warn({ reason: (err as Error).message }, 'could not revoke an expired sign-in')
+    })
   }
 
   private async personalKey(clientId: string, now: number): Promise<Bound> {
@@ -242,8 +317,10 @@ export class DelegatedTokenService {
   }
 }
 
+type OAuthFacts = Pick<DelegatedPrincipal, 'scopeMode' | 'stepUpAt' | 'stepUpActions' | 'grantExpiresAt' | 'clientName'>
+
 type Bound =
-  | { subject: string; kind: 'oauth' | 'personal'; org?: string; expiresAt?: number; allPermissions?: boolean; keyStepUpAt?: string; keyStepUpActions?: boolean }
+  | { subject: string; kind: 'oauth' | 'personal'; org?: string; expiresAt?: number; allPermissions?: boolean; keyStepUpAt?: string; keyStepUpActions?: boolean; oauth?: OAuthFacts }
   | { error: string }
 
 /** A personal key carrying all its holder's permissions (`scope_mode: all`) rather than a stored subset. */

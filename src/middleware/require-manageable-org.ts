@@ -23,7 +23,7 @@ import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
  * FAIL-CLOSED: OPA unreachable → 503, never an allow and never a quiet 403.
  */
 export function requireManageableOrg(paramName = 'organizationId') {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async function requireManageableOrg(request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
     const route = `${request.method} ${(request.url || '').split('?')[0]}`
     const rbacInfo = request.rbacInfo

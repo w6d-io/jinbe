@@ -3,7 +3,7 @@ import { ALIASES, CATALOG, PERMISSIONS } from '../policy/catalog.js'
 import { ROLES, STAFF_ROLES } from '../policy/roles.js'
 import { declaredRoutes } from '../policy/declared-routes.js'
 import { open } from '../policy/route-access.js'
-import { stepUpPermissionsOf, stepUpRule } from '../second-factor/requirements.js'
+import { oauthGrantWindowHours, stepUpPermissionsOf, stepUpRule } from '../second-factor/requirements.js'
 import { stepUpRuleJsonSchema } from '../schemas/second-factor.schema.js'
 
 /**
@@ -68,8 +68,9 @@ export async function catalogRoutes(fastify: FastifyInstance) {
       if (!r.permission || r.method === 'HEAD') continue
       routes.set(r.permission, [...(routes.get(r.permission) ?? []), { method: r.method, path: r.path }])
     }
+    const oauthHours = await oauthGrantWindowHours()
     return reply.send({
-      permissions: PERMISSIONS.map((name) => ({ name, ...CATALOG[name], stepUpRule: stepUpRule(name), routes: routes.get(name) ?? [] })),
+      permissions: PERMISSIONS.map((name) => ({ name, ...CATALOG[name], stepUpRule: stepUpRule(name, oauthHours), routes: routes.get(name) ?? [] })),
       roles: STAFF_ROLES.map((name) => ({ name, ...ROLES[name], permissions: [...ROLES[name].permissions], stepUpPermissions: stepUpPermissionsOf(ROLES[name].permissions) })),
       aliases: ALIASES,
     })

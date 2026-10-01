@@ -4,6 +4,7 @@ import { EVERYTHING, scopeGrants, specOf } from '../policy/catalog.js'
 import { denyAudit } from '../audit/deny.js'
 import { delegatedWriteBudget, productionRedirect } from './delegated-writes.js'
 import { scopeRefusalFields } from '../services/permission-refusal.js'
+import { isDryRun } from '../authz/dry-run.js'
 
 /**
  * What a DELEGATED caller (a user acting through a client: an MCP server, a personal key) may reach.
@@ -52,6 +53,11 @@ export const DELEGATION_INELIGIBLE: readonly Ineligible[] = [
   // The caller's own credentials: a token must not mint or list the keys that make tokens (org keys
   // are decided by the catalogue: org.keys:read direct, org.keys:write never).
   { pattern: /^\/api\/me\/api-keys/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
+  // The caller's browser sign-ins (MCP OAuth): listed and granted by a person — a token may only
+  // disconnect one (KEY_REVOKE). The login/consent provider takes the visitor's session alone.
+  { pattern: /^\/api\/me\/mcp\/connections/, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], why: 'api_keys' },
+  { pattern: /^\/api\/public\/oauth2\//, why: 'api_keys' },
+  { pattern: /^\/(oauth2\/register|\.well-known\/oauth-authorization-server)$/, why: 'api_keys' },
   // SCIM — every method.
   { pattern: /^\/scim\/v2\//, why: 'scim' },
   // The policy engine's and the gateway's machine feeds.
@@ -71,14 +77,20 @@ const PERSON_WRITES = [
 // Key revocation: the one DELETE a token may make (a leaked key can be killed from the assistant).
 const KEY_REVOKE = [
   /^\/api\/me\/api-keys\/:clientId$/,
+  /^\/api\/me\/mcp\/connections\/:clientId$/,
   /^\/api\/organizations\/:organizationId\/api-keys\/:clientId$/,
 ]
 
 // Routes whose permission depends on the request, decided by their own guard with delegationRefusal
 // (e.g. a membership change: adding is groups.members:write, removing is a deletion). The global gate
 // still refuses them for the backstop and self-change rules.
+// POST only because the question is a body: it changes nothing, so it spends no write budget.
+const EXPLAIN_ROUTE = /^\/api\/admin\/rbac\/explain-route$/
+
 const GUARD_DECIDED: readonly { method: string; pattern: RegExp }[] = [
   { method: 'PUT', pattern: /^\/api\/admin\/users\/:email\/groups$/ },
+  // A question, not a change: about the caller needs nothing, about somebody else access:check.
+  { method: 'POST', pattern: EXPLAIN_ROUTE },
 ]
 
 /** Why no delegated caller may reach this route pattern (rule 1), or null. */
@@ -126,7 +138,7 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
 
   if (required) return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
   // Revoking one of the holder's own keys needs no scope: it can only take power away (item d).
-  if (method === 'DELETE' && KEY_REVOKE[0].test(pattern)) return null
+  if (method === 'DELETE' && (KEY_REVOKE[0].test(pattern) || KEY_REVOKE[1].test(pattern))) return null
   const row = declaredRoute(method, pattern)
   if (row?.class === 'public') return null
   // No permission to cover: the route answers about the caller. Reading is fine; changing is not.
@@ -138,7 +150,8 @@ export async function delegationGate(request: FastifyRequest, reply: FastifyRepl
   if (request.userContext?.authVia !== 'delegated') return
   const reason = delegationRefusal(request)
   if (!reason) {
-    if (!(WRITES as readonly string[]).includes(request.method.toUpperCase())) return
+    if (!(WRITES as readonly string[]).includes(request.method.toUpperCase()) || isDryRun(request)) return
+    if (EXPLAIN_ROUTE.test(request.routeOptions?.url ?? '')) return
     const retryAfter = await delegatedWriteBudget(request)
     if (retryAfter === null) return
     denyAudit(request, 'delegated_write_rate_limited', { statusCode: 429, severity: 'warn' })

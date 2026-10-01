@@ -84,7 +84,7 @@ export const secondFactorMapJsonSchema = {
       properties: {
         stepUpMaxAgeMin: { type: 'integer' },
         personalKeyMaxAgeDays: { type: 'integer' },
-        oauthGrantMaxAgeHours: { type: 'integer' },
+        oauthGrantMaxAgeHours: { type: ['integer', 'null'], description: 'null: OAuth grants may not stand in (protected actions off)' },
       },
     },
     signIn: {

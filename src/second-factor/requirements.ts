@@ -7,6 +7,7 @@ import { declaredRoute } from '../policy/declared-routes.js'
 import type { Site } from '../sites/schemas.js'
 import { twoFactorOn } from '../sites/render.js'
 import type { GroupFlag } from './settings.js'
+import { getMcpSettings } from '../mcp/settings.js'
 
 /**
  * Every rule that asks for a second factor, said in one place so the console and the MCP can show
@@ -82,7 +83,21 @@ export interface StepUpRule {
   fourEyes: 'prod' | false
 }
 
-export function stepUpRule(permission: string): StepUpRule | null {
+/**
+ * The OAuth protected-actions window as the administrator set it (Settings → AI assistants): hours, or
+ * null when OAuth grants may not stand in at all (protectedActions 'off'). The default when the settings
+ * cannot be read.
+ */
+export async function oauthGrantWindowHours(): Promise<number | null> {
+  try {
+    const { oauth } = await getMcpSettings()
+    return oauth.protectedActions === 'off' ? null : oauth.protectedActionsHours
+  } catch {
+    return OAUTH_GRANT_MAX_AGE_HOURS
+  }
+}
+
+export function stepUpRule(permission: string, oauthHours: number | null = OAUTH_GRANT_MAX_AGE_HOURS): StepUpRule | null {
   const spec = specOf(permission)
   if (!spec) return null
   const keyStandsIn = spec.stepUp && KEY_STEP_UP_PERMISSIONS.has(permission) && spec.delegable === 'direct'
@@ -91,7 +106,7 @@ export function stepUpRule(permission: string): StepUpRule | null {
     maxAgeMin: spec.stepUp ? STEP_UP_MAX_AGE_MIN : null,
     viaPersonalKey: keyStandsIn ? { maxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS } : null,
     // Same permissions as a personal key (delegatedStepUpVerdict on the OAuth branch).
-    viaOAuthGrant: keyStandsIn ? { maxAgeHours: OAUTH_GRANT_MAX_AGE_HOURS, setting: OAUTH_GRANT_SETTING, requiresConsentOptIn: true } : null,
+    viaOAuthGrant: keyStandsIn && oauthHours !== null ? { maxAgeHours: oauthHours, setting: OAUTH_GRANT_SETTING, requiresConsentOptIn: true } : null,
     fourEyes: spec.fourEyes,
   }
 }
@@ -101,8 +116,8 @@ export function stepUpPermissionsOf(held: readonly string[]): Permission[] {
   return effectivePermissions(held).filter((p) => CATALOG[p].stepUp)
 }
 
-export const permissionRules = () =>
-  PERMISSIONS.map((name) => ({ name, label: CATALOG[name].label, stepUpRule: stepUpRule(name)! }))
+export const permissionRules = (oauthHours: number | null = OAUTH_GRANT_MAX_AGE_HOURS) =>
+  PERMISSIONS.map((name) => ({ name, label: CATALOG[name].label, stepUpRule: stepUpRule(name, oauthHours)! }))
 
 export const roleRules = () =>
   STAFF_ROLES.map((name) => ({ name, group: ROLES[name].group, stepUpPermissions: stepUpPermissionsOf(ROLES[name].permissions) }))

@@ -39,6 +39,7 @@ export interface HydraOAuth2Client {
   /** Top-level owner — we set it to the organization id for server-side list filtering. */
   owner?: string
   metadata?: Record<string, unknown>
+  redirect_uris?: string[]
   created_at?: string
   updated_at?: string
 }
@@ -88,7 +89,8 @@ export class HydraService {
     this.adminToken = env.HYDRA_ADMIN_TOKEN
   }
 
-  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  /** One admin API call (also used by hydra-flows.service.ts for the login/consent flows). */
+  async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.adminUrl}${path}`
 
     let response: Response
@@ -187,11 +189,12 @@ export class HydraService {
    * Every client, following Hydra's `Link: rel="next"` page tokens. For the policy's client dataset;
    * bounded so a runaway listing cannot grow for ever.
    */
-  async listAllClients(pageSize = 500, maxPages = 50): Promise<HydraOAuth2Client[]> {
+  async listAllClients(pageSize = 500, maxPages = 50, owner?: string): Promise<HydraOAuth2Client[]> {
     const out: HydraOAuth2Client[] = []
     let token: string | null = null
     for (let page = 0; page < maxPages; page++) {
       const params = new URLSearchParams({ page_size: String(pageSize) })
+      if (owner) params.set('owner', owner)
       if (token) params.set('page_token', token)
       const url = `${this.adminUrl}/admin/clients?${params.toString()}`
       let response: Response

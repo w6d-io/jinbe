@@ -15,7 +15,7 @@ import { allows } from '../services/user-permissions.js'
 import { sitesRepository } from '../sites/repository.js'
 import { groupSecondFactorJsonSchema, secondFactorMapJsonSchema } from '../schemas/second-factor.schema.js'
 import {
-  OAUTH_GRANT_MAX_AGE_HOURS, PERSONAL_KEY_MAX_AGE_DAYS, RULES, STEP_UP_MAX_AGE_MIN,
+  oauthGrantWindowHours, PERSONAL_KEY_MAX_AGE_DAYS, RULES, STEP_UP_MAX_AGE_MIN,
   groupSecondFactor, permissionRules, roleRules, siteSecondFactor, type GroupSecondFactor,
 } from './requirements.js'
 
@@ -180,13 +180,14 @@ export async function secondFactorRbacRoutes(fastify: FastifyInstance) {
       }
     }
 
+    const oauthHours = await oauthGrantWindowHours()
     reply.header('cache-control', 'private, no-store')
     return {
       rules: RULES,
-      limits: { stepUpMaxAgeMin: STEP_UP_MAX_AGE_MIN, personalKeyMaxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS, oauthGrantMaxAgeHours: OAUTH_GRANT_MAX_AGE_HOURS },
+      limits: { stepUpMaxAgeMin: STEP_UP_MAX_AGE_MIN, personalKeyMaxAgeDays: PERSONAL_KEY_MAX_AGE_DAYS, oauthGrantMaxAgeHours: oauthHours },
       signIn: setting ? { groups: setting.groups, explicit: setting.explicit } : null,
       groups,
-      permissions: permissionRules(),
+      permissions: permissionRules(oauthHours),
       roles: roleRules(),
       sites,
       organizations: { rules: [], note: 'No organisation-level second-factor rule exists: the platform groups and each site decide.' },

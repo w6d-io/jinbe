@@ -7,6 +7,7 @@ import { ORG_ADMIN_PERMISSIONS, ORG_ADMIN_ROLE } from '../services/org-admin.js'
 import { denyAudit } from '../audit/deny.js'
 import { grants } from '../policy/catalog.js'
 import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
+import { refusalDetails } from '../services/permission-refusal.js'
 
 /** The path OPA is asked about: the request's own, without its query string. */
 export function requestPath(request: FastifyRequest): string {
@@ -32,6 +33,60 @@ export function delegationOf(request: FastifyRequest) {
 }
 
 /**
+ * The 403 for an org route OPA refused, carrying OPA's own reason instead of one flattened message
+ * (a delegated super admin refused as `needs_2fa` read "Admin access required", and was not one to
+ * fix). Same shape as every permission refusal (`error`, `code`, `message`, `reason`, `permission`,
+ * `grantedBy`, `hint`), so kuma and auth-mcp render it without a special case:
+ *
+ *   needs_2fa  → code `needs_2fa`: granted, but the sign-in is too weak for this route (per-site 2FA,
+ *                or platform 2FA for a session). A client caller cannot step up: `step_up_unavailable`.
+ *   not_found  → code `route_not_published`: OPA holds no row for this route (its route map lags).
+ *   forbidden  → code `permission_required`, the route's declared permission and who grants it.
+ */
+export async function serviceAdminRefusal(
+  request: FastifyRequest,
+  organizationId: string,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const declared = request.routeOptions?.config?.permission
+  const permission = typeof declared === 'string' ? declared : undefined
+  const base = { error: 'Forbidden', reason, ...(permission ? { permission } : {}) }
+  if (reason === 'needs_2fa') {
+    const client = isClient(request)
+    return {
+      ...base,
+      code: client ? 'step_up_unavailable' : 'needs_2fa',
+      message: client
+        ? `Organization '${organizationId}' requires a second factor on this route, which this credential cannot carry.`
+        : `A second factor is required for this route in organization '${organizationId}'.`,
+      grantedBy: [],
+      stepUp: { requiredAal: 'aal2' },
+      hint: client
+        ? 'Sign in to the console in a browser and retry there.'
+        : 'Complete two-step sign-in at /two-step on the sign-in site, then retry.',
+    }
+  }
+  if (reason === 'not_found') {
+    return {
+      ...base,
+      code: 'route_not_published',
+      message: `The policy holds no rule for this route yet; organization '${organizationId}' cannot be decided.`,
+      grantedBy: [],
+      hint: 'The route map may not have reached the policy engine yet. Retry in a minute, or ask an administrator.',
+    }
+  }
+  const details = await refusalDetails(permission ? [permission] : [])
+  return {
+    ...base,
+    code: 'permission_required',
+    message: permission
+      ? `This needs ${permission} in organization '${organizationId}'.`
+      : `Admin access required for organization '${organizationId}'`,
+    ...details,
+  }
+}
+
+/**
  * Middleware factory: admits a request to a route of ONE organisation (named by the route parameter
  * `paramName`) exactly when the gateway would — OPA's `rbac.decision` for this very request: the
  * jinbe route_map, the org layer (membership, org grants, the per-org admin roster) and the site
@@ -49,7 +104,7 @@ export function requireServiceAdmin(
   paramName = 'organizationId',
   options: { orgAdmin?: boolean } = {}
 ) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async function requireServiceAdmin(request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
     const subject = request.userContext?.id
 
@@ -101,11 +156,8 @@ export function requireServiceAdmin(
 
     if (!allow) {
       request.log.warn({ email, organizationId, reason }, '[requireServiceAdmin] access denied by OPA')
-      denyAudit(request, 'not_service_admin')
-      return reply.status(403).send({
-        error: 'Forbidden',
-        message: `Admin access required for organization '${organizationId}'`,
-      })
+      denyAudit(request, `not_service_admin:${reason}`)
+      return reply.status(403).send(await serviceAdminRefusal(request, organizationId, reason))
     }
 
     if (orgAdmin) {
@@ -131,7 +183,7 @@ export function requireServiceAdmin(
  *   The wildcard permission '*' always grants access.
  */
 export function requireServicePermission(requiredPermission: string) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async function requireServicePermission(request: FastifyRequest, reply: FastifyReply) {
     const email = request.userContext?.email
     const route = `${request.method} ${(request.url || '').split('?')[0]}`
     const rbacInfo = request.rbacInfo

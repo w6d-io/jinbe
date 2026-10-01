@@ -208,3 +208,12 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
     })
   })
 })
+
+describe('the OAuth stand-in follows the MCP setting', () => {
+  it('uses the administrator\'s window, and none when protected actions are off', () => {
+    expect(stepUpRule('sites:apply', 4)!.viaOAuthGrant).toMatchObject({ maxAgeHours: 4, requiresConsentOptIn: true })
+    expect(stepUpRule('sites:apply', null)!.viaOAuthGrant).toBeNull()
+    expect(stepUpRule('sites:apply', null)!.viaPersonalKey).not.toBeNull()
+    expect(stepUpRule('users:read', 4)!.viaOAuthGrant).toBeNull()
+  })
+})

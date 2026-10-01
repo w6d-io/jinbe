@@ -455,9 +455,14 @@ class RedisRbacRepository {
   // Being on an org's roster AND a member of it makes a user its org admin
   // (enforced in policy: rbac.delegation.manageable_orgs + rbac.is_org_admin_of).
   // Per-org: a user can be on org A's roster but not org B's.
+  //
+  // Addresses are LOWERCASED, on write and on read: a roster entry typed "Alice@X" against the
+  // identity "alice@x" showed as admin and was refused. Rows written before that are read lowercased
+  // (no migration needed); getOrgAdminMapAsStored keeps them as typed for the OPAL feed, which
+  // publishes every spelling until the policy compares without case.
   // ═══════════════════════════════════════════════════════════
 
-  private normalizeRoster(raw: string): string[] {
+  private parseRoster(raw: string): string[] {
     try {
       const parsed: unknown = JSON.parse(raw)
       if (Array.isArray(parsed)) {
@@ -469,6 +474,10 @@ class RedisRbacRepository {
     return raw ? [raw] : []
   }
 
+  private normalizeRoster(raw: string): string[] {
+    return [...new Set(this.parseRoster(raw).map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0))]
+  }
+
   async getOrgAdminMap(): Promise<Record<string, string[]>> {
     const raw = await this.redis.hgetall('rbac:org_admins')
     const out: Record<string, string[]> = {}
@@ -478,15 +487,28 @@ class RedisRbacRepository {
     return out
   }
 
+  /** The rosters as written, legacy spellings included — for the policy feed only. */
+  async getOrgAdminMapAsStored(): Promise<Record<string, string[]>> {
+    const raw = await this.redis.hgetall('rbac:org_admins')
+    const out: Record<string, string[]> = {}
+    for (const [org, value] of Object.entries(raw)) {
+      out[org] = this.parseRoster(value)
+    }
+    return out
+  }
+
   async getOrgAdmins(organizationId: string): Promise<string[]> {
     const raw = await this.redis.hget('rbac:org_admins', organizationId)
     return raw === null ? [] : this.normalizeRoster(raw)
   }
 
-  /** Replace an org's admin roster with exactly `emails` (deduped). An empty
+  /** Replace an org's admin roster with exactly `emails` (lowercased, deduped). An empty
    *  roster removes the org's entry (the org then has no delegated admins). */
   async setOrgAdmins(organizationId: string, emails: string[]): Promise<void> {
-    const roster = [...new Set(emails.filter((e) => typeof e === 'string' && e.length > 0))]
+    const roster = [...new Set(emails
+      .filter((e) => typeof e === 'string')
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.length > 0))]
     if (roster.length === 0) {
       await this.redis.hdel('rbac:org_admins', organizationId)
       return

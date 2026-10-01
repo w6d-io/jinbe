@@ -3,6 +3,7 @@ import { rbacController } from '../controllers/rbac.controller.js'
 import { needs } from '../policy/route-access.js'
 import { refuseWhenSourcedFromGit } from '../middleware/refuse-when-sourced-from-git.js'
 import { accessCheckRoutes } from './access-check.routes.js'
+import { explainRouteRoutes } from './explain-route.routes.js'
 import { SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import {
   unauthorizedResponseSchema,
@@ -25,6 +26,7 @@ import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-h
 export async function rbacRoutes(fastify: FastifyInstance) {
   // Each route declares its catalogue permission; there is no plugin-wide gate.
   await fastify.register(accessCheckRoutes)
+  await fastify.register(explainRouteRoutes)
 
   // ===========================================================================
   // Users

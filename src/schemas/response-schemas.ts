@@ -66,10 +66,13 @@ export const forbiddenResponseSchema = {
         // What the client can act on. A delegated caller's refusal: `insufficient_scope` with
         // `scope_missing:<permission>`, or `delegation_refused` with `delegation_ineligible:<why>`. A
         // missing permission: `permission_required`; the escalation guard: `grant_exceeds_own`,
-        // `staff_group_super_admin_only`, `self_escalation`, `grants_everything`.
+        // `staff_group_super_admin_only`, `self_escalation`, `grants_everything`. An org route OPA
+        // refused: `needs_2fa` / `step_up_unavailable` (with `stepUp`), `route_not_published`, or
+        // `permission_required`, with OPA's reason in `reason`.
         code: { type: 'string', example: 'insufficient_scope' },
         reason: { type: 'string', example: 'scope_missing:users:recovery' },
         ...permissionRefusalProperties,
+        stepUp: { type: 'object', properties: { requiredAal: { type: 'string', example: 'aal2' } } },
     },
 }
 

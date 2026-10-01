@@ -93,13 +93,37 @@ describe('/api/mcp', () => {
     s.resolve.mockResolvedValue({ principal: {
       subject: 'user-1', email: 'ann@acme.io', name: 'Ann', clientId: 'claude', scopes: ['sites:read'], org: 'acme', kind: 'oauth',
       expiresAt: 1_900_000_000_000, tokenScope: 'mcp sites:read offline_access', aud: ['https://mcp.test'],
+      scopeMode: 'chosen', clientName: 'Claude Code', grantExpiresAt: 1_902_000_000_000, stepUpActions: false,
     } })
     const res = await tokenInfo()
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
       active: true, token_use: 'access_token', scope: 'mcp sites:read offline_access', client_id: 'claude', sub: 'user-1',
-      exp: 1_900_000_000, aud: ['https://mcp.test'], ext: { org: 'acme', email: 'ann@acme.io', kind: 'oauth' },
+      exp: 1_900_000_000, aud: ['https://mcp.test'],
+      ext: { org: 'acme', email: 'ann@acme.io', kind: 'oauth', scope_mode: 'chosen', client_name: 'Claude Code', grant_expires_at: 1_902_000_000, step_up_actions: false },
     })
+  })
+
+  it('token-info carries an OAuth sign-in\'s consent-time factor and protected-actions window (not stripped by the schema)', async () => {
+    s.resolve.mockResolvedValue({ principal: {
+      subject: 'user-1', email: 'ann@acme.io', name: 'Ann', clientId: 'claude', scopes: ['sites:apply'], kind: 'oauth',
+      expiresAt: 1_900_000_000_000, tokenScope: 'sites:apply mcp', aud: ['https://mcp.test'],
+      scopeMode: 'all', clientName: 'Claude Code', grantExpiresAt: 1_902_000_000_000, stepUpActions: true,
+      stepUpAt: '2026-09-30T08:00:00.000Z', stepUpUntil: '2026-09-30T20:00:00.000Z',
+    } })
+    const body = (await tokenInfo()).json()
+    expect(body.ext).toEqual({
+      email: 'ann@acme.io', kind: 'oauth', scope_mode: 'all', client_name: 'Claude Code', grant_expires_at: 1_902_000_000,
+      step_up_actions: true, step_up_at: '2026-09-30T08:00:00.000Z', step_up_until: '2026-09-30T20:00:00.000Z',
+    })
+    expect(body.ext).not.toHaveProperty('key_step_up_at')
+  })
+
+  it('token-info: browser sign-in turned off is 403 mcp_disabled (oauth_disabled), not a bad token', async () => {
+    s.resolve.mockResolvedValue({ error: 'oauth_disabled' })
+    const res = await tokenInfo()
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: 'mcp_disabled', reason: 'oauth_disabled' })
   })
 
   it('token-info names the key and its holder for a personal-key token', async () => {

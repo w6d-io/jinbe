@@ -47,6 +47,8 @@ export const SECOND_FACTOR_EXEMPT: ReadonlyArray<{ prefix: string; reason: strin
   { prefix: '/api/admin/rbac/bindings', reason: 'OPAL data source (identity bindings), guarded by the OPAL client token' },
   { prefix: '/api/admin/rbac/develop/', reason: 'compat path of the OPAL data sources, guarded by the OPAL client token' },
   { prefix: '/docs', reason: 'the published API description; public' },
+  { prefix: '/.well-known/oauth-authorization-server', reason: 'RFC 8414 metadata MCP clients read on the Hydra host before anyone signs in; public, holds nothing private' },
+  { prefix: '/oauth2/register', reason: 'MCP client registration on the Hydra host, before anyone signs in: loopback redirects only, rate limited, bound to the first consenting person' },
   { prefix: '/scim/v2', reason: "IdP provisioning with its own bearer token; no session and outside the console's API" },
 ]
 

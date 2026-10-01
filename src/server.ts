@@ -39,6 +39,8 @@ import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { apiKeyRoutes } from './routes/api-key.routes.js'
 import { personalKeyRoutes } from './routes/personal-key.routes.js'
 import { mcpRoutes } from './routes/mcp.routes.js'
+import { mcpConnectionsAdminRoutes, mcpConnectionsRoutes, oauthAuthorizationServerRoutes, oauthProviderRoutes } from './oauth/routes.js'
+import { startOAuthBackground } from './oauth/gc.js'
 import { delegationGate } from './middleware/delegation-gate.js'
 import { registerIdempotency } from './middleware/idempotency.js'
 import { scimRoutes } from './routes/scim.routes.js'
@@ -157,6 +159,10 @@ export async function buildServer() {
   // (middleware/scim-auth.ts; /scim/v2 is on the require-auth bypass list).
   await fastify.register(scimRoutes, { prefix: '/scim/v2' })
 
+  // RFC 8414 metadata + MCP client registration, OUTSIDE /api: the paths MCP clients derive from the
+  // issuer on the Hydra host (rule `mcp-oauth-as`). Answered for that Host only (oauth/routes.ts).
+  await fastify.register(oauthAuthorizationServerRoutes)
+
   await fastify.register(
     async function (api) {
       await api.register(telemetryRoutes)
@@ -164,8 +170,10 @@ export async function buildServer() {
       await api.register(catalogRoutes) // the permission catalogue and roles, for kuma and auth-mcp
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless MCP is on (env ceiling + admin switch)
+      await api.register(mcpConnectionsRoutes, { prefix: '/me/mcp/connections' }) // own MCP browser sign-ins (kuma "Signed-in apps"); 404 unless MCP is on
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
       await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification
+      await api.register(mcpConnectionsAdminRoutes, { prefix: '/admin' }) // disconnect a person's MCP sign-ins (sessions:revoke)
       await api.register(bulkRoutes, { prefix: '/admin/bulk' }) // plan / execute many changes of one kind; each op declares its permission
       await api.register(adminRoutes, { prefix: '/admin' })
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
@@ -188,6 +196,7 @@ export async function buildServer() {
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
+      await api.register(oauthProviderRoutes, { prefix: '/public/oauth2' }) // login-ui: Hydra login/consent provider for MCP clients (visitor's cookies)
       await api.register(signInProtectionPublicRoutes, { prefix: '/public/sign-in-protection' }) // login-ui: widget + sign-up mode; gateway bot check
       await api.register(signInGateRoutes, { prefix: '/public/sign-in-protection/gate' }) // the gateway: self-service submits judged before Kratos
     },
@@ -266,6 +275,9 @@ async function start() {
 
       // Home: keeps the platform-scope briefing warm (leader only, Redis lock).
       startHomeBackground(fastify.log)
+
+      // MCP browser sign-in: unconsented and orphaned client registrations go (leader only, Redis lock).
+      startOAuthBackground(fastify.log)
     } catch (err) {
       if (err instanceof BootstrapTimeoutError) {
         fastify.log.error({ elapsedMs: err.elapsedMs }, 'Bootstrap timeout — exiting')

@@ -46,8 +46,9 @@ describe('bootstrap/build-route-map', () => {
   })
 
   it('rbac management routes require a permission', () => {
+    // explain-route answers about the caller (access 'self'); about anybody else it asks access:check itself.
     const rbacRoutes = JINBE_BUILT_IN_ROUTES.filter((r) =>
-      r.path.startsWith('/api/admin/rbac'),
+      r.path.startsWith('/api/admin/rbac') && r.path !== '/api/admin/rbac/explain-route',
     )
     for (const r of rbacRoutes) {
       expect(r.permission, `${r.method} ${r.path}`).toMatch(/^[a-z.]+:[a-z_]+$/)
