@@ -172,7 +172,14 @@ class DirectGrantsService {
     // Never directly: super_admin is held through super_admins alone (its 2FA, its review, break-glass).
     const never = added.filter((g) => g.scope === 'platform' && g.app === JINBE && g.kind === 'role' && g.name === 'super_admin')
     if (never.length) refuse(never.map((g) => ({ grant: what(g), reasons: ['never_direct'], missing: [], grantedBy: [ROLES.super_admin.group] })))
-    await this.assertSecondFactorFor(subjectId, granteeEmail, added)
+    try {
+      await this.assertSecondFactorFor(subjectId, granteeEmail, added)
+    } catch (err) {
+      if (err instanceof GrantNeedsSecondFactorError) {
+        audit('user.grant_refused', subjectId || granteeEmail, actor, { email: granteeEmail, reason: 'mfa_required', role: err.role, groups: err.groups }, 'denied')
+      }
+      throw err
+    }
 
     const refused: GrantRefusal[] = []
     for (const g of added) {

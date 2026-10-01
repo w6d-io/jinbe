@@ -159,6 +159,7 @@ describe('jinbe-side rules', () => {
     expect(res.statusCode).toBe(403)
     expect(res.json().refused).toEqual([{ grant: { scope: 'platform', app: 'jinbe', kind: 'role', name: 'super_admin' }, reasons: ['never_direct'], missing: [], grantedBy: ['super_admins'] }])
     expect(grantVerdict).not.toHaveBeenCalled()
+    expect(s.emitted).toContainEqual(expect.objectContaining({ type: 'user.grant_refused', result: 'denied' }))
   })
 
   it('a role a 2FA-required group binds needs the person enrolled first (mfa_required, 422); a role no such group binds does not', async () => {
@@ -166,6 +167,7 @@ describe('jinbe-side rules', () => {
     expect(res.statusCode).toBe(422)
     expect(res.json()).toMatchObject({ error: 'mfa_required', targetEmail: 'ann@acme.io', targetGroups: ['staff-security'], secondFactor: { rule: 'enrol_before_joining' } })
     expect(s.hash.size).toBe(0)
+    expect(s.emitted).toContainEqual(expect.objectContaining({ type: 'user.grant_refused', result: 'denied', details: expect.objectContaining({ reason: 'mfa_required', role: 'jinbe:security' }) }))
     expect((await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'viewer' }])).statusCode).toBe(200)
     twoFa.enrolled.add(ANN)
     expect((await put(`/api/admin/users/${ANN}/grants`, [{ scope: 'platform', app: 'jinbe', kind: 'role', name: 'security' }])).statusCode).toBe(200)
