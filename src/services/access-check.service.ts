@@ -1,4 +1,6 @@
 import { OpaQueryError, OpaUnavailableError, opaConfigured, queryOpa } from './opa-client.js'
+import { declaredRoute } from '../policy/declared-routes.js'
+import { JINBE_APP } from '../authz/opa.js'
 
 /**
  * "Can this person do METHOD PATH, and why?" — asked of the engine that decides it.
@@ -40,13 +42,20 @@ export type AccessCheckResult = {
   app: string | null
   /** Every service holding the best-ranked match. Two or more is a tie: the policy answers not_found. */
   owners: string[]
-  matchingRules: Array<{ method: string; path: string; permission?: string }>
+  matchingRules: Array<{ method: string; path: string; permission?: string; scope?: 'any_org' }>
   groups: string[]
   roles: string[]
   permissions: string[]
   /** The level asked at, when one was given. */
   aal?: 'aal1' | 'aal2'
   stepUp?: StepUp
+  /**
+   * The route is scoped by its own guard (the audit routes): the policy says who reaches it at all
+   * (the platform permission, or its org counterpart held in some org), and the route's own scope
+   * check decides what they see. Present only for such routes.
+   */
+  decidedBy?: 'route_scope_check'
+  scopeNote?: string
 }
 
 // Unconfigured (503) and unanswered (502), under the names the route has always caught.
@@ -99,8 +108,18 @@ export async function checkAccess(input: AccessCheckInput): Promise<AccessCheckR
     }
   }
 
+  // A route scoped by its own guard: say so instead of presenting the gateway's answer as the whole story.
+  const matching = simulation.matching_rules ?? []
+  const scoped = app === JINBE_APP && matching.some((r) => r.scope === 'any_org' || declaredRoute(r.method, r.path)?.scopedBy)
+
   return {
     allow: decision.allow === true,
+    ...(scoped ? {
+      decidedBy: 'route_scope_check' as const,
+      scopeNote: decision.allow === true
+        ? "Reached, then decided by the route's own scope check: platform holders see everything, org holders only their organisations."
+        : "Refused at the policy: neither the platform permission nor its org counterpart in any organisation is held.",
+    } : {}),
     reason,
     app,
     owners,

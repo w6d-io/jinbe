@@ -27,6 +27,8 @@ describe('policy-contract.json (for opal-policies CI)', () => {
     const invite = rows.find((r) => r.method === 'POST' && r.path === '/api/organizations/:organizationId/users')!
     expect(invite.reach).toEqual({ kind: 'org', orgRoles: ['member_manager', 'owner'], everyOrg: ['super_admin', 'support'] })
     expect(rows.find((r) => r.path === '/api/whoami')!.reach).toEqual({ kind: 'public' })
-    expect(rows.find((r) => r.path === '/api/audit/events')!.reach).toEqual({ kind: 'signed-in' })
+    const audit = rows.filter((r) => r.method === 'GET' && r.path === '/api/audit/events')
+    expect(audit.map((r) => r.reach.kind)).toEqual(['platform', 'any_org'])
+    expect(audit[1].reach).toEqual({ kind: 'any_org', orgRoles: ['auditor', 'owner'], everyOrg: ['auditor', 'security', 'super_admin'] })
   })
 })

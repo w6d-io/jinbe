@@ -9897,6 +9897,10 @@ paths:
                           type: string
                         permission:
                           type: string
+                        scope:
+                          type: string
+                          enum:
+                            - any_org
                   groups:
                     type: array
                     items:
@@ -9932,6 +9936,14 @@ paths:
                           enum:
                             - site
                             - platform_group
+                  decidedBy:
+                    type: string
+                    enum:
+                      - route_scope_check
+                    description: "Only for a route scoped by its own guard (the audit routes): the
+                      route's scope check decides what the caller sees"
+                  scopeNote:
+                    type: string
                 required:
                   - allow
                   - reason

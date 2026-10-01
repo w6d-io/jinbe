@@ -7,7 +7,9 @@ import type { RouteRule } from '../services/redis-rbac.repository.js'
  * disagree. No hand rows, no aliases, no catch-all but the documentation:
  *
  *   permission P                    {method, path, permission: P} (+ org_param), one more per alsoAccepts
- *   scoped by its own guard (audit) {method, path} — any signed-in person; the guard narrows
+ *   scoped by its own guard (audit) {method, path, permission: P} (the platform holder)
+ *                                   + {method, path, permission: <org permission>, scope: 'any_org'}
+ *                                   (whoever holds it in some org); the route's guard narrows the answer
  *   access self | authenticated     {method, path}
  *   access public                   {method, path, public: true}
  *   access machine, edge            {method, path, public: true} (SCIM authenticates itself)
@@ -18,6 +20,13 @@ import type { RouteRule } from '../services/redis-rbac.repository.js'
 export const DOCS_ROW: RouteRule = { method: 'GET', path: '/docs/:any*', public: true }
 
 const isDocs = (path: string) => /^\/docs(\/|$)/.test(path)
+
+/**
+ * A route scoped by its own guard is reached by the platform permission OR by its org counterpart held
+ * in any org (the guard then shows that org's part only): requireAuditScope gives a holder of
+ * org.audit:read in some org the audit routes, cut to those orgs.
+ */
+export const SCOPED_ORG_PERMISSION: Readonly<Record<string, string>> = { audit: 'org.audit:read' }
 
 export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
   const rows: RouteRule[] = []
@@ -35,7 +44,9 @@ export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
     const base = { method: r.method, path: r.path }
     if (r.permission) {
       if (r.scopedBy) {
-        push(base)
+        push({ ...base, permission: r.permission })
+        const inOrgs = SCOPED_ORG_PERMISSION[r.scopedBy]
+        if (inOrgs) push({ ...base, permission: inOrgs, scope: 'any_org' })
         continue
       }
       const org = r.org ? { org_param: r.org } : {}

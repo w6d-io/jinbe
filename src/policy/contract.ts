@@ -34,6 +34,8 @@ export interface ContractRow extends RouteRule {
     | { kind: 'public' | 'signed-in' }
     | { kind: 'platform'; roles: string[]; groups: string[] }
     | { kind: 'org'; orgRoles: string[]; everyOrg: string[] }
+    /** scope any_org: held in some org — an org role assigned to a member there, or the every-org map. */
+    | { kind: 'any_org'; orgRoles: string[]; everyOrg: string[] }
 }
 
 export interface PolicyContract {
@@ -57,6 +59,7 @@ export function policyContract(): PolicyContract {
   const everyOrg = everyOrgDefinitions()
   const rows: ContractRow[] = GENERATED_ROUTE_MAP.map((r) => {
     if (!r.permission) return { ...r, reach: { kind: r.public ? 'public' : 'signed-in' } }
+    if (r.scope === 'any_org') return { ...r, reach: { kind: 'any_org', orgRoles: holding(orgRoles, r.permission), everyOrg: holding(everyOrg, r.permission) } }
     if (r.org_param) return { ...r, reach: { kind: 'org', orgRoles: holding(orgRoles, r.permission), everyOrg: holding(everyOrg, r.permission) } }
     const rs = holding(roles, r.permission)
     const gs = Object.entries(groups).filter(([, def]) => (def[JINBE] ?? []).some((x) => rs.includes(x))).map(([g]) => g).sort()

@@ -43,7 +43,11 @@ export type FlatRolesMap = Record<string, string[]>    // { roleName: permission
 // only (opal-policies org.rego). Checked by policy/route-org-param.ts before any write.
 /** `id`: the Site route a row comes from (data.site_login routes name rows by it); absent on non-site rows. */
 /** `public: true` marks a route open to anyone: per-site 2FA (opal-policies step_up_required) never gates it. */
-export interface RouteRule { id?: string; method: string; path: string; permission?: string; org_param?: string; public?: boolean }
+export interface RouteRule {
+  id?: string; method: string; path: string; permission?: string; org_param?: string; public?: boolean
+  /** `any_org`: the (org) permission held in ANY organisation reaches the route; the route's own guard narrows to those orgs. */
+  scope?: 'any_org'
+}
 export interface RouteMap { rules: RouteRule[] }
 
 /** Per-resource metadata for groups and services (description, who and when). */

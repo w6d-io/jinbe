@@ -89,9 +89,9 @@ const sorted = (xs: Iterable<string>) => [...new Set(xs)].sort()
 const routeKey = (r: { method: string; path: string; permission?: string | null }) => `${r.method} ${r.path} ${r.permission ?? ''}`
 
 /** The class of a v2 row: who the policy lets through. */
-function classOf(r: { permission?: string; org_param?: string; public?: boolean }): RuleRow['class'] {
+function classOf(r: { permission?: string; org_param?: string; public?: boolean; scope?: string }): RuleRow['class'] {
   if (!r.permission) return r.public ? 'public' : 'signed-in'
-  return r.org_param ? 'org' : 'platform'
+  return r.org_param || r.scope === 'any_org' ? 'org' : 'platform'
 }
 
 function rulesOf(d: PolicyData, people: readonly string[]): RuleRow[] {
@@ -101,14 +101,16 @@ function rulesOf(d: PolicyData, people: readonly string[]): RuleRow[] {
       const spec = r.permission && isCatalogPermission(r.permission) ? CATALOG[r.permission] : undefined
       const roles: string[] = []
       const groups: string[] = []
+      // An org row, or a scoped one reached by the org permission held in any org (scope any_org).
+      const inOrg = !!r.org_param || r.scope === 'any_org'
       if (r.permission) {
-        const carrying = r.org_param ? d.every_org[service] ?? {} : d.roles[service] ?? {}
-        for (const [role, perms] of Object.entries(carrying)) if (perms.includes(r.permission)) roles.push(r.org_param ? `${service}:${role} (every org)` : `${service}:${role}`)
-        if (r.org_param) for (const [svc, rs] of Object.entries(d.org_roles)) for (const [role, perms] of Object.entries(rs)) if (perms.includes(r.permission)) roles.push(qualified(svc, role))
+        const carrying = inOrg ? d.every_org[service] ?? {} : d.roles[service] ?? {}
+        for (const [role, perms] of Object.entries(carrying)) if (perms.includes(r.permission)) roles.push(inOrg ? `${service}:${role} (every org)` : `${service}:${role}`)
+        if (inOrg) for (const [svc, rs] of Object.entries(d.org_roles)) for (const [role, perms] of Object.entries(rs)) if (perms.includes(r.permission)) roles.push(qualified(svc, role))
         const bound = Object.entries(carrying).filter(([, perms]) => perms.includes(r.permission!)).map(([role]) => role)
         for (const [g, def] of Object.entries(d.groups)) if ((def[service] ?? []).some((role) => bound.includes(role))) groups.push(g)
       }
-      const holders = !r.permission ? [] : people.filter((e) => r.org_param
+      const holders = !r.permission ? [] : people.filter((e) => inOrg
         ? Object.keys(d.org_sites).some((o) => orgPermissions(d, e, o, service).includes(r.permission!))
         : platformPermissions(d, e, service).includes(r.permission!))
       out.push({

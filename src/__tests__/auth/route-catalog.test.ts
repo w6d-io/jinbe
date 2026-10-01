@@ -77,10 +77,11 @@ describe('the route_map is generated from the declarations alone (rule 3)', () =
   })
 
   it('one row per operation: no alias, no legacy name, no catch-all, no method wildcard', () => {
-    // A second row only for what the route's own guard also accepts (config.alsoAccepts).
+    // A second row only for what the route's own guard also accepts (config.alsoAccepts), or for the
+    // org counterpart of a route scoped by its own guard (scope any_org).
     const keys = GENERATED_ROUTE_MAP.map(key)
     const repeated = [...new Set(keys.filter((k, i) => keys.indexOf(k) !== i))].sort()
-    expect(repeated).toEqual(rows.filter((r) => r.alsoAccepts?.length).map(key).sort())
+    expect(repeated).toEqual(rows.filter((r) => r.alsoAccepts?.length || r.scopedBy).map(key).sort())
     for (const r of GENERATED_ROUTE_MAP) {
       expect(r.method).not.toBe('*')
       expect(r.path).not.toMatch(/:any\*|\*$/)
@@ -100,7 +101,7 @@ describe('the route_map is generated from the declarations alone (rule 3)', () =
 
   it('org rows carry org_param, a parameter of their path under /api/organizations/:organizationId', () => {
     for (const r of GENERATED_ROUTE_MAP.filter((x) => x.permission)) {
-      expect(scopeOf(r.permission!) === 'org', key(r)).toBe(!!r.org_param)
+      expect(scopeOf(r.permission!) === 'org', key(r)).toBe(!!r.org_param || r.scope === 'any_org')
       if (r.org_param) expect(r.path).toMatch(/^\/api\/organizations\/:organizationId\//)
     }
     const at = (method: string, path: string) => GENERATED_ROUTE_MAP.filter((r) => r.method === method && r.path === path)
@@ -109,12 +110,18 @@ describe('the route_map is generated from the declarations alone (rule 3)', () =
     ])
     expect(at('GET', '/api/admin/sites').map((r) => r.permission)).toEqual(['sites:read'])
     expect(at('GET', '/api/catalog')).toEqual([{ method: 'GET', path: '/api/catalog' }])
-    expect(at('GET', '/api/audit/events')).toEqual([{ method: 'GET', path: '/api/audit/events' }])
+    // Scoped by its own guard: the platform permission, or its org counterpart held in any org — never a bare signed-in row.
+    expect(at('GET', '/api/audit/events')).toEqual([
+      { method: 'GET', path: '/api/audit/events', permission: 'audit:read' },
+      { method: 'GET', path: '/api/audit/events', permission: 'org.audit:read', scope: 'any_org' },
+    ])
+    expect(at('POST', '/api/audit/exports').map((r) => r.permission)).toEqual(['audit:export', 'org.audit:read'])
+    for (const r of rows.filter((x) => x.scopedBy)) expect(at(r.method, r.path).some((x) => !x.permission), key(r)).toBe(false)
   })
 
   it('super_admin holds every platform permission any row asks for', () => {
     const held = new Set<string>(ROLES.super_admin.permissions)
-    for (const r of GENERATED_ROUTE_MAP.filter((x) => x.permission && !x.org_param)) expect(held.has(r.permission!), key(r)).toBe(true)
+    for (const r of GENERATED_ROUTE_MAP.filter((x) => x.permission && !x.org_param && !x.scope)) expect(held.has(r.permission!), key(r)).toBe(true)
     expect([...held].sort()).toEqual([...PLATFORM_PERMISSIONS].sort())
   })
 })

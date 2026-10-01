@@ -91,6 +91,37 @@ describe('POST /access-check', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
+  it('a route scoped by its own guard (audit): says the route decides; nobody with neither permission is allowed', async () => {
+    const answers = (allow: boolean) => vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url)
+      if (u.endsWith('/v1/data/rbac/decision')) return opaAnswer({ allow, reason: allow ? 'ok' : 'forbidden', groups: [] })
+      if (u.endsWith('/v1/data/rbac/owning_apps')) return opaAnswer(['jinbe'])
+      if (u.endsWith('/v1/data/rbac/simulate')) {
+        return opaAnswer({ matching_rules: [
+          { method: 'GET', path: '/api/audit/events', permission: 'audit:read' },
+          { method: 'GET', path: '/api/audit/events', permission: 'org.audit:read', scope: 'any_org' },
+        ], roles: [], permissions: [] })
+      }
+      throw new Error(`unexpected ${u}`)
+    })
+    answers(false)
+    const refused = createMockReply()
+    await route.handler(request({ email: 'ghost@example.com', method: 'GET', path: '/api/audit/events' }), refused)
+    expect(refused._body).toMatchObject({ allow: false, reason: 'forbidden', decidedBy: 'route_scope_check', scopeNote: expect.stringContaining('neither') })
+    vi.restoreAllMocks()
+    answers(true)
+    const reached = createMockReply()
+    await route.handler(request({ email: 'auditor@example.com', method: 'GET', path: '/api/audit/events' }), reached)
+    expect(reached._body).toMatchObject({ allow: true, decidedBy: 'route_scope_check', scopeNote: expect.stringContaining("route's own scope check") })
+  })
+
+  it('publishes a permission on every audit route: never a bare signed-in row', () => {
+    // /api/audit/me/* is the caller's own trail (access self).
+    const audit = GENERATED_ROUTE_MAP.filter((r) => r.path.startsWith('/api/audit/') && !r.path.startsWith('/api/audit/me/'))
+    expect(audit.length).toBeGreaterThan(0)
+    expect(audit.every((r) => r.permission)).toBe(true)
+  })
+
   it('asks OPA with the bearer token and explains the verdict', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const u = String(url)

@@ -42,7 +42,7 @@ const accessCheckResponseSchema = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { method: { type: 'string' }, path: { type: 'string' }, permission: { type: 'string' } },
+        properties: { method: { type: 'string' }, path: { type: 'string' }, permission: { type: 'string' }, scope: { type: 'string', enum: ['any_org'] } },
       },
     },
     groups: { type: 'array', items: { type: 'string' } },
@@ -58,6 +58,8 @@ const accessCheckResponseSchema = {
         requiredBy: { type: 'array', items: { type: 'string', enum: ['site', 'platform_group'] } },
       },
     },
+    decidedBy: { type: 'string', enum: ['route_scope_check'], description: "Only for a route scoped by its own guard (the audit routes): the route's scope check decides what the caller sees" },
+    scopeNote: { type: 'string' },
   },
   required: ['allow', 'reason', 'app', 'owners', 'matchingRules', 'groups', 'roles', 'permissions'],
 }
