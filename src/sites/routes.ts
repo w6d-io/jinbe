@@ -126,13 +126,15 @@ export async function sitesRoutes(fastify: FastifyInstance) {
     return draft
   }))
 
-  fastify.put('/:name/draft', { ...docNamed('sites:write', 'Autosave the draft (may be incomplete). If-Match: the draft etag you edited; a stale one is 412 stale_draft with `current` {etag, updatedBy, updatedAt} and the ETag header. Without If-Match over an existing draft: accepted and logged (SITES_DRAFT_IF_MATCH=warn, the default) or 428 (require). Answers the new etag', draftBodySchema) },
+  fastify.put('/:name/draft', { ...docNamed('sites:write', 'Autosave the draft (may be incomplete). If-Match: the draft etag you edited; a stale one is 412 stale_draft with `current` {etag, updatedBy, updatedAt} and the ETag header. If-None-Match: * when you loaded no draft: 412 stale_draft the same way if one exists now. Without If-Match over an existing draft: accepted and logged (SITES_DRAFT_IF_MATCH=warn, the default) or 428 (require). Answers the new etag', draftBodySchema) },
     handle(async (request, reply) => {
       const name = nameOf(request)
       const ifMatch = request.headers['if-match'] as string | undefined
+      // Only `*` means anything here: "write only if there is no draft".
+      const ifNoneMatch = (request.headers['if-none-match'] as string | undefined)?.trim() === '*'
       const requireIfMatch = sitesConfig().SITES_DRAFT_IF_MATCH === 'require'
-      if (!ifMatch && !requireIfMatch) request.log.warn({ site: name }, '[sites] draft autosave without If-Match (overwrites any other draft)')
-      const draft = await sites.putDraft(name, parse(draftBodySchema, request.body), actorOf(request), { ifMatch, requireIfMatch })
+      if (!ifMatch && !ifNoneMatch && !requireIfMatch) request.log.warn({ site: name }, '[sites] draft autosave without If-Match (overwrites any other draft)')
+      const draft = await sites.putDraft(name, parse(draftBodySchema, request.body), actorOf(request), { ifMatch, ifNoneMatch, requireIfMatch })
       reply.header('etag', `"${draft.etag}"`)
       return draft
     }))

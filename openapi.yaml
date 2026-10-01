@@ -6828,9 +6828,11 @@ paths:
       tags: *a2
       description: "Autosave the draft (may be incomplete). If-Match: the draft etag
         you edited; a stale one is 412 stale_draft with `current` {etag,
-        updatedBy, updatedAt} and the ETag header. Without If-Match over an
-        existing draft: accepted and logged (SITES_DRAFT_IF_MATCH=warn, the
-        default) or 428 (require). Answers the new etag"
+        updatedBy, updatedAt} and the ETag header. If-None-Match: * when you
+        loaded no draft: 412 stale_draft the same way if one exists now. Without
+        If-Match over an existing draft: accepted and logged
+        (SITES_DRAFT_IF_MATCH=warn, the default) or 428 (require). Answers the
+        new etag"
       requestBody:
         required: true
         content:

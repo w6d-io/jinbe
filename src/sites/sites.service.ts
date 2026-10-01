@@ -194,9 +194,9 @@ export async function getDraft(name: string): Promise<SiteDraft> {
 
 /**
  * Autosave the draft. `ifMatch`: the draft etag the editor loaded (GET/PUT answer it); a stale one is
- * 412 stale_draft. Callers inside jinbe (bulk, drift) pass none and overwrite, as before.
+ * 412 stale_draft. `ifNoneMatch`: the editor loaded no draft; one written since is 412 stale_draft. Callers inside jinbe (bulk, drift) pass none and overwrite, as before.
  */
-export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor, opts: { ifMatch?: string; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
+export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor, opts: { ifMatch?: string; ifNoneMatch?: boolean; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
   assertNotSystem(name)
   // A draft may be incomplete — it is autosaved while typing — but it must be about this site.
   const site = body.site as { name?: unknown } | null

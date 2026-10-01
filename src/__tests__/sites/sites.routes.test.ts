@@ -269,6 +269,26 @@ describe('drafts', () => {
     expect(retry.statusCode).toBe(200)
   })
 
+  it('If-None-Match: * writes only when there is no draft: one written meanwhile is 412 stale_draft, and it counts as a precondition under require', async () => {
+    const put = (displayName: string) => app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-none-match': '*' }, payload: { site: { name: 'payroll', displayName } } })
+    expect((await put('First')).statusCode).toBe(200)
+    const second = await put('Second')
+    expect(second.statusCode).toBe(412)
+    expect(second.json()).toMatchObject({ error: 'stale_draft', current: { updatedBy: 'sam@x.test', baseVersion: 0 } })
+    expect(second.headers.etag).toBe(`"${second.json().current.etag}"`)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().site.displayName).toBe('First')
+    process.env.SITES_DRAFT_IF_MATCH = 'require'
+    resetSitesConfig()
+    try {
+      expect((await put('Third')).statusCode).toBe(412)
+      await app.inject({ method: 'DELETE', url: '/sites/payroll/draft', headers: W })
+      expect((await put('Fourth')).statusCode).toBe(200)
+    } finally {
+      delete process.env.SITES_DRAFT_IF_MATCH
+      resetSitesConfig()
+    }
+  })
+
   it('If-Match naming a draft that is gone (saved or discarded since) is no conflict', async () => {
     const res = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': '"0123456789abcdef"' }, payload: { site: { name: 'payroll' } } })
     expect(res.statusCode).toBe(200)

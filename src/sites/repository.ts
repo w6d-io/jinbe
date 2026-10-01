@@ -161,16 +161,18 @@ class SitesRepository {
 
   /**
    * Write the draft. With `ifMatch`, the draft there now must carry that etag (or be gone: a save or
-   * a discard since is no conflict to keep); otherwise 412 `stale_draft` with the current etag and
-   * who wrote it. `requireIfMatch`: refuse (428) to overwrite an existing draft without one.
+   * a discard since is no conflict to keep); with `ifNoneMatch` (If-None-Match: *), there must be no
+   * draft at all (an editor that started from the saved version). Otherwise 412 `stale_draft` with
+   * the current etag and who wrote it. `requireIfMatch`: refuse (428) to overwrite an existing draft
+   * without either precondition.
    */
-  async putDraft(name: string, draft: SiteDraft, opts: { ifMatch?: string; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
+  async putDraft(name: string, draft: SiteDraft, opts: { ifMatch?: string; ifNoneMatch?: boolean; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
     return withRedisLock(`sites:draft:${name}`, async () => {
       const ifMatch = bareEtag(opts.ifMatch)
-      if (ifMatch !== '*' && (ifMatch || opts.requireIfMatch)) {
+      if (ifMatch !== '*' && (ifMatch || opts.ifNoneMatch || opts.requireIfMatch)) {
         const current = await this.getDraft(name)
-        if (current && !ifMatch) throw status('This site has a draft: send If-Match with the draft etag you edited', 428, 'precondition_required')
-        if (current && current.etag !== ifMatch) {
+        if (current && !ifMatch && !opts.ifNoneMatch) throw status('This site has a draft: send If-Match with the draft etag you edited', 428, 'precondition_required')
+        if (current && (opts.ifNoneMatch || current.etag !== ifMatch)) {
           const by = current.updatedBy
           throw Object.assign(status(`${by} saved this draft${current.updatedAt ? ` at ${current.updatedAt}` : ''} since you loaded it`, 412, 'stale_draft'), {
             etag: current.etag,
