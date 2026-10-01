@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { holds, manageableOrgs, rights } from '../../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../../authz/policy-unavailable.js'
 import { enforcing, scopedBy } from '../../policy/declared-routes.js'
+import { isV2 } from '../../authz-v2/model.js'
 
 /**
  * Who may read which part of the audit trail (audit-tab.md §4.4, CONTROL C8).
@@ -41,6 +42,14 @@ export async function resolveAuditScope(request: FastifyRequest, permission: str
   const held = (await tell(() => rights(email))).permissions
   if (holds(held, permission)) return { platform: true, orgs: [] }
 
+  // authz v2: the orgs where the caller holds org.audit:read (an assigned org role, or every-org).
+  if (isV2()) {
+    const orgs = await tell(async () => {
+      const [{ loadDataV2 }, { orgsHolding }] = await Promise.all([import('../../authz-v2/service.js'), import('../../authz-v2/resolve.js')])
+      return orgsHolding(await loadDataV2(), email, 'org.audit:read', 'jinbe')
+    })
+    return { platform: false, orgs }
+  }
   const administered = await tell(() => manageableOrgs(email))
   return { platform: false, orgs: [...new Set(administered)].sort() }
 }

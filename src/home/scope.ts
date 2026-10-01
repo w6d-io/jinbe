@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../config/env.js'
 import { holds, isSuperAdmin, manageableOrgs, rights } from '../authz/opa.js'
+import { isV2 } from '../authz-v2/model.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { secondFactorIsFresh } from '../services/step-up.js'
 import type { HomeModuleName } from './types.js'
@@ -91,7 +92,9 @@ export async function resolveHomeScope(request: FastifyRequest): Promise<HomeSco
     roles: held.roles,
     permissions,
     platform: holds(permissions, PLATFORM_READ),
-    superAdmin,
+    // authz v2 has no super-admin flag: the platform-health items go to who holds what they are about
+    // (the audit outbox and failures → audit:read, dead notifications → settings:read).
+    superAdmin: isV2() ? holds(permissions, 'audit:read') && holds(permissions, 'settings:read') : superAdmin,
     canApply: holds(permissions, 'sites:apply'),
     people: holds(permissions, 'users:read'),
     sessions: holds(permissions, 'sessions:read'),
