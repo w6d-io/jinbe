@@ -54,11 +54,12 @@ import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 
 const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
 
-/** ADMIN holds billing's admin role before importing (the holding rule reads the store as it is). */
+/** ADMIN holds billing's admin role before importing, as OPA resolves it. */
 async function adminHoldsBilling() {
   await redisRbacRepository.setRoles('billing', { admin: ['billing:write'] })
   await redisRbacRepository.setGroup('admins', { billing: ['admin'] })
   opaWorld.groups[ADMIN.email] = ['admins']
+  opaWorld.permissions[ADMIN.email] = ['billing:write']
 }
 
 function makeBundle(overrides: Partial<AuthBundle['rbac']> = {}): AuthBundle {
@@ -255,10 +256,11 @@ describe('RbacBundleService — import validation, history, rollback', () => {
 
       // head of history = snapshot taken before B was applied → state A
       const [preB] = await rbacBundleService.listImportHistory()
-      // The actor holds what state A grants (the holding rule reads the store as it is).
+      // The actor holds what state A grants, as OPA resolves it.
       await redisRbacRepository.setGroup('admins', { billing: ['admin'] })
       await redisRbacRepository.setRoles('billing', { admin: ['billing:write'] })
       opaWorld.groups[ADMIN.email] = ['admins']
+      opaWorld.permissions[ADMIN.email] = ['billing:write']
       const { entry, result } = await rbacBundleService.rollback(preB.id, ADMIN)
       expect(entry.id).toBe(preB.id)
       expect(result.rbac.services).toBe(1)
@@ -327,7 +329,9 @@ describe('RbacBundleService — import validation, history, rollback', () => {
           roles: { billing: { ops: ['zones:write', 'sites:read'], security: ['users:reset_second_factor'], viewer: ['sites:read'] } },
         },
       })
+      // What OPA resolves for them in billing: the ops role.
       opaWorld.groups[OPS.email] = ['ops-team']
+      opaWorld.permissions[OPS.email] = ['sites:read', 'zones:write']
     }
     const bundleWith = async (groups: Record<string, Record<string, string[]>>) => {
       const current = await rbacBundleService.export()

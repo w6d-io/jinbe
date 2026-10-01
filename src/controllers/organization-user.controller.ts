@@ -4,6 +4,8 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { orgRoleRefusals } from '../services/org-role-grants.js'
+import { AuthzUnavailableError } from '../authz/opa.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
   KratosIdentity,
@@ -132,7 +134,13 @@ export class OrganizationUserController {
     // Org roles given at creation clear the same holding rule as PUT …/users/:id/roles, BEFORE
     // anything is created: a refused role never leaves a half-provisioned person behind.
     const wanted = [...new Set(roles ?? [])]
-    const refused = await orgRoleRefusals(request.userContext?.email ?? '', organizationId, wanted)
+    let refused
+    try {
+      refused = await orgRoleRefusals(request.userContext?.email ?? '', organizationId, wanted, { email, joining: true })
+    } catch (err) {
+      if (!(err instanceof AuthzUnavailableError)) throw err
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${err.message}` })
+    }
     if (refused.length > 0) {
       return reply.status(403).send({ error: 'Forbidden', message: `Not allowed to assign: ${refused.map((r) => r.role).join(', ')}`, refused })
     }

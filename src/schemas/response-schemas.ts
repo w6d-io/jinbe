@@ -55,6 +55,8 @@ export const permissionRefusalProperties = {
     missing: { type: 'array', items: { type: 'string' }, example: ['users:reset_second_factor'] },
     missingByScope: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
     grantedBy: { type: 'array', items: { type: 'string' }, example: ['staff-security', 'super_admins'] },
+    // The policy's own codes for a refused grant (rbac.delegation verdicts), sorted.
+    reasons: { type: 'array', items: { type: 'string' }, example: ['missing_every_org_permissions', 'missing_permissions'] },
     hint: { type: 'string', example: 'Ask an administrator to add you to one of: staff-security, super_admins.' },
 } as const
 
@@ -65,8 +67,8 @@ export const forbiddenResponseSchema = {
         message: { type: 'string' },
         // What the client can act on. A delegated caller's refusal: `insufficient_scope` with
         // `scope_missing:<permission>`, or `delegation_refused` with `delegation_ineligible:<why>`. A
-        // missing permission: `permission_required`; the escalation guard: `grant_exceeds_own`,
-        // `staff_group_super_admin_only`, `self_escalation`, `grants_everything`. An org route OPA
+        // missing permission: `permission_required`; a grant the policy refused: `grant_exceeds_own`
+        // (with its `reasons`), `self_escalation`. An org route OPA
         // refused: `needs_2fa` / `step_up_unavailable` (with `stepUp`), `route_not_published`, or
         // `permission_required`, with OPA's reason in `reason`.
         code: { type: 'string', example: 'insufficient_scope' },

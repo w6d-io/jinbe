@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { orgRoleRefusedSchema } from './org-roles.routes.js'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
 import { needs } from '../policy/route-access.js'
 import {
@@ -99,7 +100,8 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
         response: {
           201: kratosIdentityJsonSchema,
           401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
+          403: orgRoleRefusedSchema,
+          503: serviceUnavailableResponseSchema,
         },
       },
     },

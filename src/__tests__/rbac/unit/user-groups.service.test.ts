@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // would reach for Postgres.
 // The model the gates read. See the helper for why they read a model rather than predicates.
 // The '*'-group / self-assignment check asks OPA; it has its own tests (rbac-escalation-guard.test.ts).
-vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}) }))
+vi.mock('../../../services/rbac-escalation-guard.js', () => ({ assertMayAssignGroup: vi.fn(async () => {}), assertMayRemoveFromGroups: vi.fn(async () => {}) }))
 vi.mock('../../../services/group-catalogue.js', async () =>
   (await import('../../helpers/group-catalogue-mock.js')).groupCatalogueMock())
 vi.mock('../../../second-factor/settings.js', async () =>
@@ -61,7 +61,7 @@ import { kratosService } from '../../../services/kratos.service.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
-import { assertMayAssignGroup } from '../../../services/rbac-escalation-guard.js'
+import { assertMayAssignGroup, assertMayRemoveFromGroups } from '../../../services/rbac-escalation-guard.js'
 import {
   GroupCatalogueUnavailableError,
   groupFacts,
@@ -647,10 +647,21 @@ describe('userGroupsService.applyGroupUpdate — the holding rule', () => {
     holds()
   })
 
-  it('asks it for every group ADDED, and for nothing removed', async () => {
+  it('asks the policy for every group ADDED, and once for all the groups removed', async () => {
     holds('viewers')
     await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['admins', 'devs'], actor: ACTOR, auditEventType: 'user.groups_changed' })
     expect(vi.mocked(assertMayAssignGroup).mock.calls.map((c) => c[0]).sort()).toEqual(['admins', 'devs'])
+    expect(vi.mocked(assertMayRemoveFromGroups).mock.calls.map((c) => c[0])).toEqual([['viewers']])
+  })
+
+  it('a refused removal answers 403 and writes nothing', async () => {
+    holds('viewers')
+    vi.mocked(assertMayRemoveFromGroups).mockRejectedValueOnce(Object.assign(new Error('refused'), {
+      statusCode: 403, code: 'grant_exceeds_own', refusal: { code: 'grant_exceeds_own', missing: ['groups.members:revoke'] },
+    }))
+    const result = await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: [], actor: ACTOR, auditEventType: 'user.groups_changed' })
+    expect(result).toMatchObject({ ok: false, status: 403, body: { missing: ['groups.members:revoke'] } })
+    expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
   })
 
   it('answers 403 with what is missing, and writes nothing', async () => {

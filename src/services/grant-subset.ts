@@ -1,8 +1,8 @@
 import { redisRbacRepository, type FlatRolesMap, type GroupDefinition } from './redis-rbac.repository.js'
 
 /**
- * What a group hands out, per app, and whether somebody already holds it — the holding rule
- * (rbac-escalation-guard.ts, authz-v2-design §1.1).
+ * What a group hands out, per app — for display, hints (who grants a permission) and the bundle diff.
+ * Never a grant decision: that is the policy's (rbac.delegation, via rbac-escalation-guard.ts).
  *
  * Resolved by app, as rbac.rego resolves it: role names bound under an app are read in THAT app's
  * roles. There is no global scope and no wildcard: holding a permission in one app says nothing about
@@ -61,23 +61,4 @@ export async function loadRoles(scopes: Iterable<string>): Promise<RolesByScope>
   const list = [...new Set(scopes)]
   const read = await Promise.all(list.map((s) => redisRbacRepository.getRoles(s)))
   return Object.fromEntries(list.map((s, i) => [s, read[i]]))
-}
-
-/** The current every-org definitions of these apps (role → org permissions carried into every org). */
-export async function loadEveryOrg(scopes: Iterable<string>): Promise<RolesByScope> {
-  const list = [...new Set(scopes)]
-  const read = await Promise.all(list.map((s) => redisRbacRepository.getEveryOrg(s)))
-  return Object.fromEntries(list.map((s, i) => [s, read[i]]))
-}
-
-/** What these groups hold in each of `scopes`, from the current model. */
-export async function heldByGroups(groups: readonly string[], scopes: readonly string[]): Promise<PermissionsByScope> {
-  const defs = await redisRbacRepository.getGroups()
-  return heldIn(groups.map((g) => defs[g]), await loadRoles(scopes), scopes)
-}
-
-/** What these groups carry into every org, in each of `scopes`. */
-export async function everyOrgByGroups(groups: readonly string[], scopes: readonly string[]): Promise<PermissionsByScope> {
-  const defs = await redisRbacRepository.getGroups()
-  return heldIn(groups.map((g) => defs[g]), await loadEveryOrg(scopes), scopes)
 }

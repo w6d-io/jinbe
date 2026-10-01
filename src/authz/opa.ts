@@ -191,6 +191,80 @@ export function orgPermissionsByOrg(email: string, app: string = JINBE_APP): Pro
 }
 
 /**
+ * THE HOLDING RULE's verdict on one grant (`rbac.delegation.*_verdict`): nobody grants what they do
+ * not hold. ONE copy of the rule, in the policy, over the data the gateway decides on — jinbe keeps
+ * none of its own, so the two cannot drift. Never cached: a grant is asked once and must see the
+ * latest data. Fails closed like every question (AuthzUnavailableError → 503).
+ */
+export interface GrantVerdict {
+  allow: boolean
+  /** Sorted codes: missing_grant_permission, missing_permissions, missing_every_org_permissions,
+   *  grantee_not_member, unknown_role, unknown_group, app_not_entitled, invalid_definition. */
+  reasons: string[]
+  /** app → what is missing on the platform (the grant permission itself included, under jinbe). */
+  missing: Record<string, string[]>
+  /** app → org permissions the grant carries into every org that the actor does not. */
+  missingEveryOrg: Record<string, string[]>
+  /** Names that would cover everything missing (groups, or "app:role" in that org). */
+  grantedBy: string[]
+}
+
+export type GrantQuestion =
+  | { kind: 'assign'; actor: string; grantee: string; org: string; role: string }
+  | { kind: 'unassign'; actor: string; org: string }
+  | { kind: 'add_to_group'; actor: string; group: string }
+  | { kind: 'remove_from_group'; actor: string }
+  | { kind: 'define_group'; actor: string; definition: Record<string, readonly string[]> }
+
+function byApp(v: unknown): Record<string, string[]> | undefined {
+  if (v === undefined || v === null) return {}
+  if (typeof v !== 'object' || Array.isArray(v)) return undefined
+  const out: Record<string, string[]> = {}
+  for (const [app, perms] of Object.entries(v as Record<string, unknown>)) {
+    const list = strings(perms)
+    if (!list) return undefined
+    if (list.length > 0) out[app] = list
+  }
+  return out
+}
+
+/** The exact rule and input a grant question sends OPA. */
+export function grantInput(q: GrantQuestion): { rule: string; input: Record<string, unknown> } {
+  const actor = { email: q.actor }
+  switch (q.kind) {
+    case 'assign': return { rule: 'rbac/delegation/assign_verdict', input: { actor, grantee: { email: q.grantee }, org: q.org, role: q.role } }
+    case 'unassign': return { rule: 'rbac/delegation/unassign_verdict', input: { actor, org: q.org } }
+    case 'add_to_group': return { rule: 'rbac/delegation/add_to_group_verdict', input: { actor, group: q.group } }
+    case 'remove_from_group': return { rule: 'rbac/delegation/remove_from_group_verdict', input: { actor } }
+    case 'define_group': return { rule: 'rbac/delegation/define_group_verdict', input: { actor, definition: q.definition } }
+  }
+}
+
+export async function grantVerdict(q: GrantQuestion): Promise<GrantVerdict> {
+  const { rule, input } = grantInput(q)
+  let r: unknown
+  try {
+    r = await queryOpa<unknown>(rule, input)
+  } catch (err) {
+    throw new AuthzUnavailableError((err as Error).message)
+  }
+  const v = r as { allow?: unknown; reasons?: unknown; missing?: unknown; missing_every_org?: unknown; granted_by?: unknown } | undefined
+  const reasons = strings(v?.reasons ?? [])
+  const missing = byApp(v?.missing)
+  const missingEveryOrg = byApp(v?.missing_every_org)
+  const grantedBy = Array.isArray(v?.granted_by) && v.granted_by.every((s) => typeof s === 'string') ? [...(v.granted_by as string[])] : undefined
+  if (!v || typeof v.allow !== 'boolean' || !reasons || !missing || !missingEveryOrg || !grantedBy) {
+    throw new AuthzUnavailableError(`OPA answered nothing usable for ${rule}`)
+  }
+  return { allow: v.allow, reasons, missing, missingEveryOrg, grantedBy }
+}
+
+/** The org roles (`app:role`) this address may assign in `org` (`rbac.delegation.assignable_roles`). */
+export function assignableRoles(email: string, org: string): Promise<string[]> {
+  return ask('rbac/delegation/assignable_roles', { actor: { email }, org }, strings)
+}
+
+/**
  * Whether this address must hold a second factor (`rbac.second_factor_required`, rbac.rego § 8c:
  * a member of a group in data.second_factor). A policy that predates the rule answers nothing, which
  * is `AuthzUnavailableError` like any other unanswerable question.

@@ -1,27 +1,27 @@
-import { rights } from '../authz/opa.js'
+import { AuthzUnavailableError, grantVerdict, rights, type GrantQuestion, type GrantVerdict } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { redisRbacRepository, type GroupDefinition } from './redis-rbac.repository.js'
 import { auditEventService, type AuditActorInput } from './audit-event.service.js'
-import {
-  everyOrgByGroups, exceeding, flatten, groupGrants, heldByGroups, isEmpty, isStaffGroup, loadEveryOrg, loadRoles,
-  type PermissionsByScope,
-} from './grant-subset.js'
-import { refusalDetails } from './permission-refusal.js'
+import { exceeding, flatten, isEmpty, isStaffGroup, type PermissionsByScope } from './grant-subset.js'
+import { hintFor, refusalDetails } from './permission-refusal.js'
 
 /**
  * Nobody grants what they do not hold — THE HOLDING RULE (authz-v2-design §1.1, §2.5).
  *
- * Every grant — a group definition, a widened role, a group assignment, an imported bundle — needs
- * the grant permission (checked by the route) AND that the actor holds every permission it confers,
- * app by app, including what it carries into every org (the every-org map). A super admin passes
- * because they hold everything, never because they are special: there is no wildcard and no bypass.
- * Taking power away needs nothing more than the route's permission.
+ * The rule has ONE copy: the policy's `rbac.delegation` verdicts, over the data the gateway decides
+ * on. jinbe asks it for every grant — a group definition (`define_group`), handing out a group
+ * (`add_to_group`), taking one away (`remove_from_group`) — and renders its answer: what is missing
+ * (the every-org part included) and which groups would cover it. A super admin passes because they
+ * hold everything, never because they are special. jinbe keeps no rule of its own to drift from it.
+ *
+ * Two changes the policy cannot judge, because what they grant is not in its data yet — widening a
+ * role, importing a bundle — ask only that the actor holds, as OPA resolves it (`rbac.user_info`),
+ * every permission they add. That is a subset test on OPA's answer, not a second rule.
  *
  * Objects defined in code — the staff groups and super_admins, jinbe's roles and route map — are not
  * changed through the API at all, whoever asks: 409 `defined_in_code`.
  *
- * What the actor holds is asked of OPA (their groups); what a definition confers is read from the
- * published model. FAIL-CLOSED: no identity answers 401, OPA unreachable 503 — never an allow.
+ * FAIL-CLOSED: no identity answers 401, OPA unreachable 503 — never an allow.
  */
 
 export type RbacChange =
@@ -32,7 +32,7 @@ export type RbacChange =
   /** Replacing one service's route map. */
   | { kind: 'routes'; service: string }
 
-type Refusal = { missing?: string[]; missingByScope?: Record<string, string[]>; grantedBy?: string[]; hint?: string }
+type Refusal = { missing?: string[]; missingByScope?: Record<string, string[]>; reasons?: string[]; permission?: string; grantedBy?: string[]; hint?: string }
 
 function refuse(reason: string, message: string, change: RbacChange, actor: AuditActorInput, details: Refusal = {}, statusCode = 403): never {
   auditEventService.emit({
@@ -44,22 +44,34 @@ function refuse(reason: string, message: string, change: RbacChange, actor: Audi
   throw Object.assign(new Error(message), { statusCode, code: reason, refusal: { code: reason, message, ...details } })
 }
 
-/** What a grant confers: platform permissions per app, and org permissions carried into every org. */
-interface Conferred {
-  platform: PermissionsByScope
-  everyOrg: PermissionsByScope
+/** How a refused verdict reads: the platform part per app, then `every organisation: <perm>`. */
+export function verdictRefusal(v: GrantVerdict): Refusal & { missing: string[] } {
+  const names = [...flatten(v.missing), ...flatten(v.missingEveryOrg).map((p) => `every organisation: ${p}`)]
+  return {
+    missing: names,
+    ...(names.length === 1 ? { permission: names[0] } : {}),
+    // `every_org:<app>` for what a grant carries into every org, beside the platform part per app.
+    missingByScope: { ...v.missing, ...Object.fromEntries(Object.entries(v.missingEveryOrg).map(([app, perms]) => [`every_org:${app}`, perms])) },
+    reasons: v.reasons,
+    grantedBy: v.grantedBy,
+    hint: hintFor(v.grantedBy, names),
+  }
 }
 
-/** Refuses a grant that exceeds what the actor holds: what is missing, and who grants it. */
-async function refuseExceeding(missing: Conferred, what: string, change: RbacChange, actor: AuditActorInput): Promise<never> {
-  const names = [...flatten(missing.platform), ...flatten(missing.everyOrg).map((p) => `${p} (every org)`)]
-  const details = await refusalDetails(missing.platform)
-  refuse('grant_exceeds_own', `${what} grants what you do not hold: ${names.join(', ')}`, change, actor, {
-    // `every_org:<app>` for what a group carries into every org, beside the platform part per app.
-    missing: names,
-    missingByScope: { ...missing.platform, ...Object.fromEntries(Object.entries(missing.everyOrg).map(([app, perms]) => [`every_org:${app}`, perms])) },
-    ...details,
-  })
+/** Asks the policy; 503 when it cannot tell. */
+async function ask(q: GrantQuestion): Promise<GrantVerdict> {
+  try {
+    return await grantVerdict(q)
+  } catch (err) {
+    if (err instanceof AuthzUnavailableError) unavailable(err)
+    throw err
+  }
+}
+
+function refuseVerdict(v: GrantVerdict, what: string, change: RbacChange, actor: AuditActorInput): never {
+  const details = verdictRefusal(v)
+  const why = details.missing.length > 0 ? `grants what you do not hold: ${details.missing.join(', ')}` : `is refused (${v.reasons.join(', ')})`
+  refuse('grant_exceeds_own', `${what} ${why}`, change, actor, details)
 }
 
 function refuseDefinedInCode(what: string, change: RbacChange, actor: AuditActorInput): never {
@@ -95,22 +107,23 @@ function authenticated(actor?: AuditActorInput): asserts actor is AuditActorInpu
   }
 }
 
-/** What a group definition confers, from the current model. */
-async function conferredBy(def: GroupDefinition): Promise<Conferred> {
-  const apps = Object.keys(def)
-  const [roles, everyOrg] = await Promise.all([loadRoles(apps), loadEveryOrg(apps)])
-  return { platform: groupGrants(def, roles), everyOrg: groupGrants(def, everyOrg) }
+/** What of `added` (app → permissions) the actor does not hold, as OPA resolves their roles per app. */
+async function notHeld(email: string, added: PermissionsByScope): Promise<PermissionsByScope> {
+  const held: PermissionsByScope = {}
+  try {
+    for (const app of Object.keys(added)) held[app] = (await rights(email, app)).permissions
+  } catch (err) {
+    unavailable(err)
+  }
+  return exceeding(added, held)
 }
 
-/** What `conferred` grants that `groups` (the actor's) do not hold. */
-async function beyond(groups: readonly string[], conferred: Conferred): Promise<Conferred> {
-  const platformApps = Object.keys(conferred.platform)
-  const everyOrgApps = Object.keys(conferred.everyOrg)
-  const [held, heldEveryOrg] = await Promise.all([heldByGroups(groups, platformApps), everyOrgByGroups(groups, everyOrgApps)])
-  return { platform: exceeding(conferred.platform, held), everyOrg: exceeding(conferred.everyOrg, heldEveryOrg) }
+async function refuseNotHeld(missing: PermissionsByScope, what: string, change: RbacChange, actor: AuditActorInput): Promise<never> {
+  const names = flatten(missing)
+  refuse('grant_exceeds_own', `${what} grants what you do not hold: ${names.join(', ')}`, change, actor, {
+    missing: names, missingByScope: missing, ...(await refusalDetails(missing)),
+  })
 }
-
-const nothing = (c: Conferred) => isEmpty(c.platform) && isEmpty(c.everyOrg)
 
 /** What a roles change adds to the roles some group binds under `service`, as `{ service: [...] }`. */
 async function addedToBoundRoles(service: string, roles: Record<string, string[]>): Promise<PermissionsByScope> {
@@ -130,8 +143,8 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
     case 'group': {
       if (isStaffGroup(change.name)) refuseDefinedInCode(`Group '${change.name}'`, change, actor)
       if (!change.after) return
-      const missing = await beyond(await askGroups(actor.email), await conferredBy(change.after))
-      if (!nothing(missing)) await refuseExceeding(missing, `Group '${change.name}'`, change, actor)
+      const v = await ask({ kind: 'define_group', actor: actor.email, definition: change.after })
+      if (!v.allow) refuseVerdict(v, `Group '${change.name}'`, change, actor)
       return
     }
     case 'roles': {
@@ -139,8 +152,8 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
       // no group binds grants nobody anything yet (a new service's roles).
       const added = await addedToBoundRoles(change.service, change.roles)
       if (isEmpty(added)) return
-      const missing = await beyond(await askGroups(actor.email), { platform: added, everyOrg: {} })
-      if (!nothing(missing)) await refuseExceeding(missing, `This change to the roles of '${change.service}'`, change, actor)
+      const missing = await notHeld(actor.email, added)
+      if (!isEmpty(missing)) await refuseNotHeld(missing, `This change to the roles of '${change.service}'`, change, actor)
       return
     }
     case 'routes': {
@@ -157,21 +170,26 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
 }
 
 /**
- * Handing out a group (PUT /api/admin/users/:email/groups, the bulk add, a group given at creation):
- * the holding rule over what the group confers. The route already required groups.members:write.
+ * Handing out a group (PUT /api/admin/users/:email/groups, the bulk add): the policy's
+ * `add_to_group` verdict. A group nothing defines is refused earlier, as not in the model.
  */
 export async function assertMayAssignGroup(group: string, actor?: AuditActorInput): Promise<void> {
   authenticated(actor)
-  const definition = (await redisRbacRepository.getGroups())[group]
-  if (!definition) return
-  const change: RbacChange = { kind: 'group', name: group, after: null }
-  const missing = await beyond(await askGroups(actor.email), await conferredBy(definition))
-  if (!nothing(missing)) await refuseExceeding(missing, `Group '${group}'`, change, actor)
+  const v = await ask({ kind: 'add_to_group', actor: actor.email, group })
+  if (!v.allow) refuseVerdict(v, `Group '${group}'`, { kind: 'group', name: group, after: null }, actor)
+}
+
+/** Taking groups away: the policy's `remove_from_group` verdict (the revoke permission). */
+export async function assertMayRemoveFromGroups(groups: readonly string[], actor?: AuditActorInput): Promise<void> {
+  authenticated(actor)
+  if (groups.length === 0) return
+  const v = await ask({ kind: 'remove_from_group', actor: actor.email })
+  if (!v.allow) refuseVerdict(v, `Removing '${groups.join("', '")}'`, { kind: 'group', name: groups[0], after: null }, actor)
 }
 
 /**
  * A bundle import: every group whose grants the import changes (resolved against the roles the import
- * leaves) clears the same rule as a single edit — never a code-defined group, nothing not held.
+ * leaves) — never a code-defined group, nothing the actor does not hold (as OPA resolves it).
  */
 export async function assertBundleWithinOwn(
   changed: ReadonlyArray<{ name: string; after: PermissionsByScope }>,
@@ -179,11 +197,10 @@ export async function assertBundleWithinOwn(
 ): Promise<void> {
   authenticated(actor)
   if (changed.length === 0) return
-  const groups = await askGroups(actor.email)
   for (const { name, after } of changed) {
     const change: RbacChange = { kind: 'group', name, after: null }
     if (isStaffGroup(name)) refuseDefinedInCode(`Group '${name}'`, change, actor)
-    const missing = await beyond(groups, { platform: after, everyOrg: {} })
-    if (!nothing(missing)) await refuseExceeding(missing, `Imported group '${name}'`, change, actor)
+    const missing = await notHeld(actor.email, after)
+    if (!isEmpty(missing)) await refuseNotHeld(missing, `Imported group '${name}'`, change, actor)
   }
 }

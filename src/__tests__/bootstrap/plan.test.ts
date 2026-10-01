@@ -119,6 +119,15 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(person('opsy@x.io')!.losses.sort()).toEqual(['org.keys:read@*', 'org.keys:revoke@*'])
   })
 
+  it('the D1 losses are shown once per group, first, for the owner to approve', () => {
+    expect(plan.lossesByGroup).toContainEqual({ group: 'staff-ops', members: ['opsy@x.io'], losses: ['org.keys:read@*', 'org.keys:revoke@*'], everyOrg: ['org.keys:read@*', 'org.keys:revoke@*'] })
+    // A group whose members keep everything is not listed.
+    expect(plan.lossesByGroup.map((l) => l.group)).not.toContain('super_admins')
+    const md = renderPlanMarkdown(plan)
+    expect(md.indexOf('## Losses to approve')).toBeLessThan(md.indexOf('## 1. Today'))
+    expect(md).toMatch(/\| staff-ops \| 1 \| org\.keys:read@\*, org\.keys:revoke@\* \|/)
+  })
+
   it('roster admins become jinbe:owner (members only), so they lose nothing in their org', () => {
     expect(plan.migration.orgRoles).toEqual([{ org: ACME, email: 'boss@acme.io', id: 'id-6', role: 'jinbe:owner', from: 'roster' }])
     expect(person('boss@acme.io')!.losses).toEqual([])
@@ -164,7 +173,7 @@ describe('the v2 plan over a v1 inventory', () => {
 
   it('renders every section for the owner', () => {
     const md = renderPlanMarkdown(plan)
-    for (const h of ['## 1. Today', '## 2. Rule by rule', '## 3. People', '## 4. Orphans', '## 5. Migration map']) expect(md).toContain(h)
+    for (const h of ['## Losses to approve', '## 1. Today', '## 2. Rule by rule', '## 3. People', '## 4. Orphans', '## 5. Migration map']) expect(md).toContain(h)
     expect(md).toContain(plan.planHash)
     expect(md).toContain('| [ ] | jinbe | DELETE | /api/admin/users/:id |')
   })

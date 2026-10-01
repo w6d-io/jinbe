@@ -27,6 +27,8 @@ export function renderPlanMarkdown(plan: Plan): string {
     ['rules after the apply (jinbe)', plan.rules.length],
     ['people holding anything (before or after)', plan.people.length],
     ['people whose access changes', changed.length],
+    ['people who LOSE something', plan.people.filter((p) => p.losses.length).length],
+    ['groups whose every member loses something (see "Losses to approve")', plan.lossesByGroup.length],
     ['memberships to groups that will not exist', plan.orphans.memberships.length],
     ['org roles the policy will ignore', plan.orphans.orgRoles.length],
     ['org roles the apply writes (migration)', plan.migration.orgRoles.length],
@@ -35,6 +37,13 @@ export function renderPlanMarkdown(plan: Plan): string {
     ['OAuth clients with retired scopes', plan.orphans.clients.length],
     ['stale jinbe rows in Redis', plan.before.staleJinbeRows.length],
   ]))
+
+  out.push('## Losses to approve', '',
+    'What every member of a group loses after the apply — a model decision read once (D1: platform roles keep only the ' +
+    'every-org reach the decision gives them). `p@*` was reach into every organisation. Each person is listed again in section 3.', '')
+  out.push(plan.lossesByGroup.length
+    ? table(['group', 'members', 'every member loses', 'of which every-org reach'], plan.lossesByGroup.map((l) => [l.group, l.members.length, l.losses.join(', '), l.everyOrg.join(', ')]))
+    : 'Nobody loses anything as a group.\n')
 
   out.push('## 1. Today (live)', '')
   out.push(table(['service', 'roles', 'rows', 'roles granting *'], plan.before.services.map((s) => [s.name, s.roles, s.rows, s.wildcardRoles.join(', ')])))
@@ -60,7 +69,9 @@ export function renderPlanMarkdown(plan: Plan): string {
   ])))
 
   out.push('## 3. People: gains and losses', '', '`p@org` is a permission in one org; `p@*` in every org.', '')
-  out.push(table(['person', 'loses', 'gains'], changed.map((p) => [p.email, p.losses.join(', '), p.gains.join(', ')])))
+  // Losses first: the people losing access lead the table, the most lost first.
+  const ranked = [...changed].sort((a, b) => b.losses.length - a.losses.length || a.email.localeCompare(b.email))
+  out.push(table(['person', 'LOSES', 'gains'], ranked.map((p) => [p.email, p.losses.length ? `**${p.losses.join(', ')}**` : '', p.gains.join(', ')])))
   out.push(`${plan.people.length - changed.length} more people keep exactly what they hold.`, '')
 
   out.push('## 4. Orphans (kept on the identity, dropped from the policy: D4)', '')

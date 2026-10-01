@@ -58,6 +58,12 @@ export interface Plan {
   }
   rules: RuleRow[]
   people: PersonDiff[]
+  /**
+   * The losses to approve, by group: what EVERY member of a group loses (e.g. D1 — staff-ops losing
+   * org.keys:* in every org). Shown first in the review so a model decision is read as one line, not
+   * scattered over each person. `everyOrg`: the part that was reach into every organisation (`@*`).
+   */
+  lossesByGroup: Array<{ group: string; members: string[]; losses: string[]; everyOrg: string[] }>
   orphans: {
     memberships: Array<{ email: string; group: string }>
     orgRoles: Array<{ email: string; org: string; role: string; why: string }>
@@ -194,6 +200,19 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
     people.push({ email, before, after, gains: a.filter((p) => !covered(p, bSet)), losses: b.filter((p) => !covered(p, aSet)) })
   }
 
+  // ── losses shared by a whole group (what the owner approves as a decision) ──
+  const lossesByGroup: Plan['lossesByGroup'] = []
+  const losing = new Map(people.filter((p) => p.losses.length).map((p) => [p.email, p.losses]))
+  const groupNames = sorted([...Object.keys(inv.groups), ...Object.keys(staffGroups())])
+  for (const group of groupNames) {
+    const members = emails.filter((e) => (inv.identities.get(e)?.groups ?? []).includes(group))
+    if (members.length === 0 || !members.every((e) => losing.has(e))) continue
+    const shared = members.map((e) => losing.get(e)!).reduce((acc, l) => acc.filter((p) => l.includes(p)))
+    if (shared.length === 0) continue
+    lossesByGroup.push({ group, members, losses: shared, everyOrg: shared.filter((p) => p.endsWith('@*')) })
+  }
+  lossesByGroup.sort((a, b) => b.members.length - a.members.length || a.group.localeCompare(b.group))
+
   // ── orphans ──
   const memberships: Plan['orphans']['memberships'] = []
   const orgRoles: Plan['orphans']['orgRoles'] = []
@@ -248,6 +267,7 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
     },
     rules: rulesOf(d, emails),
     people,
+    lossesByGroup,
     orphans: { memberships, orgRoles, roster, orgGrants, clients },
     migration: {
       orgRoles: migration.added,

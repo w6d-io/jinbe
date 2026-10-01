@@ -1,6 +1,6 @@
 import { kratosService } from './kratos.service.js'
 import { rbacService } from './rbac.service.js'
-import { assertMayAssignGroup } from './rbac-escalation-guard.js'
+import { assertMayAssignGroup, assertMayRemoveFromGroups } from './rbac-escalation-guard.js'
 import { auditEventService } from './audit-event.service.js'
 import type { AuditAct } from './audit-types.js'
 import { diffUserGroups } from './audit-diff.js'
@@ -207,6 +207,14 @@ class UserGroupsService {
       const denial = await this.checkGrantWithinOwn(g, identity.email, actor)
       if (denial) {
         this.emitDenied(String(denial.body.error), identity, actor, g, denial.status)
+        return denial
+      }
+    }
+    // Taking groups away: the policy's own verdict too (the revoke permission), not this service's.
+    if (removed.length > 0) {
+      const denial = await this.checkGrantWithinOwn(removed, identity.email, actor)
+      if (denial) {
+        this.emitDenied(String(denial.body.error), identity, actor, removed[0], denial.status)
         return denial
       }
     }
@@ -442,16 +450,19 @@ class UserGroupsService {
     return null
   }
 
-  /** The holding rule for one added group: a refusal, or null. */
+  /** The holding rule for one added group (or the groups removed): a refusal, or null. */
   private async checkGrantWithinOwn(
-    groupName: string,
+    group: string | readonly string[],
     targetEmail: string,
     actor: { id?: string | null; email?: string | null; ip?: string | null },
   ): Promise<ApplyGroupUpdateResult & { ok: false } | null> {
     try {
-      await assertMayAssignGroup(groupName, { id: actor.id, email: actor.email, ip: actor.ip })
+      const who = { id: actor.id, email: actor.email, ip: actor.ip }
+      if (typeof group === 'string') await assertMayAssignGroup(group, who)
+      else await assertMayRemoveFromGroups(group, who)
       return null
     } catch (e) {
+      const groupName = typeof group === 'string' ? group : group.join(', ')
       const within = grantRefusal(e, groupName, targetEmail)
       if (within) return within
       const err = e as Error & { statusCode?: number }

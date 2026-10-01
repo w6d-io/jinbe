@@ -28,7 +28,7 @@ vi.mock('../../../services/org-roles.repository.js', () => ({
 }))
 vi.mock('../../../services/kratos.service.js', () => ({
   kratosService: {
-    getIdentity: vi.fn(async (id: string) => (id === MEMBER ? { id, organization_id: ORG, metadata_admin: {} } : id === OUTSIDER ? { id, organization_id: null, metadata_admin: {} } : Promise.reject(new Error('404')))),
+    getIdentity: vi.fn(async (id: string) => (id === MEMBER ? { id, organization_id: ORG, metadata_admin: {}, traits: { email: 'member@acme.io' } } : id === OUTSIDER ? { id, organization_id: null, metadata_admin: {} } : Promise.reject(new Error('404')))),
     updateAdminState: vi.fn(),
   },
 }))
@@ -37,7 +37,8 @@ vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: 
 
 const { installRouteAccess } = await import('../../../policy/route-access.js')
 const { orgRolesRoutes } = await import('../../../routes/org-roles.routes.js')
-const { opaWorld, resetOpaWorld } = await import('../../helpers/opa-authz-mock.js')
+const { opaWorld, refused, resetOpaWorld } = await import('../../helpers/opa-authz-mock.js')
+const { grantVerdict } = await import('../../../authz/opa.js')
 
 let app: FastifyInstance
 let as = 'mm@acme.io'
@@ -48,6 +49,16 @@ beforeEach(async () => {
   opaWorld.orgPermissions['mm@acme.io'] = { [ORG]: ['org.members:read', 'org.members:write'] }
   opaWorld.orgPermissions['owner@acme.io'] = { [ORG]: orgRoleDefs.owner }
   opaWorld.decide = (q) => (opaWorld.orgPermissions[q.email]?.[ORG] ?? []).length > 0
+  // The policy's answers (rbac.delegation): what each caller may assign here, and its verdicts.
+  opaWorld.assignable['mm@acme.io'] = { [ORG]: ['jinbe:member_manager'] }
+  opaWorld.assignable['owner@acme.io'] = { [ORG]: ['jinbe:member_manager', 'jinbe:owner', 'jinbe:viewer'] }
+  opaWorld.verdict = (q) => {
+    if (q.kind === 'unassign') return null
+    const role = q.role as string
+    if (!role.startsWith('jinbe:') || !(role.slice(6) in orgRoleDefs)) return refused({ reasons: ['unknown_role'], grantedBy: [] })
+    if ((opaWorld.assignable[q.actor]?.[q.org as string] ?? []).includes(role)) return null
+    return refused({ missing: { jinbe: ['org.audit:read', 'org.keys:read', 'org.keys:revoke', 'org.keys:write'] }, grantedBy: ['jinbe:owner'] })
+  }
   as = 'mm@acme.io'
   app = Fastify()
   installRouteAccess(app as never)
@@ -59,7 +70,7 @@ beforeEach(async () => {
 })
 
 describe('org roles, stored by jinbe', () => {
-  it('lists the org roles, marking what the caller may assign (holding rule)', async () => {
+  it('lists the org roles, marking what the policy says the caller may assign', async () => {
     const res = await app.inject({ method: 'GET', url: `/api/organizations/${ORG}/roles` })
     expect(res.statusCode).toBe(200)
     const roles = res.json().roles as Array<{ role: string; assignable: boolean }>
@@ -70,8 +81,13 @@ describe('org roles, stored by jinbe', () => {
   it('refuses to add a role the caller does not hold there, naming what is missing', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: ['jinbe:owner'] } })
     expect(res.statusCode).toBe(403)
-    expect(res.json().refused).toEqual([{ role: 'jinbe:owner', reason: 'grant_exceeds_own', missing: ['org.audit:read', 'org.keys:read', 'org.keys:revoke', 'org.keys:write'] }])
+    expect(res.json().refused).toEqual([{
+      role: 'jinbe:owner', reason: 'grant_exceeds_own', reasons: ['missing_permissions'],
+      missing: ['org.audit:read', 'org.keys:read', 'org.keys:revoke', 'org.keys:write'], grantedBy: ['jinbe:owner'],
+    }])
     expect(stored).toEqual({})
+    // Asked of the policy with the grantee's address, the org and the role.
+    expect(grantVerdict).toHaveBeenCalledWith({ kind: 'assign', actor: 'mm@acme.io', grantee: 'member@acme.io', org: ORG, role: 'jinbe:owner' })
   })
 
   it('writes an allowed role, by identity id, and reads it back', async () => {
@@ -81,17 +97,35 @@ describe('org roles, stored by jinbe', () => {
     expect(res.json()).toEqual({ id: MEMBER, roles: ['jinbe:member_manager'] })
   })
 
-  it('an owner may hand out owner; removing needs nothing more', async () => {
+  it('an owner may hand out owner; a removal asks the policy once (unassign)', async () => {
     as = 'owner@acme.io'
     expect((await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: ['jinbe:owner'] } })).statusCode).toBe(200)
     as = 'mm@acme.io'
     expect((await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: [] } })).statusCode).toBe(200)
     expect(stored[ORG][MEMBER]).toEqual([])
+    expect(grantVerdict).toHaveBeenLastCalledWith({ kind: 'unassign', actor: 'mm@acme.io', org: ORG })
+  })
+
+  it('a refused removal is listed like a refused addition, nothing written', async () => {
+    stored[ORG] = { [MEMBER]: ['jinbe:viewer'] }
+    opaWorld.verdict = (q) => (q.kind === 'unassign' ? refused({ reasons: ['missing_grant_permission'], missing: { jinbe: ['org.members:write'] }, grantedBy: ['jinbe:member_manager'] }) : null)
+    const res = await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: [] } })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().refused).toEqual([{ role: 'jinbe:viewer', reason: 'grant_permission_missing', reasons: ['missing_grant_permission'], missing: ['org.members:write'], grantedBy: ['jinbe:member_manager'] }])
+    expect(stored[ORG][MEMBER]).toEqual(['jinbe:viewer'])
+  })
+
+  it('503 when the policy cannot tell — never a write', async () => {
+    opaWorld.verdict = () => { throw new Error('unreachable') }
+    vi.mocked(grantVerdict).mockRejectedValueOnce(new Error('OPA down'))
+    const res = await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: ['jinbe:viewer'] } })
+    expect(res.statusCode).toBe(503)
+    expect(stored).toEqual({})
   })
 
   it('an unknown role and a role of an unentitled site are refused', async () => {
     const res = await app.inject({ method: 'PUT', url: `/api/organizations/${ORG}/users/${MEMBER}/roles`, payload: { roles: ['jinbe:god', 'payroll:editor'] } })
-    expect(res.json().refused).toEqual([{ role: 'jinbe:god', reason: 'unknown_role' }, { role: 'payroll:editor', reason: 'unknown_role' }])
+    expect(res.json().refused).toEqual([{ role: 'jinbe:god', reason: 'unknown_role', reasons: ['unknown_role'] }, { role: 'payroll:editor', reason: 'unknown_role', reasons: ['unknown_role'] }])
   })
 
   it('404 for a person who is not a member; the org gate refuses a caller holding nothing there', async () => {

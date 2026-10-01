@@ -82,7 +82,7 @@ describe('OrganizationUserController.createUser — org roles', () => {
     const reply = createReply()
     await organizationUserController.createUser(req({ email: 'new@example.com', roles: ['jinbe:viewer', 'jinbe:viewer', 'payroll:clerk'] }) as never, reply)
 
-    expect(orgRoleRefusals).toHaveBeenCalledWith('owner@example.com', ORG, ['jinbe:viewer', 'payroll:clerk'])
+    expect(orgRoleRefusals).toHaveBeenCalledWith('owner@example.com', ORG, ['jinbe:viewer', 'payroll:clerk'], { email: 'new@example.com', joining: true })
     expect(orgRolesRepository.setForMember).toHaveBeenCalledWith(ORG, 'new-user-1', ['jinbe:viewer', 'payroll:clerk'])
     expect(reply._statusCode).toBe(201)
   })

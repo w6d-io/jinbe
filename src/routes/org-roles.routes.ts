@@ -8,7 +8,7 @@ import { JINBE, qualified } from '../policy/roles.js'
 import { kratosService } from '../services/kratos.service.js'
 import { join, organisationsOn } from '../services/organisation-store/membership.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
-import { orgRoleRefusals, orgRolesFor } from '../services/org-role-grants.js'
+import { orgRoleRefusals, orgRoleRemovalRefusal, orgRolesFor } from '../services/org-role-grants.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
@@ -46,13 +46,22 @@ const ownersBody = {
 
 const notFound = { ...notFoundResponseSchema, properties: { ...notFoundResponseSchema.properties, error: { type: 'string' } } }
 const errors = { 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFound, 503: serviceUnavailableResponseSchema }
-const refusedSchema = {
+/** A 403 naming each refused org role (also the org user create route's). */
+export const orgRoleRefusedSchema = {
   ...forbiddenResponseSchema,
   properties: {
     ...forbiddenResponseSchema.properties,
     refused: {
       type: 'array',
-      items: { type: 'object', properties: { role: { type: 'string' }, reason: { type: 'string' }, missing: { type: 'array', items: { type: 'string' } } } },
+      items: {
+        type: 'object',
+        properties: {
+          role: { type: 'string' }, reason: { type: 'string' },
+          reasons: { type: 'array', items: { type: 'string' } },
+          missing: { type: 'array', items: { type: 'string' } },
+          grantedBy: { type: 'array', items: { type: 'string' } },
+        },
+      },
     },
   },
 }
@@ -62,15 +71,16 @@ function unavailable(reply: FastifyReply, err: unknown) {
   return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${(err as Error).message}` })
 }
 
-/** Whether the identity belongs to the org (the routes answer 404 otherwise). */
-async function memberOf(id: string, organizationId: string): Promise<boolean> {
+/** The member's address when the identity belongs to the org; null otherwise (the routes answer 404). */
+async function memberOf(id: string, organizationId: string): Promise<{ email: string } | null> {
   const identity = await kratosService.getIdentity(id).catch(() => null)
-  if (!identity) return false
+  if (!identity) return null
   const state = {
     organizationId: ((identity as Record<string, unknown>).organization_id as string | null | undefined) ?? null,
     metadataAdmin: (identity.metadata_admin as Record<string, unknown> | null) ?? {},
   }
-  return organisationsOn(state).includes(organizationId)
+  if (!organisationsOn(state).includes(organizationId)) return null
+  return { email: String((identity.traits as { email?: unknown } | undefined)?.email ?? '') }
 }
 
 export async function orgRolesRoutes(fastify: FastifyInstance) {
@@ -120,23 +130,29 @@ export async function orgRolesRoutes(fastify: FastifyInstance) {
     ...needs('org.members:write', ORG),
     schema: {
       description:
-        "Replace one member's org roles in this organization. Every role being ADDED must pass the holding rule: the caller " +
-        'holds org.members:write here and every permission of the role here. Removing a role needs nothing more.',
+        "Replace one member's org roles in this organization. Decided by the policy (rbac.delegation): every role ADDED " +
+        'must pass the holding rule (the caller holds org.members:write here and every permission of the role here); a removal ' +
+        'needs org.members:write here. A refusal lists each role with its reasons, what is missing and which org roles cover it.',
       tags: ['organization-users'],
       params: organizationUserIdParamJsonSchema,
       body: rolesBody,
-      response: { 200: memberRoles, ...errors, 403: refusedSchema },
+      response: { 200: memberRoles, ...errors, 403: orgRoleRefusedSchema },
     },
   }, async (request, reply) => {
     const { organizationId, id } = request.params as { organizationId: string; id: string }
     const wanted = [...new Set((request.body as { roles: string[] }).roles)].sort()
-    if (!(await memberOf(id, organizationId))) return reply.status(404).send({ error: 'Not Found', message: `No member '${id}' in organization '${organizationId}'` })
+    const member = await memberOf(id, organizationId)
+    if (!member) return reply.status(404).send({ error: 'Not Found', message: `No member '${id}' in organization '${organizationId}'` })
 
     const before = await orgRolesRepository.getForMember(organizationId, id)
     const added = wanted.filter((r) => !before.includes(r))
+    const removed = before.filter((r) => !wanted.includes(r))
+    const caller = request.userContext?.email ?? ''
     let refused
     try {
-      refused = await orgRoleRefusals(request.userContext?.email ?? '', organizationId, added)
+      refused = await orgRoleRefusals(caller, organizationId, added, { email: member.email })
+      const removal = await orgRoleRemovalRefusal(caller, organizationId, removed)
+      if (removal) refused.push(removal)
     } catch (err) {
       return unavailable(reply, err)
     }

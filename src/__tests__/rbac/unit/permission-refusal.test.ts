@@ -10,6 +10,14 @@ const h = vi.hoisted(() => ({ held: [] as string[] }))
 vi.mock('../../../authz/opa.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: h.held })),
+  // The policy's verdict on the group definition below (rbac.delegation.define_group_verdict).
+  grantVerdict: vi.fn(async () => ({
+    allow: false,
+    reasons: ['missing_every_org_permissions', 'missing_permissions'],
+    missing: { jinbe: ['users:disable', 'users:reset_second_factor'] },
+    missingEveryOrg: { jinbe: ['org.audit:read', 'org.keys:read', 'org.members:read'] },
+    grantedBy: ['staff-security', 'super_admins'],
+  })),
 }))
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => null) } }))
 vi.mock('../../../audit/deny.js', () => ({ denyAudit: vi.fn() }))

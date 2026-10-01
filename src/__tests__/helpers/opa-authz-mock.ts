@@ -19,7 +19,19 @@ export const opaWorld = {
   orgPermissions: {} as Record<string, Record<string, string[]>>,
   /** Verdict for rbac.decision; default: holds anything in the org named by the path. */
   decide: null as null | ((q: { email: string; method: string; path: string }) => boolean),
+  /** The policy's grant verdict (rbac.delegation.*_verdict); default: allowed. */
+  verdict: null as null | ((q: GrantQ) => Partial<Verdict> | null),
+  /** actor → org → assignable org roles (rbac.delegation.assignable_roles). */
+  assignable: {} as Record<string, Record<string, string[]>>,
   down: false,
+}
+
+type GrantQ = { kind: string; actor: string; [k: string]: unknown }
+type Verdict = { allow: boolean; reasons: string[]; missing: Record<string, string[]>; missingEveryOrg: Record<string, string[]>; grantedBy: string[] }
+
+/** A refused verdict, as the policy answers one. */
+export function refused(over: Partial<Verdict> = {}): Verdict {
+  return { allow: false, reasons: ['missing_permissions'], missing: {}, missingEveryOrg: {}, grantedBy: ['super_admins'], ...over }
 }
 
 export function resetOpaWorld(): void {
@@ -29,6 +41,8 @@ export function resetOpaWorld(): void {
   opaWorld.members = {}
   opaWorld.orgPermissions = {}
   opaWorld.decide = null
+  opaWorld.verdict = null
+  opaWorld.assignable = {}
   opaWorld.down = false
 }
 
@@ -62,6 +76,12 @@ export function opaAuthzMock() {
     manageableOrgs: vi.fn(async (email: string) => { up(); return opaWorld.manageable[email] ?? [] }),
     memberOrgs: vi.fn(async (email: string) => { up(); return opaWorld.members[email] ?? [] }),
     orgPermissionsByOrg: vi.fn(async (email: string) => { up(); return { ...(opaWorld.orgPermissions[email] ?? {}) } }),
+    grantVerdict: vi.fn(async (q: GrantQ): Promise<Verdict> => {
+      up()
+      const v = opaWorld.verdict?.(q)
+      return v ? { allow: false, reasons: [], missing: {}, missingEveryOrg: {}, grantedBy: [], ...v } : { allow: true, reasons: [], missing: {}, missingEveryOrg: {}, grantedBy: [] }
+    }),
+    assignableRoles: vi.fn(async (email: string, org: string) => { up(); return [...(opaWorld.assignable[email]?.[org] ?? [])] }),
     holds,
     holdsInJinbe: vi.fn(async (email: string, required: string) => holds((await rights(email)).permissions, required)),
     clearAuthzCache: vi.fn(),

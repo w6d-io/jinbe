@@ -1,137 +1,137 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// The holding rule: nobody grants what they do not hold — a group definition, a widened role, a group
-// assignment, an import — app by app, what a group carries into every org included. A super admin
-// passes by holding everything, never by a flag. What code defines is never changed through the API.
+// The holding rule has one copy, the policy's rbac.delegation verdicts: jinbe asks it for every grant
+// and renders the answer. What the rule decides is proven against the policy in opal-policies
+// (contract_test.rego over policy-contract.json); here, what jinbe asks and what it does with a verdict.
+// What code defines is never changed through the API (409), and nothing fails open.
 
 const store = vi.hoisted(() => ({
   groups: {} as Record<string, Record<string, string[]>>,
   roles: {} as Record<string, Record<string, string[]>>,
-  everyOrg: {} as Record<string, Record<string, string[]>>,
 }))
 
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
+vi.mock('../../../services/redis-client.service.js', () => ({ redisClientService: { isConnected: true } }))
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getGroups: vi.fn(async () => store.groups),
     getRoles: vi.fn(async (service: string) => store.roles[service] ?? null),
-    getEveryOrg: vi.fn(async (service: string) => store.everyOrg[service] ?? null),
   },
 }))
 
-import { assertBundleWithinOwn, assertMayAssignGroup, assertNoSelfEscalation } from '../../../services/rbac-escalation-guard.js'
-import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
+import { assertBundleWithinOwn, assertMayAssignGroup, assertMayRemoveFromGroups, assertNoSelfEscalation, verdictRefusal } from '../../../services/rbac-escalation-guard.js'
+import { opaWorld, refused, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
-import { everyOrgDefinitions, roleDefinitions, staffGroups } from '../../../policy/roles.js'
+import { grantVerdict } from '../../../authz/opa.js'
+import { staffGroups } from '../../../policy/roles.js'
 
 const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
-const ROOT = { id: 'id-root', email: 'root@example.com' }
 
-const status = async (p: Promise<unknown>) => {
-  try { await p; return 200 } catch (e) { return (e as { statusCode?: number }).statusCode ?? 500 }
-}
-const refusal = async (p: Promise<unknown>) => {
-  try { await p; return null } catch (e) { return e as { statusCode?: number; code?: string; refusal?: Record<string, unknown> } }
-}
+type Refusal = { statusCode?: number; code?: string; message?: string; refusal?: Record<string, unknown> }
+const refusal = async (p: Promise<unknown>): Promise<Refusal | null> => p.then(() => null, (e) => e as Refusal)
 
 beforeEach(() => {
   vi.clearAllMocks()
   resetOpaWorld()
-  store.groups = {
-    ...staffGroups(),
-    ops: { billing: ['admin'] },
-    billing: { billing: ['viewer'] },
-  }
-  store.roles = {
-    jinbe: roleDefinitions(),
-    billing: { admin: ['invoices:read', 'invoices:write'], viewer: ['invoices:read'] },
-  }
-  store.everyOrg = { jinbe: everyOrgDefinitions() }
-  opaWorld.groups['admin@example.com'] = ['ops']
-  opaWorld.groups['root@example.com'] = ['super_admins']
+  store.groups = { ...staffGroups(), billing: { billing: ['viewer'] } }
+  store.roles = { billing: { admin: ['invoices:read', 'invoices:write'], viewer: ['invoices:read'] } }
+  opaWorld.groups[ADMIN.email] = ['billing']
+  opaWorld.permissions[ADMIN.email] = ['invoices:read']
 })
 
-describe('group definitions', () => {
-  it('allows a group that grants nothing beyond what the actor holds', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'readers', after: { billing: ['viewer'] } }, ADMIN))).toBe(200)
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: null }, ADMIN))).toBe(200)
+describe('what jinbe asks the policy', () => {
+  it('a group definition: define_group with the group as it will be', async () => {
+    await assertNoSelfEscalation({ kind: 'group', name: 'readers', after: { billing: ['viewer'] } }, ADMIN)
+    expect(grantVerdict).toHaveBeenCalledWith({ kind: 'define_group', actor: ADMIN.email, definition: { billing: ['viewer'] } })
   })
 
-  it('refuses one granting what the actor does not hold, in that app (grant_exceeds_own), saying what', async () => {
-    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'new', after: { jinbe: ['viewer'] } }, ADMIN))
+  it('handing out a group: add_to_group; taking groups away: remove_from_group, once', async () => {
+    await assertMayAssignGroup('staff-viewers', ADMIN)
+    await assertMayRemoveFromGroups(['billing', 'staff-viewers'], ADMIN)
+    await assertMayRemoveFromGroups([], ADMIN)
+    expect(vi.mocked(grantVerdict).mock.calls.map(([q]) => q)).toEqual([
+      { kind: 'add_to_group', actor: ADMIN.email, group: 'staff-viewers' },
+      { kind: 'remove_from_group', actor: ADMIN.email },
+    ])
+  })
+
+  it('deleting a group takes power away: nothing beyond the route is asked', async () => {
+    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'billing', after: null }, ADMIN))).toBeNull()
+    expect(grantVerdict).not.toHaveBeenCalled()
+  })
+})
+
+describe('a refused verdict', () => {
+  it('answers 403 grant_exceeds_own with what is missing, the every-org part named, who covers it, audited', async () => {
+    opaWorld.verdict = () => refused({
+      reasons: ['missing_every_org_permissions', 'missing_permissions'],
+      missing: { jinbe: ['users:reset_second_factor'] },
+      missingEveryOrg: { jinbe: ['org.members:write'] },
+      grantedBy: ['staff-security', 'super_admins'],
+    })
+    const e = await refusal(assertMayAssignGroup('staff-security', ADMIN))
     expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
-    expect(e!.refusal).toMatchObject({ missingByScope: { jinbe: expect.arrayContaining(['sites:read']) } })
+    expect(e!.refusal).toMatchObject({
+      missing: ['users:reset_second_factor', 'every organisation: org.members:write'],
+      missingByScope: { jinbe: ['users:reset_second_factor'], 'every_org:jinbe': ['org.members:write'] },
+      reasons: ['missing_every_org_permissions', 'missing_permissions'],
+      grantedBy: ['staff-security', 'super_admins'],
+      hint: 'Ask an administrator to add you to one of: staff-security, super_admins.',
+    })
+    expect(e!.message).toContain('every organisation: org.members:write')
     expect(auditEventService.emit).toHaveBeenCalledWith(expect.objectContaining({ result: 'denied', reason: 'grant_exceeds_own' }))
   })
 
-  it('counts what a group carries into every org: holding the platform part is not enough', async () => {
-    // A grant-holder holding everything security holds on platform, but no every-org reach.
-    store.roles.jinbe = { ...store.roles.jinbe, lead: [...roleDefinitions().security, 'groups:write'] }
-    store.groups.leads = { jinbe: ['lead'] }
-    opaWorld.groups['lead@example.com'] = ['leads']
-    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, { id: 'id-lead', email: 'lead@example.com' }))
-    expect(e).toMatchObject({ code: 'grant_exceeds_own' })
-    expect(e!.refusal).toMatchObject({ missingByScope: { 'every_org:jinbe': ['org.audit:read', 'org.keys:read', 'org.members:read'] } })
+  it('names the one permission missing as `permission`', () => {
+    expect(verdictRefusal(refused({ missing: { jinbe: ['groups:write'] } }))).toMatchObject({ permission: 'groups:write', missing: ['groups:write'] })
   })
 
-  it('a super admin passes by holding everything', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, ROOT))).toBe(200)
-  })
-
-  it('a super admin missing ONE permission is refused like anybody else', async () => {
-    store.roles.jinbe = { ...store.roles.jinbe, super_admin: roleDefinitions().super_admin.filter((p) => p !== 'recert:delete') }
-    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'incident', after: { jinbe: ['security'] } }, ROOT))
-    expect(e).toMatchObject({ code: 'grant_exceeds_own' })
-    expect(e!.refusal).toMatchObject({ missing: ['recert:delete'] })
-  })
-
-  it('the staff groups and super_admins are defined in code: 409 for everybody', async () => {
-    for (const g of ['super_admins', 'staff-viewers']) {
-      expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: g, after: { jinbe: ['viewer'] } }, ROOT))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
-      expect(await status(assertNoSelfEscalation({ kind: 'group', name: g, after: null }, ROOT))).toBe(409)
-    }
+  it('a refusal with nothing missing still refuses and says why', async () => {
+    opaWorld.verdict = () => refused({ reasons: ['invalid_definition'], grantedBy: [] })
+    const e = await refusal(assertNoSelfEscalation({ kind: 'group', name: 'odd', after: { billing: ['viewer'] } }, ADMIN))
+    expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+    expect(e!.message).toContain('invalid_definition')
   })
 })
 
-describe('roles and route maps', () => {
-  it('widening a role some group binds needs what it adds', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'invoices:write'] } }, ADMIN))).toBe(200)
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))).toBe(403)
+describe('defined in code', () => {
+  it('the staff groups and super_admins: 409 for everybody, before the policy is asked', async () => {
+    for (const g of ['super_admins', 'staff-viewers']) {
+      expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: g, after: { jinbe: ['viewer'] } }, ADMIN))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
+      expect(await refusal(assertBundleWithinOwn([{ name: g, after: {} }], ADMIN))).toMatchObject({ statusCode: 409 })
+    }
+    expect(grantVerdict).not.toHaveBeenCalled()
+  })
+})
+
+describe('what the policy cannot see yet: a widened role, an imported bundle', () => {
+  it('widening a role some group binds needs what it adds, as OPA resolves the actor', async () => {
+    expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'] } }, ADMIN))).toBeNull()
+    const e = await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))
+    expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own', refusal: { missing: ['payments:write'] } })
+    // A role no group binds grants nobody anything yet.
+    expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { fresh: ['payments:write'] } }, ADMIN))).toBeNull()
   })
 
-  it('a role no group binds grants nobody anything yet', async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { fresh: ['payments:write'] } }, ADMIN))).toBe(200)
+  it('an imported group changing what it grants clears the same subset test', async () => {
+    expect(await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN))).toBeNull()
+    expect((await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['payments:write'] } }], ADMIN)))?.statusCode).toBe(403)
   })
 
   it("the routes of a service the actor holds a role in are not theirs to change", async () => {
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN))).toBe(403)
-    expect(await status(assertNoSelfEscalation({ kind: 'routes', service: 'shop' }, ADMIN))).toBe(200)
+    expect((await refusal(assertNoSelfEscalation({ kind: 'routes', service: 'billing' }, ADMIN)))?.statusCode).toBe(403)
+    expect(await refusal(assertNoSelfEscalation({ kind: 'routes', service: 'shop' }, ADMIN))).toBeNull()
   })
 })
 
-describe('group assignment', () => {
-  it('needs everything the group confers, for anybody', async () => {
-    expect(await status(assertMayAssignGroup('billing', ADMIN))).toBe(200)
-    expect(await status(assertMayAssignGroup('staff-viewers', ADMIN))).toBe(403)
-    expect(await status(assertMayAssignGroup('super_admins', ROOT))).toBe(200)
-  })
-
-  it('a group nothing defines is left to the caller (it confers nothing)', async () => {
-    expect(await status(assertMayAssignGroup('ghost', ADMIN))).toBe(200)
-  })
-
-  it('401 without an identity, 503 when OPA cannot tell', async () => {
-    expect(await status(assertMayAssignGroup('billing', { id: null, email: null } as never))).toBe(401)
+describe('fails closed', () => {
+  it('401 without an identity; 503 when OPA cannot tell — never an allow', async () => {
+    expect((await refusal(assertMayAssignGroup('billing', { id: null, email: null } as never)))?.statusCode).toBe(401)
     opaWorld.down = true
-    expect(await status(assertMayAssignGroup('billing', ADMIN))).toBe(503)
-  })
-})
-
-describe('bundle imports', () => {
-  it('a changed group clears the same rule; a staff group is never imported over', async () => {
-    expect(await status(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN))).toBe(200)
-    expect(await status(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['payments:write'] } }], ADMIN))).toBe(403)
-    expect(await status(assertBundleWithinOwn([{ name: 'super_admins', after: {} }], ROOT))).toBe(409)
+    expect((await refusal(assertMayAssignGroup('billing', ADMIN)))?.statusCode).toBe(503)
+    expect((await refusal(assertMayRemoveFromGroups(['billing'], ADMIN)))?.statusCode).toBe(503)
+    expect((await refusal(assertNoSelfEscalation({ kind: 'group', name: 'x', after: { billing: ['viewer'] } }, ADMIN)))?.statusCode).toBe(503)
+    expect((await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN)))?.statusCode).toBe(503)
   })
 })

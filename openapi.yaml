@@ -819,6 +819,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -980,6 +987,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1041,6 +1055,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1138,6 +1159,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1199,6 +1227,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1300,6 +1335,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1529,6 +1571,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1628,6 +1677,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1736,6 +1792,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -1951,6 +2014,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2185,6 +2255,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2293,6 +2370,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2441,6 +2525,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2625,6 +2716,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2835,6 +2933,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -2928,6 +3033,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3022,6 +3134,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3140,6 +3259,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3252,6 +3378,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3383,6 +3516,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3483,6 +3623,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3575,6 +3722,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3667,6 +3821,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3806,6 +3967,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -3926,6 +4094,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4021,6 +4196,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4433,6 +4615,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4530,6 +4719,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4667,6 +4863,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4815,6 +5018,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -4937,6 +5147,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -5138,6 +5355,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -9129,6 +9353,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -9549,6 +9780,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -9824,6 +10062,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -9920,6 +10165,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10042,6 +10294,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10163,6 +10422,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10298,6 +10564,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10401,6 +10674,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10497,6 +10777,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10591,6 +10878,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10696,6 +10990,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10788,6 +11089,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -10906,6 +11214,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -11007,6 +11322,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -11155,6 +11477,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -11458,6 +11787,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14049,6 +14385,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14090,6 +14433,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14131,6 +14481,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14172,6 +14529,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14316,6 +14680,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14357,6 +14728,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14461,6 +14839,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -14502,6 +14887,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15079,6 +15471,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15279,6 +15678,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15289,6 +15695,41 @@ paths:
                       requiredAal:
                         type: string
                         example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:
+                          type: string
+                        reason:
+                          type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/organizations/{organizationId}/users/{id}:
     get:
       tags:
@@ -15463,6 +15904,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15675,6 +16123,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15778,6 +16233,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -15986,6 +16448,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16187,6 +16656,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16315,6 +16791,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16423,6 +16906,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16538,6 +17028,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16663,6 +17160,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16800,6 +17304,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -16901,6 +17412,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17016,6 +17534,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17145,6 +17670,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17183,10 +17715,12 @@ paths:
     put:
       tags:
         - organization-users
-      description: "Replace one member's org roles in this organization. Every role
-        being ADDED must pass the holding rule: the caller holds
-        org.members:write here and every permission of the role here. Removing a
-        role needs nothing more."
+      description: "Replace one member's org roles in this organization. Decided by
+        the policy (rbac.delegation): every role ADDED must pass the holding
+        rule (the caller holds org.members:write here and every permission of
+        the role here); a removal needs org.members:write here. A refusal lists
+        each role with its reasons, what is missing and which org roles cover
+        it."
       requestBody:
         required: true
         content:
@@ -17292,6 +17826,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17311,7 +17852,15 @@ paths:
                           type: string
                         reason:
                           type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
                         missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
                           type: array
                           items:
                             type: string
@@ -17444,6 +17993,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17592,6 +18148,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17633,6 +18196,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17674,6 +18244,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17715,6 +18292,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17781,6 +18365,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17822,6 +18413,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17863,6 +18461,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
@@ -17904,6 +18509,13 @@ paths:
                     example:
                       - staff-security
                       - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
                   hint:
                     type: string
                     example: "Ask an administrator to add you to one of: staff-security,
