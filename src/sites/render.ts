@@ -76,7 +76,11 @@ export interface SiteCr {
 export interface Rendered {
   routeMap: RouteRule[]
   roles: FlatRolesMap
-  groups: { platform: Record<string, GroupDefinition>; orgGrantable: Record<string, GroupDefinition> }
+  groups: { platform: Record<string, GroupDefinition> }
+  /** The site's org roles (rbac:org_roles:<site>): `groups.orgGrantable` `<site>-x` → role `x`, its permissions. */
+  orgRoles: FlatRolesMap
+  /** What a site role carries into every org entitled to the site (rbac:every_org:<site>). */
+  everyOrg: FlatRolesMap
   orgServiceMap: Record<string, string[]>
   siteCr: SiteCr
   /** The same gates as full Oathkeeper rules — what gatekit compiles and probes. */
@@ -154,8 +158,35 @@ export function stableStringify(value: unknown): string {
 
 export const sha256 = (value: unknown) => createHash('sha256').update(stableStringify(value)).digest('hex')
 
-export function expandRoles(site: Pick<Site, 'name' | 'roles'>): FlatRolesMap {
-  const d = defaultServiceRoles(site.name)
+/** The permissions the site's routes ask for (the catch-all included): what `admin` covers. */
+export function declaredPermissions(site: Pick<Site, 'routes'>): string[] {
+  const out = new Set<string>()
+  for (const r of site.routes.items) if (r.access.kind === 'permission') out.add(r.access.permission)
+  if (site.routes.catchAll.access.kind === 'permission') out.add(site.routes.catchAll.access.permission)
+  return [...out].sort()
+}
+
+/** A wildcard name (`*`, `resource:*`): never a permission — matching is exact. */
+export const isWildcard = (p: string) => p === '*' || p.endsWith(':*')
+
+/**
+ * What a wildcard in a STORED intent stood for, made explicit (the in-place move, authz-v2-design
+ * §3.1): `*` → every declared permission, `resource:*` → the declared ones of that resource. Used only
+ * where an already-applied version is rendered again (republish, drift); a new preview or publish
+ * with a wildcard is refused instead, with a hint naming these same permissions.
+ */
+export function explicitWildcards<T extends Pick<Site, 'routes' | 'roles'> & { everyOrg?: Site['everyOrg'] }>(site: T): T {
+  if (typeof site.roles === 'string') return site
+  const declared = declaredPermissions(site)
+  const expand = (perms: string[]) => (!perms.some(isWildcard) ? perms
+    : [...new Set(perms.flatMap((p) => (p === '*' ? declared : p.endsWith(':*') ? declared.filter((d) => d.startsWith(p.slice(0, -1))) : [p])))].sort())
+  const roles = Object.fromEntries(Object.entries(site.roles).map(([r, perms]) => [r, expand(perms)]))
+  const everyOrg = site.everyOrg ? Object.fromEntries(Object.entries(site.everyOrg).map(([r, perms]) => [r, expand(perms)])) : undefined
+  return { ...site, roles, ...(everyOrg ? { everyOrg } : {}) }
+}
+
+export function expandRoles(site: Pick<Site, 'name' | 'roles' | 'routes'>): FlatRolesMap {
+  const d = defaultServiceRoles(site.name, declaredPermissions(site))
   if (site.roles === 'standard') return { admin: d.admin, editor: d.editor, viewer: d.viewer }
   if (site.roles === 'readonly') return { viewer: d.viewer }
   if (site.roles === 'operator') return d
@@ -163,16 +194,17 @@ export function expandRoles(site: Pick<Site, 'name' | 'roles'>): FlatRolesMap {
 }
 
 /**
- * Why a group could not be handed out by an org admin (opal-policies `can_grant`): it must span only
- * this site, carry at least one permission and never `*`. Null when it can.
+ * Why an org-grantable entry cannot become an org role of the site (`<site>-x` → org role `x`, held
+ * per organisation and handed out under the holding rule): it must be named for this site, map to
+ * known roles and carry at least one permission. Null when it can.
  */
 export function orgGrantableProblem(site: string, group: string, roles: readonly string[], rolesMap: FlatRolesMap): string | null {
-  if (!group.startsWith(`${site}-`)) return `org-grantable group '${group}' must be named ${site}-…`
+  if (!group.startsWith(`${site}-`)) return `org role '${group}' must be named ${site}-…`
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(group.slice(site.length + 1))) return `org role '${group}': after ${site}- use lowercase letters, digits, - and _`
   const unknown = roles.filter((r) => !rolesMap[r])
-  if (unknown.length > 0) return `org-grantable group '${group}' maps to unknown role(s) ${unknown.join(', ')}`
+  if (unknown.length > 0) return `org role '${group}' maps to unknown role(s) ${unknown.join(', ')}`
   const perms = roles.flatMap((r) => rolesMap[r])
-  if (perms.includes('*')) return `org-grantable group '${group}' carries an "everything" role, which org admins may not hand out`
-  if (perms.length === 0) return `org-grantable group '${group}' grants no permission`
+  if (perms.length === 0) return `org role '${group}' grants no permission`
   return null
 }
 
@@ -273,19 +305,50 @@ export function render(site: Site, platform: Platform): Rendered {
   }
 
   // ── roles and groups ────────────────────────────────────────
-  const roles = expandRoles(site)
+  // No wildcard anywhere: a role, an every-org entry or a route holds or asks exact names only.
+  const declared = declaredPermissions(site)
+  const wildHint = `list the permissions instead; this site's routes declare: ${declared.join(', ') || '(none yet — give the routes permissions first)'}`
+  if (typeof site.roles !== 'string') {
+    for (const [role, perms] of Object.entries(site.roles)) {
+      const wild = perms.filter(isWildcard)
+      if (wild.length) fail('wildcard_permission', `role '${role}' lists ${wild.join(', ')}: a wildcard grants nothing — ${wildHint}`, `roles.${role}`)
+    }
+  }
+  for (const [role, perms] of Object.entries(site.everyOrg ?? {})) {
+    const wild = perms.filter(isWildcard)
+    if (wild.length) fail('wildcard_permission', `everyOrg '${role}' lists ${wild.join(', ')}: a wildcard grants nothing — ${wildHint}`, `everyOrg.${role}`)
+  }
+  site.routes.items.forEach((r, i) => {
+    if (r.access.kind === 'permission' && isWildcard(r.access.permission)) {
+      fail('wildcard_permission', `${r.path} asks ${r.access.permission}: name the one permission it needs (resource:verb)`, `routes.items.${i}.access`)
+    }
+  })
+  if (site.routes.catchAll.access.kind === 'permission' && isWildcard(site.routes.catchAll.access.permission)) {
+    fail('wildcard_permission', `the catch-all asks ${site.routes.catchAll.access.permission}: name the one permission it needs (resource:verb)`, 'routes.catchAll.access')
+  }
+  const roles = Object.fromEntries(Object.entries(expandRoles(site)).map(([r, perms]) => [r, perms.filter((p) => !isWildcard(p))]))
   const platformGroups: Record<string, GroupDefinition> = {}
   for (const [group, groupRoles] of Object.entries(site.groups.platform)) {
     const unknown = groupRoles.filter((r) => !roles[r])
     if (unknown.length > 0) fail('unknown_role', `group '${group}' maps to unknown role(s) ${unknown.join(', ')}`, `groups.platform.${group}`)
     platformGroups[group] = { [name]: groupRoles }
   }
-  const orgGrantable: Record<string, GroupDefinition> = {}
+  // Org-grantable entries are the site's org roles: `<site>-x` → org role `x` (assigned as `<site>:x`
+  // in one organisation), carrying the permissions of the site roles it names.
+  const orgRoles: FlatRolesMap = {}
   for (const [group, def] of Object.entries(site.groups.orgGrantable)) {
     const problem = orgGrantableProblem(name, group, def.roles, roles)
     if (problem) fail(problem.includes('unknown role') ? 'unknown_role' : 'org_grantable', problem, `groups.orgGrantable.${group}`)
-    if (site.groups.platform[group]) fail('org_grantable', `'${group}' cannot be both a platform and an org-grantable group`, `groups.orgGrantable.${group}`)
-    orgGrantable[group] = { [name]: def.roles }
+    if (site.groups.platform[group]) fail('org_grantable', `'${group}' cannot be both a platform group and an org role`, `groups.orgGrantable.${group}`)
+    orgRoles[group.slice(name.length + 1)] = [...new Set(def.roles.flatMap((r) => roles[r] ?? []))].sort()
+  }
+  // What a site role carries into every org entitled to the site: never more than the role holds.
+  const everyOrg: FlatRolesMap = {}
+  for (const [role, perms] of Object.entries(site.everyOrg ?? {})) {
+    if (!roles[role]) { fail('unknown_role', `everyOrg names unknown role '${role}'`, `everyOrg.${role}`); continue }
+    const beyond = perms.filter((p) => !isWildcard(p) && !roles[role].includes(p))
+    if (beyond.length) fail('every_org_beyond_role', `everyOrg '${role}' carries ${beyond.join(', ')}, which role '${role}' does not hold`, `everyOrg.${role}`)
+    everyOrg[role] = [...new Set(perms.filter((p) => !isWildcard(p)))].sort()
   }
   const orgServiceMap = Object.fromEntries(site.orgs.map((org) => [org, [name]]))
 
@@ -434,5 +497,5 @@ export function render(site: Site, platform: Platform): Rendered {
     spec,
   }
 
-  return { routeMap, roles, groups: { platform: platformGroups, orgGrantable }, orgServiceMap, siteCr, rules, checks }
+  return { routeMap, roles, groups: { platform: platformGroups }, orgRoles, everyOrg, orgServiceMap, siteCr, rules, checks }
 }

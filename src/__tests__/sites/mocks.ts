@@ -51,6 +51,8 @@ export function makeRbacStore() {
     groupMeta: {} as Record<string, unknown>,
     serviceMeta: {} as Record<string, unknown>,
     orgMap: {} as Record<string, string[]>,
+    orgRoles: {} as Record<string, Record<string, string[]>>,
+    everyOrg: {} as Record<string, Record<string, string[]>>,
     accessRules: [] as OathkeeperRule[],
     log: [] as string[],
   }
@@ -80,6 +82,12 @@ export function makeRbacStore() {
       if (sites.length === 0) delete s.orgMap[o]
       else s.orgMap[o] = sites
     },
+    getOrgRoles: async (n: string) => s.orgRoles[n] ?? null,
+    setOrgRoles: async (n: string, r: Record<string, string[]>) => { s.log.push(`setOrgRoles:${n}`); s.orgRoles[n] = r },
+    deleteOrgRoles: async (n: string) => { delete s.orgRoles[n] },
+    getEveryOrg: async (n: string) => s.everyOrg[n] ?? null,
+    setEveryOrg: async (n: string, r: Record<string, string[]>) => { s.log.push(`setEveryOrg:${n}`); s.everyOrg[n] = r },
+    deleteEveryOrg: async (n: string) => { delete s.everyOrg[n] },
     getAccessRules: async () => s.accessRules,
     setAccessRules: async (rules: OathkeeperRule[]) => { s.log.push('setAccessRules'); s.accessRules = rules },
   }
@@ -91,6 +99,8 @@ export function makeRbacStore() {
     s.groupMeta = {}
     s.serviceMeta = {}
     s.orgMap = {}
+    s.orgRoles = {}
+    s.everyOrg = {}
     s.accessRules = []
     s.log = []
   }

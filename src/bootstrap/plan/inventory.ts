@@ -27,6 +27,18 @@ export interface IdentityInventory {
   organizationRoles: Record<string, string[]>
 }
 
+/** One applied site's definitions, as its intent renders them. */
+export interface SiteModel {
+  roles: Record<string, string[]>
+  routeMap: RouteRule[]
+  /** platform group → this site's roles in it. */
+  groups: Record<string, string[]>
+  orgRoles: Record<string, string[]>
+  everyOrg: Record<string, string[]>
+  /** The orgs the intent entitles. */
+  orgs: string[]
+}
+
 export interface Inventory {
   services: string[]
   /** svc → role → permissions (`global` included when an earlier release wrote it). */
@@ -51,6 +63,13 @@ export interface Inventory {
   orgAssignments: OrgAssignments
   /** The applied sites (their permissions are republished from their intents). */
   sites: string[]
+  /**
+   * What each applied site's applied version renders to — exactly what the reseed writes (wildcards
+   * made explicit, org-grantable entries as org roles). Sites that could not be rendered are in
+   * `siteFailures`, and the apply leaves them unpublished.
+   */
+  siteModels: Record<string, SiteModel>
+  siteFailures: Array<{ site: string; error: string }>
   /** Custom (non built-in) Oathkeeper rule ids in rbac:oathkeeper:rules. */
   oathkeeperRuleIds: string[]
   /** The bootstrap marker, as stored (schema, gitSha). */

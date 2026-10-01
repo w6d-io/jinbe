@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { render, orgGrantableProblem, platformPayload } from '../../sites/render.js'
+import { explicitWildcards, isWildcard, render, orgGrantableProblem, platformPayload } from '../../sites/render.js'
 import { siteSchema } from '../../sites/schemas.js'
 import { routeSpecificity } from '../../policy/route-ties.js'
 import { ACME, oathkeeperRegex, payrollSite, platform } from './fixtures.js'
@@ -188,19 +188,36 @@ describe('render — roles and groups', () => {
     expect(render(payrollSite(), platform).groups.platform).toEqual({ admins: { payroll: ['admin'] } })
   })
 
-  it('org-grantable groups span only this site and never carry "*"', () => {
-    const { groups, roles } = render(payrollSite(), platform)
-    expect(groups.orgGrantable).toEqual({ 'payroll-editors': { payroll: ['editor'] } })
-    for (const [name, def] of Object.entries(groups.orgGrantable)) {
-      expect(Object.keys(def)).toEqual(['payroll'])
-      expect(orgGrantableProblem('payroll', name, def.payroll, roles)).toBeNull()
-    }
+  it('an org-grantable entry is an org role of the site: <site>-x → x, the permissions of its roles', () => {
+    const { groups, orgRoles } = render(payrollSite(), platform)
+    expect(orgRoles).toEqual({ editors: ['payslips:create', 'payslips:read'] })
+    expect(groups).toEqual({ platform: { admins: { payroll: ['admin'] } } })
   })
 
-  it('refuses an org-grantable group holding an "everything" role', () => {
-    const site = payrollSite()
-    site.groups.orgGrantable['payroll-admins'] = { label: 'x', roles: ['admin'] }
-    expect(errors(render(site, platform))).toContain('org_grantable')
+  it('presets are explicit: admin holds every permission the routes declare, never *', () => {
+    const { roles } = render(payrollSite({ roles: 'standard' }), platform)
+    expect(roles.admin).toEqual(expect.arrayContaining(['payslips:create', 'payslips:read', 'payroll:read']))
+    expect(Object.values(roles).flat().some(isWildcard)).toBe(false)
+  })
+
+  it('refuses a wildcard anywhere in the intent, naming what the routes declare', () => {
+    const r = render(payrollSite({ roles: { admin: ['*'], editor: ['payslips:*'], viewer: ['payslips:read'] } }), platform)
+    const wild = r.checks.filter((c) => c.code === 'wildcard_permission')
+    expect(wild.map((c) => c.path)).toEqual(['roles.admin', 'roles.editor'])
+    expect(wild[0].message).toContain('payslips:create, payslips:read')
+    expect(Object.values(r.roles).flat()).not.toContain('*')
+  })
+
+  it('a stored intent with * is made explicit when an applied version is rendered again', () => {
+    const site = explicitWildcards(payrollSite({ roles: { admin: ['*'], editor: ['payslips:*'], viewer: ['payslips:read'] } }))
+    expect(site.roles).toEqual({ admin: ['payslips:create', 'payslips:read'], editor: ['payslips:create', 'payslips:read'], viewer: ['payslips:read'] })
+    expect(errors(render(site, platform))).not.toContain('wildcard_permission')
+  })
+
+  it('everyOrg: what a site role carries into every entitled org, never beyond the role', () => {
+    expect(render(payrollSite({ everyOrg: { editor: ['payslips:read'] } }), platform).everyOrg).toEqual({ editor: ['payslips:read'] })
+    expect(errors(render(payrollSite({ everyOrg: { viewer: ['payslips:create'] } }), platform))).toContain('every_org_beyond_role')
+    expect(errors(render(payrollSite({ everyOrg: { ghost: ['payslips:read'] } }), platform))).toContain('unknown_role')
   })
 
   it('refuses an org-grantable group not named after the site, or without a permission', () => {

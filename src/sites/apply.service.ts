@@ -164,7 +164,7 @@ export async function blastRadius(name: string) {
   const record = await getRecord(name)
   const groups = await redisRbacRepository.getGroups()
   const covering = Object.entries(groups).filter(([, def]) => name in def).map(([g]) => g)
-  const orgGrantable = covering.filter((g) => record.site.groups.orgGrantable[g] || (g.startsWith(`${name}-`) && Object.keys(groups[g]).length === 1))
+  const orgRoles = Object.keys((await redisRbacRepository.getOrgRoles(name)) ?? {}).map((r) => `${name}:${r}`).sort()
   const orgMap = await redisRbacRepository.getOrgSites()
   const assignments = await orgRolesRepository.getAll()
   // Per entitled org: how many people hold one of this site's org roles there.
@@ -173,8 +173,9 @@ export async function blastRadius(name: string) {
     .map(([id]) => ({ id, grants: Object.values(assignments[id] ?? {}).filter((roles) => roles.some((r) => r.startsWith(`${name}:`))).length }))
   const routeMap = await redisRbacRepository.getRouteMap(name)
   return {
-    groups: covering.filter((g) => !orgGrantable.includes(g)),
-    orgGrantableGroups: orgGrantable,
+    groups: covering,
+    // The site's org roles ("<site>:<role>"): deleted with it, and every assignment of them stops counting.
+    orgRoles,
     orgs,
     rules: record.applied?.rules.length ?? 0,
     routes: routeMap?.rules.length ?? 0,

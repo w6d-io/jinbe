@@ -1,6 +1,6 @@
 import type { Rendered } from './render.js'
 import type { Site } from './schemas.js'
-import { stableStringify } from './render.js'
+import { declaredPermissions, expandRoles, explicitWildcards, stableStringify } from './render.js'
 
 /**
  * What a change does, for the Review screen: per-artefact before/after with changed fields, and the
@@ -67,10 +67,15 @@ export function riskOf(before: Site | null, after: Site): Risk {
   }
   for (const [id, route] of b) if (!a.has(id)) flag('route_removed', 'low', `${route.path} is removed`)
 
+  // A group holding a role that covers every permission the site's routes declare.
   const star = (s: Site | null) => {
     if (!s) return new Set<string>()
-    const roles = typeof s.roles === 'string' ? (s.roles === 'readonly' ? {} : { admin: ['*'] }) : s.roles
-    return new Set(Object.entries(s.groups.platform).filter(([, rs]) => rs.some((r) => roles[r]?.includes('*'))).map(([g]) => g))
+    const site = explicitWildcards(s)
+    const declared = declaredPermissions(site)
+    if (declared.length === 0) return new Set<string>()
+    const roles = expandRoles(site)
+    const everything = (r: string) => declared.every((p) => roles[r]?.includes(p))
+    return new Set(Object.entries(site.groups.platform).filter(([, rs]) => rs.some(everything)).map(([g]) => g))
   }
   const starBefore = star(before)
   for (const g of star(after)) if (!starBefore.has(g)) flag('grants_everything', 'high', `group ${g} gets every permission on the site`)

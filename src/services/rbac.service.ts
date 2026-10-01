@@ -926,6 +926,12 @@ export class RbacService {
       // would let somebody redefine a role they hold until then.
       throw Object.assign(new Error(`The roles of '${JINBE}' are defined in code and cannot be changed here`), { statusCode: 409, code: 'defined_in_code' })
     }
+    // Exact match only: a wildcard grants nothing, so storing one would only mislead.
+    const wild = Object.entries(roles).flatMap(([role, perms]) => perms.filter((p) => p === '*' || p.endsWith(':*')).map((p) => `${role}: ${p}`))
+    if (wild.length > 0) {
+      const declared = [...new Set(((await redisRbacRepository.getRouteMap(serviceName))?.rules ?? []).flatMap((r) => (r.permission ? [r.permission] : [])))].sort()
+      throw Object.assign(new Error(`A wildcard grants nothing (${wild.join(', ')}): list the permissions instead${declared.length ? `; ${serviceName}'s routes declare: ${declared.join(', ')}` : ''}`), { statusCode: 400, code: 'wildcard_permission' })
+    }
     await assertNoSelfEscalation({ kind: 'roles', service: serviceName, roles }, actor)
     const before = await redisRbacRepository.getRoles(serviceName)
     await redisRbacRepository.setRoles(serviceName, roles)

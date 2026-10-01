@@ -97,10 +97,6 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
   for (const group of Object.keys(rendered.groups.platform)) {
     if (!groups[group]) checks.push({ level: 'error', code: 'unknown_group', message: `platform group '${group}' does not exist`, path: `groups.platform.${group}` })
   }
-  for (const group of Object.keys(rendered.groups.orgGrantable)) {
-    const others = Object.keys(groups[group] ?? {}).filter((svc) => svc !== site.name)
-    if (others.length > 0) checks.push({ level: 'error', code: 'group_taken', message: `group '${group}' already covers ${others.join(', ')}`, path: `groups.orgGrantable.${group}` })
-  }
 
   const cfg = sitesConfig()
   const host = site.address.host

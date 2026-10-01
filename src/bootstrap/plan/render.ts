@@ -33,10 +33,16 @@ export function renderPlanMarkdown(plan: Plan): string {
     ['org roles the policy will ignore', plan.orphans.orgRoles.length],
     ['org roles the apply writes (migration)', plan.migration.orgRoles.length],
     ['roster entries', plan.orphans.roster.length],
-    ['org grants', plan.orphans.orgGrants.length],
+    ['org grants with no site org role behind them (dropped)', plan.orphans.orgGrants.length],
     ['OAuth clients with retired scopes', plan.orphans.clients.length],
     ['stale jinbe rows in Redis', plan.before.staleJinbeRows.length],
+    ['applied sites that cannot be rendered (left unpublished)', plan.before.siteFailures.length],
   ]))
+
+  if (plan.before.siteFailures.length) {
+    out.push('## Sites the apply cannot republish', '', 'Fix and publish each again before applying, or its people lose access to it.', '')
+    out.push(table(['site', 'error'], plan.before.siteFailures.map((f) => [f.site, f.error])))
+  }
 
   out.push('## Losses to approve', '',
     'What every member of a group loses after the apply — a model decision read once (D1: platform roles keep only the ' +
@@ -81,7 +87,7 @@ export function renderPlanMarkdown(plan: Plan): string {
   out.push(table(['person', 'org', 'role', 'why'], plan.orphans.orgRoles.map((m) => [m.email, m.org, m.role, m.why])))
   out.push('### Roster entries', '')
   out.push(table(['org', 'person', 'member'], plan.orphans.roster.map((m) => [m.org, m.email, m.member ? 'yes' : 'no (grants nothing today either)'])))
-  out.push('### Org grants (no v2 equivalent until the sites carry org roles, wave V4)', '')
+  out.push('### Org grants with no equivalent (the group is no site\'s org role; carried ones are in section 5)', '')
   out.push(table(['org', 'person', 'groups'], plan.orphans.orgGrants.map((m) => [m.org, m.email, m.groups.join(', ')])))
   out.push('### OAuth clients with retired scopes', '')
   out.push(table(['client', 'kind', 'owner', 'retired', 'proposed', 're-scoped to'], plan.orphans.clients.map((c) => [c.clientId, c.kind, c.owner, c.retired.join(', '), c.proposed, c.rescopedTo.join(', ')])))

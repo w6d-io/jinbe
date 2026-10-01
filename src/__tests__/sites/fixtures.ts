@@ -43,7 +43,7 @@ export function payrollSite(overrides: Partial<Site> = {}): Site {
       ],
       catchAll: { gate: 'web', access: { kind: 'signed-in' } },
     },
-    roles: { admin: ['*'], editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'] },
+    roles: { admin: ['payslips:create', 'payslips:read'], editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'] },
     groups: {
       platform: { admins: ['admin'] },
       orgGrantable: { 'payroll-editors': { label: 'Payroll editors', roles: ['editor'] } },
@@ -94,4 +94,4 @@ export function oathkeeperRegex(pattern: string): RegExp {
 }
 
 /** The confirm findings (sites/findings.ts) a person acknowledges to publish payrollSite and its variants. */
-export const ACK = ['public_route', 'public_write_route', 'public_catch_all', 'signed_in_route', 'signed_in_catch_all', 'wildcard_role', 'gate_not_preset', 'bare_bearer_token']
+export const ACK = ['public_route', 'public_write_route', 'public_catch_all', 'signed_in_route', 'signed_in_catch_all', 'gate_not_preset', 'bare_bearer_token']

@@ -5765,6 +5765,14 @@ paths:
                         type: string
                         format: uuid
                       maxItems: 500
+                    everyOrg:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                            cess/anyOf/2/properties/permission"
+                        maxItems: 200
                     login:
                       type: object
                       properties:
@@ -6504,6 +6512,14 @@ paths:
                         type: string
                         format: uuid
                       maxItems: 500
+                    everyOrg:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                            cess/anyOf/2/properties/permission"
+                        maxItems: 200
                     login:
                       type: object
                       properties:
@@ -7042,6 +7058,14 @@ paths:
                         type: string
                         format: uuid
                       maxItems: 500
+                    everyOrg:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                            cess/anyOf/2/properties/permission"
+                        maxItems: 200
                     login:
                       type: object
                       properties:
@@ -7607,6 +7631,14 @@ paths:
                         type: string
                         format: uuid
                       maxItems: 500
+                    everyOrg:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          $ref: "#/properties/site/properties/routes/properties/items/items/properties/ac\
+                            cess/anyOf/2/properties/permission"
+                        maxItems: 200
                     login:
                       type: object
                       properties:

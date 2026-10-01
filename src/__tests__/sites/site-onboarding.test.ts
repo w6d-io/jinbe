@@ -151,10 +151,9 @@ describe('the check endpoint (preview) carries the security findings', () => {
     expect(body.findings).toEqual(expect.arrayContaining([
       { code: 'public_route', level: 'confirm', message: 'GET /health is open to anyone, without signing in', fix: expect.any(String), path: 'routes.items.0' },
       expect.objectContaining({ code: 'signed_in_catch_all', level: 'confirm', path: 'routes.catchAll' }),
-      expect.objectContaining({ code: 'wildcard_role', level: 'confirm' }),
       expect.objectContaining({ code: 'waf_off', level: 'warn', message: expect.stringContaining('nginx Ingress') }),
     ]))
-    expect(body.publish).toEqual({ blocked: false, acknowledge: ['public_route', 'signed_in_catch_all', 'wildcard_role'] })
+    expect(body.publish).toEqual({ blocked: false, acknowledge: ['public_route', 'signed_in_catch_all'] })
   })
 
   it('a check apply refuses on (unknown platform group) is an error finding: blocked, and apply still 409s', async () => {
@@ -198,7 +197,7 @@ describe('publishing refuses unconfirmed findings', () => {
     const res = await apply({})
     expect(res.statusCode).toBe(422)
     expect(res.json()).toMatchObject({ error: 'unconfirmed_findings', message: expect.stringContaining('"public_route"') })
-    expect(res.json().findings.map((f: { code: string }) => f.code)).toEqual(['public_route', 'signed_in_catch_all', 'wildcard_role'])
+    expect(res.json().findings.map((f: { code: string }) => f.code)).toEqual(['public_route', 'signed_in_catch_all'])
     expect(cluster.kube.applied).toEqual([])
     expect(store.s.log).toEqual([])
   })
@@ -207,8 +206,8 @@ describe('publishing refuses unconfirmed findings', () => {
     await save()
     const partial = await apply({ acknowledge: ['public_route'] })
     expect(partial.statusCode).toBe(422)
-    expect(partial.json().findings.map((f: { code: string }) => f.code)).toEqual(['signed_in_catch_all', 'wildcard_role'])
-    const ok = await apply({ acknowledge: ['public_route', 'signed_in_catch_all', 'wildcard_role'] })
+    expect(partial.json().findings.map((f: { code: string }) => f.code)).toEqual(['signed_in_catch_all'])
+    const ok = await apply({ acknowledge: ['public_route', 'signed_in_catch_all'] })
     expect(ok.statusCode).toBe(200)
     expect(cluster.kube.applied).toHaveLength(1)
   })
@@ -239,11 +238,11 @@ describe('publishing refuses unconfirmed findings', () => {
     const bare = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1 } })
     expect(bare.statusCode).toBe(422)
     expect(bare.json().error).toBe('unconfirmed_findings')
-    const asked = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route', 'signed_in_catch_all'] } })
+    const asked = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route'] } })
     expect(asked.statusCode).toBe(422)
-    const req = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route', 'signed_in_catch_all', 'wildcard_role'] } })
+    const req = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route', 'signed_in_catch_all'] } })
     expect(req.statusCode).toBe(201)
-    expect(req.json().acknowledge).toEqual(['public_route', 'signed_in_catch_all', 'wildcard_role'])
+    expect(req.json().acknowledge).toEqual(['public_route', 'signed_in_catch_all'])
     const approved = await app.inject({ method: 'POST', url: `/sites/requests/${req.json().id}/approve`, headers: WM, payload: {} })
     expect(approved.statusCode).toBe(200)
     expect(approved.json().state).toBe('applied')
@@ -251,15 +250,15 @@ describe('publishing refuses unconfirmed findings', () => {
 
   it('approval refuses a finding that appeared since the request, unless the approver acknowledges it', async () => {
     await save()
-    const req = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route', 'signed_in_catch_all', 'wildcard_role'] } })
-    // As if wildcard_role had appeared after the request was made: the request does not cover it.
+    const req = await app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: W, payload: { version: 1, acknowledge: ['public_route', 'signed_in_catch_all'] } })
+    // As if signed_in_catch_all had appeared after the request was made: the request does not cover it.
     const redisRequests = redis.hashes.get('rbac:sites:requests')!
     const stored = JSON.parse(redisRequests.get(req.json().id)!)
-    redisRequests.set(req.json().id, JSON.stringify({ ...stored, acknowledge: ['public_route', 'signed_in_catch_all'] }))
+    redisRequests.set(req.json().id, JSON.stringify({ ...stored, acknowledge: ['public_route'] }))
     const refused = await app.inject({ method: 'POST', url: `/sites/requests/${req.json().id}/approve`, headers: WM, payload: {} })
     expect(refused.statusCode).toBe(422)
-    expect(refused.json().findings.map((f: { code: string }) => f.code)).toEqual(['wildcard_role'])
-    const approved = await app.inject({ method: 'POST', url: `/sites/requests/${req.json().id}/approve`, headers: WM, payload: { acknowledge: ['wildcard_role'] } })
+    expect(refused.json().findings.map((f: { code: string }) => f.code)).toEqual(['signed_in_catch_all'])
+    const approved = await app.inject({ method: 'POST', url: `/sites/requests/${req.json().id}/approve`, headers: WM, payload: { acknowledge: ['signed_in_catch_all'] } })
     expect(approved.statusCode).toBe(200)
   })
 

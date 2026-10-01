@@ -44,11 +44,8 @@ export interface FindingContext {
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const presetList = (Object.keys(WHO) as WhoPreset[]).map((k) => `${k} (${WHO[k].map((h) => h.handler).join(' → ')})`).join('; ')
 
-/** The permissions of a role that grant everything on the site, or everything on one resource. */
-const wildcards = (perms: readonly string[]) => perms.filter((p) => p === '*' || p.endsWith(':*'))
-
-/** Whether one permission held satisfies a required one (exact, `*`, or `resource:*`). */
-const grants = (held: string, needed: string) => held === needed || held === '*' || (held.endsWith(':*') && needed.startsWith(held.slice(0, -1)))
+/** Whether one permission held satisfies a required one: exactly itself (no wildcard exists). */
+const grants = (held: string, needed: string) => held === needed
 
 export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, ctx: FindingContext): Finding[] {
   const out: Finding[] = []
@@ -108,15 +105,9 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
   route(site.routes.catchAll.access, `every path not listed (${site.address.pathPrefix ?? ''}/*)`, true, 'routes.catchAll', true)
 
   // ── roles ───────────────────────────────────────────────────
-  for (const [role, perms] of Object.entries(roles)) {
+  for (const role of Object.keys(roles)) {
     if (!held.has(role)) {
-      add('warn', 'role_unheld', `role '${role}' is held by no group: nobody but super admins gets it`, `Give it to a group (groups.platform or groups.orgGrantable), or remove it`, 'roles')
-      continue
-    }
-    const wild = wildcards(perms)
-    if (wild.length > 0) {
-      add('confirm', 'wildcard_role', `role '${role}' grants ${wild.map((w) => (w === '*' ? 'everything on the site (*)' : w)).join(', ')}, and a group holds it`,
-        'List the permissions the role needs; acknowledge wildcard_role if this is the site administrators\' role', 'roles')
+      add('warn', 'role_unheld', `role '${role}' is held by no group or org role: nobody gets it`, `Give it to a group (groups.platform) or an org role (groups.orgGrantable), or remove it`, 'roles')
     }
   }
 
@@ -131,7 +122,7 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
   if (ctx.orgsRemoved?.length) {
     const names = ctx.orgsRemoved.map((o) => (o.name ? `${o.name} (${o.id})` : o.id))
     add('warn', 'publish_removes_orgs', `publishing removes this site from: ${names.join(', ')}`,
-      'These organizations have the site (given in Settings → Organization sites) but the site\'s Organizations do not list them: add them to the site before publishing to keep their access', 'orgs')
+      'These organizations are entitled to the site now but the site\'s Organizations do not list them: add them to the site before publishing to keep their access', 'orgs')
   }
 
   // ── edge ────────────────────────────────────────────────────
@@ -153,7 +144,6 @@ function heldRoles(site: Site, groups: Record<string, GroupDefinition>): Set<str
 /** How to fix the platform checks apply refuses on; anything else gets the generic hint. */
 const CHECK_FIX: Record<string, string> = {
   unknown_group: 'Create the group first (Access → Groups), or map the roles to an existing platform group',
-  group_taken: 'Name an org-grantable group for this site only (<site>-…); that group already covers other services',
   service_exists: 'This name is a service not managed as a site: adopt it through the migration, or pick another name',
   route_tie: 'Another service declares the same route on a shared host: change the path, or give the site its own host',
   host_reserved: 'Pick another host: this one is the platform\'s',

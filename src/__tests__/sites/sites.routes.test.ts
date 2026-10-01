@@ -378,10 +378,12 @@ describe('apply', () => {
     const res = await apply()
     expect(res.statusCode).toBe(200)
     expect(store.s.routeMaps.payroll.rules.length).toBeGreaterThan(0)
-    expect(store.s.roles.payroll).toMatchObject({ admin: ['*'] })
+    expect(store.s.roles.payroll).toMatchObject({ admin: ['payslips:create', 'payslips:read'] })
     expect(store.s.services.has('payroll')).toBe(true)
     expect(store.s.groups.admins).toEqual({ payroll: ['admin'] })
-    expect(store.s.groups['payroll-editors']).toEqual({ payroll: ['editor'] })
+    // An org-grantable entry is an org role of the site, not a platform group.
+    expect(store.s.groups['payroll-editors']).toBeUndefined()
+    expect(store.s.orgRoles.payroll).toEqual({ editors: ['payslips:create', 'payslips:read'] })
     expect(store.s.orgMap[ACME]).toEqual(['payroll'])
     const log = store.s.log
     expect(log.indexOf('invalidateBundle')).toBeGreaterThan(log.indexOf('setRouteMap:payroll'))
@@ -513,11 +515,11 @@ describe('rollback, pause, delete, blast radius', () => {
   it('blast radius names the groups, orgs, grants, rules and routes', async () => {
     await save()
     await applyV(1)
-    h.grants = { [ACME]: { 'id-bob': ['payroll:editor'], 'id-eve': ['jinbe:viewer'] } }
+    h.grants = { [ACME]: { 'id-bob': ['payroll:editors'], 'id-eve': ['jinbe:viewer'] } }
     const res = await app.inject({ method: 'GET', url: '/sites/payroll/blast-radius' })
     expect(res.json()).toMatchObject({
       groups: ['admins'],
-      orgGrantableGroups: ['payroll-editors'],
+      orgRoles: ['payroll:editors'],
       orgs: [{ id: ACME, grants: 1 }],
       rules: 3,
     })
@@ -535,6 +537,7 @@ describe('rollback, pause, delete, blast radius', () => {
     expect(store.s.services.has('payroll')).toBe(false)
     expect(store.s.groups.admins).toEqual({})
     expect(store.s.groups['payroll-editors']).toBeUndefined()
+    expect(store.s.orgRoles.payroll).toBeUndefined()
     expect(store.s.orgMap[ACME]).toBeUndefined()
     expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).statusCode).toBe(404)
     expect(redis.strings.has('rbac:sites:deleted:payroll')).toBe(true)

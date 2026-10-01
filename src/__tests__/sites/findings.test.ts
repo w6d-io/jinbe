@@ -87,7 +87,6 @@ describe('securityFindings', () => {
       ['public_write_route', 'routes.items.3'],
       ['signed_in_route', 'routes.items.4'],
       ['signed_in_catch_all', 'routes.catchAll'],
-      ['wildcard_role', 'roles'],
     ])
     const open = run(payrollSite({ routes: { ...payrollSite().routes, catchAll: { gate: 'public', access: { kind: 'public' } } } }))
     expect(codes(open)).toContain('public_catch_all')
@@ -107,9 +106,10 @@ describe('securityFindings', () => {
     expect(codes(run(site, { auditors: { payroll: ['viewer'] } }))).toEqual([])
   })
 
-  it('a held wildcard role — * or resource:* — asks for confirmation; an unheld one is only unheld', () => {
-    expect(codes(run(tidy({ roles: { editor: ['payslips:*'], viewer: ['payslips:read'] } })))).toEqual(['wildcard_role'])
-    expect(codes(run(tidy({ roles: { editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'], admin: ['*'] } })))).toEqual(['role_unheld'])
+  it('matching is exact: a role listing payslips:* does not reach payslips:read', () => {
+    const f = run(tidy({ roles: { editor: ['payslips:*'], viewer: ['payslips:create'] } }))
+    expect(codes(f)).toContain('permission_unreachable')
+    expect(codes(f)).not.toContain('wildcard_role')
   })
 
   it('an upstream that does not keep the public Host is an info finding, never blocking', () => {

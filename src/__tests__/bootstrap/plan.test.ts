@@ -53,12 +53,24 @@ function inventory(): Inventory {
     systemGroups: ['super_admins'],
     orgAdmins: { [ACME]: ['Boss@Acme.io', 'left@acme.io'] },
     orgServices: { [ACME]: ['kuma', 'payroll'] },
-    orgGrants: { [ACME]: { 'grantee@acme.io': ['viewers'] } },
+    orgGrants: { [ACME]: { 'grantee@acme.io': ['viewers', 'payroll-clerks'] } },
     orgSites: {},
     orgRoles: {},
     everyOrg: {},
     orgAssignments: {},
     sites: ['payroll'],
+    // payroll's applied intent, rendered: its editors as a platform group and as an org role.
+    siteModels: {
+      payroll: {
+        roles: { editor: ['payroll:write'], clerk: ['payroll:read'] },
+        routeMap: [{ method: 'POST', path: '/runs', permission: 'payroll:write' }, { method: 'GET', path: '/runs', permission: 'payroll:read' }],
+        groups: { 'payroll-editors': ['editor'] },
+        orgRoles: { clerks: ['payroll:read'] },
+        everyOrg: {},
+        orgs: [ACME],
+      },
+    },
+    siteFailures: [],
     oathkeeperRuleIds: ['custom-legacy'],
     marker: { schemaVersion: 7, gitSha: 'abc' },
     identities: new Map([
@@ -129,7 +141,7 @@ describe('the v2 plan over a v1 inventory', () => {
   })
 
   it('roster admins become jinbe:owner (members only), so they lose nothing in their org', () => {
-    expect(plan.migration.orgRoles).toEqual([{ org: ACME, email: 'boss@acme.io', id: 'id-6', role: 'jinbe:owner', from: 'roster' }])
+    expect(plan.migration.orgRoles).toContainEqual({ org: ACME, email: 'boss@acme.io', id: 'id-6', role: 'jinbe:owner', from: 'roster' })
     expect(person('boss@acme.io')!.losses).toEqual([])
     expect(person('boss@acme.io')!.after.org[ACME]).toContain('org.keys:write')
     expect(plan.orphans.roster).toContainEqual({ org: ACME, email: 'left@acme.io', member: false })
@@ -141,6 +153,18 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(plan.before.groups.find((g) => g.name === 'payroll-editors')).toMatchObject({ kept: true })
     expect(plan.migration.groups).toContainEqual({ before: 'kuma-admin', after: null })
     expect(plan.migration.groups).toContainEqual({ before: 'super_admins', after: 'super_admins' })
+  })
+
+  it("an org grant of a site's org-grantable group becomes that site's org role there (V4)", () => {
+    expect(plan.migration.orgRoles).toContainEqual({ org: ACME, email: 'grantee@acme.io', id: 'id-8', role: 'payroll:clerks', from: 'org_grant' })
+  })
+
+  it('the after model is what the applied intents render, not what is stored', () => {
+    const md = renderPlanMarkdown(plan)
+    expect(plan.rules.some((r) => r.service === 'payroll' && r.method === 'GET' && r.path === '/runs')).toBe(true)
+    expect(md).not.toContain('## Sites the apply cannot republish')
+    const broken = buildPlan({ ...inventory(), siteFailures: [{ site: 'wiki', error: 'applied version 3 is gone' }] }, NOW)
+    expect(renderPlanMarkdown(broken)).toContain('| wiki | applied version 3 is gone |')
   })
 
   it('org grants and retired token scopes are listed with a proposal', () => {

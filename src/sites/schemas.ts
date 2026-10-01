@@ -139,6 +139,9 @@ export const siteSchema = z
       })
       .strict(),
     orgs: z.array(z.string().uuid()).max(500),
+    // What a site role carries into every org entitled to the site (rbac:every_org:<site>): role →
+    // permissions of that role. Exact names; render refuses a wildcard and anything beyond the role.
+    everyOrg: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/), z.array(permission).max(200)).optional(),
     // Per-site login (S-4): 2FA is published to OPA as data.site_login[<site>] (routes = route ids,
     // honoured under every scope); branding is served by the public by-host lookup.
     login: z

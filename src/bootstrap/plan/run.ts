@@ -7,7 +7,7 @@ import { hydraService } from '../../services/hydra.service.js'
 import { kratosService } from '../../services/kratos.service.js'
 import { rolesByOrganisation } from '../../services/organisation-store/membership.js'
 import { allOrganisations, organisationStoreConfigured } from '../../services/organisation-store.js'
-import { sitesRepository } from '../../sites/repository.js'
+import { renderAppliedSites } from '../../sites/republish.js'
 import { rights } from '../../authz/opa.js'
 import { readMarker } from '../marker.js'
 import type { Inventory, OAuthClientFacts } from './inventory.js'
@@ -88,7 +88,16 @@ export async function readInventory(logger: Logger, builtInRuleIds: ReadonlySet<
     const m = await readMarker()
     return m ? { schemaVersion: m.schemaVersion, gitSha: m.gitSha } : null
   }, null)
-  const sites = await attempt('sites', unavailable, logger, async () => (await sitesRepository.list()).filter((r) => r.applied).map((r) => r.site.name).sort(), [] as string[])
+  const applied = await attempt('sites', unavailable, logger, () => renderAppliedSites(), { models: [], failed: [], records: [] })
+  const siteModels: Inventory['siteModels'] = Object.fromEntries(applied.models.map(({ site, rendered }) => [site.name, {
+    roles: rendered.roles,
+    routeMap: rendered.routeMap,
+    groups: Object.fromEntries(Object.entries(rendered.groups.platform).map(([g, def]) => [g, def[site.name] ?? []])),
+    orgRoles: rendered.orgRoles,
+    everyOrg: rendered.everyOrg,
+    orgs: Object.keys(rendered.orgServiceMap).sort(),
+  }]))
+  const sites = Object.keys(siteModels).sort()
   return {
     services: services.sort(),
     roles,
@@ -105,6 +114,8 @@ export async function readInventory(logger: Logger, builtInRuleIds: ReadonlySet<
     everyOrg,
     orgAssignments: await orgRolesRepository.getAll(),
     sites,
+    siteModels,
+    siteFailures: applied.failed,
     oathkeeperRuleIds: rules.map((r) => r.id).filter((id) => !builtInRuleIds.has(id)).sort(),
     marker,
     identities,

@@ -7,7 +7,7 @@ import { JINBE, everyOrgDefinitions, isStaffGroup, orgRoleDefinitions, qualified
 import { QUALIFIED_ROLE } from '../../services/org-roles.repository.js'
 import type { Inventory } from './inventory.js'
 import { beforeHoldings, holdingsIn, legacyName, renamedTo } from './v1-model.js'
-import { ORG_ROLE_RENAMES, migrationOf, type Migration } from './migration.js'
+import { ORG_ROLE_RENAMES, migrationOf, siteOrgRoleOf, type Migration } from './migration.js'
 
 /**
  * The review list (authz-v2-design §3.3): what the store holds today, what the model will decide once
@@ -55,6 +55,8 @@ export interface Plan {
     orgGrants: Record<string, Record<string, string[]>>
     customOathkeeperRules: string[]
     marker: Inventory['marker']
+    /** Applied sites whose intent could not be rendered: the apply leaves them unpublished. */
+    siteFailures: Inventory['siteFailures']
   }
   rules: RuleRow[]
   people: PersonDiff[]
@@ -131,24 +133,24 @@ function covered(name: string, set: Set<string>): boolean {
 
 /**
  * What the store holds once `--apply` has run: jinbe's code-owned model, each applied site's own
- * definitions (republished from its intent — read here as stored), and the migration map. Groups that
+ * definitions (its applied intent rendered, wildcards made explicit — what the reseed writes), and
+ * the migration map. Groups that
  * neither code nor a site defines are gone; their memberships stay on the identity (D4).
  */
 export function afterModel(inv: Inventory, migration: Migration): StoredModel & { assignments: Migration['assignments'] } {
-  const sites = new Set(inv.sites)
-  const siteOnly = <T>(m: Record<string, T>) => Object.fromEntries(Object.entries(m).filter(([svc]) => sites.has(svc)))
+  const sites = Object.entries(inv.siteModels)
+  const bySite = <T>(pick: (m: Inventory['siteModels'][string]) => T) => Object.fromEntries(sites.map(([svc, m]) => [svc, pick(m)]))
+  // The staff groups, then each site's column in the groups its intent names (what its publish writes).
   const groups: Record<string, Record<string, string[]>> = { ...staffGroups() }
-  for (const [name, def] of Object.entries(inv.groups)) {
-    if (isStaffGroup(name)) continue
-    const kept = siteOnly(def)
-    if (Object.keys(kept).length) groups[name] = kept
+  for (const [svc, m] of sites) {
+    for (const [g, roles] of Object.entries(m.groups)) if (!isStaffGroup(g)) groups[g] = { ...(groups[g] ?? {}), [svc]: roles }
   }
   return {
-    roles: { ...siteOnly(inv.roles), [JINBE]: roleDefinitions() },
+    roles: { ...bySite((m) => m.roles), [JINBE]: roleDefinitions() },
     groups,
-    orgRoles: { ...siteOnly(inv.orgRoles), [JINBE]: orgRoleDefinitions() },
-    everyOrg: { ...siteOnly(inv.everyOrg), [JINBE]: everyOrgDefinitions() },
-    routeMap: { ...Object.fromEntries(Object.entries(siteOnly(inv.routeMaps)).map(([svc, rules]) => [svc, { rules }])), [JINBE]: { rules: [...GENERATED_ROUTE_MAP] } },
+    orgRoles: { ...bySite((m) => m.orgRoles), [JINBE]: orgRoleDefinitions() },
+    everyOrg: { ...bySite((m) => m.everyOrg), [JINBE]: everyOrgDefinitions() },
+    routeMap: { ...bySite((m) => ({ rules: m.routeMap })), [JINBE]: { rules: [...GENERATED_ROUTE_MAP] } },
     orgSites: migration.orgSites,
     assignments: migration.assignments,
   }
@@ -244,8 +246,9 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
       roster.push({ org, email, member: !!id && (inv.identities.get(id)?.organizations ?? []).includes(org) })
     }
   }
+  // Org grants the migration does not carry (no site org role behind the group).
   const orgGrants = Object.entries(inv.orgGrants).flatMap(([org, byEmail]) =>
-    Object.entries(byEmail).filter(([, gs]) => gs.length).map(([email, gs]) => ({ org, email, groups: sorted(gs) })))
+    Object.entries(byEmail).map(([email, gs]) => ({ org, email, groups: sorted(gs.filter((g) => !siteOrgRoleOf(inv, g))) })).filter((g) => g.groups.length))
   const clients = (inv.clients ?? []).map((c) => {
     const retired = c.scopes.filter((s) => legacyName(s) !== null)
     const rescopedTo = sorted(c.scopes.flatMap((s) => {
@@ -263,7 +266,7 @@ export function buildPlan(inv: Inventory, now = new Date()): Plan {
     before: {
       services, jinbeRows: count, staleJinbeRows, groups,
       roster: inv.orgAdmins, orgServiceMap: inv.orgServices, orgGrants: inv.orgGrants,
-      customOathkeeperRules: inv.oathkeeperRuleIds, marker: inv.marker,
+      customOathkeeperRules: inv.oathkeeperRuleIds, marker: inv.marker, siteFailures: inv.siteFailures,
     },
     rules: rulesOf(d, emails),
     people,

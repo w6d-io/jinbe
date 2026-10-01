@@ -157,6 +157,11 @@ describe('RbacService - Services', () => {
     it('leaves another service free to use the name', async () => {
       await expect(service.updateServiceRoles('kuma', { viewer: ['read'], support: ['read'] })).resolves.toBeDefined()
     })
+
+    it('refuses a wildcard, 400 wildcard_permission, before anything is written', async () => {
+      await expect(service.updateServiceRoles('kuma', { admin: ['*'], editor: ['kuma:*'] }))
+        .rejects.toMatchObject({ statusCode: 400, code: 'wildcard_permission', message: expect.stringContaining('admin: *, editor: kuma:*') })
+    })
   })
 
   describe('updateServiceRoutes — refuse a route another service already owns at the same rank', () => {

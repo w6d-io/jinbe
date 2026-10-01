@@ -1,6 +1,6 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import type { Site } from './schemas.js'
-import { render, stableStringify, type Rendered, type SiteCr } from './render.js'
+import { explicitWildcards, render, stableStringify, type Rendered, type SiteCr } from './render.js'
 import { sitesRepository, type SiteDraft, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
 import { kubeSites, type SiteCrObject } from './kube-sites.js'
@@ -66,7 +66,8 @@ export async function expectedOf(record: SiteRecord): Promise<{ site: Site; rend
   if (!record.applied) return null
   const v = await sitesRepository.version(record.site.name, record.applied.version)
   if (!v) return null
-  const site = { ...v.site, state: record.site.state }
+  // A version applied before wildcards were refused renders with them made explicit (render.ts).
+  const site = explicitWildcards({ ...v.site, state: record.site.state })
   const rendered = render(site, await loadPlatform())
   return { site, rendered, cr: withVersion(rendered.siteCr, record.applied.version) }
 }
@@ -90,13 +91,17 @@ async function permissionItems(name: string, rendered: Rendered): Promise<DriftI
   const roles = (await redisRbacRepository.getRoles(name)) ?? {}
   if (!same(roles, rendered.roles)) items.push({ artefact: `roles/${name}`, field: '*', expected: rendered.roles, actual: roles })
   const groups = await redisRbacRepository.getGroups()
-  const wanted = { ...rendered.groups.platform, ...rendered.groups.orgGrantable }
+  const wanted = { ...rendered.groups.platform }
   for (const [g, def] of Object.entries(wanted)) {
     if (!same(groups[g]?.[name], def[name])) items.push({ artefact: `group/${g}`, field: name, expected: def[name], actual: groups[g]?.[name] ?? null })
   }
   for (const [g, def] of Object.entries(groups)) {
     if (!wanted[g] && name in def) items.push({ artefact: `group/${g}`, field: name, expected: null, actual: def[name] })
   }
+  const orgRoles = (await redisRbacRepository.getOrgRoles(name)) ?? {}
+  if (!same(orgRoles, rendered.orgRoles)) items.push({ artefact: `org_roles/${name}`, field: '*', expected: rendered.orgRoles, actual: orgRoles })
+  const everyOrg = (await redisRbacRepository.getEveryOrg(name)) ?? {}
+  if (!same(everyOrg, rendered.everyOrg)) items.push({ artefact: `every_org/${name}`, field: '*', expected: rendered.everyOrg, actual: everyOrg })
   const orgMap = await redisRbacRepository.getOrgSites()
   const liveOrgs = Object.entries(orgMap).filter(([, svcs]) => svcs.includes(name)).map(([o]) => o).sort()
   const wantedOrgs = Object.keys(rendered.orgServiceMap).sort()
