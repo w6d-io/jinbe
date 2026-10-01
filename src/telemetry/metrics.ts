@@ -146,3 +146,10 @@ export const notificationsDeadLettered = new Counter({
   help: 'Notifications moved to the dead-letter stream, by why (attempts_exhausted, rejected, expired, unreadable)',
   labelNames: ['reason'] as const,
 })
+
+// authz v2: a code-owned rbac2 key found changed by hand and rewritten (authz-v2/store.ts converge).
+export const rbacOwnedDrift = new Counter({
+  name: 'jinbe_rbac_owned_drift_total',
+  help: 'Code-owned authz v2 keys found edited outside jinbe and converged back, by key',
+  labelNames: ['key'] as const,
+})

@@ -2,6 +2,7 @@ import { queryOpa } from '../services/opa-client.js'
 import type { HeldRights } from '../services/authorization-resolution.js'
 import { grants } from '../policy/catalog.js'
 import { SwrCache } from '../cache/swr.js'
+import { isV2 } from '../authz-v2/model.js'
 
 /**
  * Every authorization question jinbe asks about its own API, answered by the engine that enforces
@@ -172,8 +173,12 @@ export function memberOrgs(email: string): Promise<string[]> {
   return ask('rbac/caller_organizations', { email }, strings)
 }
 
-/** Holder of a GLOBAL role carrying `*` — power over every org, not only within one service. */
+/**
+ * Holder of a GLOBAL role carrying `*` — power over every org, not only within one service.
+ * Nobody under authz v2: there is no `*` and no bypass; a super admin passes by holding (holding.ts).
+ */
 export function isSuperAdmin(email: string): Promise<boolean> {
+  if (isV2()) return Promise.resolve(false)
   return ask('rbac/super_admin', { email, app: JINBE_APP }, (r) =>
     typeof r === 'boolean' ? r : undefined,
   )

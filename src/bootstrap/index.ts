@@ -12,6 +12,7 @@ import { seedDelegation } from './seed-delegation.js'
 import { seedStaffRoles } from './seed-staff.js'
 import { migrateSecondFactorFlags } from '../second-factor/settings.js'
 import { seedDefaultAdmin } from './seed-admin.js'
+import { convergeJinbeV2 } from '../authz-v2/service.js'
 import {
   readMarker,
   writeMarker,
@@ -142,6 +143,8 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       // Roles are code: converge them on every boot, like the protection tags above.
       await seedStaffRoles(logger)
       await pinSecondFactorDefaults(logger)
+      // The authz v2 model beside v1 (rbac2:*), code-owned: converged on every run too.
+      await convergeJinbeV2(logger)
       return { outcome, marker: existing }
     }
 
@@ -210,6 +213,8 @@ async function runUpsertOnly(config: BootstrapConfig, logger: BootstrapLogger): 
   // Staff roles (code) and their empty staff-* groups; membership is the owner's decision per person.
   await seedStaffRoles(logger)
   await pinSecondFactorDefaults(logger)
+  // The authz v2 model beside v1 (rbac2:*): written, not active until rbac:authz_active says v2.
+  await convergeJinbeV2(logger)
 }
 
 /**

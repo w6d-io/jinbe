@@ -55,6 +55,13 @@ export async function buildOpalDatasourceEntries(): Promise<OpalDataSourceEntry[
     // route is granted to a client only in its own org and only as far as its scopes reach.
     { url: `${jinbeUrl}/api/admin/rbac/opal/api_clients`, topics: ['policy_data'], dst_path: '/api_clients' },
   ]
+  if (env.RBAC_V2_PUBLISH) {
+    // authz v2, side by side: the whole v2 model in one document, and the switch the router reads.
+    entries.push(
+      { url: `${jinbeUrl}/api/admin/rbac/opal/v2`, topics: ['policy_data'], dst_path: '/v2' },
+      { url: `${jinbeUrl}/api/admin/rbac/opal/authz`, topics: ['policy_data'], dst_path: '/authz' },
+    )
+  }
 
   // The client sends this on every data fetch.
   const config = { headers: { Authorization: `Bearer ${env.OPAL_CLIENT_TOKEN}` } }

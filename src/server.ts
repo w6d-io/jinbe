@@ -52,6 +52,7 @@ import { realtimeService } from './services/realtime.service.js'
 import { opalPublisher } from './services/opal-publisher.js'
 import { startBackupScheduler } from './services/backup-scheduler.service.js'
 import { getRedisClient } from './services/redis-client.service.js'
+import { AUTHZ_ACTIVE_KEY, startActiveModelWatch } from './authz-v2/model.js'
 import { rootLogger, componentLogger, captureProcessWarnings, fastifyLoggingOptions } from './telemetry/logger.js'
 import { startMetricsServer } from './telemetry/metrics-server.js'
 import { telemetryRoutes } from './routes/telemetry.routes.js'
@@ -251,6 +252,9 @@ async function start() {
         notificationService.register(new HttpNotifier({ url: env.JINBE_SERVICE_URL }))
         await notificationService.start()
       }
+
+      // Which authorization model this process follows (rbac:authz_active, v1 until the switch).
+      startActiveModelWatch(() => getRedisClient().get(AUTHZ_ACTIVE_KEY))
 
       // Real-time SSE fan-out — pushes a minimal change signal to connected
       // admin browsers (via Redis pub/sub, so it works across replicas).

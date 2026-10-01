@@ -6,6 +6,8 @@ import {
   exceeding, flatten, groupGrants, heldByGroups, isEmpty, isStaffGroup, loadRoles, type PermissionsByScope,
 } from './grant-subset.js'
 import { refusalDetails } from './permission-refusal.js'
+import { isV2 } from '../authz-v2/model.js'
+import { assertV2Assign, assertV2Change } from '../authz-v2/grant-guard.js'
 
 /**
  * No administrator rewrites the model in their own favour.
@@ -140,6 +142,8 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
     throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
   }
   const email = actor.email
+  // authz v2: the holding rule; code- and intent-owned objects are not edited through the API.
+  if (isV2()) return assertV2Change(change, actor)
 
   if (await askSuperAdmin(email)) return
   const groups = await askGroups(email)
@@ -206,6 +210,7 @@ export async function assertMayAssignGroup(group: string, targetEmail: string, a
   if (!actor?.id || !actor.email) {
     throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
   }
+  if (isV2()) return assertV2Assign(group, actor)
   const self = targetEmail.toLowerCase() === actor.email.toLowerCase()
   const definition = (await redisRbacRepository.getGroups())[group]
   const wildcard = definition ? await grantsEverything(definition) : false
@@ -225,6 +230,7 @@ export async function assertGrantWithinOwn(group: string, actor?: AuditActorInpu
   if (!actor?.id || !actor.email) {
     throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
   }
+  if (isV2()) return assertV2Assign(group, actor)
   if (await askSuperAdmin(actor.email)) return
   const change: RbacChange = { kind: 'group', name: group, after: null }
   if (isStaffGroup(group)) await refuseStaff(group, 'assign', change, actor)
@@ -249,6 +255,11 @@ export async function assertBundleWithinOwn(
     throw Object.assign(new Error('Authentication required for this operation'), { statusCode: 401 })
   }
   if (changed.length === 0) return
+  // authz v2: a bundle carries v1 data; the v2 model is code and intents, never imported.
+  if (isV2()) {
+    for (const { name } of changed) await assertV2Change({ kind: 'group', name, after: null }, actor)
+    return
+  }
   if (await askSuperAdmin(actor.email)) return
   const groups = await askGroups(actor.email)
   for (const { name, after } of changed) {

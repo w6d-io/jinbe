@@ -7,6 +7,7 @@ import { denyAudit } from '../audit/deny.js'
 import { delegationOf, isClient, requestPath } from './require-service-admin.js'
 import { delegationRefusal } from './delegation-gate.js'
 import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
+import { isV2 } from '../authz-v2/model.js'
 
 /**
  * Gates for routes that act on ONE organisation — the one named by the route parameter — decided by
@@ -55,6 +56,21 @@ export function requireOrgAdmin(paramName = 'organizationId') {
     const email = caller(request)
     if (!email) return unauthenticated(reply)
     const organizationId = (request.params as Record<string, string>)[paramName]
+
+    // authz v2: one gate — the org clause for this request (rbac.decision routes to rbacv2). No
+    // super-admin flag, no platform holder, no roster.
+    if (isV2()) {
+      let allow: boolean
+      try {
+        ;({ allow } = await decide({
+          email, method: request.method, path: requestPath(request), aal: request.userContext?.aal,
+          client: isClient(request), delegation: delegationOf(request),
+        }))
+      } catch (err) {
+        return unavailable(request, reply, organizationId, err)
+      }
+      return allow ? undefined : refuse(request, reply, organizationId, 'not_granted_in_org')
+    }
 
     let superAdmin: boolean
     try {

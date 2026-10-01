@@ -1,4 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
+import { isV2 } from '../authz-v2/model.js'
+import { PLATFORM_ROLES } from '../authz-v2/roles.js'
 import { env } from '../config/env.js'
 import { isSuperAdmin } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
@@ -24,6 +26,8 @@ declare module 'fastify' {
  */
 export function devRights(): { groups: string[]; roles: string[]; permissions: string[] } {
   const role = ROLES[env.DEV_ROLE]
+  // authz v2: the role's generated v2 list (super_admin = every platform permission, never `*`).
+  if (isV2()) return { groups: [role.group], roles: [env.DEV_ROLE], permissions: [...PLATFORM_ROLES[env.DEV_ROLE]] }
   return { groups: [role.group], roles: [env.DEV_ROLE], permissions: [...role.permissions] }
 }
 

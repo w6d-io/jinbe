@@ -12,6 +12,7 @@ import { mirrorOpalFetch } from '../home/runtime.js'
 import { apiClientsDataset } from '../services/api-clients.js'
 import { open } from '../policy/route-access.js'
 import { bindingsWithLowercaseKeys, rosterForPolicy } from '../services/email-spellings.js'
+import { loadDataV2, readAuthzActive } from '../authz-v2/service.js'
 
 // =============================================================================
 // OPAL Data Routes — called by the OPAL server/client only, guarded by the OPAL client token
@@ -226,6 +227,45 @@ export async function rbacOpalRoutes(fastify: FastifyInstance) {
     const { service } = request.params as { service: string }
     const routeMap = await redisRbacRepository.getRouteMap(service)
     return reply.send(routeMap || { rules: [] })
+  })
+
+  // authz v2 (authz-v2-design §3.2): ALL of data.v2 in one document, so OPA never holds half a model.
+  // In the manifest only with RBAC_V2_PUBLISH; nothing decides on it until the router does.
+  fastify.get('/opal/v2', {
+    ...open('machine'),
+    schema: {
+      description:
+        'OPAL data source (authz v2): all of data.v2 — roles, groups, memberships, org roles and assignments, ' +
+        'the every-org map, org entitlements, route maps and the catalogue. 503 when any source cannot be read, ' +
+        'so OPAL keeps the last good copy.',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send(await loadDataV2())
+    } catch (err) {
+      request.log.error({ err: (err as Error).message }, 'v2: a source is unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({ error: 'Service Unavailable', message: 'The v2 model could not be read. Keep the last good data and retry.' })
+    }
+  })
+
+  // Which model decides (data.authz.active): the router in opal-policies reads it. 503 on a store error,
+  // so OPAL keeps the value OPA holds instead of falling back to a default mid-incident.
+  fastify.get('/opal/authz', {
+    ...open('machine'),
+    schema: {
+      description: 'OPAL data source (authz v2): which authorization model is active, {"active":"v1"|"v2"} (data.authz).',
+      tags: ['rbac'],
+      response: { 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request, reply) => {
+    try {
+      return reply.send({ active: await readAuthzActive() })
+    } catch (err) {
+      request.log.error({ err: (err as Error).message }, 'authz: store unavailable — answering 503 so OPAL keeps the last good data')
+      return reply.status(503).send({ error: 'Service Unavailable', message: 'The active model could not be read. Keep the last good data and retry.' })
+    }
   })
 
   // OPAL datasource config (tells OPAL what to fetch)

@@ -8,6 +8,8 @@ import { denyAudit } from '../audit/deny.js'
 import { grants } from '../policy/catalog.js'
 import { holdsDeclaredPermissionGlobally } from './platform-holder.js'
 import { refusalDetails } from '../services/permission-refusal.js'
+import { isV2 } from '../authz-v2/model.js'
+import { devRights } from './require-admin.js'
 
 /** The path OPA is asked about: the request's own, without its query string. */
 export function requestPath(request: FastifyRequest): string {
@@ -118,12 +120,9 @@ export function requireServiceAdmin(
     // DEV MODE: bypass
     if (env.DEV_BYPASS_AUTH && env.NODE_ENV === 'development') {
       request.log.debug({ email }, '[requireServiceAdmin] DEV_BYPASS_AUTH — OPA not asked')
-      request.rbacInfo = {
-        email,
-        groups: ['super_admins', 'admins'],
-        roles: ['super_admin', 'admin'],
-        permissions: ['*'],
-      }
+      request.rbacInfo = isV2()
+        ? { email, ...devRights() }
+        : { email, groups: ['super_admins', 'admins'], roles: ['super_admin', 'admin'], permissions: ['*'] }
       return
     }
 
@@ -145,7 +144,8 @@ export function requireServiceAdmin(
       held = await rights(email)
       // A staff role holding the route's permission across the platform passes in every org.
       if (!allow) allow = await holdsDeclaredPermissionGlobally(request)
-      if (allow && options.orgAdmin) orgAdmin = (await manageableOrgs(email)).includes(organizationId)
+      // authz v2 has no roster: what an org admin may do is what the org clause grants, route by route.
+      if (allow && options.orgAdmin && !isV2()) orgAdmin = (await manageableOrgs(email)).includes(organizationId)
     } catch (err) {
       request.log.warn({ subject, organizationId, err: (err as Error).message }, '[requireServiceAdmin] OPA could not be asked')
       return reply.status(503).send({

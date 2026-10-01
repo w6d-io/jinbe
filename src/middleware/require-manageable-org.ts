@@ -1,4 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
+import { isV2 } from '../authz-v2/model.js'
 import { memberOrgs } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { denyAudit } from '../audit/deny.js'
@@ -39,6 +40,10 @@ export function requireManageableOrg(paramName = 'organizationId') {
         message: 'Authorization context not initialized',
       })
     }
+
+    // authz v2: the org clause already decided this request in requireServiceAdmin (grants in that org,
+    // every-org map included); there is no wildcard reach and no second confinement to apply.
+    if (isV2()) return
 
     // Legacy full access: a global/service wildcard admin keeps unrestricted
     // reach across the service (super_admin, or a service role resolving to *).

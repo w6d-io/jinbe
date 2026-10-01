@@ -340,6 +340,13 @@ export const envSchema = z.object({
   OPAL_SERVER_TOKEN: z.string().min(1).optional(),
   // Each manifest entry's periodic_update_interval: the OPAL client refetches it this often even if a
   // push is lost. 0 leaves it out (fetched on connect and on push only).
+  // authz v2 (authz-v2-design §3.2): publish data.v2 and data.authz to OPA (two more datasource
+  // entries). Off by default: the rbac2 keys are written either way, and nothing reads data.v2 until
+  // the opal-policies router does.
+  RBAC_V2_PUBLISH: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('false'),
   OPAL_DATA_REFRESH_SECONDS: z.string().transform(Number).pipe(z.number().nonnegative()).default('60'),
   // Internal URL that opal-server uses to fetch data from this jinbe instance.
   // Set to the in-cluster service URL in production.

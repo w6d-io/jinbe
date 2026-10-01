@@ -15,6 +15,11 @@ export function canonicalHash(value: unknown): string {
   return 'sha256:' + createHash('sha256').update(json).digest('hex')
 }
 
+/** The same canonical form as a string: what a stored document is compared and written as. */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value))
+}
+
 function canonicalize(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
   if (Array.isArray(value)) return value.map(canonicalize)

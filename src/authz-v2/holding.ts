@@ -27,7 +27,7 @@ export interface Conferred {
 
 export type HoldingVerdict =
   | { ok: true }
-  | { ok: false; reason: 'grant_permission_missing' | 'grant_exceeds_own' | 'not_org_member' | 'org_not_entitled' | 'unknown_role' | 'defined_in_code'; permission?: string; missing?: Conferred }
+  | { ok: false; reason: 'grant_permission_missing' | 'grant_exceeds_own' | 'not_org_member' | 'org_not_entitled' | 'unknown_role' | 'unknown_group' | 'defined_in_code'; permission?: string; missing?: Conferred }
 
 const sorted = (xs: Iterable<string>) => [...new Set(xs)].sort()
 
@@ -84,6 +84,7 @@ function holding(d: DataV2, actor: string, grantPermission: string, conferred: C
 
 /** `can_add_to_group`: groups.members:write, and holding everything the group confers. */
 export function mayAddToGroup(d: DataV2, actor: string, group: string): HoldingVerdict {
+  if (!d.groups[group]) return { ok: false, reason: 'unknown_group' }
   return holding(d, actor, 'groups.members:write', conferredByDefinition(d, d.groups[group] ?? {}))
 }
 
