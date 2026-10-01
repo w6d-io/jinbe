@@ -151,7 +151,8 @@ async function target(r: StoredRequest, now: number): Promise<Target> {
 export interface StepUpContext { cookie: string | undefined; ip: string | null; ua: string | null; requestId: string | null; now?: number }
 
 export type StepUpAnswer =
-  | { action: 'show'; kind: 'oauth' | 'personal'; client_id: string; client_name: string; expiresAt: string }
+  /** `hours`: how long protected actions last after the new proof (the admin's window for a sign-in, 30 days for a key). */
+  | { action: 'show'; kind: 'oauth' | 'personal'; client_id: string; client_name: string; expiresAt: string; hours: number }
   | { action: 'redirect'; to: string }
   | { action: 'done'; kind: 'oauth' | 'personal'; client_id: string; client_name: string; step_up_at: string; step_up_until: string | null }
 
@@ -168,9 +169,10 @@ export async function describeStepUpRequest(id: string, ctx: StepUpContext): Pro
   authOriginOrFail()
   const r = await readRequest(id)
   await holderSession(r, ctx.cookie)
-  await protectedActionsOn()
+  const settings = await protectedActionsOn()
   const t = await target(r, now)
-  return { action: 'show', kind: t.kind, client_id: r.clientId, client_name: t.clientName, expiresAt: new Date(Date.parse(r.createdAt) + STEP_UP_REQUEST_TTL_S * 1000).toISOString() }
+  const hours = t.kind === 'oauth' ? settings.oauth.protectedActionsHours : KEY_STEP_UP_MAX_AGE_MS / 3600_000
+  return { action: 'show', kind: t.kind, client_id: r.clientId, client_name: t.clientName, expiresAt: new Date(Date.parse(r.createdAt) + STEP_UP_REQUEST_TTL_S * 1000).toISOString(), hours }
 }
 
 /** The person completes the link: a fresh proof for that credential. */

@@ -18412,7 +18412,7 @@ paths:
         - oauth
       description: "What a second-factor refresh link would refresh, for login-ui (the
         visitor's Kratos cookies; nothing is consumed): {action:'show', kind,
-        client_id, client_name, expiresAt}. 401 without a session, 403
+        client_id, client_name, expiresAt, hours}. 401 without a session, 403
         wrong_account (not the holder) | protected_actions_off | mcp_disabled,
         404 request_unknown (expired or used), 409 protected_actions_not_allowed
         | credential_gone."
@@ -18452,6 +18452,10 @@ paths:
                     type: string
                   expiresAt:
                     type: string
+                  hours:
+                    type: integer
+                    description: "How long protected actions last after the refresh: the admin
+                      window for a sign-in, 720 (30 days) for a key"
                   step_up_at:
                     type: string
                   step_up_until:
@@ -18576,6 +18580,10 @@ paths:
                     type: string
                   expiresAt:
                     type: string
+                  hours:
+                    type: integer
+                    description: "How long protected actions last after the refresh: the admin
+                      window for a sign-in, 720 (30 days) for a key"
                   step_up_at:
                     type: string
                   step_up_until:

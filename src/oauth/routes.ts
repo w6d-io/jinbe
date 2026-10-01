@@ -244,6 +244,7 @@ export async function oauthProviderRoutes(fastify: FastifyInstance) {
       client_id: { type: 'string' },
       client_name: { type: 'string' },
       expiresAt: { type: 'string' },
+      hours: { type: 'integer', description: 'How long protected actions last after the refresh: the admin window for a sign-in, 720 (30 days) for a key' },
       step_up_at: { type: 'string' },
       step_up_until: { type: ['string', 'null'] },
     },
@@ -254,7 +255,7 @@ export async function oauthProviderRoutes(fastify: FastifyInstance) {
     schema: {
       description:
         "What a second-factor refresh link would refresh, for login-ui (the visitor's Kratos cookies; nothing is consumed): " +
-        "{action:'show', kind, client_id, client_name, expiresAt}. 401 without a session, 403 wrong_account (not the holder) | " +
+        "{action:'show', kind, client_id, client_name, expiresAt, hours}. 401 without a session, 403 wrong_account (not the holder) | " +
         'protected_actions_off | mcp_disabled, 404 request_unknown (expired or used), 409 protected_actions_not_allowed | credential_gone.',
       tags: ['oauth'],
       querystring: { type: 'object', required: ['req'], properties: { req: REQ } },

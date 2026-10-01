@@ -156,7 +156,9 @@ describe('POST /api/me/mcp/step-up-requests (the credential asks for itself)', (
 describe('the holder completes the link (login-ui)', () => {
   it('shows what it refreshes without consuming it', async () => {
     const req = reqIdOf((await ask({ kind: 'oauth' })).json().url)
-    expect((await show(req)).json()).toMatchObject({ action: 'show', kind: 'oauth', client_id: 'c-1', client_name: 'Claude Code' })
+    expect((await show(req)).json()).toMatchObject({ action: 'show', kind: 'oauth', client_id: 'c-1', client_name: 'Claude Code', hours: 12 })
+    const key = reqIdOf((await ask({ kind: 'personal' })).json().url)
+    expect((await show(key)).json()).toMatchObject({ kind: 'personal', hours: 720 })
     expect(h.redis.has(`jinbe:stepup-req:${req}`)).toBe(true)
   })
 
