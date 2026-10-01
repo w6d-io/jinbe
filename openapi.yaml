@@ -408,8 +408,9 @@ paths:
     get:
       tags:
         - auth
-      description: The permission catalogue (labels, sensitivity, step-up, four-eyes,
-        delegable, routes), the staff roles and the legacy aliases.
+      description: The permission catalogue (labels, sensitivity, step-up and its
+        rule, four-eyes, delegable, routes), the staff roles and the legacy
+        aliases.
       responses:
         "200":
           description: Default Response
@@ -447,6 +448,42 @@ paths:
                           enum:
                             - direct
                             - never
+                        stepUpRule:
+                          type: object
+                          description: "required: a second factor proven within maxAgeMin minutes;
+                            viaPersonalKey: a personal key may stand in with the
+                            factor proven at its creation, up to maxAgeDays
+                            (null: it may not); viaOAuthGrant: an OAuth grant
+                            may stand in with the factor proven at consent when
+                            the user allowed protected actions, for maxAgeHours
+                            (the MCP setting named); fourEyes: a second person
+                            in prod."
+                          properties:
+                            required:
+                              type: boolean
+                            maxAgeMin:
+                              type: integer
+                              nullable: true
+                            viaPersonalKey:
+                              type: object
+                              nullable: true
+                              properties:
+                                maxAgeDays:
+                                  type: integer
+                            viaOAuthGrant:
+                              type: object
+                              nullable: true
+                              properties:
+                                maxAgeHours:
+                                  type: integer
+                                setting:
+                                  type: string
+                                requiresConsentOptIn:
+                                  type: boolean
+                            fourEyes:
+                              type:
+                                - string
+                                - boolean
                         routes:
                           type: array
                           items:
@@ -471,6 +508,11 @@ paths:
                           type: array
                           items:
                             type: string
+                        stepUpPermissions:
+                          type: array
+                          items:
+                            type: string
+                          description: Its permissions that need a recent second factor
                   aliases:
                     type: object
                     additionalProperties:
@@ -481,8 +523,10 @@ paths:
     get:
       tags:
         - me
-      description: The caller's effective permissions across the platform, and which
-        user-management actions they allow.
+      description: "The caller's effective permissions across the platform, which
+        user-management actions they allow, and their second-factor picture
+        (secondFactor: requiredBecause groups, enrolled, currentAal,
+        factorAgeMin, stepUpFresh, stepUpPermissions)."
       responses:
         "200":
           description: Default Response
@@ -509,6 +553,44 @@ paths:
                     type: object
                     additionalProperties:
                       type: boolean
+                  secondFactor:
+                    type: object
+                    nullable: true
+                    description: "required/requiredBecause: the groups that make two-step sign-in
+                      (aal2) mandatory; enrolled/methods: null when unread;
+                      currentAal, factorAgeMin, stepUpFresh: the caller's own
+                      session (null when describing somebody else);
+                      stepUpPermissions: their permissions that need a second
+                      factor proven within 15 minutes (null when unread)."
+                    properties:
+                      required:
+                        type: boolean
+                      requiredBecause:
+                        type: array
+                        items:
+                          type: string
+                      enrolled:
+                        type: boolean
+                        nullable: true
+                      methods:
+                        type: array
+                        nullable: true
+                        items:
+                          type: string
+                      currentAal:
+                        type: string
+                        nullable: true
+                      factorAgeMin:
+                        type: integer
+                        nullable: true
+                      stepUpFresh:
+                        type: boolean
+                        nullable: true
+                      stepUpPermissions:
+                        type: array
+                        nullable: true
+                        items:
+                          type: string
                   apps:
                     type: object
                     additionalProperties:
@@ -4698,7 +4780,8 @@ paths:
       description: "A user's site access (groups → roles per service) and org access
         (per org: `admin` as OPA decides it (manageable_orgs), `rostered` as
         jinbe's roster store says, `why` when they differ, and the groups
-        granted there). Needs access:read."
+        granted there), and secondFactor (requiredBecause, enrolled,
+        stepUpPermissions; session fields null). Needs access:read."
       parameters:
         - schema:
             type: string
@@ -4754,6 +4837,44 @@ paths:
                           type: array
                           items:
                             type: string
+                  secondFactor:
+                    type: object
+                    nullable: true
+                    description: "required/requiredBecause: the groups that make two-step sign-in
+                      (aal2) mandatory; enrolled/methods: null when unread;
+                      currentAal, factorAgeMin, stepUpFresh: the caller's own
+                      session (null when describing somebody else);
+                      stepUpPermissions: their permissions that need a second
+                      factor proven within 15 minutes (null when unread)."
+                    properties:
+                      required:
+                        type: boolean
+                      requiredBecause:
+                        type: array
+                        items:
+                          type: string
+                      enrolled:
+                        type: boolean
+                        nullable: true
+                      methods:
+                        type: array
+                        nullable: true
+                        items:
+                          type: string
+                      currentAal:
+                        type: string
+                        nullable: true
+                      factorAgeMin:
+                        type: integer
+                        nullable: true
+                      stepUpFresh:
+                        type: boolean
+                        nullable: true
+                      stepUpPermissions:
+                        type: array
+                        nullable: true
+                        items:
+                          type: string
         "401":
           description: Default Response
           content:
@@ -4848,7 +4969,9 @@ paths:
     get:
       tags: &a2
         - sites
-      description: List sites with their status
+      description: "List sites with their status and two-step sign-in bar
+        (secondFactor: scope, routes, clients, minAal, summary — of the saved
+        version)"
       responses:
         "200":
           description: Default Response
@@ -6086,7 +6209,8 @@ paths:
   /api/admin/sites/{name}:
     get:
       tags: *a2
-      description: "A site: saved intent, version, etag, status"
+      description: "A site: saved intent, its two-step sign-in bar (secondFactor),
+        version, etag, status"
       parameters:
         - schema:
             type: string
@@ -8790,9 +8914,9 @@ paths:
     get:
       tags:
         - rbac
-      description: "OPAL data source: groups whose members must hold a second factor
+      description: 'OPAL data source: groups switched to "Members must use 2FA"
         (data.second_factor). 503 when the store cannot be read, so OPAL keeps
-        the requirement OPA already holds."
+        the requirement OPA already holds.'
       responses:
         "503":
           description: Default Response
@@ -9444,6 +9568,28 @@ paths:
                             type: array
                             items:
                               type: string
+                        secondFactor:
+                          type: object
+                          description: "The group's \"Members must use 2FA\" switch. required: members
+                            need two-step sign-in (aal2) on every
+                            permission-carrying route, and nobody is added
+                            before enrolling a second factor
+                            (enrolBeforeJoining, always equal). source:
+                            group_setting (stored) | default (not stored yet: on
+                            for a group that can write or holds *).
+                            defaultRequired: what the default would be."
+                          properties:
+                            required:
+                              type: boolean
+                            source:
+                              type: string
+                              enum:
+                                - group_setting
+                                - default
+                            enrolBeforeJoining:
+                              type: boolean
+                            defaultRequired:
+                              type: boolean
                       required:
                         - name
                         - services
@@ -11950,9 +12096,10 @@ paths:
       tags:
         - second-factor
       description: Replace the groups whose members must use two-step sign-in. Every
-        name must be an existing group; an empty list requires nobody. Published
-        to OPA as data.second_factor. Requires settings.signin:write + a second
-        factor proven within 15 minutes.
+        name must be an existing group; an empty list turns every group off.
+        Sets each group's "Members must use 2FA" switch (listed on, others off);
+        published to OPA as data.second_factor. groups.mfa:write (super admin
+        alone), with a second factor proven within 15 minutes.
       requestBody:
         required: true
         content:
@@ -11965,7 +12112,7 @@ paths:
               properties:
                 groups:
                   type: array
-                  maxItems: 50
+                  maxItems: 200
                   items:
                     type: string
                     maxLength: 100
@@ -11986,6 +12133,295 @@ paths:
                     items:
                       type: string
         "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+  /api/admin/rbac/second-factor-map:
+    get:
+      tags:
+        - second-factor
+      description: "Every second-factor rule and what it applies to: sign-in groups
+        (group_sign_in), groups that need enrolment before joining, permissions
+        needing a recent second factor (step_up, with personal-key stand-in and
+        four-eyes), staff roles, each site's two-step bar (site_login).
+        groups:read or sites:read; groups need groups:read and sites
+        sites:read."
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        label:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                            - enforced
+                            - planned
+                  limits:
+                    type: object
+                    properties:
+                      stepUpMaxAgeMin:
+                        type: integer
+                      personalKeyMaxAgeDays:
+                        type: integer
+                      oauthGrantMaxAgeHours:
+                        type:
+                          - "null"
+                          - integer
+                        description: "null: OAuth grants may not stand in (protected actions off)"
+                  signIn:
+                    type: object
+                    nullable: true
+                    description: The groups switched to "Members must use 2FA"; explicit false =
+                      some group still runs on its default (not pinned yet).
+                    properties:
+                      groups:
+                        type: array
+                        items:
+                          type: string
+                      explicit:
+                        type: boolean
+                  groups:
+                    type: array
+                    nullable: true
+                    description: Null without groups:read, or when the groups cannot be read (see
+                      unavailable).
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        secondFactor:
+                          type: object
+                          description: "The group's \"Members must use 2FA\" switch. required: members
+                            need two-step sign-in (aal2) on every
+                            permission-carrying route, and nobody is added
+                            before enrolling a second factor
+                            (enrolBeforeJoining, always equal). source:
+                            group_setting (stored) | default (not stored yet: on
+                            for a group that can write or holds *).
+                            defaultRequired: what the default would be."
+                          properties:
+                            required:
+                              type: boolean
+                            source:
+                              type: string
+                              enum:
+                                - group_setting
+                                - default
+                            enrolBeforeJoining:
+                              type: boolean
+                            defaultRequired:
+                              type: boolean
+                  permissions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        label:
+                          type: string
+                        stepUpRule:
+                          type: object
+                          description: "required: a second factor proven within maxAgeMin minutes;
+                            viaPersonalKey: a personal key may stand in with the
+                            factor proven at its creation, up to maxAgeDays
+                            (null: it may not); viaOAuthGrant: an OAuth grant
+                            may stand in with the factor proven at consent when
+                            the user allowed protected actions, for maxAgeHours
+                            (the MCP setting named); fourEyes: a second person
+                            in prod."
+                          properties:
+                            required:
+                              type: boolean
+                            maxAgeMin:
+                              type: integer
+                              nullable: true
+                            viaPersonalKey:
+                              type: object
+                              nullable: true
+                              properties:
+                                maxAgeDays:
+                                  type: integer
+                            viaOAuthGrant:
+                              type: object
+                              nullable: true
+                              properties:
+                                maxAgeHours:
+                                  type: integer
+                                setting:
+                                  type: string
+                                requiresConsentOptIn:
+                                  type: boolean
+                            fourEyes:
+                              type:
+                                - string
+                                - boolean
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        group:
+                          type: string
+                        stepUpPermissions:
+                          type: array
+                          items:
+                            type: string
+                  sites:
+                    type: array
+                    nullable: true
+                    description: The applied version of each site (what visitors meet); null without
+                      sites:read or when unreadable.
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        displayName:
+                          type: string
+                        host:
+                          type: string
+                        applied:
+                          type: boolean
+                        secondFactor:
+                          type: object
+                          description: A site's own two-step sign-in bar (login.twoFactor), with a
+                            sentence for a person.
+                          properties:
+                            scope:
+                              type: string
+                              enum:
+                                - none
+                                - writes
+                                - all
+                                - routes
+                            routes:
+                              type: array
+                              items:
+                                type: string
+                            clients:
+                              type: string
+                              nullable: true
+                              enum:
+                                - exempt
+                                - refused
+                                - null
+                            minAal:
+                              type: string
+                              enum:
+                                - aal1
+                                - aal2
+                            summary:
+                              type: string
+                  organizations:
+                    type: object
+                    properties:
+                      rules:
+                        type: array
+                        items:
+                          type: string
+                      note:
+                        type: string
+                  unavailable:
+                    type: array
+                    items:
+                      type: string
+                    description: Sections that could not be read (signIn, groups, sites).
+  /api/admin/rbac/groups/{name}/second-factor:
+    put:
+      tags:
+        - second-factor
+      description: "Switch a group's \"Members must use 2FA\": on, its members need
+        two-step sign-in (aal2) on every permission-carrying route and nobody
+        joins it before enrolling a second factor. Published to OPA as
+        data.second_factor. groups.mfa:write (super admin alone), with a second
+        factor proven within 15 minutes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - required
+              additionalProperties: false
+              properties:
+                required:
+                  type: boolean
+      parameters:
+        - schema:
+            type: string
+            maxLength: 64
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  secondFactor:
+                    type: object
+                    description: "The group's \"Members must use 2FA\" switch. required: members
+                      need two-step sign-in (aal2) on every permission-carrying
+                      route, and nobody is added before enrolling a second
+                      factor (enrolBeforeJoining, always equal). source:
+                      group_setting (stored) | default (not stored yet: on for a
+                      group that can write or holds *). defaultRequired: what
+                      the default would be."
+                    properties:
+                      required:
+                        type: boolean
+                      source:
+                        type: string
+                        enum:
+                          - group_setting
+                          - default
+                      enrolBeforeJoining:
+                        type: boolean
+                      defaultRequired:
+                        type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "404":
           description: Default Response
           content:
             application/json:
