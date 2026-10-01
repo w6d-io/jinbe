@@ -14,11 +14,12 @@ const run = (site: Site, groups = {}, protection: ProtectionStatus | null = WAF)
 const codes = (f: Finding[]) => f.map((x) => x.code)
 const gate = (over: Partial<Gate>): Gate => ({ id: 'api', label: 'API', authenticators: WHO['signed-in'], authorizer: 'policy', mutators: [{ handler: 'header' }], errors: 'api', ...over })
 
-/** payroll with every route behind a permission, a deny catch-all, and no wildcard role: no finding at all. */
+/** payroll with every route behind a permission, a deny catch-all, no wildcard role and the public Host kept: no finding at all. */
 function tidy(over: Partial<Site> = {}): Site {
   const base = payrollSite()
   return {
     ...base,
+    upstream: { ...base.upstream, preserveHost: true },
     gates: [base.gates[0]],
     routes: { items: base.routes.items.filter((r) => r.access.kind === 'permission'), catchAll: { gate: 'web', access: { kind: 'deny' } } },
     roles: { editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'] },
@@ -109,6 +110,21 @@ describe('securityFindings', () => {
   it('a held wildcard role — * or resource:* — asks for confirmation; an unheld one is only unheld', () => {
     expect(codes(run(tidy({ roles: { editor: ['payslips:*'], viewer: ['payslips:read'] } })))).toEqual(['wildcard_role'])
     expect(codes(run(tidy({ roles: { editor: ['payslips:read', 'payslips:create'], viewer: ['payslips:read'], admin: ['*'] } })))).toEqual(['role_unheld'])
+  })
+
+  it('an upstream that does not keep the public Host is an info finding, never blocking', () => {
+    for (const preserveHost of [false, undefined]) {
+      const f = run(tidy({ upstream: { service: 'payroll', namespace: 'payroll', port: 8080, preserveHost } }))
+      expect(f).toEqual([expect.objectContaining({ code: 'preserve_host_off', level: 'info', path: 'upstream.preserveHost', message: expect.stringContaining('payroll.payroll.svc.cluster.local') })])
+      expect(publishState(f)).toEqual({ blocked: false, acknowledge: [] })
+      expect(unresolved(f)).toEqual([])
+    }
+  })
+
+  it('orgs that would lose the site on publish are warned, by name when known', () => {
+    const f = securityFindings(tidy(), { roles: expandRoles(tidy()) }, { groups: {}, protection: WAF, orgsRemoved: [{ id: 'o-1', name: 'Test org' }, { id: 'o-2' }] })
+    expect(f).toEqual([expect.objectContaining({ code: 'publish_removes_orgs', level: 'warn', message: 'publishing removes this site from: Test org (o-1), o-2' })])
+    expect(publishState(f).blocked).toBe(false)
   })
 
   it('the WAF: off is warned with the reason, unknown is warned as unknown', () => {

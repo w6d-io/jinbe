@@ -379,7 +379,7 @@ class RedisRbacRepository {
   // names (e.g. '["kuma","fleet"]'). An org can bundle more than one service.
   //
   // BACKWARD COMPAT: pre-migration values are a bare scalar service name
-  // (e.g. 'kuma'). Service names match ^[a-z0-9_]+$ so a legacy scalar can
+  // (e.g. 'kuma'). Service names match SERVICE_NAME_PATTERN (^[a-z0-9_-]+$) so a legacy scalar can
   // never be a JSON array literal. Reads normalize BOTH shapes to string[];
   // writes always emit the JSON array. This lets pre-migration data keep
   // serving correctly while jinbe emits arrays going forward.

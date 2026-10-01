@@ -37,6 +37,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
     createAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     updateAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
     deleteAccessRule: vi.fn().mockImplementation(async () => mockState.mutationResult),
+    setOrgServiceMapping: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -237,6 +238,29 @@ describe('RbacController', () => {
       )
 
       expect(rbacService.getServiceRoles).toHaveBeenCalledWith('jinbe')
+    })
+  })
+
+  describe('setOrgServiceMapping', () => {
+    const ORG = '11111111-1111-4111-8111-111111111111'
+
+    it('accepts hyphenated site names (echo-mfa), like the route schema and site publish do', async () => {
+      const reply = createMockReply()
+      await controller.setOrgServiceMapping(
+        createMockRequest({ body: { organizationId: ORG, services: ['echo', 'echo-mfa', 'wallets-api'] } }) as FastifyRequest<{ Body: { organizationId: string; services: string[] } }>,
+        reply,
+      )
+      expect(reply._statusCode).toBe(201)
+      expect(rbacService.setOrgServiceMapping).toHaveBeenCalledWith(ORG, ['echo', 'echo-mfa', 'wallets-api'], expect.anything())
+    })
+
+    it('still refuses a name outside the service charset, naming the field', async () => {
+      const call = controller.setOrgServiceMapping(
+        createMockRequest({ body: { organizationId: ORG, services: ['echo', 'Echo MFA'] } }) as FastifyRequest<{ Body: { organizationId: string; services: string[] } }>,
+        createMockReply(),
+      )
+      await expect(call).rejects.toMatchObject({ errors: [expect.objectContaining({ path: ['services', 1] })] })
+      expect(rbacService.setOrgServiceMapping).not.toHaveBeenCalled()
     })
   })
 

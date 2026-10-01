@@ -3,7 +3,7 @@ import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
 import { render, type Rendered } from './render.js'
-import { DELETED_TTL_SECONDS, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
+import { DELETED_TTL_SECONDS, draftEtagOf, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
 import { assertGatesAuthenticated, assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
@@ -22,6 +22,7 @@ import { EPHEMERAL_TTL } from './schemas.js'
 import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } from './address.js'
 import { handlerDefaults } from '../gateway/service.js'
 import { resolveGates, type ResolvedGate } from './resolved-gates.js'
+import { organisationsById } from '../services/organisation-store.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -191,7 +192,11 @@ export async function getDraft(name: string): Promise<SiteDraft> {
   return draft
 }
 
-export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor): Promise<SiteDraft> {
+/**
+ * Autosave the draft. `ifMatch`: the draft etag the editor loaded (GET/PUT answer it); a stale one is
+ * 412 stale_draft. `ifNoneMatch`: the editor loaded no draft; one written since is 412 stale_draft. Callers inside jinbe (bulk, drift) pass none and overwrite, as before.
+ */
+export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor, opts: { ifMatch?: string; ifNoneMatch?: boolean; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
   assertNotSystem(name)
   // A draft may be incomplete — it is autosaved while typing — but it must be about this site.
   const site = body.site as { name?: unknown } | null
@@ -204,9 +209,9 @@ export async function putDraft(name: string, body: { site?: unknown; baseVersion
   // Edited back to what is saved: nothing left to review, so no draft is kept.
   if (draftChangesNothing(draft, current)) {
     await sitesRepository.deleteDraft(name)
-    return { ...draft, updatedAt: new Date().toISOString() }
+    return { ...draft, updatedAt: new Date().toISOString(), etag: draftEtagOf(site) }
   }
-  const saved = await sitesRepository.putDraft(name, draft)
+  const saved = await sitesRepository.putDraft(name, draft, opts)
   auditSite('draft', name, actor, current ? `draft saved over version ${current.version}` : 'draft saved (new site)', { baseVersion: draft.baseVersion })
   return saved
 }
@@ -229,13 +234,41 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
 
 /** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
 export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>): Promise<Finding[]> {
-  const [groups, protectionOf] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup()])
-  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host) })
+  const [groups, protectionOf, orgsRemoved] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site)])
+  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved })
 }
 
-export async function preview(site: Site) {
-  assertNotSystem(site.name)
+/**
+ * The orgs publishing would take the site from (publish.ts reconcileOrgs): those whose bundle has it
+ * now but that the intent's `orgs` does not list. Named when the directory answers; never fails.
+ */
+async function orgsLeaving(site: Site): Promise<Array<{ id: string; name?: string }>> {
+  try {
+    const map = await redisRbacRepository.getOrgServiceMap()
+    const ids = Object.entries(map).filter(([org, bundle]) => bundle.includes(site.name) && !site.orgs.includes(org)).map(([org]) => org).sort()
+    if (ids.length === 0) return []
+    const named = new Map((await organisationsById(ids).catch(() => [])).map((o) => [o.id, o.name]))
+    return ids.map((id) => (named.get(id) ? { id, name: named.get(id) } : { id }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * What a site gets when it is created (its first save) and the field is left out: the upstream keeps
+ * the public Host. Never applied to a stored intent, whose render keeps `preserveHost ?? false`, so
+ * no existing site changes the Host its service sees on its next apply.
+ */
+export function withCreateDefaults(site: Site): Site {
+  if (site.upstream.preserveHost !== undefined) return site
+  return { ...site, upstream: { ...site.upstream, preserveHost: true } }
+}
+
+export async function preview(candidate: Site) {
+  assertNotSystem(candidate.name)
   const records = await sitesRepository.list()
+  // A site not saved yet previews as its first save will store it.
+  const site = records.some((r) => r.site.name === candidate.name) ? candidate : withCreateDefaults(candidate)
   const platform = await loadPlatform()
   const rendered = render(site, platform)
   // gatekit first: when it cannot answer there is no preview at all (no JS approximation).
@@ -283,14 +316,15 @@ export async function diff(name: string, candidate?: Site) {
   return { artefacts: diffArtefacts(name, before?.rendered ?? null, after), risk, words: risk.flags.map((f) => f.message) }
 }
 
-export async function save(name: string, site: Site, opts: { note?: string; ifMatch?: string; actor: Actor; kind?: 'save' | 'rollback' }): Promise<SiteRecord> {
+export async function save(name: string, candidate: Site, opts: { note?: string; ifMatch?: string; actor: Actor; kind?: 'save' | 'rollback' }): Promise<SiteRecord> {
   assertNotSystem(name)
-  if (site.name !== name) throw siteError(400, 'name_mismatch', `body names '${site.name}', not '${name}'`)
-  assertGatesAuthenticated(site)
+  if (candidate.name !== name) throw siteError(400, 'name_mismatch', `body names '${candidate.name}', not '${name}'`)
+  assertGatesAuthenticated(candidate)
+  const current = await sitesRepository.get(name)
+  const site = current ? candidate : withCreateDefaults(candidate)
   const rendered = render(site, await loadPlatform())
   const errors = errorsOf(rendered.checks)
   if (errors.length > 0) throw siteError(422, 'invalid_site', 'This version cannot be saved as it is', rendered.checks)
-  const current = await sitesRepository.get(name)
   if (!current?.applied && (await redisRbacRepository.serviceExists(name))) {
     throw siteError(409, 'service_exists', `'${name}' is already a service not managed as a site; adopt it through the migration instead`)
   }

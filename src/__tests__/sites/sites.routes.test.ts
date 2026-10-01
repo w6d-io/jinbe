@@ -176,10 +176,38 @@ describe('save, list, get, versions', () => {
     expect(versions[0].site).toBeUndefined()
   })
 
+  it('a new site keeps the public Host by default; an explicit false is kept', async () => {
+    expect((await save()).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).json().site.upstream.preserveHost).toBe(true)
+    const off = payrollSite({ name: 'billing', address: { host: 'billing.dev.example.com' }, upstream: { service: 'billing', namespace: 'billing', port: 8080, preserveHost: false }, groups: { platform: { admins: ['admin'] }, orgGrantable: {} } })
+    expect((await save(off)).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/billing' })).json().site.upstream.preserveHost).toBe(false)
+  })
+
+  it('a stored intent without preserveHost keeps it unset on its next save, so its Host does not change', async () => {
+    const legacy = payrollSite()
+    await redis.hset('rbac:sites', 'payroll', JSON.stringify({ site: legacy, version: 1, etag: 'e1', savedAt: '2026-09-01T00:00:00Z', savedBy: 'old@x.test' }))
+    const res = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: { ...W, 'if-match': '"e1"' }, payload: { site: legacy } })
+    expect(res.statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).json().site.upstream.preserveHost).toBeUndefined()
+  })
+
+  it('preview of a site not saved yet shows the create default, and says when the Host is not kept', async () => {
+    const fresh = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(fresh.artefacts.siteCr.spec.upstream.preserveHost).toBe(true)
+    expect(fresh.findings.map((f: { code: string }) => f.code)).not.toContain('preserve_host_off')
+    const off = payrollSite({ upstream: { service: 'payroll', namespace: 'payroll', port: 8080, preserveHost: false } })
+    const body = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: off } })).json()
+    expect(body.findings).toContainEqual(expect.objectContaining({ code: 'preserve_host_off', level: 'info' }))
+    expect(body.publish.blocked).toBe(false)
+  })
+
   it('rejects an invalid intent with the zod issues', async () => {
     const res = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: W, payload: { site: { ...payrollSite(), address: { host: 'not a host' } } } })
     expect(res.statusCode).toBe(400)
     expect(res.json().issues.length).toBeGreaterThan(0)
+    expect(res.json().details).toContainEqual(expect.objectContaining({ field: 'site.address.host', message: expect.any(String) }))
+    expect(res.json().message).toContain('site.address.host')
   })
 
   it('rejects a body naming another site', async () => {
@@ -209,6 +237,81 @@ describe('drafts', () => {
     expect(got).toMatchObject({ site: { name: 'payroll' }, baseVersion: 0, updatedBy: 'sam@x.test' })
     expect((await app.inject({ method: 'DELETE', url: '/sites/payroll/draft', headers: W })).statusCode).toBe(204)
     expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).statusCode).toBe(404)
+  })
+
+  it('a draft has an etag (body and ETag header) that the next autosave names in If-Match', async () => {
+    const first = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: { name: 'payroll', displayName: 'A' } } })
+    expect(first.statusCode).toBe(200)
+    const etag = first.json().etag as string
+    expect(etag).toMatch(/^[0-9a-f]{16}$/)
+    expect(first.headers.etag).toBe(`"${etag}"`)
+    const got = await app.inject({ method: 'GET', url: '/sites/payroll/draft' })
+    expect(got.headers.etag).toBe(`"${etag}"`)
+    expect(got.json().etag).toBe(etag)
+    const next = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${etag}"` }, payload: { site: { name: 'payroll', displayName: 'B' } } })
+    expect(next.statusCode).toBe(200)
+    expect(next.json().etag).not.toBe(etag)
+  })
+
+  it('an autosave over a draft someone else saved since is 412 with the current etag and who saved', async () => {
+    const mine = (await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: { name: 'payroll', displayName: 'Mine' } } })).json().etag
+    await redis.set('rbac:sites:draft:payroll', JSON.stringify({ site: { name: 'payroll', displayName: 'Theirs' }, baseVersion: 0, updatedBy: 'alex@x.test', updatedAt: '2026-10-01T10:00:00.000Z' }))
+    const stale = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${mine}"` }, payload: { site: { name: 'payroll', displayName: 'Mine 2' } } })
+    expect(stale.statusCode).toBe(412)
+    const body = stale.json()
+    expect(body).toMatchObject({ error: 'stale_draft', current: { updatedBy: 'alex@x.test', updatedAt: '2026-10-01T10:00:00.000Z', baseVersion: 0 } })
+    expect(body.message).toContain('alex@x.test')
+    expect(stale.headers.etag).toBe(`"${body.current.etag}"`)
+    // Theirs is still there.
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().site.displayName).toBe('Theirs')
+    // Retrying with the current etag (after merging) goes through.
+    const retry = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${body.current.etag}"` }, payload: { site: { name: 'payroll', displayName: 'Merged' } } })
+    expect(retry.statusCode).toBe(200)
+  })
+
+  it('If-None-Match: * writes only when there is no draft: one written meanwhile is 412 stale_draft, and it counts as a precondition under require', async () => {
+    const put = (displayName: string) => app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-none-match': '*' }, payload: { site: { name: 'payroll', displayName } } })
+    expect((await put('First')).statusCode).toBe(200)
+    const second = await put('Second')
+    expect(second.statusCode).toBe(412)
+    expect(second.json()).toMatchObject({ error: 'stale_draft', current: { updatedBy: 'sam@x.test', baseVersion: 0 } })
+    expect(second.headers.etag).toBe(`"${second.json().current.etag}"`)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().site.displayName).toBe('First')
+    process.env.SITES_DRAFT_IF_MATCH = 'require'
+    resetSitesConfig()
+    try {
+      expect((await put('Third')).statusCode).toBe(412)
+      await app.inject({ method: 'DELETE', url: '/sites/payroll/draft', headers: W })
+      expect((await put('Fourth')).statusCode).toBe(200)
+    } finally {
+      delete process.env.SITES_DRAFT_IF_MATCH
+      resetSitesConfig()
+    }
+  })
+
+  it('If-Match naming a draft that is gone (saved or discarded since) is no conflict', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': '"0123456789abcdef"' }, payload: { site: { name: 'payroll' } } })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('without If-Match: accepted by default (warn), 428 over an existing draft when SITES_DRAFT_IF_MATCH=require', async () => {
+    const put = (headers: Record<string, string> = W) => app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers, payload: { site: { name: 'payroll', displayName: String(Math.random()) } } })
+    expect((await put()).statusCode).toBe(200)
+    expect((await put()).statusCode).toBe(200)
+    process.env.SITES_DRAFT_IF_MATCH = 'require'
+    resetSitesConfig()
+    try {
+      const refused = await put()
+      expect(refused.statusCode).toBe(428)
+      expect(refused.json().error).toBe('precondition_required')
+      const etag = (await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().etag
+      expect((await put({ ...W, 'if-match': `"${etag}"` })).statusCode).toBe(200)
+      // The first autosave of a site has no draft to name.
+      expect((await app.inject({ method: 'PUT', url: '/sites/billing/draft', headers: W, payload: { site: { name: 'billing' } } })).statusCode).toBe(200)
+    } finally {
+      delete process.env.SITES_DRAFT_IF_MATCH
+      resetSitesConfig()
+    }
   })
 
   it('a draft naming another site is refused', async () => {
@@ -290,6 +393,33 @@ describe('apply', () => {
     const listed = (await app.inject({ method: 'GET', url: '/sites' })).json()
     expect(listed[0]).toMatchObject({ status: 'live', appliedBy: 'sam@x.test' })
     expect(h.emit).toHaveBeenCalled()
+  })
+
+  it('an org given the site outside its intent: preview warns, and the publish that removes it is audited', async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222'
+    store.s.orgMap[OTHER] = ['kuma', 'payroll']
+    const preview = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(preview.findings).toContainEqual(expect.objectContaining({ code: 'publish_removes_orgs', level: 'warn', path: 'orgs', message: `publishing removes this site from: ${OTHER}` }))
+    expect(preview.publish.blocked).toBe(false)
+    await save()
+    h.emit.mockClear()
+    expect((await apply()).statusCode).toBe(200)
+    // The model is unchanged (the site's orgs win); every bundle it changed is now on the trail.
+    expect(store.s.orgMap[OTHER]).toEqual(['kuma'])
+    await new Promise((r) => setImmediate(r))
+    const orgEvents = h.emit.mock.calls.map((c) => c[0] as { type?: string; target?: { id?: string }; changes?: { added?: string[]; removed?: string[] }; details?: { via?: string } })
+      .filter((e) => e.type === 'rbac.org_service_mapping_set')
+    expect(orgEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: expect.objectContaining({ id: OTHER }), changes: expect.objectContaining({ removed: ['payroll'], added: [] }), details: expect.objectContaining({ via: 'site.publish' }) }),
+      expect.objectContaining({ target: expect.objectContaining({ id: ACME }), changes: expect.objectContaining({ added: ['payroll'] }) }),
+    ]))
+    expect(orgEvents).toHaveLength(2)
+  })
+
+  it('no warning when every org that has the site is in its orgs', async () => {
+    store.s.orgMap[ACME] = ['payroll']
+    const preview = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(preview.findings.map((f: { code: string }) => f.code)).not.toContain('publish_removes_orgs')
   })
 
   it('refuses to apply a version that is not the saved one', async () => {

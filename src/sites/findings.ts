@@ -13,13 +13,14 @@ import { siteError } from './checks.js'
  *   confirm  publishing is refused until a person acknowledges it (`acknowledge: [code]` on apply or
  *            on the apply request) — a deliberate choice that must not happen by accident: a public
  *            route, a hand-built gate, a role granting everything;
- *   warn     said, never blocking.
+ *   warn     said, never blocking;
+ *   info     worth knowing about a deliberate setting, never blocking.
  *
  * Acknowledging a code covers every finding with that code. Pure: the groups and the WAF state are
  * handed in (sites.service `findingsFor` reads them).
  */
 
-export type FindingLevel = 'error' | 'warn' | 'confirm'
+export type FindingLevel = 'error' | 'warn' | 'confirm' | 'info'
 
 export interface Finding {
   code: string
@@ -36,6 +37,8 @@ export interface FindingContext {
   groups: Record<string, GroupDefinition>
   /** Whether the site's host is behind the WAF; null when the cluster cannot say. */
   protection: ProtectionStatus | null
+  /** Orgs that have the site now (org_service_map) but are not in its `orgs`: publishing takes it from them. */
+  orgsRemoved?: ReadonlyArray<{ id: string; name?: string }>
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -115,6 +118,20 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
       add('confirm', 'wildcard_role', `role '${role}' grants ${wild.map((w) => (w === '*' ? 'everything on the site (*)' : w)).join(', ')}, and a group holds it`,
         'List the permissions the role needs; acknowledge wildcard_role if this is the site administrators\' role', 'roles')
     }
+  }
+
+  // ── upstream ────────────────────────────────────────────────
+  if (site.upstream.preserveHost !== true) {
+    const { service, namespace } = site.upstream
+    add('info', 'preserve_host_off', `the service sees the internal host name (${service}.${namespace}.svc.cluster.local), not ${site.address.host}`,
+      'Turn on Preserve host so redirects, absolute links and cookies use the public host; keep it off only for a service that answers on its Service name', 'upstream.preserveHost')
+  }
+
+  // ── organizations ───────────────────────────────────────────
+  if (ctx.orgsRemoved?.length) {
+    const names = ctx.orgsRemoved.map((o) => (o.name ? `${o.name} (${o.id})` : o.id))
+    add('warn', 'publish_removes_orgs', `publishing removes this site from: ${names.join(', ')}`,
+      'These organizations have the site (given in Settings → Organization sites) but the site\'s Organizations do not list them: add them to the site before publishing to keep their access', 'orgs')
   }
 
   // ── edge ────────────────────────────────────────────────────

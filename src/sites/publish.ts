@@ -1,7 +1,8 @@
 import { redisRbacRepository, type GroupDefinition } from '../services/redis-rbac.repository.js'
 import { withRedisLock } from '../services/redis-lock.js'
 import { rbacService } from '../services/rbac.service.js'
-import type { AuditActorInput } from '../services/audit-event.service.js'
+import { auditEventService, type AuditActorInput } from '../services/audit-event.service.js'
+import { diffList } from '../services/audit-diff.js'
 import { findRouteTies, loadPublishedRouteRules, routeTieConflict, type PinnedHosts } from '../policy/route-ties.js'
 import { assertOrgParams } from '../policy/route-org-param.js'
 import type { Rendered } from './render.js'
@@ -42,13 +43,13 @@ export async function publishPermissions(
     })
   })
   await reconcileGroups(name, perms)
-  await reconcileOrgs(name, perms)
+  await reconcileOrgs(name, perms, ctx.actor, 'published')
   await rbacService.invalidateBundle('site.permissions_published', { type: 'site', id: name, service: name }, ctx.actor)
 }
 
 export async function unpublishPermissions(name: string, actor: AuditActorInput): Promise<void> {
   await reconcileGroups(name, EMPTY)
-  await reconcileOrgs(name, EMPTY)
+  await reconcileOrgs(name, EMPTY, actor, 'removed')
   await withRedisLock('route_maps', async () => {
     await redisRbacRepository.deleteRouteMap(name)
     await redisRbacRepository.deleteRoles(name)
@@ -85,18 +86,40 @@ async function reconcileGroups(name: string, perms: Permissions): Promise<void> 
   })
 }
 
-async function reconcileOrgs(name: string, perms: Permissions): Promise<void> {
+/**
+ * Every org bundle brought to the site's `orgs`: added where listed, and taken out of every org not
+ * listed, an org given the site from Settings → Organization sites included (preview warns before:
+ * findings.ts `publish_removes_orgs`). Each bundle changed is audited like a Settings change
+ * (org.services.changed), naming the site publish as the reason.
+ */
+async function reconcileOrgs(name: string, perms: Permissions, actor: AuditActorInput, why: 'published' | 'removed'): Promise<void> {
+  const changed: Array<{ org: string; before: string[]; after: string[] }> = []
   await withRedisLock('org_service_map', async () => {
     const map = await redisRbacRepository.getOrgServiceMap()
     const wanted = new Set(Object.keys(perms.orgServiceMap))
+    const write = async (org: string, before: string[], after: string[]) => {
+      await redisRbacRepository.setOrgServiceMapping(org, after)
+      changed.push({ org, before, after })
+    }
     for (const org of wanted) {
       const bundle = map[org] ?? []
-      if (!bundle.includes(name)) await redisRbacRepository.setOrgServiceMapping(org, [...bundle, name])
+      if (!bundle.includes(name)) await write(org, bundle, [...bundle, name])
     }
     for (const [org, bundle] of Object.entries(map)) {
-      if (!wanted.has(org) && bundle.includes(name)) {
-        await redisRbacRepository.setOrgServiceMapping(org, bundle.filter((s) => s !== name))
-      }
+      if (!wanted.has(org) && bundle.includes(name)) await write(org, bundle, bundle.filter((s) => s !== name))
     }
   })
+  const reason = why === 'published' ? `site ${name} published: its organizations are the site's orgs` : `site ${name} removed`
+  for (const { org, before, after } of changed) {
+    // Best-effort, like every other audit write: never fails the publish.
+    Promise.resolve().then(() => auditEventService.emit({
+      type: 'rbac.org_service_mapping_set',
+      target: { type: 'org_service_map', id: org, services: after, service: name },
+      actor: { id: actor.id, email: actor.email, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
+      requestId: actor.requestId,
+      changes: diffList('org_service_map', org, before, after),
+      details: { reason, site: name, via: why === 'published' ? 'site.publish' : 'site.remove' },
+      source: 'jinbe-api',
+    })).catch(() => {})
+  }
 }
