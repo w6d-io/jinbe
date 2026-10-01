@@ -157,6 +157,33 @@ describe('the check endpoint (preview) carries the security findings', () => {
     expect(body.publish).toEqual({ blocked: false, acknowledge: ['public_route', 'signed_in_catch_all', 'wildcard_role'] })
   })
 
+  it('a check apply refuses on (unknown platform group) is an error finding: blocked, and apply still 409s', async () => {
+    const site = payrollSite({ groups: { platform: { 'no-such-group': ['viewer'] }, orgGrantable: payrollSite().groups.orgGrantable } })
+    const body = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site } })).json()
+    expect(body.findings).toContainEqual({
+      code: 'unknown_group', level: 'error', message: "platform group 'no-such-group' does not exist",
+      fix: expect.stringContaining('Create the group first'), path: 'groups.platform.no-such-group',
+    })
+    expect(body.publish.blocked).toBe(true)
+    expect(body.checks).toContainEqual(expect.objectContaining({ code: 'unknown_group', level: 'error' }))
+    // Apply's own checks stay the backstop.
+    await save(site)
+    const res = await apply({ acknowledge: [...ACK, 'unknown_group'] })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error).toBe('checks_failed')
+  })
+
+  it('a gatekit overlap is an error finding too', async () => {
+    h.gatekit.overlap = (body: unknown) => {
+      const ids = (body as { rules: Array<{ id: string }> }).rules.map((r) => r.id)
+      return { overlaps: [{ a: ids[0], b: ids[1], method: 'GET', exampleUrl: 'https://payroll.dev.example.com/health' }] }
+    }
+    const body = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    h.gatekit.overlap = () => ({ overlaps: [] })
+    expect(body.findings).toContainEqual(expect.objectContaining({ code: 'rule_overlap', level: 'error', fix: expect.stringContaining('POST /sites/match') }))
+    expect(body.publish.blocked).toBe(true)
+  })
+
   it('the simulation-api gate is reported: not a preset, bare bearer_token', async () => {
     const site = payrollSite()
     site.gates[0] = { ...site.gates[0], authenticators: [{ handler: 'cookie_session' }, { handler: 'bearer_token' }] }
