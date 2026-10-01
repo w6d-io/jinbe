@@ -233,9 +233,21 @@ export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>)
   return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host) })
 }
 
-export async function preview(site: Site) {
-  assertNotSystem(site.name)
+/**
+ * What a site gets when it is created (its first save) and the field is left out: the upstream keeps
+ * the public Host. Never applied to a stored intent, whose render keeps `preserveHost ?? false`, so
+ * no existing site changes the Host its service sees on its next apply.
+ */
+export function withCreateDefaults(site: Site): Site {
+  if (site.upstream.preserveHost !== undefined) return site
+  return { ...site, upstream: { ...site.upstream, preserveHost: true } }
+}
+
+export async function preview(candidate: Site) {
+  assertNotSystem(candidate.name)
   const records = await sitesRepository.list()
+  // A site not saved yet previews as its first save will store it.
+  const site = records.some((r) => r.site.name === candidate.name) ? candidate : withCreateDefaults(candidate)
   const platform = await loadPlatform()
   const rendered = render(site, platform)
   // gatekit first: when it cannot answer there is no preview at all (no JS approximation).
@@ -283,14 +295,15 @@ export async function diff(name: string, candidate?: Site) {
   return { artefacts: diffArtefacts(name, before?.rendered ?? null, after), risk, words: risk.flags.map((f) => f.message) }
 }
 
-export async function save(name: string, site: Site, opts: { note?: string; ifMatch?: string; actor: Actor; kind?: 'save' | 'rollback' }): Promise<SiteRecord> {
+export async function save(name: string, candidate: Site, opts: { note?: string; ifMatch?: string; actor: Actor; kind?: 'save' | 'rollback' }): Promise<SiteRecord> {
   assertNotSystem(name)
-  if (site.name !== name) throw siteError(400, 'name_mismatch', `body names '${site.name}', not '${name}'`)
-  assertGatesAuthenticated(site)
+  if (candidate.name !== name) throw siteError(400, 'name_mismatch', `body names '${candidate.name}', not '${name}'`)
+  assertGatesAuthenticated(candidate)
+  const current = await sitesRepository.get(name)
+  const site = current ? candidate : withCreateDefaults(candidate)
   const rendered = render(site, await loadPlatform())
   const errors = errorsOf(rendered.checks)
   if (errors.length > 0) throw siteError(422, 'invalid_site', 'This version cannot be saved as it is', rendered.checks)
-  const current = await sitesRepository.get(name)
   if (!current?.applied && (await redisRbacRepository.serviceExists(name))) {
     throw siteError(409, 'service_exists', `'${name}' is already a service not managed as a site; adopt it through the migration instead`)
   }

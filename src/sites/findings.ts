@@ -13,13 +13,14 @@ import { siteError } from './checks.js'
  *   confirm  publishing is refused until a person acknowledges it (`acknowledge: [code]` on apply or
  *            on the apply request) — a deliberate choice that must not happen by accident: a public
  *            route, a hand-built gate, a role granting everything;
- *   warn     said, never blocking.
+ *   warn     said, never blocking;
+ *   info     worth knowing about a deliberate setting, never blocking.
  *
  * Acknowledging a code covers every finding with that code. Pure: the groups and the WAF state are
  * handed in (sites.service `findingsFor` reads them).
  */
 
-export type FindingLevel = 'error' | 'warn' | 'confirm'
+export type FindingLevel = 'error' | 'warn' | 'confirm' | 'info'
 
 export interface Finding {
   code: string
@@ -115,6 +116,13 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
       add('confirm', 'wildcard_role', `role '${role}' grants ${wild.map((w) => (w === '*' ? 'everything on the site (*)' : w)).join(', ')}, and a group holds it`,
         'List the permissions the role needs; acknowledge wildcard_role if this is the site administrators\' role', 'roles')
     }
+  }
+
+  // ── upstream ────────────────────────────────────────────────
+  if (site.upstream.preserveHost !== true) {
+    const { service, namespace } = site.upstream
+    add('info', 'preserve_host_off', `the service sees the internal host name (${service}.${namespace}.svc.cluster.local), not ${site.address.host}`,
+      'Turn on Preserve host so redirects, absolute links and cookies use the public host; keep it off only for a service that answers on its Service name', 'upstream.preserveHost')
   }
 
   // ── edge ────────────────────────────────────────────────────

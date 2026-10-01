@@ -176,10 +176,38 @@ describe('save, list, get, versions', () => {
     expect(versions[0].site).toBeUndefined()
   })
 
+  it('a new site keeps the public Host by default; an explicit false is kept', async () => {
+    expect((await save()).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).json().site.upstream.preserveHost).toBe(true)
+    const off = payrollSite({ name: 'billing', address: { host: 'billing.dev.example.com' }, upstream: { service: 'billing', namespace: 'billing', port: 8080, preserveHost: false }, groups: { platform: { admins: ['admin'] }, orgGrantable: {} } })
+    expect((await save(off)).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/billing' })).json().site.upstream.preserveHost).toBe(false)
+  })
+
+  it('a stored intent without preserveHost keeps it unset on its next save, so its Host does not change', async () => {
+    const legacy = payrollSite()
+    await redis.hset('rbac:sites', 'payroll', JSON.stringify({ site: legacy, version: 1, etag: 'e1', savedAt: '2026-09-01T00:00:00Z', savedBy: 'old@x.test' }))
+    const res = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: { ...W, 'if-match': '"e1"' }, payload: { site: legacy } })
+    expect(res.statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll' })).json().site.upstream.preserveHost).toBeUndefined()
+  })
+
+  it('preview of a site not saved yet shows the create default, and says when the Host is not kept', async () => {
+    const fresh = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })).json()
+    expect(fresh.artefacts.siteCr.spec.upstream.preserveHost).toBe(true)
+    expect(fresh.findings.map((f: { code: string }) => f.code)).not.toContain('preserve_host_off')
+    const off = payrollSite({ upstream: { service: 'payroll', namespace: 'payroll', port: 8080, preserveHost: false } })
+    const body = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: off } })).json()
+    expect(body.findings).toContainEqual(expect.objectContaining({ code: 'preserve_host_off', level: 'info' }))
+    expect(body.publish.blocked).toBe(false)
+  })
+
   it('rejects an invalid intent with the zod issues', async () => {
     const res = await app.inject({ method: 'PUT', url: '/sites/payroll', headers: W, payload: { site: { ...payrollSite(), address: { host: 'not a host' } } } })
     expect(res.statusCode).toBe(400)
     expect(res.json().issues.length).toBeGreaterThan(0)
+    expect(res.json().details).toContainEqual(expect.objectContaining({ field: 'site.address.host', message: expect.any(String) }))
+    expect(res.json().message).toContain('site.address.host')
   })
 
   it('rejects a body naming another site', async () => {
