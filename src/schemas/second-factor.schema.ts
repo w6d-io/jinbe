@@ -31,7 +31,9 @@ export const siteSecondFactorJsonSchema = {
     scope: { type: 'string', enum: ['none', 'writes', 'all', 'routes'] },
     routes: stringList,
     clients: { type: 'string', nullable: true, enum: ['exempt', 'refused', null] },
-    minAal: { type: 'string', enum: ['aal1', 'aal2'] },
+    minAal: { type: 'string', enum: ['aal1', 'aal2'], description: 'What is enforced: aal1 when the site asks nothing, or when a gate it needs never asks the policy' },
+    enforced: { type: 'boolean', nullable: true, description: 'Whether the gates make the policy check it; null when the site asks for no two-step sign-in' },
+    notEnforcedOn: { ...stringList, description: 'Gates covering routes it applies to that never ask the policy' },
     summary: { type: 'string' },
   },
 }
