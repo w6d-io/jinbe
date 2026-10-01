@@ -11,6 +11,9 @@ import {
   setDeployments,
   updateOrganisation,
 } from '../services/organisation-store.js'
+import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { orgRolesRepository } from '../services/org-roles.repository.js'
+import { JINBE } from '../policy/roles.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
   badRequestResponseSchema,
@@ -105,6 +108,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
               name: { type: 'string' },
               tenant: { type: 'string' },
               applications: { type: 'array', items: { type: 'string' } },
+              sites: { type: 'array', items: { type: 'string' } },
             },
           },
           400: badRequestResponseSchema,
@@ -135,6 +139,8 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       let created
       try {
         created = await createOrganisation({ name, tenant })
+        // An org is entitled to jinbe from birth: without it in org_sites the policy refuses its org routes.
+        await redisRbacRepository.setOrgSites(created.id, [JINBE])
       } catch (err) {
         request.log.error({ err }, 'The organisation could not be created')
         return reply.status(503).send({
@@ -153,7 +159,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
         })
         .catch(() => {})
 
-      return reply.status(201).send({ id: created.id, name, tenant, applications: [] })
+      return reply.status(201).send({ id: created.id, name, tenant, applications: [], sites: [JINBE] })
     },
   )
 
@@ -247,6 +253,9 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       if (!organisationStoreConfigured()) return reply.status(503).send(organisationStoreNotConfigured())
 
       await deleteOrganisation(params.data.id)
+      // Nothing of the org stays in the RBAC store: its entitlements and its org role assignments.
+      await redisRbacRepository.setOrgSites(params.data.id, [])
+      await orgRolesRepository.forgetOrg(params.data.id)
 
       auditEventService
         .emit({

@@ -99,7 +99,7 @@ export function renderPlanMarkdown(plan: Plan): string {
   out.push(table(['person', 'org', 'before', 'after'], plan.migration.orgRoleRenames.map((m) => [m.email, m.org, m.from, m.to ?? 'unmapped (dropped)'])))
   out.push('### Groups', '')
   out.push(table(['before', 'after'], plan.migration.groups.map((g) => [g.before, g.after ?? 'gone (memberships dropped from policy)'])))
-  out.push('### Org entitlements (org_sites)', '')
+  out.push('### Org entitlements (org_sites)', '', 'Every organisation keeps jinbe (its own org routes); the sites are those whose intent lists the organisation.', '')
   out.push(table(['org', 'sites'], Object.entries(plan.migration.orgSites).map(([o, sites]) => [o, sites.join(', ')])))
   return out.join('\n')
 }

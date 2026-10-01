@@ -4,7 +4,7 @@ import { redisRbacRepository, type OathkeeperRule } from '../services/redis-rbac
 import { republishAppliedSites } from '../sites/republish.js'
 import { readInventory, writePlan } from './plan/run.js'
 import { buildPlan } from './plan/review.js'
-import { migrationOf } from './plan/migration.js'
+import { migrationOf, orgsWithoutJinbe } from './plan/migration.js'
 import { EphemeralSnapshotError, snapshotDurability, takeSnapshot, storeSnapshot } from './snapshot.js'
 import { convergeJinbe } from './converge.js'
 import { upsertBuiltInRules } from './upsert-rules.js'
@@ -119,6 +119,9 @@ export async function applyModel(opts: {
   logger.info({ snapshot }, 'RBAC store snapshot written (the rollback point)')
 
   const migration = migrationOf(inv)
+  // Every org keeps its own jinbe routes: an org missing from org_sites would be refused all of them.
+  const lockedOut = orgsWithoutJinbe(inv, migration)
+  if (lockedOut.length > 0) throw new Error(`Refusing to apply: these organisations would lose jinbe in org_sites (their org routes refused): ${lockedOut.join(', ')}`)
   const wiped = await wipe(redis)
   logger.warn({ keys: wiped.length, planHash: plan.planHash }, 'stored RBAC wiped — reseeding from code and the sites')
 

@@ -4805,6 +4805,10 @@ paths:
                     type: array
                     items:
                       type: string
+                  sites:
+                    type: array
+                    items:
+                      type: string
         "400":
           description: Default Response
           content:

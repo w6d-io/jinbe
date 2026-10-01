@@ -10,6 +10,7 @@ import type { Inventory } from './inventory.js'
  *   metadata_admin.organization_roles admin/owner → jinbe:owner in X (a member of X)
  *   an org role already `svc:role` on the identity → kept, in rbac:org_assignments
  *   org grant in X of a site's org-grantable group <site>-x (member of X) → <site>:x in X (the site's org role)
+ *   every org (registry, memberships, org roles)             → org_sites[org] ∋ jinbe (its own org routes)
  *   the orgs each applied site's intent lists                → org_sites (what its publish reconciles to)
  *
  * An org grant of any other group has no equivalent: listed as an orphan, dropped from the policy (D4).
@@ -68,12 +69,27 @@ export function migrationOf(inv: Inventory): Migration {
     }
   }
 
-  // Each site's publish reconciles org_sites to the orgs its intent lists (sites/publish.ts).
+  // jinbe for EVERY org: the policy refuses an org's jinbe routes when org_sites[org] does not list it.
+  // Then each site's publish reconciles org_sites to the orgs its intent lists (sites/publish.ts).
   const orgSites: Record<string, string[]> = {}
+  for (const org of everyOrgOf(inv, assignments)) orgSites[org] = [JINBE]
   for (const [site, model] of Object.entries(inv.siteModels)) {
     for (const org of model.orgs) orgSites[org] = [...new Set([...(orgSites[org] ?? []), site])].sort()
   }
   return { assignments, added, orgSites }
+}
+
+/** Every org the apply must entitle to jinbe: the registry's, any a person belongs to, any holding org roles. */
+export function everyOrgOf(inv: Pick<Inventory, 'organisations' | 'identities'>, assignments: OrgAssignments): string[] {
+  const orgs = new Set<string>(inv.organisations)
+  for (const f of inv.identities.values()) for (const o of f.organizations) if (o) orgs.add(o)
+  for (const o of Object.keys(assignments)) orgs.add(o)
+  return [...orgs].sort()
+}
+
+/** Orgs the migration would leave without jinbe in org_sites (must be none: the apply refuses otherwise). */
+export function orgsWithoutJinbe(inv: Pick<Inventory, 'organisations' | 'identities'>, migration: Pick<Migration, 'orgSites' | 'assignments'>): string[] {
+  return everyOrgOf(inv, migration.assignments).filter((o) => !(migration.orgSites[o] ?? []).includes(JINBE))
 }
 
 /** `<site>-x`, an org-grantable group of an applied site, is now that site's org role `<site>:x`. */

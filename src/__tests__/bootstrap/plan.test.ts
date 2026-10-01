@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { migrationOf, orgsWithoutJinbe } from '../../bootstrap/plan/migration.js'
 import { buildPlan } from '../../bootstrap/plan/review.js'
 import { renderPlanMarkdown } from '../../bootstrap/plan/render.js'
 import type { Inventory } from '../../bootstrap/plan/inventory.js'
@@ -155,8 +156,17 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(plan.migration.orgRoleRenames).toEqual([{ email: 'boss@acme.io', org: ACME, from: 'admin', to: 'jinbe:owner' }])
   })
 
-  it('site groups and the org entitlements are kept; jinbe and kuma leave the org → service map', () => {
-    expect(plan.migration.orgSites).toEqual({ [ACME]: ['payroll'] })
+  it('every org keeps jinbe in org_sites (registry and memberships), plus the sites whose intent lists it', () => {
+    expect(plan.migration.orgSites).toEqual({ [ACME]: ['jinbe', 'payroll'], globex: ['jinbe'] })
+    expect(orgsWithoutJinbe(inventory(), migrationOf(inventory()))).toEqual([])
+    // An org left without jinbe is what the apply refuses on.
+    const broken = migrationOf(inventory())
+    delete broken.orgSites.globex
+    expect(orgsWithoutJinbe(inventory(), broken)).toEqual(['globex'])
+    expect(renderPlanMarkdown(plan)).toContain('| globex | jinbe |')
+  })
+
+  it('site groups are kept; jinbe and kuma leave the org → service map', () => {
     expect(plan.before.groups.find((g) => g.name === 'payroll-editors')).toMatchObject({ kept: true })
     expect(plan.migration.groups).toContainEqual({ before: 'kuma-admin', after: null })
     expect(plan.migration.groups).toContainEqual({ before: 'super_admins', after: 'super_admins' })

@@ -16,6 +16,11 @@ const s = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
 }))
 
+const rbacStore = vi.hoisted(() => ({ orgSites: {} as Record<string, string[]>, forgotten: [] as string[] }))
+vi.mock('../../../services/redis-rbac.repository.js', () => ({
+  redisRbacRepository: { setOrgSites: vi.fn(async (o: string, sites: string[]) => { if (sites.length) rbacStore.orgSites[o] = sites; else delete rbacStore.orgSites[o] }) },
+}))
+vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetOrg: vi.fn(async (o: string) => { rbacStore.forgotten.push(o) }) } }))
 vi.mock('../../../authz/opa.js', () => ({
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: s.holds ? ['orgs:write', 'orgs:delete'] : [] })),
 }))
@@ -116,6 +121,8 @@ describe('DELETE /api/admin/organizations/:id', () => {
     expect(res.statusCode).toBe(204)
     expect(s.record).toBeNull()
     expect(s.audits[0]).toMatchObject({ type: 'organization.deleted' })
+    // Its entitlements and org role assignments leave the RBAC store with it.
+    expect(rbacStore.forgotten).toHaveLength(1)
   })
 
   it('refuses while members remain, and says how many', async () => {

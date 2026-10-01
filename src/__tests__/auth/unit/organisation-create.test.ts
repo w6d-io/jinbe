@@ -28,6 +28,11 @@ const { poolState, envState, store } = vi.hoisted(() => ({
   },
 }))
 
+const rbacStore = vi.hoisted(() => ({ orgSites: {} as Record<string, string[]>, forgotten: [] as string[] }))
+vi.mock('../../../services/redis-rbac.repository.js', () => ({
+  redisRbacRepository: { setOrgSites: vi.fn(async (o: string, sites: string[]) => { if (sites.length) rbacStore.orgSites[o] = sites; else delete rbacStore.orgSites[o] }) },
+}))
+vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetOrg: vi.fn(async (o: string) => { rbacStore.forgotten.push(o) }) } }))
 vi.mock('../../../config/index.js', () => ({ env: envState.env }))
 vi.mock('pg', () => ({ Pool: vi.fn(function () { return poolState }) }))
 
@@ -125,7 +130,9 @@ describe('POST /api/admin/organizations', () => {
 
     expect(answer.code).toBe(201)
     expect(store.createOrganisation).toHaveBeenCalledWith({ name: 'Acme Corp', tenant: 'acme-corp' })
-    expect(answer.body).toMatchObject({ name: 'Acme Corp', tenant: 'acme-corp', applications: [] })
+    expect(answer.body).toMatchObject({ name: 'Acme Corp', tenant: 'acme-corp', applications: [], sites: ['jinbe'] })
+    // Entitled to jinbe from birth: its org routes answer at once.
+    expect(Object.values(rbacStore.orgSites)).toEqual([['jinbe']])
   })
 
   it('keeps an explicit tenant', async () => {
