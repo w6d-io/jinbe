@@ -8,6 +8,7 @@ import type { OrgAssignments } from '../../services/org-roles.repository.js'
  * own credentials, inside the jinbe pod: Redis, Kratos, the organisation registry, Hydra, the sites.
  */
 
+import type { DirectGrant } from '../../services/direct-grants.repository.js'
 export interface OAuthClientFacts {
   clientId: string
   /** `personal` (a person's key), `org` (an org's key), `other` (MCP or a registered client). */
@@ -61,6 +62,8 @@ export interface Inventory {
   everyOrg: Record<string, Record<string, string[]>>
   /** org → identity id → org roles (rbac:org_assignments). */
   orgAssignments: OrgAssignments
+  /** identity id → per-person direct grants (rbac:direct_grants), expired included (the plan filters). */
+  directGrants: Record<string, DirectGrant[]>
   /** The applied sites (their permissions are republished from their intents). */
   sites: string[]
   /**

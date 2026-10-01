@@ -18089,6 +18089,1675 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/admin/users/{id}/grants:
+    get:
+      tags:
+        - admin
+      description: One person's direct grants (roles and permissions held without a
+        group), in every scope, expired ones marked.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: users.grants:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+    put:
+      tags:
+        - admin
+      description: "Replace one person's direct grants, platform-wide and in any
+        organisation. Each grant: scope (\"platform\" or an org id), app, kind
+        (role|permission), name, optional reason and expiresAt. Every grant
+        added or changed, and every scope losing one, is decided by the policy
+        (holding rule); a refusal changes nothing and lists each refused grant."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - grants
+              additionalProperties: false
+              properties:
+                grants:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required:
+                      - scope
+                      - app
+                      - kind
+                      - name
+                    additionalProperties: false
+                    properties:
+                      scope:
+                        type: string
+                        description: '"platform" or an organisation id'
+                      app:
+                        type: string
+                        pattern: ^[a-z0-9][a-z0-9_-]*$
+                      kind:
+                        type: string
+                        enum:
+                          - role
+                          - permission
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 120
+                      reason:
+                        type: string
+                        maxLength: 500
+                      expiresAt:
+                        type: string
+                        format: date-time
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: users.grants:write
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+    delete:
+      tags:
+        - admin
+      description: Take every direct grant of one person away (each scope decided by
+        the policy).
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: users.grants:write
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/users/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - admin
+      description: Take one direct grant away.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: grantId
+          required: true
+      x-permission: users.grants:write
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/grants:
+    get:
+      tags:
+        - admin
+      description: "Everyone holding direct grants, with each grant (who gave it,
+        when, why, until when): the list a review or a recertification walks."
+      x-permission: users.grants:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  people:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        email:
+                          type: string
+                          nullable: true
+                        grants:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              scope:
+                                type: string
+                                description: '"platform" or an organisation id'
+                              app:
+                                type: string
+                              kind:
+                                type: string
+                                enum:
+                                  - role
+                                  - permission
+                              name:
+                                type: string
+                              reason:
+                                type: string
+                              expiresAt:
+                                type: string
+                                format: date-time
+                              grantedBy:
+                                type: string
+                              grantedAt:
+                                type: string
+                                format: date-time
+                              active:
+                                type: boolean
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/users/{id}/grants:
+    get:
+      tags:
+        - organization-users
+      description: One member's direct grants in this organization.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+          description: User ID
+      x-permission: org.members:read
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+    put:
+      tags:
+        - organization-users
+      description: Replace one member's direct grants in this organization (scope must
+        be this organization's id). Decided by the policy (holding rule in this
+        organization); a refusal changes nothing and lists each refused grant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - grants
+              additionalProperties: false
+              properties:
+                grants:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required:
+                      - scope
+                      - app
+                      - kind
+                      - name
+                    additionalProperties: false
+                    properties:
+                      scope:
+                        type: string
+                        description: '"platform" or an organisation id'
+                      app:
+                        type: string
+                        pattern: ^[a-z0-9][a-z0-9_-]*$
+                      kind:
+                        type: string
+                        enum:
+                          - role
+                          - permission
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 120
+                      reason:
+                        type: string
+                        maxLength: 500
+                      expiresAt:
+                        type: string
+                        format: date-time
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+          description: User ID
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/users/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - organization-users
+      description: Take one of a member's direct grants in this organization away.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: grantId
+          required: true
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  grants:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scope:
+                          type: string
+                          description: '"platform" or an organisation id'
+                        app:
+                          type: string
+                        kind:
+                          type: string
+                          enum:
+                            - role
+                            - permission
+                        name:
+                          type: string
+                        reason:
+                          type: string
+                        expiresAt:
+                          type: string
+                          format: date-time
+                        grantedBy:
+                          type: string
+                        grantedAt:
+                          type: string
+                          format: date-time
+                        active:
+                          type: boolean
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/mcp/token-info:
     post:
       tags:

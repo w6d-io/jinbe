@@ -33,6 +33,7 @@ describe('the catalogue', () => {
       'orgs:delete', 'recert:delete', 'sites:delete', 'users:delete', 'zones:delete',
       'recert:manage', 'sites.requests:approve', 'users:reset_second_factor', 'groups.mfa:write',
       'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
+      'users.grants:write',
     ].sort())
   })
 
@@ -120,7 +121,7 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
     const held = new Set(STAFF_ROLES.filter((r) => r !== 'super_admin').flatMap((r) => [...ROLES[r].permissions]))
     expect(PLATFORM_PERMISSIONS.filter((p) => !held.has(p)).sort()).toEqual([
       'groups.members:write', 'groups.mfa:write', 'groups:write', 'orgs.owners:write', 'orgs:delete', 'orgs:write', 'policy.bundle:write',
-      'settings.mcp:write', 'settings.signin:write', 'users.metadata:write', 'users:delete',
+      'settings.mcp:write', 'settings.signin:write', 'users.grants:write', 'users.metadata:write', 'users:delete',
     ].sort())
   })
 

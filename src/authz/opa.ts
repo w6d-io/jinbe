@@ -215,6 +215,9 @@ export type GrantQuestion =
   | { kind: 'add_to_group'; actor: string; group: string }
   | { kind: 'remove_from_group'; actor: string }
   | { kind: 'define_group'; actor: string; definition: Record<string, readonly string[]> }
+  /** A per-person direct grant: one role or one permission of `app`, platform-wide or in one org. */
+  | { kind: 'grant_direct'; actor: string; grantee: string; scope: string; app: string; grantKind: 'role' | 'permission'; name: string }
+  | { kind: 'revoke_direct'; actor: string; scope: string }
 
 function byApp(v: unknown): Record<string, string[]> | undefined {
   if (v === undefined || v === null) return {}
@@ -237,6 +240,9 @@ export function grantInput(q: GrantQuestion): { rule: string; input: Record<stri
     case 'add_to_group': return { rule: 'rbac/delegation/add_to_group_verdict', input: { actor, group: q.group } }
     case 'remove_from_group': return { rule: 'rbac/delegation/remove_from_group_verdict', input: { actor } }
     case 'define_group': return { rule: 'rbac/delegation/define_group_verdict', input: { actor, definition: q.definition } }
+    // A platform grant names no org; an org grant names it (`org`), as delegation.rego reads them.
+    case 'grant_direct': return { rule: 'rbac/delegation/grant_direct_verdict', input: { actor, grantee: { email: q.grantee }, app: q.app, kind: q.grantKind, name: q.name, ...(q.scope === 'platform' ? {} : { org: q.scope }) } }
+    case 'revoke_direct': return { rule: 'rbac/delegation/revoke_direct_verdict', input: { actor, ...(q.scope === 'platform' ? {} : { org: q.scope }) } }
   }
 }
 

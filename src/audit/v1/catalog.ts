@@ -62,6 +62,11 @@ export const AUDIT_EVENTS = {
   'org.roles.refused': ['authz', 'update', 'warn'],
   'org.owners.changed': ['authz', 'update', 'warn'],
   'org.services.changed': ['authz', 'update'],
+  // Per-person direct grants (services/direct-grants.service.ts): given, taken away, run out, refused.
+  'user.grant.granted': ['authz', 'create', 'warn'],
+  'user.grant.revoked': ['authz', 'delete'],
+  'user.grant.expired': ['authz', 'delete'],
+  'user.grant.refused': ['authz', 'update', 'warn'],
 
   'rbac.group.created': ['authz', 'create'],
   'rbac.group.updated': ['authz', 'update'],

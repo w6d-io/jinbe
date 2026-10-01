@@ -17,11 +17,22 @@ import type { Gate, Handler, Site } from './schemas.js'
  * there, one header on the wire).
  */
 
-/** The platform header mutator's names (charts auth values, dev-aws-1 and prod-aws-1). */
+/**
+ * The platform header mutator's names (charts auth values, dev-aws-1 and prod-aws-1), and the role and
+ * permission headers a policy decision may carry for the requested site's app (ROLE_HEADERS): every
+ * one is blanked on a gate that does not set it, so a client can never send it to the upstream.
+ */
 export const PLATFORM_IDENTITY_HEADERS = [
   'x-user-id', 'x-user-email', 'x-user-groups', 'x-email', 'x-id', 'x-tenant-id', 'x-type',
-  'x-person-uuid', 'x-applicant-uuid', 'x-client-id', 'x-token-scope',
+  'x-person-uuid', 'x-applicant-uuid', 'x-client-id', 'x-token-scope', 'x-user-roles', 'x-user-permissions',
 ]
+
+/**
+ * What a policy gate forwards from the decision when the platform turns role headers on
+ * (SITES_ROLE_HEADERS): the caller's groups, and their roles and permissions in THIS site's app only
+ * (the payload names the app; rbac.decision answers for it). Off, the role headers stay blanked.
+ */
+export const ROLE_HEADERS = ['X-User-Groups', 'X-User-Roles', 'X-User-Permissions']
 
 /** What the gateway config makes upstreams trust, read from the Gateway spec. */
 export interface GatewayIdentity {

@@ -72,7 +72,7 @@ function unavailable(reply: FastifyReply, err: unknown) {
 }
 
 /** The member's address when the identity belongs to the org; null otherwise (the routes answer 404). */
-async function memberOf(id: string, organizationId: string): Promise<{ email: string } | null> {
+export async function memberOf(id: string, organizationId: string): Promise<{ email: string } | null> {
   const identity = await kratosService.getIdentity(id).catch(() => null)
   if (!identity) return null
   const state = {

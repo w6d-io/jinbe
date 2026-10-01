@@ -10,7 +10,7 @@ import type { KratosBindingsResponse } from './rbac.service.js'
  * Only the OPAL feeds read these; displays keep one row per identity.
  */
 
-type AddressMaps = Pick<KratosBindingsResponse, 'group_membership' | 'user_organizations' | 'user_organization_primary' | 'org_assignments'>
+type AddressMaps = Pick<KratosBindingsResponse, 'group_membership' | 'user_organizations' | 'user_organization_primary' | 'org_assignments' | 'direct'>
 
 function withLowercase<T>(map: Record<string, T>): Record<string, T> {
   const out: Record<string, T> = { ...map }
@@ -28,5 +28,6 @@ export function bindingsWithLowercaseKeys<B extends AddressMaps>(bindings: B): B
     user_organizations: withLowercase(bindings.user_organizations),
     user_organization_primary: withLowercase(bindings.user_organization_primary),
     org_assignments: withLowercase(bindings.org_assignments),
+    direct: withLowercase(bindings.direct),
   }
 }

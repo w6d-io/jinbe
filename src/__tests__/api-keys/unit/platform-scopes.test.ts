@@ -55,7 +55,7 @@ describe('platformScopes — what a personal key may carry', () => {
       'groups.members:write', 'groups:read', 'groups:write', 'org.keys:read', 'org.keys:revoke', 'org.members:read', 'org.members:write',
       'orgs.members:write', 'orgs:read', 'orgs:write', 'recert:read', 'sessions:read',
       'settings:read', 'sites:apply', 'sites:read', 'sites:write',
-      'stats:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
+      'stats:read', 'users.grants:read', 'users.metadata:write', 'users:create', 'users:disable', 'users:read', 'users:recovery', 'users:send_login_link',
       'users:update', 'users:update_email', 'users:verify', 'zones:read',
     ])
   })
@@ -65,7 +65,7 @@ describe('platformScopes — what a personal key may carry', () => {
     for (const p of ['*', 'org:manage_api_keys', 'org.keys:write', 'groups.members:revoke', 'users:delete', 'users:reset_second_factor',
       'sites:delete', 'sites.requests:approve', 'zones:delete', 'orgs.owners:write', 'policy.bundle:write',
       'recert:manage', 'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
-      'admin:read', 'admin:write']) {
+      'users.grants:write', 'admin:read', 'admin:write']) {
       expect(all).not.toContain(p)
     }
   })

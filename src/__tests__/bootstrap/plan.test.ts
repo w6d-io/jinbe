@@ -58,6 +58,13 @@ function inventory(): Inventory {
     orgRoles: {},
     everyOrg: {},
     orgAssignments: {},
+    // grantee@acme.io (id-8) holds users:read directly, until 2999; an expired grant counts for nothing.
+    directGrants: {
+      'id-8': [
+        { id: 'g1', scope: 'platform', app: 'jinbe', kind: 'permission', name: 'users:read', expiresAt: '2999-01-01T00:00:00.000Z', grantedBy: 'root@x.io', grantedAt: '2026-09-01T00:00:00.000Z' },
+        { id: 'g2', scope: 'platform', app: 'jinbe', kind: 'permission', name: 'users:delete', expiresAt: '2020-01-01T00:00:00.000Z', grantedBy: 'root@x.io', grantedAt: '2019-09-01T00:00:00.000Z' },
+      ],
+    },
     sites: ['payroll'],
     // payroll's applied intent, rendered: its editors as a platform group and as an org role.
     siteModels: {
@@ -165,6 +172,13 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(md).not.toContain('## Sites the apply cannot republish')
     const broken = buildPlan({ ...inventory(), siteFailures: [{ site: 'wiki', error: 'applied version 3 is gone' }] }, NOW)
     expect(renderPlanMarkdown(broken)).toContain('| wiki | applied version 3 is gone |')
+  })
+
+  it('direct grants are kept by the apply and count after it: in the people diff and the rule holders', () => {
+    expect(person('grantee@acme.io')!.after.platform).toEqual(['users:read'])
+    expect(person('grantee@acme.io')!.gains).toContain('users:read')
+    const row = plan.rules.find((r) => r.service === 'jinbe' && r.permission === 'users:read' && r.method === 'GET')!
+    expect(row.holders.emails).toContain('grantee@acme.io')
   })
 
   it('org grants and retired token scopes are listed with a proposal', () => {

@@ -1,6 +1,7 @@
 import { allGroupMemberships } from './organisation-store.js'
 import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { kratosService } from './kratos.service.js'
+import { directBinding, directGrantsRepository, type DirectBinding } from './direct-grants.repository.js'
 import { orgRolesRepository } from './org-roles.repository.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
@@ -230,6 +231,8 @@ export interface KratosBindingsResponse {
   user_organization_primary: Record<string, string>
   /** email → org → org roles (`svc:role`) assigned there, for orgs the person belongs to (rbac:org_assignments). */
   org_assignments: Record<string, Record<string, string[]>>
+  /** email → per-person direct grants still active (rbac:direct_grants; org ones only where a member). */
+  direct: Record<string, DirectBinding>
 }
 
 // Re-export types from repository for convenience
@@ -1138,9 +1141,13 @@ export class RbacService {
   async getBindingsFromKratos(opts: { maxAgeMs?: number } = { maxAgeMs: AUTHZ_DIRECTORY_MAX_AGE_MS }): Promise<KratosBindingsResponse> {
     // Single directory scan → groups + org membership + primary org, so OPA's
     // group view and its tenant (org) view come from the same snapshot.
-    const [bindings, assignments] = await Promise.all([kratosService.getAllIdentitiesWithBindings(opts), orgRolesRepository.getAll()])
+    const [bindings, assignments, grants] = await Promise.all([
+      kratosService.getAllIdentitiesWithBindings(opts), orgRolesRepository.getAll(), directGrantsRepository.getAll(),
+    ])
     const group_membership: Record<string, string[]> = {}
     const org_assignments: Record<string, Record<string, string[]>> = {}
+    const direct: Record<string, DirectBinding> = {}
+    const now = Date.now()
     const user_organizations: Record<string, string[]> = {}
     const user_organization_primary: Record<string, string> = {}
     for (const [email, b] of bindings) {
@@ -1167,8 +1174,11 @@ export class RbacService {
         if (roles?.length) mine[org] = roles
       }
       if (Object.keys(mine).length > 0) org_assignments[email] = mine
+      // Direct grants: expired ones left out here (the sweeper removes them within a minute too).
+      const held = b.id ? directBinding(grants[b.id] ?? [], orgs, now) : null
+      if (held) direct[email] = held
     }
-    return { group_membership, user_organizations, user_organization_primary, org_assignments }
+    return { group_membership, user_organizations, user_organization_primary, org_assignments, direct }
   }
 }
 

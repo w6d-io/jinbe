@@ -85,5 +85,6 @@ export function opaAuthzMock() {
     holds,
     holdsInJinbe: vi.fn(async (email: string, required: string) => holds((await rights(email)).permissions, required)),
     clearAuthzCache: vi.fn(),
+    invalidateAuthz: vi.fn(),
   }
 }

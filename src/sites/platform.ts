@@ -70,6 +70,7 @@ export async function loadPlatform(): Promise<Platform> {
     platformNamespaces: cfg.SITES_PLATFORM_NAMESPACES,
     upstreamAllow: cfg.SITES_UPSTREAM_ALLOW,
     ...(cfg.SITES_ACCESS_URL ? { accessUrl: cfg.SITES_ACCESS_URL } : {}),
+    ...(cfg.SITES_ROLE_HEADERS ? { roleHeaders: true } : {}),
     ...(await loadIdentity()),
   }
 }

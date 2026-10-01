@@ -39,6 +39,31 @@ describe('identity headers on gates that set none', () => {
     expect(headers['x-user-id']).toBe('')
   })
 
+  it('X-User-Roles and X-User-Permissions are blanked on a gate that sets none, role headers on or off', () => {
+    for (const p of [platform, { ...platform, roleHeaders: true }]) {
+      const headers = (gate(render(payrollSite(), p), 'public').mutators[0].config as { headers: Record<string, string> }).headers
+      expect(headers['x-user-roles']).toBe('')
+      expect(headers['x-user-permissions']).toBe('')
+    }
+  })
+
+  it('with role headers on, a policy gate forwards groups, roles and permissions of this site\'s app from the decision, and does not blank them', () => {
+    const site = payrollSite()
+    site.gates[1] = { ...site.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
+    const r = render(site, { ...platform, roleHeaders: true })
+    const authorizer = gate(r, 'public').authorizer as { handler: string; config: { forward_response_headers_to_upstream: string[]; payload: string } }
+    expect(authorizer.config.forward_response_headers_to_upstream).toEqual(['X-User-Groups', 'X-User-Roles', 'X-User-Permissions'])
+    expect(authorizer.config.payload).toContain('"app": "payroll"')
+    const headers = (gate(r, 'public').mutators[0].config as { headers: Record<string, string> }).headers
+    expect(headers).not.toHaveProperty('x-user-roles')
+    expect(headers).not.toHaveProperty('x-user-permissions')
+    expect(headers['x-user-id']).toBe('')
+    // Off: no forward list of its own, and the role headers stay blanked.
+    const off = render(site, platform)
+    expect((gate(off, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('forward_response_headers_to_upstream')
+    expect((gate(off, 'public').mutators[0].config as { headers: Record<string, string> }).headers['x-user-roles']).toBe('')
+  })
+
   it('the pre-flight rule blanks them too; the deny rule never reaches the upstream', () => {
     const site: Site = payrollSite()
     site.routes.items.push({ id: 'internal', methods: ['GET'], path: '/internal', gate: 'web', access: { kind: 'deny' }, source: 'manual' })

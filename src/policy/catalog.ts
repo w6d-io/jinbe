@@ -92,6 +92,10 @@ export const CATALOG = {
   // Held by super_admin alone (no staff role carries it; owner decision 2026-09-30): who must sign in
   // with a second factor, and who may join without one.
   'groups.mfa:write': p('access', "Switch a group's \"Members must use 2FA\"", 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
+  // Per-person direct grants (a role or a permission held without a group). Reading them is review work
+  // (security, auditors); writing is the holding rule's, like handing out a group.
+  'users.grants:read': p('access', 'See the roles and permissions people hold directly, not through a group', 'medium'),
+  'users.grants:write': p('access', 'Give a person a role or a permission directly, or take it away', 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
 
   // ── Organisations, from the platform (no org parameter) ────────────────────────────────────────
   'orgs:read': p('organizations', 'List organisations and their owners', 'low'),

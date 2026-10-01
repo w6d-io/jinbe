@@ -11,6 +11,7 @@ import { assertOrgParams } from '../policy/route-org-param.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { assertBundleWithinOwn } from './rbac-escalation-guard.js'
 import { groupGrants, loadRoles, type PermissionsByScope, type RolesByScope } from './grant-subset.js'
+import { directGrantsRepository, type DirectGrant } from './direct-grants.repository.js'
 import { orgRolesRepository, type OrgAssignments } from './org-roles.repository.js'
 import { JINBE, isStaffGroup } from '../policy/roles.js'
 
@@ -27,6 +28,8 @@ export interface AuthBundle {
     orgSites?: Record<string, string[]>
     /** Org → identity id → org roles (rbac:org_assignments): people's org roles, backed up with the rest. */
     orgAssignments?: OrgAssignments
+    /** Identity id → direct grants (rbac:direct_grants): people's per-person roles and permissions. */
+    directGrants?: Record<string, DirectGrant[]>
     /** Service → org roles; service → every-org map (with the roles section). */
     orgRoles?: Record<string, FlatRolesMap>
     everyOrg?: Record<string, FlatRolesMap>
@@ -35,8 +38,8 @@ export interface AuthBundle {
   }
 }
 
-export type BundleSection = 'services' | 'groups' | 'roles' | 'routeMaps' | 'oathkeeperRules' | 'orgSites' | 'orgAssignments'
-export const ALL_BUNDLE_SECTIONS: BundleSection[] = ['services', 'groups', 'roles', 'routeMaps', 'oathkeeperRules', 'orgSites', 'orgAssignments']
+export type BundleSection = 'services' | 'groups' | 'roles' | 'routeMaps' | 'oathkeeperRules' | 'orgSites' | 'orgAssignments' | 'directGrants'
+export const ALL_BUNDLE_SECTIONS: BundleSection[] = ['services', 'groups', 'roles', 'routeMaps', 'oathkeeperRules', 'orgSites', 'orgAssignments', 'directGrants']
 
 /**
  * What an import may never write: what jinbe defines in code (its roles, route map, org roles,
@@ -64,6 +67,7 @@ export function withoutOwned(bundle: AuthBundle): AuthBundle {
       oathkeeperRules: r.oathkeeperRules ?? [],
       orgSites,
       orgAssignments: r.orgAssignments ?? {},
+      directGrants: r.directGrants ?? {},
       orgRoles: keep(r.orgRoles),
       everyOrg: keep(r.everyOrg),
     },
@@ -104,19 +108,20 @@ export interface ImportHistorySummary {
   takenAt: string
   actor: string | null
   reason: ImportHistoryReason
-  counts: { services: number; groups: number; roles: number; routeMaps: number; oathkeeperRules: number; orgSites: number; orgAssignments: number }
+  counts: { services: number; groups: number; roles: number; routeMaps: number; oathkeeperRules: number; orgSites: number; orgAssignments: number; directGrants: number }
 }
 
 class RbacBundleService {
   // `sections` (optional) narrows a MANUAL export/download to selected parts.
   // Omitted → full 1:1 snapshot (what the backup CronJob + restore use).
   async export(sections?: BundleSection[]): Promise<AuthBundle> {
-    const [services, groups, oathkeeperRules, orgSites, orgAssignments] = await Promise.all([
+    const [services, groups, oathkeeperRules, orgSites, orgAssignments, directGrants] = await Promise.all([
       redisRbacRepository.getServices(),
       redisRbacRepository.getGroups(),
       redisRbacRepository.getAccessRules(),
       redisRbacRepository.getOrgSites(),
       orgRolesRepository.getAll(),
+      directGrantsRepository.getAll(),
     ])
 
     const [rolesEntries, routeMapEntries, orgRoleEntries, everyOrgEntries] = await Promise.all([
@@ -137,7 +142,7 @@ class RbacBundleService {
       if (rm) routeMaps[svc] = rm
     }
 
-    const fullRbac = { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, orgRoles, everyOrg }
+    const fullRbac = { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, directGrants, orgRoles, everyOrg }
     let rbac: AuthBundle['rbac'] = fullRbac
     if (sections && sections.length && sections.length < ALL_BUNDLE_SECTIONS.length) {
       const picked: Partial<typeof fullRbac> = {}
@@ -350,7 +355,7 @@ class RbacBundleService {
    * it throws mid-way. Returns the services pruned by a full restore.
    */
   private async applyBundle(bundle: AuthBundle, sections?: BundleSection[]): Promise<string[]> {
-    const { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, orgRoles, everyOrg } = bundle.rbac
+    const { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, directGrants, orgRoles, everyOrg } = bundle.rbac
     const want = (s: BundleSection) => !sections || sections.length === 0 || sections.includes(s)
     const isFull = !sections || sections.length === 0 || sections.length >= ALL_BUNDLE_SECTIONS.length
 
@@ -422,6 +427,10 @@ class RbacBundleService {
       }
     }
 
+    if (want('directGrants')) {
+      for (const [subject, grants] of Object.entries(directGrants ?? {})) await directGrantsRepository.restore(subject, grants)
+    }
+
     return orphanServices
   }
 
@@ -443,6 +452,7 @@ class RbacBundleService {
           oathkeeperRules: rbac?.oathkeeperRules?.length ?? 0,
           orgSites: Object.keys(rbac?.orgSites ?? rbac?.orgServiceMap ?? {}).length,
           orgAssignments: Object.keys(rbac?.orgAssignments ?? {}).length,
+          directGrants: Object.keys(rbac?.directGrants ?? {}).length,
         },
       }
     })

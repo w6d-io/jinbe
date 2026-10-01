@@ -1,6 +1,7 @@
 import type { PolicyData } from './resolve.js'
 import type { FlatRolesMap, GroupDefinition, RouteRule } from '../../services/redis-rbac.repository.js'
 import type { OrgAssignments } from '../../services/org-roles.repository.js'
+import { directBinding, type DirectBinding, type DirectGrant } from '../../services/direct-grants.repository.js'
 import { JINBE } from '../../policy/roles.js'
 
 /**
@@ -34,8 +35,11 @@ export function buildPolicyData(
   identities: ReadonlyMap<string, IdentityFacts>,
   assignments: OrgAssignments,
   knownOrgs: readonly string[],
+  grants: Readonly<Record<string, readonly DirectGrant[]>> = {},
+  now = Date.now(),
 ): PolicyData {
   const group_membership: Record<string, string[]> = {}
+  const direct: Record<string, DirectBinding> = {}
   const user_organizations: Record<string, string[]> = {}
   const org_assignments: Record<string, Record<string, string[]>> = {}
   const orgs = new Set([...knownOrgs, ...Object.keys(model.orgSites)])
@@ -58,6 +62,8 @@ export function buildPolicyData(
       if (roles?.length) mine[org] = [...roles].sort()
     }
     if (Object.keys(mine).length) put(org_assignments, email, mine)
+    const held = facts.id ? directBinding(grants[facts.id] ?? [], memberOf, now) : null
+    if (held) put(direct, email, held)
   }
 
   const org_sites: Record<string, string[]> = {}
@@ -70,6 +76,7 @@ export function buildPolicyData(
     user_organizations,
     org_roles: model.orgRoles,
     org_assignments,
+    direct,
     every_org: model.everyOrg,
     org_sites,
     route_map: model.routeMap,

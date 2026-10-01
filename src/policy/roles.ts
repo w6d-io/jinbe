@@ -66,7 +66,7 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   auditor: {
     group: 'staff-auditors',
     label: 'Compliance: read everything, export evidence',
-    permissions: [...VIEWER, ...PEOPLE_READ, 'audit:export', 'policy.bundle:read', 'recert:read'],
+    permissions: [...VIEWER, ...PEOPLE_READ, 'audit:export', 'policy.bundle:read', 'recert:read', 'users.grants:read'],
   },
   security: {
     group: 'staff-security',
@@ -75,6 +75,7 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
       ...VIEWER, ...PEOPLE_READ,
       'sessions:revoke', 'users:disable', 'users:update_email', 'users:reset_second_factor', 'users:verify',
       'groups.members:revoke', 'audit:export', 'policy.bundle:read', 'recert:read', 'recert:manage', 'recert:delete',
+      'users.grants:read',
     ],
   },
   super_admin: {

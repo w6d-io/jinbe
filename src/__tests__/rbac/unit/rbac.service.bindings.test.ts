@@ -72,6 +72,7 @@ describe('RbacService - getBindingsFromKratos', () => {
     const result = await service.getBindingsFromKratos()
     expect(result).toEqual({
       org_assignments: {},
+      direct: {},
       group_membership: {
         'admin@example.com': ['admins', 'users'],
         'dev@example.com': ['devs', 'users'],
@@ -86,6 +87,7 @@ describe('RbacService - getBindingsFromKratos', () => {
     const result = await service.getBindingsFromKratos()
     expect(result).toEqual({
       org_assignments: {},
+      direct: {},
       group_membership: {},
       user_organizations: {},
       user_organization_primary: {},
@@ -181,6 +183,31 @@ describe('RbacService - getBindingsFromKratos', () => {
     expect(result.user_organization_primary).toEqual({
       'multi@example.com': 'org-a',
       'legacy@example.com': 'org-c',
+    })
+  })
+
+  it('publishes direct grants by address: active ones only, an org grant only where the person is a member', async () => {
+    const at = '2026-01-01T00:00:00.000Z'
+    const g = (over: Record<string, unknown>) => ({ id: `g-${Math.random()}`, grantedBy: 'root@example.com', grantedAt: at, ...over })
+    await redisMock.hset('rbac:direct_grants', 'id-ann', JSON.stringify([
+      g({ scope: 'platform', app: 'jinbe', kind: 'permission', name: 'users:read' }),
+      g({ scope: 'platform', app: 'payroll', kind: 'role', name: 'editor', reason: 'cover', expiresAt: '2999-01-01T00:00:00.000Z' }),
+      g({ scope: 'platform', app: 'jinbe', kind: 'role', name: 'ops', expiresAt: '2020-01-01T00:00:00.000Z' }),
+      g({ scope: 'org-a', app: 'jinbe', kind: 'role', name: 'viewer' }),
+      g({ scope: 'org-z', app: 'jinbe', kind: 'role', name: 'owner' }),
+    ]))
+    vi.mocked(kratosService.getAllIdentitiesWithBindings).mockResolvedValueOnce(
+      new Map([['Ann@example.com', { ...binding(['users'], ['org-a']), id: 'id-ann' }], ['bob@example.com', { ...binding(['users']), id: 'id-bob' }]]) as never
+    )
+    const result = await service.getBindingsFromKratos()
+    expect(result.direct).toEqual({
+      'Ann@example.com': {
+        platform: {
+          jinbe: { roles: [], permissions: [{ name: 'users:read' }] },
+          payroll: { roles: [{ name: 'editor', expires_at: '2999-01-01T00:00:00.000Z' }], permissions: [] },
+        },
+        orgs: { 'org-a': { jinbe: { roles: [{ name: 'viewer' }], permissions: [] } } },
+      },
     })
   })
 

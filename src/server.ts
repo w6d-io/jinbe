@@ -21,6 +21,8 @@ import { userAddressRoutes } from './routes/user-address.routes.js'
 import { bulkRoutes } from './bulk/routes.js'
 import { rbacRoutes } from './routes/rbac.routes.js'
 import { orgOwnersRoutes, orgRolesRoutes } from './routes/org-roles.routes.js'
+import { adminDirectGrantsRoutes, orgDirectGrantsRoutes } from './routes/direct-grants.routes.js'
+import { startDirectGrantSweeper } from './services/direct-grants.service.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
 import { startSitesBackground } from './sites/sync.js'
@@ -195,6 +197,8 @@ export async function buildServer() {
       await api.register(apiKeyRoutes, { prefix: '/organizations/:organizationId' })
       await api.register(orgRolesRoutes, { prefix: '/organizations/:organizationId' }) // org roles: list, a member's, assign (holding rule)
       await api.register(orgOwnersRoutes, { prefix: '/admin/organizations/:organizationId' }) // name an org's owners (orgs.owners:write)
+      await api.register(adminDirectGrantsRoutes, { prefix: '/admin' }) // per-person direct grants (users.grants:*), and everyone holding them
+      await api.register(orgDirectGrantsRoutes, { prefix: '/organizations/:organizationId' }) // a member's direct grants in one org (org.members:*)
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
@@ -258,6 +262,8 @@ async function start() {
 
       // Break-glass grants end on their deadline even if nobody remembers them (bootstrap/break-glass.ts).
       startBreakGlassSweeper(fastify.log)
+      // Direct grants stop counting at their expiry; the sweeper takes them out and audits it.
+      startDirectGrantSweeper(fastify.log)
 
       // Real-time SSE fan-out — pushes a minimal change signal to connected
       // admin browsers (via Redis pub/sub, so it works across replicas).

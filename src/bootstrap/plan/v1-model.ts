@@ -117,7 +117,7 @@ function previousHoldings(inv: Inventory, email: string): Holdings {
 function currentHoldings(inv: Inventory, email: string): Holdings {
   const d = buildPolicyData(
     { roles: inv.roles, groups: inv.groups, orgRoles: inv.orgRoles, everyOrg: inv.everyOrg, routeMap: {}, orgSites: inv.orgSites },
-    inv.identities, inv.orgAssignments, inv.organisations,
+    inv.identities, inv.orgAssignments, inv.organisations, inv.directGrants,
   )
   return holdingsIn(d, email)
 }

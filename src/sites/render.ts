@@ -7,7 +7,7 @@ import { HTTP_METHODS, SYSTEM_SITES, type Access, type Gate, type Handler, type 
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
 import { placeHost, type Zone } from './host.js'
 import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
-import { PLATFORM_IDENTITY_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
+import { PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
 
 /**
  * render(site, platform): every artefact a Site stands for, from its intent alone.
@@ -31,6 +31,8 @@ export interface Platform {
   upstreamAllow?: string[]
   /** login-ui's /access page: where every site's browser gates send `forbidden` (SITES_ACCESS_URL). */
   accessUrl?: string
+  /** Policy gates forward the caller's roles and permissions in the site's app (SITES_ROLE_HEADERS). */
+  roleHeaders?: boolean
   /** Headers upstreams trust from the gateway (default PLATFORM_IDENTITY_HEADERS); see identity-headers. */
   identityHeaders?: string[]
   /** Headers each remote authorizer forwards from its decision, per handler (gateway config). */
@@ -386,7 +388,7 @@ export function render(site: Site, platform: Platform): Rendered {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
     const authorizer: Handler = gate.authorizer === 'policy'
-      ? { handler: 'remote_json', config: { payload: platformPayload(name) } }
+      ? { handler: 'remote_json', config: { payload: platformPayload(name), ...(platform.roleHeaders ? { forward_response_headers_to_upstream: ROLE_HEADERS } : {}) } }
       : gate.authorizer
     handlerOk('authorizers', authorizer, at)
     const mutators = guard(gate, authorizer)

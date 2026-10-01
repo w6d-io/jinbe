@@ -3,6 +3,7 @@ import { kratosService, KratosApiError } from '../services/kratos.service.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
+import { directGrantsRepository } from '../services/direct-grants.repository.js'
 import { orgRoleRefusals } from '../services/org-role-grants.js'
 import { AuthzUnavailableError } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
@@ -254,8 +255,9 @@ export class OrganizationUserController {
 
     try {
       await leaveOrganisation(identity, organizationId)
-      // Their org roles there go with the membership (an assignment without it grants nothing anyway).
+      // Their org roles and direct grants there go with the membership (without it they grant nothing anyway).
       await orgRolesRepository.forgetMember(organizationId, id)
+      await directGrantsRepository.forgetOrg(id, organizationId)
     } catch (err) {
       return storeUnavailable(reply, err)
     }

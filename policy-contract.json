@@ -122,6 +122,18 @@
       "delegable": "never",
       "four_eyes": "prod"
     },
+    "users.grants:read": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "direct",
+      "four_eyes": false
+    },
+    "users.grants:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": "prod"
+    },
     "orgs:read": {
       "scope": "platform",
       "step_up": false,
@@ -390,6 +402,7 @@
         "settings:read",
         "sites:read",
         "stats:read",
+        "users.grants:read",
         "users:read",
         "zones:read"
       ],
@@ -411,6 +424,7 @@
         "settings:read",
         "sites:read",
         "stats:read",
+        "users.grants:read",
         "users:disable",
         "users:read",
         "users:reset_second_factor",
@@ -451,6 +465,8 @@
         "sites:read",
         "sites:write",
         "stats:read",
+        "users.grants:read",
+        "users.grants:write",
         "users.metadata:write",
         "users:create",
         "users:delete",
@@ -929,6 +945,24 @@
               "staff-security",
               "staff-support",
               "staff-viewers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/grants",
+          "permission": "users.grants:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
               "super_admins"
             ]
           }
@@ -3132,6 +3166,66 @@
           }
         },
         {
+          "method": "DELETE",
+          "path": "/api/admin/users/:id/grants",
+          "permission": "users.grants:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/users/:id/grants",
+          "permission": "users.grants:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/admin/users/:id/grants",
+          "permission": "users.grants:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/users/:id/grants/:grantId",
+          "permission": "users.grants:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "POST",
           "path": "/api/admin/users/:id/login-link",
           "permission": "users:send_login_link",
@@ -3805,6 +3899,62 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/users/:id/grants",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/api/organizations/:organizationId/users/:id/grants",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/organizations/:organizationId/users/:id/grants/:grantId",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
           "method": "PUT",
           "path": "/api/organizations/:organizationId/users/:id/membership",
           "permission": "org.members:write",
@@ -4054,5 +4204,243 @@
         }
       ]
     }
+  },
+  "direct_grants": {
+    "examples": [
+      {
+        "name": "a platform permission, alone",
+        "email": "perm@example.com",
+        "bindings": {
+          "direct": {
+            "perm@example.com": {
+              "platform": {
+                "jinbe": {
+                  "roles": [],
+                  "permissions": [
+                    {
+                      "name": "users:read"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "user_organizations": {}
+        },
+        "expect": {
+          "platform": [
+            "users:read"
+          ],
+          "orgs": {}
+        }
+      },
+      {
+        "name": "a platform role",
+        "email": "role@example.com",
+        "bindings": {
+          "direct": {
+            "role@example.com": {
+              "platform": {
+                "jinbe": {
+                  "roles": [
+                    {
+                      "name": "viewer"
+                    }
+                  ],
+                  "permissions": []
+                }
+              }
+            }
+          },
+          "user_organizations": {}
+        },
+        "expect": {
+          "platform": [
+            "gateway:read",
+            "groups:read",
+            "orgs:read",
+            "settings:read",
+            "sites:read",
+            "stats:read",
+            "zones:read"
+          ],
+          "orgs": {}
+        }
+      },
+      {
+        "name": "an org role, for a member",
+        "email": "member@example.com",
+        "bindings": {
+          "direct": {
+            "member@example.com": {
+              "orgs": {
+                "org-example": {
+                  "jinbe": {
+                    "roles": [
+                      {
+                        "name": "viewer"
+                      }
+                    ],
+                    "permissions": []
+                  }
+                }
+              }
+            }
+          },
+          "user_organizations": {
+            "member@example.com": [
+              "org-example"
+            ]
+          }
+        },
+        "expect": {
+          "platform": [],
+          "orgs": {
+            "org-example": [
+              "org.keys:read",
+              "org.members:read"
+            ]
+          }
+        }
+      },
+      {
+        "name": "an org permission, for a member",
+        "email": "orgperm@example.com",
+        "bindings": {
+          "direct": {
+            "orgperm@example.com": {
+              "orgs": {
+                "org-example": {
+                  "jinbe": {
+                    "roles": [],
+                    "permissions": [
+                      {
+                        "name": "org.keys:read"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "user_organizations": {
+            "orgperm@example.com": [
+              "org-example"
+            ]
+          }
+        },
+        "expect": {
+          "platform": [],
+          "orgs": {
+            "org-example": [
+              "org.keys:read"
+            ]
+          }
+        }
+      },
+      {
+        "name": "an expired grant counts for nothing (the policy checks expires_at too)",
+        "email": "expired@example.com",
+        "bindings": {
+          "direct": {
+            "expired@example.com": {
+              "platform": {
+                "jinbe": {
+                  "roles": [],
+                  "permissions": [
+                    {
+                      "name": "users:read",
+                      "expires_at": "2000-01-01T00:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "user_organizations": {}
+        },
+        "expect": {
+          "platform": [],
+          "orgs": {}
+        }
+      },
+      {
+        "name": "a direct role carries its every-org reach",
+        "email": "support@example.com",
+        "bindings": {
+          "direct": {
+            "support@example.com": {
+              "platform": {
+                "jinbe": {
+                  "roles": [
+                    {
+                      "name": "support"
+                    }
+                  ],
+                  "permissions": []
+                }
+              }
+            }
+          },
+          "user_organizations": {}
+        },
+        "expect": {
+          "platform": [
+            "access:check",
+            "access:read",
+            "audit:read",
+            "gateway:read",
+            "groups:read",
+            "orgs.members:write",
+            "orgs:read",
+            "sessions:read",
+            "sessions:revoke",
+            "settings:read",
+            "sites:read",
+            "stats:read",
+            "users:create",
+            "users:read",
+            "users:recovery",
+            "users:send_login_link",
+            "users:update",
+            "users:verify",
+            "zones:read"
+          ],
+          "orgs": {
+            "org-example": [
+              "org.members:read",
+              "org.members:write"
+            ]
+          }
+        }
+      },
+      {
+        "name": "an org grant without membership counts for nothing",
+        "email": "outsider@example.com",
+        "bindings": {
+          "direct": {
+            "outsider@example.com": {
+              "orgs": {
+                "org-example": {
+                  "jinbe": {
+                    "roles": [
+                      {
+                        "name": "owner"
+                      }
+                    ],
+                    "permissions": []
+                  }
+                }
+              }
+            }
+          },
+          "user_organizations": {}
+        },
+        "expect": {
+          "platform": [],
+          "orgs": {}
+        }
+      }
+    ]
   }
 }

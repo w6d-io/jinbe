@@ -95,6 +95,7 @@ vi.mock('../../../services/rbac.service.js', () => ({
   rbacService: { notifyBindingsChanged: vi.fn().mockResolvedValue(undefined) },
 }))
 vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetMember: vi.fn(async () => {}), setForMember: vi.fn(async () => {}) } }))
+vi.mock('../../../services/direct-grants.repository.js', () => ({ directGrantsRepository: { forgetOrg: vi.fn(async () => []) } }))
 vi.mock('../../../services/org-role-grants.js', () => ({ orgRoleRefusals: vi.fn(async () => []) }))
 vi.mock('../../../services/user-groups.service.js', () => ({ userGroupsService: {} }))
 vi.mock('../../../services/group-catalogue.js', () => ({

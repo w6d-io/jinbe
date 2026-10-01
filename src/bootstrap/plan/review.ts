@@ -159,7 +159,8 @@ export function afterModel(inv: Inventory, migration: Migration): StoredModel & 
 export function buildPlan(inv: Inventory, now = new Date()): Plan {
   const migration = migrationOf(inv)
   const model = afterModel(inv, migration)
-  const d = buildPolicyData(model, inv.identities, model.assignments, inv.organisations)
+  // Direct grants are people's data: kept by the apply, so they count after it as before.
+  const d = buildPolicyData(model, inv.identities, model.assignments, inv.organisations, inv.directGrants)
   const emails = [...inv.identities.keys()].sort()
 
   // ── today ──

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { redisRbacRepository } from '../../services/redis-rbac.repository.js'
 import { getRedisClient } from '../../services/redis-client.service.js'
+import { directGrantsRepository } from '../../services/direct-grants.repository.js'
 import { orgRolesRepository } from '../../services/org-roles.repository.js'
 import { hydraService } from '../../services/hydra.service.js'
 import { kratosService } from '../../services/kratos.service.js'
@@ -113,6 +114,7 @@ export async function readInventory(logger: Logger, builtInRuleIds: ReadonlySet<
     orgRoles,
     everyOrg,
     orgAssignments: await orgRolesRepository.getAll(),
+    directGrants: await directGrantsRepository.getAll(),
     sites,
     siteModels,
     siteFailures: applied.failed,

@@ -120,6 +120,7 @@ beforeEach(() => {
     user_organizations: {},
     user_organization_primary: {},
     org_assignments: {},
+    direct: {},
   }))
   store.services = ['kuma', 'stairfleet1', 'empty']
   store.roles = {
@@ -223,6 +224,7 @@ describe('data.bindings is written in one PUT — never a window without binding
       user_organizations: {},
       user_organization_primary: {},
       org_assignments: {},
+      direct: {},
       groups: store.groups,
     })
     expect((await fetchWithStatus(routes, '/api/admin/rbac/opal/groups')).body).toEqual(store.groups)
