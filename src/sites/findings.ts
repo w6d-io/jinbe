@@ -1,6 +1,6 @@
 import type { GroupDefinition } from '../services/redis-rbac.repository.js'
 import type { Access, Site } from './schemas.js'
-import type { Check, Rendered } from './render.js'
+import { secondFactorGaps, type Check, type Rendered } from './render.js'
 import type { ProtectionStatus } from './protection.js'
 import { WHO, WHO_LABEL, isBareBearer, whoOf, type WhoPreset } from './presets.js'
 import { siteError } from './checks.js'
@@ -86,6 +86,21 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
       }
     }
   })
+
+  // ── who may pass ────────────────────────────────────────────
+  site.gates.forEach((gate, i) => {
+    const anonymous = gate.authenticators.some((h) => h.handler === 'noop' || h.handler === 'anonymous')
+    if (!anonymous && gate.authorizer !== 'policy' && gate.authorizer.handler === 'allow') {
+      add('confirm', 'gate_signed_in_only', `gate '${gate.id}': any signed-in person passes, no permission or two-step sign-in check (authorizer allow)`,
+        `Set Who may pass to the policy on gate '${gate.id}' to check permissions and the site's two-step sign-in; acknowledge gate_signed_in_only if every signed-in account may use what it serves`, `gates.${i}.authorizer`)
+    }
+  })
+  for (const gap of secondFactorGaps(site)) {
+    const i = site.gates.findIndex((g) => g.id === gap.gate)
+    const who = gap.why === 'anonymous' ? 'lets anyone in' : 'lets every signed-in person pass'
+    add('error', 'second_factor_not_enforced', `the site asks for two-step sign-in, but gate '${gap.gate}' ${who} (authorizer ${gap.authorizer}) without asking the policy: neither the second factor nor any permission is checked there`,
+      `Set Who may pass to the policy on gate '${gap.gate}'`, `gates.${i}.authorizer`)
+  }
 
   // ── routes ──────────────────────────────────────────────────
   const roles = rendered.roles

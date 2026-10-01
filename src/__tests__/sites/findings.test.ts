@@ -175,3 +175,50 @@ describe('blockingFindings', () => {
     expect(publishState(blockingFindings([{ level: 'error', code: 'host_taken', message: 'm' }])).blocked).toBe(true)
   })
 })
+
+describe('two-step sign-in the gates cannot enforce', () => {
+  const mfa = (scope: 'all' | 'writes' | 'routes', over: Partial<Gate>, routes?: string[]) =>
+    tidy({ gates: [gate({ id: 'web', ...over })], login: { twoFactor: { scope, clients: 'exempt', ...(routes ? { routes } : {}) }, reach: 'granted' } })
+
+  it('echo-mfa: 2FA on, web gate cookie_session + allow → error second_factor_not_enforced, and gate_signed_in_only', () => {
+    const f = run(mfa('all', { authorizer: { handler: 'allow' } }))
+    expect(f.map((x) => [x.code, x.level])).toEqual([['gate_signed_in_only', 'confirm'], ['second_factor_not_enforced', 'error']])
+    expect(f[1]).toMatchObject({ fix: "Set Who may pass to the policy on gate 'web'", path: 'gates.0.authorizer', message: expect.stringContaining('lets every signed-in person pass') })
+    expect(publishState(f).blocked).toBe(true)
+  })
+
+  it('a policy gate enforces it; deny lets nobody in; 2FA off asks nothing of the gates', () => {
+    expect(run(mfa('all', {}))).toEqual([])
+    expect(codes(run(mfa('all', { authorizer: { handler: 'deny' } })))).toEqual([])
+    expect(codes(run(tidy({ gates: [gate({ id: 'web', authorizer: { handler: 'allow' } })] })))).toEqual(['gate_signed_in_only'])
+  })
+
+  it('a noop + allow gate on a protected route: lets anyone in', () => {
+    const f = run(mfa('all', { authenticators: WHO.anyone, authorizer: { handler: 'allow' } }))
+    expect(f.find((x) => x.code === 'second_factor_not_enforced')?.message).toContain('lets anyone in')
+    expect(codes(f)).not.toContain('gate_signed_in_only')
+  })
+
+  it('only the routes the 2FA applies to count: writes scope and read-only gates, routes scope and chosen ids', () => {
+    // tidy's web gate serves GET payslips and POST create: a write, so writes scope needs it.
+    expect(codes(run(mfa('writes', { authorizer: { handler: 'allow' } })))).toContain('second_factor_not_enforced')
+    const reads = tidy({
+      gates: [gate({ id: 'web' }), gate({ id: 'ro', authorizer: { handler: 'allow' } })],
+      routes: { items: [{ id: 'list', methods: ['GET'], path: '/list', gate: 'ro', access: { kind: 'signed-in' }, source: 'manual' }, ...tidy().routes.items], catchAll: { gate: 'web', access: { kind: 'deny' } } },
+      login: { twoFactor: { scope: 'writes', clients: 'exempt' }, reach: 'granted' },
+    })
+    expect(codes(run(reads))).not.toContain('second_factor_not_enforced')
+    expect(codes(run({ ...reads, login: { twoFactor: { scope: 'routes', routes: ['list'], clients: 'exempt' }, reach: 'granted' } }))).toContain('second_factor_not_enforced')
+  })
+})
+
+describe('siteSecondFactor', () => {
+  it('says NOT enforced (minAal aal1) when a gate it needs never asks the policy; null when only login is given', async () => {
+    const { siteSecondFactor } = await import('../../second-factor/requirements.js')
+    const site = tidy({ gates: [gate({ id: 'web', authorizer: { handler: 'allow' } })], login: { twoFactor: { scope: 'all', clients: 'exempt' }, reach: 'granted' } })
+    expect(siteSecondFactor(site)).toMatchObject({ enforced: false, notEnforcedOn: ['web'], minAal: 'aal1', summary: expect.stringMatching(/^Two-step sign-in is set but NOT enforced: gate 'web' never asks the policy/) })
+    expect(siteSecondFactor({ ...site, gates: [gate({ id: 'web' })] })).toMatchObject({ enforced: true, notEnforcedOn: [], minAal: 'aal2' })
+    expect(siteSecondFactor({ login: site.login })).toMatchObject({ enforced: null, minAal: 'aal2' })
+    expect(siteSecondFactor(tidy())).toMatchObject({ enforced: null, minAal: 'aal1' })
+  })
+})

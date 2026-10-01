@@ -5,7 +5,7 @@ import { KEY_STEP_UP_MAX_AGE_MS, KEY_STEP_UP_PERMISSIONS } from '../middleware/d
 import type { MfaMethod } from '../services/kratos.service.js'
 import { declaredRoute } from '../policy/declared-routes.js'
 import type { Site } from '../sites/schemas.js'
-import { twoFactorOn } from '../sites/render.js'
+import { secondFactorGaps, twoFactorOn } from '../sites/render.js'
 import type { GroupFlag } from './settings.js'
 import { getMcpSettings } from '../mcp/settings.js'
 
@@ -130,12 +130,18 @@ export interface SiteSecondFactor {
   routes: string[]
   /** OAuth clients: let through, or refused (a token carries no sign-in level). Null when the site asks nothing. */
   clients: 'exempt' | 'refused' | null
+  /** What is enforced: aal1 when the site asks nothing, or when a gate it needs never asks the policy. */
   minAal: 'aal1' | 'aal2'
+  /** Whether the gates make the policy check it: null when the site asks nothing (or its gates were not given). */
+  enforced: boolean | null
+  /** Gates covering routes the 2FA applies to that never ask the policy (so nobody checks it there). */
+  notEnforcedOn: string[]
   /** The same, in one sentence for a person. */
   summary: string
 }
 
-export function siteSecondFactor(site: Pick<Site, 'login'>): SiteSecondFactor {
+/** Pass the gates and routes too (a whole site) to know whether the gates enforce what login asks. */
+export function siteSecondFactor(site: Pick<Site, 'login'> & Partial<Pick<Site, 'gates' | 'routes'>>): SiteSecondFactor {
   const tf = site.login?.twoFactor
   const on = twoFactorOn(site)
   const routes = tf?.routes ?? []
@@ -147,7 +153,12 @@ export function siteSecondFactor(site: Pick<Site, 'login'>): SiteSecondFactor {
   else if (scope === 'writes') summary = `Two-step sign-in for changes (POST, PUT, PATCH, DELETE)${also}; reading works after a password.`
   else summary = `Two-step sign-in on ${routes.length} chosen route${routes.length === 1 ? '' : 's'} only.`
   if (on && tf?.clients === 'refused') summary += ' OAuth clients are refused where it applies.'
-  return { scope, routes: [...routes], clients: on ? (tf?.clients ?? null) : null, minAal: on ? 'aal2' : 'aal1', summary }
+  const gaps = on && site.gates && site.routes ? secondFactorGaps({ login: site.login, gates: site.gates, routes: site.routes }).map((g) => g.gate) : []
+  const enforced = on && site.gates && site.routes ? gaps.length === 0 : null
+  if (enforced === false) {
+    summary = `Two-step sign-in is set but NOT enforced: gate${gaps.length === 1 ? '' : 's'} ${gaps.map((g) => `'${g}'`).join(', ')} never ask${gaps.length === 1 ? 's' : ''} the policy, so any account passes there without it. (Set: ${summary})`
+  }
+  return { scope, routes: [...routes], clients: on ? (tf?.clients ?? null) : null, minAal: on && enforced !== false ? 'aal2' : 'aal1', enforced, notEnforcedOn: gaps, summary }
 }
 
 // ── one person ────────────────────────────────────────────────
