@@ -97,7 +97,7 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
         `Set Who may pass to the policy on gate '${gate.id}' to check permissions and the site's two-step sign-in; acknowledge gate_signed_in_only if every signed-in account may use what it serves`, `gates.${i}.authorizer`)
     }
     // Identifies people, passes none of it on: the gateway blanks every identity header (anti-spoofing).
-    const identifies = gate.authenticators.some((h) => h.handler !== 'noop' && h.handler !== 'anonymous')
+    const identifies = gate.authenticators.some((h) => !['noop', 'anonymous', 'unauthorized'].includes(h.handler))
     if (identifies && !gate.mutators.some((m) => IDENTITY_MUTATORS.has(m.handler))) {
       add('warn', 'gate_passes_no_identity', `gate '${gate.id}' signs people in but passes nothing on: the app receives the X-User-* headers (id, email, groups, AAL…) empty`,
         `Set Gets to identity headers (or enrich) on gate '${gate.id}'`, `gates.${i}.mutators`)

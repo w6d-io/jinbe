@@ -245,5 +245,6 @@ describe('a sign-in gate that passes no identity', () => {
     expect(codes(run(site({ mutators: [{ handler: 'header' }] })))).toEqual([])
     expect(codes(run(site({ mutators: [{ handler: 'hydrator' }, { handler: 'header' }] })))).toEqual([])
     expect(codes(run(site({ mutators: [{ handler: 'id_token' }] })))).toEqual([])
+    expect(codes(run(site({ authenticators: [{ handler: 'unauthorized' }], authorizer: { handler: 'deny' }, mutators: [{ handler: 'noop' }] })))).not.toContain('gate_passes_no_identity')
   })
 })
