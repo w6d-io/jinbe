@@ -1,6 +1,6 @@
 import type { GroupDefinition } from '../services/redis-rbac.repository.js'
 import type { Access, Site } from './schemas.js'
-import type { Rendered } from './render.js'
+import type { Check, Rendered } from './render.js'
 import type { ProtectionStatus } from './protection.js'
 import { WHO, WHO_LABEL, isBareBearer, whoOf, type WhoPreset } from './presets.js'
 import { siteError } from './checks.js'
@@ -131,6 +131,40 @@ function heldRoles(site: Site, groups: Record<string, GroupDefinition>): Set<str
   for (const def of Object.values(site.groups.orgGrantable)) def.roles.forEach((r) => held.add(r))
   for (const def of Object.values(groups)) (def[site.name] ?? []).forEach((r) => held.add(r))
   return held
+}
+
+/** How to fix the platform checks apply refuses on; anything else gets the generic hint. */
+const CHECK_FIX: Record<string, string> = {
+  unknown_group: 'Create the group first (Access → Groups), or map the roles to an existing platform group',
+  group_taken: 'Name an org-grantable group for this site only (<site>-…); that group already covers other services',
+  service_exists: 'This name is a service not managed as a site: adopt it through the migration, or pick another name',
+  route_tie: 'Another service declares the same route on a shared host: change the path, or give the site its own host',
+  host_reserved: 'Pick another host: this one is the platform\'s',
+  host_taken: 'Pick another host or path prefix: another site serves it',
+  rule_overlap: 'Change the route or gate so no request matches two gateway rules (POST /sites/match shows which)',
+  pattern_invalid: 'Fix the route path or the expert match URL so the gateway can compile it',
+  handler_disabled: 'Use a handler the gateway runs, or enable it in the gateway configuration first',
+  host_outside_zones: 'Use a host under a zone, or create the zone first (POST /sites/zones/suggest)',
+  host_too_deep: 'Use a host exactly one label under a zone',
+  unknown_role: 'Map the group to a role the site defines',
+  unknown_gate: 'Point the route at a gate the site declares',
+  public_needs_anonymous_gate: 'Serve the public route through a gate that lets anonymous callers in (Anyone, or Optional sign-in)',
+}
+
+/**
+ * The error checks apply refuses on before writing anything — render (422 invalid_site), the platform
+ * context, gatekit and an address swap (409 checks_failed) — as error findings, so the check endpoint
+ * says `blocked` whenever apply would refuse. Apply keeps running them itself.
+ */
+export function blockingFindings(checks: readonly Check[]): Finding[] {
+  const seen = new Set<string>()
+  return checks.filter((c) => c.level === 'error').flatMap((c) => {
+    const key = `${c.code} ${c.message} ${c.path ?? ''}`
+    if (seen.has(key)) return []
+    seen.add(key)
+    const fix = CHECK_FIX[c.code] ?? 'Fix it in the draft: publishing refuses (409 checks_failed / 422 invalid_site) until this check passes'
+    return [{ code: c.code, level: 'error' as const, message: c.message, fix, ...(c.path ? { path: c.path } : {}) }]
+  })
 }
 
 /** What still stops a publish: every error, and every confirm whose code was not acknowledged. */

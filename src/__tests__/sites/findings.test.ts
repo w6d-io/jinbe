@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertPublishable, publishState, securityFindings, unresolved, type Finding } from '../../sites/findings.js'
+import { assertPublishable, blockingFindings, publishState, securityFindings, unresolved, type Finding } from '../../sites/findings.js'
 import { SESSION_TOKEN, WHO, isBareBearer, whoOf } from '../../sites/presets.js'
 import { expandRoles } from '../../sites/render.js'
 import type { Gate, Site } from '../../sites/schemas.js'
@@ -142,5 +142,20 @@ describe('the publish gate', () => {
   it('422 unconfirmed_findings names the codes to acknowledge', () => {
     expect(() => assertPublishable(f)).toThrow(/acknowledge: \["public_route"\]/)
     expect(() => assertPublishable(f, ['public_route'])).not.toThrow()
+  })
+})
+
+describe('blockingFindings', () => {
+  it('error checks become error findings with a fix (known code or the generic one), deduplicated; warnings are left out', () => {
+    expect(blockingFindings([
+      { level: 'error', code: 'unknown_group', message: "platform group 'x' does not exist", path: 'groups.platform.x' },
+      { level: 'error', code: 'unknown_group', message: "platform group 'x' does not exist", path: 'groups.platform.x' },
+      { level: 'error', code: 'something_new', message: 'm' },
+      { level: 'warn', code: 'no_sso', message: 'w' },
+    ])).toEqual([
+      { code: 'unknown_group', level: 'error', message: "platform group 'x' does not exist", fix: expect.stringContaining('Create the group first'), path: 'groups.platform.x' },
+      { code: 'something_new', level: 'error', message: 'm', fix: expect.stringContaining('409 checks_failed') },
+    ])
+    expect(publishState(blockingFindings([{ level: 'error', code: 'host_taken', message: 'm' }])).blocked).toBe(true)
   })
 })

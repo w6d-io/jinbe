@@ -7,7 +7,7 @@ import { DELETED_TTL_SECONDS, sitesRepository, type SiteRecord, type SiteDraft }
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
 import { assertGatesAuthenticated, assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
-import { publishState, securityFindings, type Finding } from './findings.js'
+import { blockingFindings, publishState, securityFindings, type Finding } from './findings.js'
 import { diffArtefacts, riskOf } from './diff.js'
 import { gatekit, type RenderSample } from './gatekit.client.js'
 import { placeHost, zonesView, type Zone } from './host.js'
@@ -254,7 +254,8 @@ export async function preview(site: Site) {
   const ingresses = await clusterIngresses()
   const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
-  const findings = await findingsFor(site, rendered)
+  // What apply refuses on (render, context, gatekit, swap), then the security findings.
+  const findings = [...blockingFindings([...checks, ...ctx, ...gk, ...swap]), ...(await findingsFor(site, rendered))]
   const resolvedGates = await resolvedGatesOf(site, rendered)
   return {
     resolvedGates,
