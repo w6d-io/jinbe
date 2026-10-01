@@ -13,6 +13,13 @@
  *   3 — bootstrap failed (after passing env + dependency checks)
  *   4 — schema downgrade detected
  *   5 — marker corruption
+ *
+ * `--plan [--out DIR] [--opa]` (authz v2, wave V0): READ-ONLY. Takes no lock, writes no marker and
+ * no RBAC key (only the shared identity-directory cache may refresh); reads the live v1 RBAC state with jinbe's own credentials and writes the v2 review
+ * list (plan.json, plan.md) to DIR (default /tmp/jinbe-authz-plan). `--opa` also checks every listed
+ * person's v1 platform permissions against OPA. Run it inside the jinbe pod:
+ *   kubectl exec deploy/jinbe -- node dist/cli/bootstrap.js --plan --out /tmp/plan --opa
+ *   kubectl cp <pod>:/tmp/plan ./plan
  */
 
 import pino from 'pino'
@@ -21,6 +28,9 @@ import { redisClientService } from '../services/redis-client.service.js'
 import { runBootstrap, SchemaDowngradeError } from '../bootstrap/index.js'
 import { readMarker, MarkerCorruptError } from '../bootstrap/marker.js'
 import { waitForRedis, waitForKratos, DependencyTimeoutError } from '../bootstrap/wait-deps.js'
+import { buildBuiltInRules, OPTIONAL_BUILT_IN_RULE_IDS } from '../bootstrap/build-rules.js'
+import { runPlan } from '../authz-v2/plan/run.js'
+import type { BootstrapConfig } from '../bootstrap/types.js'
 
 const EXIT = {
   SUCCESS: 0,
@@ -31,6 +41,58 @@ const EXIT = {
   MARKER_CORRUPT: 5,
 } as const
 
+function argValue(name: string): string | undefined {
+  const i = process.argv.indexOf(name)
+  return i >= 0 ? process.argv[i + 1] : undefined
+}
+
+/** What the orchestrator and the plan are configured with, from the environment. */
+function configFromEnv(): BootstrapConfig {
+  return {
+    domains: {
+      auth: env.AUTH_DOMAIN!,
+      app: env.APP_DOMAIN!,
+      api: env.API_DOMAIN || env.APP_DOMAIN!,
+    },
+    urls: {
+      kratosPublic: env.KRATOS_PUBLIC_URL,
+      kratosAdmin: env.KRATOS_ADMIN_URL,
+      loginUi: env.LOGIN_UI_URL!,
+      adminUi: env.ADMIN_UI_URL!,
+      jinbeInternal: env.JINBE_INTERNAL_URL,
+    },
+    signInGate: env.SIGN_IN_GATE_ENABLED,
+    mcp: env.MCP_PUBLIC_URL && env.MCP_UPSTREAM_URL ? { publicUrl: env.MCP_PUBLIC_URL, upstream: env.MCP_UPSTREAM_URL } : null,
+    mcpOAuthIssuer: env.MCP_OAUTH_ISSUER || null,
+    admin: env.ADMIN_EMAIL && env.ADMIN_PASSWORD ? { email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD, name: env.ADMIN_NAME } : null,
+  }
+}
+
+/** `--plan`: the read-only v2 review list. */
+async function plan(logger: pino.Logger): Promise<number> {
+  try {
+    await waitForRedis({ logger })
+  } catch (err) {
+    if (err instanceof DependencyTimeoutError) return EXIT.DEPENDENCY_TIMEOUT
+    throw err
+  }
+  const config = configFromEnv()
+  let builtInRuleIds = new Set<string>(OPTIONAL_BUILT_IN_RULE_IDS)
+  try {
+    const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer })
+    builtInRuleIds = new Set([...rules.map((r) => r.id), ...OPTIONAL_BUILT_IN_RULE_IDS])
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'plan: built-in rules could not be built from the environment — every rule id is listed')
+  }
+  try {
+    await runPlan({ logger, outDir: argValue('--out') ?? '/tmp/jinbe-authz-plan', opa: process.argv.includes('--opa'), docs: env.ENABLE_SWAGGER, builtInRuleIds })
+    return EXIT.SUCCESS
+  } catch (err) {
+    logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'plan failed')
+    return EXIT.BOOTSTRAP_FAILED
+  }
+}
+
 async function main(): Promise<number> {
   const logger = pino({
     level: env.LOG_LEVEL,
@@ -40,6 +102,8 @@ async function main(): Promise<number> {
       gitSha: env.COMMIT_SHA,
     },
   })
+
+  if (process.argv.includes('--plan')) return plan(logger)
 
   logger.info({ schemaTarget: 1 }, 'Bootstrap CLI starting')
 
@@ -110,40 +174,13 @@ async function main(): Promise<number> {
     force = true
   }
 
-  // Build orchestrator config.
-  const kratosPublic = env.KRATOS_PUBLIC_URL
-  const jinbeInternal = env.JINBE_INTERNAL_URL
-  const adminEmail = env.ADMIN_EMAIL
-  const adminPassword = env.ADMIN_PASSWORD
-  const adminName = env.ADMIN_NAME
-
   try {
     const result = await runBootstrap({
       logger,
       gitSha: env.COMMIT_SHA || 'unknown',
       version: env.APP_VERSION || 'unknown',
       force,
-      config: {
-        domains: {
-          auth: env.AUTH_DOMAIN!,
-          app: env.APP_DOMAIN!,
-          api: env.API_DOMAIN || env.APP_DOMAIN!,
-        },
-        urls: {
-          kratosPublic,
-          kratosAdmin: env.KRATOS_ADMIN_URL,
-          loginUi: env.LOGIN_UI_URL!,
-          adminUi: env.ADMIN_UI_URL!,
-          jinbeInternal,
-        },
-        signInGate: env.SIGN_IN_GATE_ENABLED,
-        mcp: env.MCP_PUBLIC_URL && env.MCP_UPSTREAM_URL ? { publicUrl: env.MCP_PUBLIC_URL, upstream: env.MCP_UPSTREAM_URL } : null,
-        mcpOAuthIssuer: env.MCP_OAUTH_ISSUER || null,
-        admin:
-          adminEmail && adminPassword
-            ? { email: adminEmail, password: adminPassword, name: adminName }
-            : null,
-      },
+      config: configFromEnv(),
     })
     logger.info({ outcome: result.outcome }, 'Bootstrap CLI finished')
     return EXIT.SUCCESS

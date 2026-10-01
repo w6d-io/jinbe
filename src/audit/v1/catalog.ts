@@ -52,6 +52,8 @@ export const AUDIT_EVENTS = {
   'org.admins.changed': ['authz', 'update'],
   // authz v2: org roles on the identity, and an org's owners named from the platform.
   'org.roles.changed': ['authz', 'update'],
+  // A code-owned authz v2 key found edited outside jinbe, and converged back (authz-v2/store.ts).
+  'rbac.owned_drift': ['authz', 'update', 'high'],
   'org.roles.refused': ['authz', 'update', 'warn'],
   'org.owners.changed': ['authz', 'update', 'warn'],
   'org.services.changed': ['authz', 'update'],

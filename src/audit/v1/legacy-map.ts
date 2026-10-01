@@ -26,6 +26,7 @@ const BY_TYPE: Record<string, AuditEventType> = {
   'organization_user.roles_changed': 'org.roles.changed',
   'organization_user.roles_refused': 'org.roles.refused',
   'organization.owners_changed': 'org.owners.changed',
+  'rbac.owned_drift': 'rbac.owned_drift',
   'organization.created': 'org.created',
   'organization.updated': 'org.updated',
   'organization.deleted': 'org.deleted',

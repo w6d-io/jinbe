@@ -27,8 +27,8 @@ export async function convergeJinbeV2(logger: Logger): Promise<ConvergeResult> {
   for (const key of result.drifted) {
     rbacOwnedDrift.labels(key).inc()
     auditEventService.emit({
-      category: 'rbac', kind: 'security', verb: 'update', target: key,
-      result: 'applied', reason: 'rbac.owned_drift', severity: 'high',
+      type: 'rbac.owned_drift', target: { type: 'rbac2', id: key },
+      result: 'applied', reason: 'converged back to what code defines', severity: 'high',
       actor: { email: 'system', type: 'system' }, source: 'bootstrap',
     }).catch(() => {})
   }
