@@ -1,12 +1,13 @@
-import { mkdir, readFile, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { dirname, join, resolve } from 'path'
 import type { Redis } from 'ioredis'
 import { backupStore } from '../services/backup-store.service.js'
 
 /**
  * A raw, exact snapshot of the RBAC store (every `rbac:*` key, the bootstrap marker included),
  * taken before `--apply` wipes and reseeds it. MANDATORY: the apply refuses to touch anything unless
- * the snapshot is written to a local file AND, when backup is configured, to S3.
+ * the snapshot is written to a local file AND, when backup is configured, to S3 — and refuses outright
+ * unless at least one copy outlives the pod (snapshotDurability).
  *
  * Raw on purpose, not an RBAC bundle: the previous release must find its data exactly as it left it
  * (its own key names, its own marker schema), which no bundle format of THIS release can promise.
@@ -47,6 +48,47 @@ export async function takeSnapshot(redis: Store, reason: string, gitSha: string)
     else if (type === 'zset') keys[key] = { type, value: await redis.zrange(key, 0, -1, 'WITHSCORES') }
   }
   return { version: 1, takenAt: new Date().toISOString(), reason, gitSha, keys }
+}
+
+export class EphemeralSnapshotError extends Error {
+  constructor(public readonly why: string) {
+    super(`Refusing to apply: the rollback snapshot would not outlive this pod (${why}). Configure the S3 backup, ` +
+      'or mount a persistent volume at JINBE_SNAPSHOT_DIR and set JINBE_SNAPSHOT_DIR_DURABLE=true. ' +
+      'Only if you accept losing the rollback point: --allow-ephemeral-snapshot.')
+    this.name = 'EphemeralSnapshotError'
+  }
+}
+
+export interface Durability {
+  durable: boolean
+  /** Where a copy will outlive the pod: 's3', 'volume'. */
+  where: string[]
+  /** Why not, when not. */
+  why: string
+}
+
+/**
+ * Whether the snapshot lands somewhere that outlives the pod: the S3 backup when configured, or
+ * JINBE_SNAPSHOT_DIR on a volume DECLARED durable (JINBE_SNAPSHOT_DIR_DURABLE=true) and that is a
+ * mount point of its own — not the container's filesystem. A declaration alone is not enough (a typo
+ * in a mount path would silently write into the container), and a mount alone is not either (an
+ * emptyDir is a mount and dies with the pod).
+ */
+export async function snapshotDurability(dir: string, declared: boolean, s3 = backupStore.enabled()): Promise<Durability> {
+  const where: string[] = []
+  if (s3) where.push('s3')
+  let volumeWhy = 'JINBE_SNAPSHOT_DIR is not declared durable (JINBE_SNAPSHOT_DIR_DURABLE)'
+  if (declared) {
+    try {
+      const abs = resolve(dir)
+      const [here, parent] = await Promise.all([stat(abs), stat(dirname(abs))])
+      if (here.dev !== parent.dev) where.push('volume')
+      else volumeWhy = `${abs} is declared durable but is not a mounted volume (same filesystem as ${dirname(abs)})`
+    } catch (err) {
+      volumeWhy = `${dir} is declared durable but cannot be read: ${(err as Error).message}`
+    }
+  }
+  return { durable: where.length > 0, where, why: where.length > 0 ? '' : `no S3 backup configured; ${volumeWhy}` }
 }
 
 /**

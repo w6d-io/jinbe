@@ -5,7 +5,7 @@ import { republishAppliedSites } from '../sites/republish.js'
 import { readInventory, writePlan } from './plan/run.js'
 import { buildPlan } from './plan/review.js'
 import { migrationOf } from './plan/migration.js'
-import { takeSnapshot, storeSnapshot } from './snapshot.js'
+import { EphemeralSnapshotError, snapshotDurability, takeSnapshot, storeSnapshot } from './snapshot.js'
 import { convergeJinbe } from './converge.js'
 import { upsertBuiltInRules } from './upsert-rules.js'
 import type { BootstrapLogger } from './types.js'
@@ -80,6 +80,10 @@ export async function applyModel(opts: {
   builtInRules: OathkeeperRule[]
   gitSha: string
   snapshotDir: string
+  /** JINBE_SNAPSHOT_DIR_DURABLE: the operator declares the snapshot dir a persistent volume. */
+  snapshotDirDurable?: boolean
+  /** `--allow-ephemeral-snapshot`: apply even when no snapshot copy outlives the pod (logged loudly). */
+  allowEphemeralSnapshot?: boolean
   planDir?: string
 }): Promise<ApplyResult> {
   const { logger } = opts
@@ -93,6 +97,21 @@ export async function applyModel(opts: {
   const blind = inv.unavailable.filter((u) => !u.startsWith('OAuth clients'))
   if (blind.length > 0 && !opts.firstRun) {
     throw new Error(`Refusing to apply on a partial read (${blind.join(', ')}): the plan could not see everything`)
+  }
+
+  // The rollback point must outlive the pod (a post-upgrade Job's /tmp does not). A first run has
+  // nothing to roll back to.
+  if (!opts.firstRun) {
+    const durability = await snapshotDurability(opts.snapshotDir, opts.snapshotDirDurable === true)
+    if (!durability.durable) {
+      if (!opts.allowEphemeralSnapshot) throw new EphemeralSnapshotError(durability.why)
+      logger.error(
+        { why: durability.why, snapshotDir: opts.snapshotDir },
+        '!!! --allow-ephemeral-snapshot: APPLYING WITH A ROLLBACK SNAPSHOT THAT DIES WITH THIS POD. Copy it out before the pod ends !!!',
+      )
+    } else {
+      logger.info({ where: durability.where }, 'the rollback snapshot will outlive this pod')
+    }
   }
 
   const redis = getRedisClient()

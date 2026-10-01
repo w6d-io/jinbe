@@ -345,6 +345,9 @@ export const envSchema = z.object({
   JINBE_BREAK_GLASS_CODE_SHA256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
   // Where --apply writes its mandatory pre-apply store snapshot (and S3 too when backup is on).
   JINBE_SNAPSHOT_DIR: z.string().default('/tmp/jinbe-snapshots'),
+  // Declares JINBE_SNAPSHOT_DIR a persistent volume. --apply refuses unless a snapshot copy outlives
+  // the pod: the S3 backup, or this dir declared durable AND mounted (bootstrap/snapshot.ts).
+  JINBE_SNAPSHOT_DIR_DURABLE: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // The planHash an upgrade's bootstrap may apply on its own (the reviewed `--plan`). Unset: an
   // install written by the previous model refuses to start the new one until --apply is run.
   JINBE_RBAC_APPLY_EXPECT: z.string().optional(),

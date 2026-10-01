@@ -101,7 +101,10 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       if (!opts.expectPlan) throw new MigrationNotApprovedError(existing.schemaVersion)
       outcome = 'schema-upgrade'
       logger.warn({ from: existing.schemaVersion, to: SCHEMA_VERSION, expect: opts.expectPlan }, 'Schema upgrade — applying the reviewed plan (wipe and reseed)')
-      const result = await applyModel({ logger, expect: opts.expectPlan, firstRun: false, builtInRules, gitSha: opts.gitSha, snapshotDir })
+      const result = await applyModel({
+        logger, expect: opts.expectPlan, firstRun: false, builtInRules, gitSha: opts.gitSha, snapshotDir,
+        snapshotDirDurable: opts.snapshotDirDurable, allowEphemeralSnapshot: opts.allowEphemeralSnapshot,
+      })
       logger.info({ ...result }, 'Model applied')
     } else if (
       existing.builtInsHash.rules !== currentBuiltInsHash.rules ||

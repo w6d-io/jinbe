@@ -69,6 +69,10 @@ export interface RunBootstrapOptions {
   expectPlan?: string | null
   /** Where the mandatory pre-apply snapshot goes (and S3 when backup is configured). */
   snapshotDir?: string
+  /** The snapshot dir is declared a persistent volume (JINBE_SNAPSHOT_DIR_DURABLE). */
+  snapshotDirDurable?: boolean
+  /** `--allow-ephemeral-snapshot`: the only override of the durable-snapshot rule. */
+  allowEphemeralSnapshot?: boolean
 }
 
 export type { OathkeeperRule, RouteRule }

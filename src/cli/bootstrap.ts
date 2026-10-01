@@ -14,6 +14,7 @@
  *   5 — marker corruption
  *   6 — the stored RBAC is the previous model's and no reviewed plan approves moving it (nothing changed)
  *   7 — break-glass refused
+ *   8 — apply refused: the rollback snapshot would not outlive the pod (nothing changed)
  *
  * Commands, run inside the jinbe pod (`kubectl exec deploy/jinbe -- node dist/cli/bootstrap.js …`):
  *
@@ -21,9 +22,12 @@
  *                                       state, every rule after the apply, each person's gains and
  *                                       losses, orphans, the migration map. `--opa` checks today's
  *                                       platform permissions against OPA. No lock, no RBAC write.
- *   --apply --expect HASH [--out DIR]   the reviewed move: mandatory store snapshot (file + S3), wipe,
+ *   --apply --expect HASH [--out DIR] [--allow-ephemeral-snapshot]
+ *                                       the reviewed move: mandatory store snapshot (file + S3), wipe,
  *                                       reseed from code and the applied sites; refused unless the
- *                                       live state still gives HASH.
+ *                                       live state still gives HASH, and unless the snapshot outlives
+ *                                       the pod (S3 backup, or JINBE_SNAPSHOT_DIR_DURABLE=true on a
+ *                                       mounted volume) — the flag is the only, loudly logged, override.
  *   --restore-snapshot FILE|S3KEY       puts the store back exactly as a snapshot holds it (rollback:
  *                                       then redeploy the previous release).
  *   --break-glass --email A --reason R [--minutes N] [--dry-run]
@@ -40,7 +44,7 @@ import { waitForRedis, waitForKratos, DependencyTimeoutError } from '../bootstra
 import { buildBuiltInRules, OPTIONAL_BUILT_IN_RULE_IDS } from '../bootstrap/build-rules.js'
 import { runPlan } from '../bootstrap/plan/run.js'
 import { applyModel, PlanMismatchError } from '../bootstrap/apply.js'
-import { loadSnapshot, restoreSnapshot } from '../bootstrap/snapshot.js'
+import { EphemeralSnapshotError, loadSnapshot, restoreSnapshot } from '../bootstrap/snapshot.js'
 import { breakGlass, BreakGlassError } from '../bootstrap/break-glass.js'
 import { acquireLock, releaseLock, generateHolderId } from '../bootstrap/lock.js'
 import { writeMarker } from '../bootstrap/marker.js'
@@ -58,7 +62,10 @@ const EXIT = {
   MARKER_CORRUPT: 5,
   NOT_APPROVED: 6,
   BREAK_GLASS_REFUSED: 7,
+  EPHEMERAL_SNAPSHOT: 8,
 } as const
+
+const ALLOW_EPHEMERAL = process.argv.includes('--allow-ephemeral-snapshot')
 
 function argValue(name: string): string | undefined {
   const i = process.argv.indexOf(name)
@@ -137,7 +144,8 @@ async function apply(logger: pino.Logger): Promise<number> {
     const previous = await readMarker()
     const result = await applyModel({
       logger, expect, firstRun: false, builtInRules, gitSha: env.COMMIT_SHA || 'unknown',
-      snapshotDir: env.JINBE_SNAPSHOT_DIR, planDir: argValue('--out'),
+      snapshotDir: env.JINBE_SNAPSHOT_DIR, snapshotDirDurable: env.JINBE_SNAPSHOT_DIR_DURABLE,
+      allowEphemeralSnapshot: ALLOW_EPHEMERAL, planDir: argValue('--out'),
     })
     const now = new Date().toISOString()
     await writeMarker({
@@ -157,6 +165,10 @@ async function apply(logger: pino.Logger): Promise<number> {
     if (err instanceof PlanMismatchError) {
       logger.error({ actual: err.actual, expected: err.expected }, err.message)
       return EXIT.NOT_APPROVED
+    }
+    if (err instanceof EphemeralSnapshotError) {
+      logger.error({ why: err.why }, err.message)
+      return EXIT.EPHEMERAL_SNAPSHOT
     }
     logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'apply failed')
     return EXIT.BOOTSTRAP_FAILED
@@ -308,10 +320,16 @@ async function main(): Promise<number> {
       config: configFromEnv(),
       expectPlan: env.JINBE_RBAC_APPLY_EXPECT ?? null,
       snapshotDir: env.JINBE_SNAPSHOT_DIR,
+      snapshotDirDurable: env.JINBE_SNAPSHOT_DIR_DURABLE,
+      allowEphemeralSnapshot: ALLOW_EPHEMERAL,
     })
     logger.info({ outcome: result.outcome }, 'Bootstrap CLI finished')
     return EXIT.SUCCESS
   } catch (err) {
+    if (err instanceof EphemeralSnapshotError) {
+      logger.error({ why: err.why }, err.message)
+      return EXIT.EPHEMERAL_SNAPSHOT
+    }
     if (err instanceof MigrationNotApprovedError || err instanceof PlanMismatchError) {
       logger.error({ err: err.message }, 'The stored RBAC was not moved: review --plan, then --apply --expect <planHash>')
       return EXIT.NOT_APPROVED
