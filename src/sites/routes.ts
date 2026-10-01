@@ -17,6 +17,7 @@ import { migrationRoutes } from './migration/routes.js'
 import { siteImportRoutes } from './openapi/routes.js'
 import { siteLifecycleRoutes } from './lifecycle.routes.js'
 import { setEphemeral } from './ephemeral.js'
+import { sitesConfig } from './config.js'
 
 /**
  * /api/admin/sites — plug a site (SERVICE_PLUG.md, site-ux.md §14.2).
@@ -119,10 +120,22 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   fastify.post('/:name/restore', { ...docNamed('sites:apply', 'Restore a deleted site from its snapshot, saved but not applied') },
     handle(async (request) => ops.restore(nameOf(request))))
 
-  fastify.get('/:name/draft', docNamed('sites:read', 'The server-side draft'), handle(async (request) => sites.getDraft(nameOf(request))))
+  fastify.get('/:name/draft', docNamed('sites:read', 'The server-side draft, with its etag (also the ETag header): send it as If-Match on the next autosave'), handle(async (request, reply) => {
+    const draft = await sites.getDraft(nameOf(request))
+    reply.header('etag', `"${draft.etag}"`)
+    return draft
+  }))
 
-  fastify.put('/:name/draft', { ...docNamed('sites:write', 'Autosave the draft (may be incomplete)', draftBodySchema) },
-    handle(async (request) => sites.putDraft(nameOf(request), parse(draftBodySchema, request.body), actorOf(request))))
+  fastify.put('/:name/draft', { ...docNamed('sites:write', 'Autosave the draft (may be incomplete). If-Match: the draft etag you edited; a stale one is 412 stale_draft with `current` {etag, updatedBy, updatedAt} and the ETag header. Without If-Match over an existing draft: accepted and logged (SITES_DRAFT_IF_MATCH=warn, the default) or 428 (require). Answers the new etag', draftBodySchema) },
+    handle(async (request, reply) => {
+      const name = nameOf(request)
+      const ifMatch = request.headers['if-match'] as string | undefined
+      const requireIfMatch = sitesConfig().SITES_DRAFT_IF_MATCH === 'require'
+      if (!ifMatch && !requireIfMatch) request.log.warn({ site: name }, '[sites] draft autosave without If-Match (overwrites any other draft)')
+      const draft = await sites.putDraft(name, parse(draftBodySchema, request.body), actorOf(request), { ifMatch, requireIfMatch })
+      reply.header('etag', `"${draft.etag}"`)
+      return draft
+    }))
 
   fastify.delete('/:name/draft', { ...docNamed('sites:write', 'Discard the draft') }, handle(async (request, reply) => {
     await sites.deleteDraft(nameOf(request), actorOf(request))

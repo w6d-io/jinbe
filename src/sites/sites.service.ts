@@ -3,7 +3,7 @@ import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
 import { render, type Rendered } from './render.js'
-import { DELETED_TTL_SECONDS, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
+import { DELETED_TTL_SECONDS, draftEtagOf, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
 import { assertGatesAuthenticated, assertNotSystem, contextChecks, errorsOf, gatekitChecks, hostOwner, liveRules, siteError } from './checks.js'
@@ -192,7 +192,11 @@ export async function getDraft(name: string): Promise<SiteDraft> {
   return draft
 }
 
-export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor): Promise<SiteDraft> {
+/**
+ * Autosave the draft. `ifMatch`: the draft etag the editor loaded (GET/PUT answer it); a stale one is
+ * 412 stale_draft. Callers inside jinbe (bulk, drift) pass none and overwrite, as before.
+ */
+export async function putDraft(name: string, body: { site?: unknown; baseVersion?: number }, actor: Actor, opts: { ifMatch?: string; requireIfMatch?: boolean } = {}): Promise<SiteDraft> {
   assertNotSystem(name)
   // A draft may be incomplete — it is autosaved while typing — but it must be about this site.
   const site = body.site as { name?: unknown } | null
@@ -205,9 +209,9 @@ export async function putDraft(name: string, body: { site?: unknown; baseVersion
   // Edited back to what is saved: nothing left to review, so no draft is kept.
   if (draftChangesNothing(draft, current)) {
     await sitesRepository.deleteDraft(name)
-    return { ...draft, updatedAt: new Date().toISOString() }
+    return { ...draft, updatedAt: new Date().toISOString(), etag: draftEtagOf(site) }
   }
-  const saved = await sitesRepository.putDraft(name, draft)
+  const saved = await sitesRepository.putDraft(name, draft, opts)
   auditSite('draft', name, actor, current ? `draft saved over version ${current.version}` : 'draft saved (new site)', { baseVersion: draft.baseVersion })
   return saved
 }

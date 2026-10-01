@@ -43,6 +43,9 @@ import type { Zone } from './host.js'
  *   SITES_GATEWAYS         comma-separated namespace/name of the Gateway API Gateways a zone may be attached to
  *                          (mirror the operator's --gateways: Gateways whose policies run the WAF and CrowdSec).
  *                          Empty = the gateway exposure is not offered and no Gateway API object is read.
+ *   SITES_DRAFT_IF_MATCH   warn | require (default warn): a draft autosave over an existing draft without
+ *                          If-Match is accepted and logged (warn), or refused 428 (require). A stale
+ *                          If-Match is always 412. Set require once kuma and auth-mcp both send it.
  */
 
 const zoneSchema = z.object({
@@ -102,6 +105,7 @@ const schema = z.object({
   SITES_INGRESS_ADDRESSES: z.string().default('').transform(list),
   SITES_ZONE_DNS_TIMEOUT_MS: z.coerce.number().int().min(100).max(10_000).default(1500),
   SITES_MAX_ROUTES: z.coerce.number().int().min(1).max(2000).default(500),
+  SITES_DRAFT_IF_MATCH: z.enum(['warn', 'require']).default('warn'),
   SITES_GATEWAYS: z.string().default('').transform(list).pipe(z.array(z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, 'namespace/name'))),
 })
 

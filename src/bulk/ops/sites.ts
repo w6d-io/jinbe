@@ -8,7 +8,7 @@ import type { BulkOp, Outcome } from '../types.js'
 
 type Params = { site: string }
 type DraftSite = { name?: string; gates?: Array<{ id?: string }>; routes?: { items?: Route[] } & Record<string, unknown> } & Record<string, unknown>
-type State = { site: DraftSite; baseVersion: number; changed: number }
+type State = { site: DraftSite; baseVersion: number; changed: number; draftEtag?: string }
 
 const siteName = z.string().regex(SITE_NAME_PATTERN)
 
@@ -38,7 +38,7 @@ export const sitesRoutesUpsert: BulkOp<Route, Params, State> = {
     const [record, draft] = await Promise.all([sitesRepository.get(params.site), sitesRepository.getDraft(params.site)])
     const base = (draft?.site ?? record?.site) as DraftSite | undefined
     if (!base || typeof base !== 'object') throw siteError(404, 'not_found', `No site or draft named ${params.site}`)
-    return { site: structuredClone(base), baseVersion: draft?.baseVersion ?? record?.version ?? 0, changed: 0 }
+    return { site: structuredClone(base), baseVersion: draft?.baseVersion ?? record?.version ?? 0, changed: 0, draftEtag: draft?.etag }
   },
 
   async plan(_caller, _params, state, item): Promise<Outcome> {
@@ -65,7 +65,8 @@ export const sitesRoutesUpsert: BulkOp<Route, Params, State> = {
 
   async commit(caller, params, state, ctx) {
     if (state.changed === 0) return
-    await putDraft(params.site, { site: state.site, baseVersion: state.baseVersion }, caller.siteActor)
+    // The draft as loaded: an autosave since then is 412 stale_draft (every item failed), not overwritten.
+    await putDraft(params.site, { site: state.site, baseVersion: state.baseVersion }, caller.siteActor, { ifMatch: state.draftEtag })
     auditSite('draft', params.site, caller.siteActor, `${state.changed} route(s) mapped in bulk`, { bulk: ctx.jobId, routes: state.changed })
   },
 }

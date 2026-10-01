@@ -239,6 +239,61 @@ describe('drafts', () => {
     expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).statusCode).toBe(404)
   })
 
+  it('a draft has an etag (body and ETag header) that the next autosave names in If-Match', async () => {
+    const first = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: { name: 'payroll', displayName: 'A' } } })
+    expect(first.statusCode).toBe(200)
+    const etag = first.json().etag as string
+    expect(etag).toMatch(/^[0-9a-f]{16}$/)
+    expect(first.headers.etag).toBe(`"${etag}"`)
+    const got = await app.inject({ method: 'GET', url: '/sites/payroll/draft' })
+    expect(got.headers.etag).toBe(`"${etag}"`)
+    expect(got.json().etag).toBe(etag)
+    const next = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${etag}"` }, payload: { site: { name: 'payroll', displayName: 'B' } } })
+    expect(next.statusCode).toBe(200)
+    expect(next.json().etag).not.toBe(etag)
+  })
+
+  it('an autosave over a draft someone else saved since is 412 with the current etag and who saved', async () => {
+    const mine = (await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: { name: 'payroll', displayName: 'Mine' } } })).json().etag
+    await redis.set('rbac:sites:draft:payroll', JSON.stringify({ site: { name: 'payroll', displayName: 'Theirs' }, baseVersion: 0, updatedBy: 'alex@x.test', updatedAt: '2026-10-01T10:00:00.000Z' }))
+    const stale = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${mine}"` }, payload: { site: { name: 'payroll', displayName: 'Mine 2' } } })
+    expect(stale.statusCode).toBe(412)
+    const body = stale.json()
+    expect(body).toMatchObject({ error: 'stale_draft', current: { updatedBy: 'alex@x.test', updatedAt: '2026-10-01T10:00:00.000Z', baseVersion: 0 } })
+    expect(body.message).toContain('alex@x.test')
+    expect(stale.headers.etag).toBe(`"${body.current.etag}"`)
+    // Theirs is still there.
+    expect((await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().site.displayName).toBe('Theirs')
+    // Retrying with the current etag (after merging) goes through.
+    const retry = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': `"${body.current.etag}"` }, payload: { site: { name: 'payroll', displayName: 'Merged' } } })
+    expect(retry.statusCode).toBe(200)
+  })
+
+  it('If-Match naming a draft that is gone (saved or discarded since) is no conflict', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: { ...W, 'if-match': '"0123456789abcdef"' }, payload: { site: { name: 'payroll' } } })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('without If-Match: accepted by default (warn), 428 over an existing draft when SITES_DRAFT_IF_MATCH=require', async () => {
+    const put = (headers: Record<string, string> = W) => app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers, payload: { site: { name: 'payroll', displayName: String(Math.random()) } } })
+    expect((await put()).statusCode).toBe(200)
+    expect((await put()).statusCode).toBe(200)
+    process.env.SITES_DRAFT_IF_MATCH = 'require'
+    resetSitesConfig()
+    try {
+      const refused = await put()
+      expect(refused.statusCode).toBe(428)
+      expect(refused.json().error).toBe('precondition_required')
+      const etag = (await app.inject({ method: 'GET', url: '/sites/payroll/draft' })).json().etag
+      expect((await put({ ...W, 'if-match': `"${etag}"` })).statusCode).toBe(200)
+      // The first autosave of a site has no draft to name.
+      expect((await app.inject({ method: 'PUT', url: '/sites/billing/draft', headers: W, payload: { site: { name: 'billing' } } })).statusCode).toBe(200)
+    } finally {
+      delete process.env.SITES_DRAFT_IF_MATCH
+      resetSitesConfig()
+    }
+  })
+
   it('a draft naming another site is refused', async () => {
     const put = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: { name: 'billing' } } })
     expect(put.statusCode).toBe(400)
