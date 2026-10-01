@@ -33,6 +33,8 @@ export interface Platform {
   accessUrl?: string
   /** Policy gates forward the caller's roles and permissions in the site's app (SITES_ROLE_HEADERS). */
   roleHeaders?: boolean
+  /** Where those gates ask: the proxy's /decision (the /allow boolean carries no identity headers). */
+  decisionUrl?: string
   /** Headers upstreams trust from the gateway (default PLATFORM_IDENTITY_HEADERS); see identity-headers. */
   identityHeaders?: string[]
   /** Headers each remote authorizer forwards from its decision, per handler (gateway config). */
@@ -323,6 +325,10 @@ export function render(site: Site, platform: Platform): Rendered {
   // A deny catch-all publishes no row: the policy then owns no route there and refuses.
   if (catchAllAccess.kind !== 'deny') routeMap.push(...rowsFor({ id: CATCH_ALL_ID, methods: catchAllMethods, path: catchAllPath }, catchAllAccess))
 
+  if (platform.roleHeaders && !platform.decisionUrl && site.gates.some((g) => g.authorizer === 'policy')) {
+    warn('role_headers_unavailable', 'role headers are on but no decision endpoint is known (SITES_AUTHZ_DECISION_URL): X-User-Roles and X-User-Permissions stay blank', 'gates')
+  }
+
   // ── per-site 2FA ────────────────────────────────────────────
   const with2fa = twoFactorOn(site)
   for (const id of site.login?.twoFactor.routes ?? []) {
@@ -419,8 +425,13 @@ export function render(site: Site, platform: Platform): Rendered {
   const gateRule = (gate: Gate, url: string, methods: string[]) => {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
+    // Role headers need the decision endpoint: the global remote (/allow) answers a bare boolean and
+    // the proxy sets no X-User-* header there. Without a decision URL the headers stay blanked.
+    const roleHeaders = platform.roleHeaders && platform.decisionUrl
+      ? { remote: platform.decisionUrl, forward_response_headers_to_upstream: ROLE_HEADERS }
+      : {}
     const authorizer: Handler = gate.authorizer === 'policy'
-      ? { handler: 'remote_json', config: { payload: platformPayload(name), ...(platform.roleHeaders ? { forward_response_headers_to_upstream: ROLE_HEADERS } : {}) } }
+      ? { handler: 'remote_json', config: { payload: platformPayload(name), ...roleHeaders } }
       : gate.authorizer
     handlerOk('authorizers', authorizer, at)
     const mutators = guard(gate, authorizer)

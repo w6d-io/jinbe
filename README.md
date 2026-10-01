@@ -75,6 +75,19 @@ Where the others are protocol servers, Jinbe is the **API + audit + policy autho
 5. On allow, Oathkeeper forwards the request with identity headers injected.
 6. Jinbe is the source of truth — it serves both the Oathkeeper rule feed and the OPA data bundle.
 
+### Identity headers a site receives
+
+Every identity header is set by the gateway or blanked, never passed through from the client.
+
+| Header | Value |
+|---|---|
+| `X-User-Id`, `X-User-Email` | the session's subject and address |
+| `X-User-Groups` | the caller's groups: a **JSON array**, e.g. `["staff-support"]` |
+| `X-User-Roles`, `X-User-Permissions` | the caller's roles and permissions **in this site's app only** (platform grants, direct grants included; never another org's): **JSON arrays**, e.g. `["support"]`, `["orgs:read","users:read"]`; `[]` when none |
+| `X-User-AAL`, `X-User-2FA-At` | the session's sign-in strength and when it last proved a second factor |
+
+Parse the arrays as JSON, not as comma-separated lists. `X-User-Roles` and `X-User-Permissions` are only sent when `SITES_ROLE_HEADERS=true`. Policy gates then ask the decision endpoint (`SITES_AUTHZ_DECISION_URL`, or the gateway's remote_json remote with `/allow` → `/decision`), and the decision proxy must emit them (opa-authz-proxy ≥ v0.5.0). Otherwise they arrive blank.
+
 Jinbe **ignores** the `x-user-*` headers Oathkeeper injects for downstream services. Its own trust anchors are the `ory_kratos_session` cookie (validated against Kratos `/sessions/whoami`) and — when enabled — a Kubernetes ServiceAccount token verified by the cluster's API server. Trusting the headers would let any in-cluster pod impersonate an admin by setting them.
 
 ---

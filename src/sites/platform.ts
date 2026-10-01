@@ -4,7 +4,7 @@ import type { Zone } from './host.js'
 import { sitesConfig } from './config.js'
 import { kubeSites, type ZoneCrObject } from './kube-sites.js'
 import { currentSpec } from '../gateway/service.js'
-import { PLATFORM_IDENTITY_HEADERS, gatewayIdentity } from './identity-headers.js'
+import { PLATFORM_IDENTITY_HEADERS, decisionUrlOf, gatewayIdentity } from './identity-headers.js'
 
 /**
  * What render needs to know about the platform: enabled handlers, namespace, zones.
@@ -46,12 +46,18 @@ function readiness(z: ZoneCrObject): { ready?: boolean } {
  * from a decision. Read with the zones, and like them a cluster failure is the caller's 503 rather
  * than a silently shorter list (a different list renames the rules).
  */
-async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'authorizerHeaders'>> {
-  if (sitesConfig().SITES_KUBE === 'off') return { identityHeaders: PLATFORM_IDENTITY_HEADERS, authorizerHeaders: {} }
+async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'authorizerHeaders' | 'decisionUrl'>> {
+  const cfg = sitesConfig()
+  if (cfg.SITES_KUBE === 'off') {
+    const url = decisionUrlOf(cfg.SITES_AUTHZ_DECISION_URL, undefined)
+    return { identityHeaders: PLATFORM_IDENTITY_HEADERS, authorizerHeaders: {}, ...(url ? { decisionUrl: url } : {}) }
+  }
   const gw = gatewayIdentity(await currentSpec())
+  const url = decisionUrlOf(cfg.SITES_AUTHZ_DECISION_URL, gw.policyRemote)
   return {
     identityHeaders: [...new Set([...PLATFORM_IDENTITY_HEADERS, ...gw.headers, ...Object.values(gw.forwarded).flat()])],
     authorizerHeaders: gw.forwarded,
+    ...(url ? { decisionUrl: url } : {}),
   }
 }
 

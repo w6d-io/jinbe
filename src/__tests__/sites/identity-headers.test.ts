@@ -50,17 +50,25 @@ describe('identity headers on gates that set none', () => {
   it('with role headers on, a policy gate forwards groups, roles and permissions of this site\'s app from the decision, and does not blank them', () => {
     const site = payrollSite()
     site.gates[1] = { ...site.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
-    const r = render(site, { ...platform, roleHeaders: true })
-    const authorizer = gate(r, 'public').authorizer as { handler: string; config: { forward_response_headers_to_upstream: string[]; payload: string } }
+    const decisionUrl = 'http://auth-opa-authz-proxy:8080/v1/data/rbac/decision'
+    const r = render(site, { ...platform, roleHeaders: true, decisionUrl })
+    const authorizer = gate(r, 'public').authorizer as { handler: string; config: { forward_response_headers_to_upstream: string[]; payload: string; remote: string } }
     expect(authorizer.config.forward_response_headers_to_upstream).toEqual(['X-User-Groups', 'X-User-Roles', 'X-User-Permissions'])
+    // The decision endpoint, not the global /allow boolean: only /decision carries the X-User-* headers.
+    expect(authorizer.config.remote).toBe(decisionUrl)
     expect(authorizer.config.payload).toContain('"app": "payroll"')
     const headers = (gate(r, 'public').mutators[0].config as { headers: Record<string, string> }).headers
     expect(headers).not.toHaveProperty('x-user-roles')
     expect(headers).not.toHaveProperty('x-user-permissions')
     expect(headers['x-user-id']).toBe('')
-    // Off: no forward list of its own, and the role headers stay blanked.
-    const off = render(site, platform)
+    // Off: no remote and no forward list of its own, and the role headers stay blanked.
+    const off = render(site, { ...platform, decisionUrl })
     expect((gate(off, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('forward_response_headers_to_upstream')
+    expect((gate(off, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('remote')
+    // On without a known decision endpoint: nothing forwarded (still blanked), and a warning says why.
+    const blind = render(site, { ...platform, roleHeaders: true })
+    expect((gate(blind, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('forward_response_headers_to_upstream')
+    expect(blind.checks).toContainEqual(expect.objectContaining({ level: 'warn', code: 'role_headers_unavailable' }))
     expect((gate(off, 'public').mutators[0].config as { headers: Record<string, string> }).headers['x-user-roles']).toBe('')
   })
 
@@ -126,5 +134,21 @@ describe('gatewayIdentity', () => {
 
   it('copes with a gateway without header mutator config', () => {
     expect(gatewayIdentity({ authenticators: {}, authorizers: {}, mutators: {}, errors: {}, errorFallback: [] })).toEqual({ headers: [], forwarded: {} })
+  })
+})
+
+describe('decisionUrlOf', () => {
+  it('the configured URL, else the gateway remote with /allow → /decision, else none', async () => {
+    const { decisionUrlOf } = await import('../../sites/identity-headers.js')
+    expect(decisionUrlOf('http://x/v1/data/rbac/decision', 'http://p/v1/data/rbac/allow')).toBe('http://x/v1/data/rbac/decision')
+    expect(decisionUrlOf(undefined, 'http://auth-opa-authz-proxy:8080/v1/data/rbac/allow')).toBe('http://auth-opa-authz-proxy:8080/v1/data/rbac/decision')
+    expect(decisionUrlOf(undefined, 'http://p/v1/data/rbac/decision')).toBe('http://p/v1/data/rbac/decision')
+    expect(decisionUrlOf(undefined, 'http://p/other')).toBeNull()
+    expect(decisionUrlOf(undefined, undefined)).toBeNull()
+  })
+
+  it('gatewayIdentity reads the global remote_json remote', () => {
+    const spec = { mutators: {}, authorizers: { remote_json: { config: { remote: 'http://p/v1/data/rbac/allow' } } } } as unknown as GatewaySpec
+    expect(gatewayIdentity(spec).policyRemote).toBe('http://p/v1/data/rbac/allow')
   })
 })

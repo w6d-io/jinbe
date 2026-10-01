@@ -24,6 +24,8 @@ import type { Zone } from './host.js'
  *   SITES_ROLE_HEADERS     true: policy gates forward X-User-Roles / X-User-Permissions (the caller's roles and
  *                          permissions in the site's app) beside X-User-Groups. Needs the gateway's decision
  *                          proxy to emit them; off (default), both are blanked like every unset identity header.
+ *   SITES_AUTHZ_DECISION_URL  the decision endpoint those gates ask instead of the boolean /allow (only with
+ *                          SITES_ROLE_HEADERS). Unset: the gateway's remote_json remote, /allow → /decision.
  *   SITES_PUBLIC_RATE_LIMIT  requests per minute per IP on the public site endpoints (60).
  *   SITES_MIGRATION_DUALRUN_MIN_SEC   dual-run length before cut-over is allowed (3600).
  *   SITES_MIGRATION_ROLLBACK_DAYS     how long after cut-over a rollback is offered (7).
@@ -97,6 +99,7 @@ const schema = z.object({
   SITES_SYNC_MAX_PER_TICK: z.coerce.number().int().min(1).max(100).default(3),
   SITES_ACCESS_URL: z.string().url().optional(),
   SITES_ROLE_HEADERS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  SITES_AUTHZ_DECISION_URL: z.string().url().optional(),
   SITES_PUBLIC_RATE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(60),
   SITES_MIGRATION_DUALRUN_MIN_SEC: z.coerce.number().int().min(0).max(30 * 86_400).default(3600),
   SITES_MIGRATION_ROLLBACK_DAYS: z.coerce.number().int().min(1).max(90).default(7),

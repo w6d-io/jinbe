@@ -51,6 +51,19 @@ export interface GatewayIdentity {
   headers: string[]
   /** Headers each remote authorizer copies from its decision response (it overwrites them too). */
   forwarded: Record<string, string[]>
+  /** The global remote_json `remote` (the policy endpoint every policy gate asks), when set. */
+  policyRemote?: string
+}
+
+/**
+ * The decision endpoint for a policy gate forwarding role headers: the configured URL, else the
+ * gateway's remote_json remote with its rule `/allow` replaced by `/decision` (the boolean /allow
+ * answer carries no identity headers; /decision carries them all). Null when neither says.
+ */
+export function decisionUrlOf(configured: string | undefined, policyRemote: string | undefined): string | null {
+  if (configured) return configured
+  if (policyRemote && /\/allow$/.test(policyRemote)) return policyRemote.replace(/\/allow$/, '/decision')
+  return policyRemote && /\/decision$/.test(policyRemote) ? policyRemote : null
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -63,9 +76,11 @@ export function gatewayIdentity(spec: GatewaySpec): GatewayIdentity {
     const list = strings(h.config?.forward_response_headers_to_upstream)
     if (list.length > 0) forwarded[name] = list
   }
+  const remote = spec.authorizers.remote_json?.config?.remote
   return {
     headers: isObject(headers) ? Object.entries(headers).filter(([, v]) => typeof v === 'string' && v.includes('{{')).map(([k]) => k) : [],
     forwarded,
+    ...(typeof remote === 'string' ? { policyRemote: remote } : {}),
   }
 }
 
