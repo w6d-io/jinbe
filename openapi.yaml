@@ -1278,6 +1278,101 @@ paths:
                 properties:
                   message:
                     type: string
+  /api/me/mcp/step-up-requests/:
+    post:
+      tags:
+        - oauth
+      description: "For an AI assistant acting through a personal key or a browser
+        sign-in: a single-use link (10 minutes) that its holder opens to prove a
+        second factor again, renewing the protected-actions window of THIS
+        credential. 400 not_delegated from a browser session; 409
+        protected_actions_not_allowed when the key or the sign-in was given none
+        (reconnect / new key); 403 protected_actions_off | mcp_disabled; 429
+        with Retry-After past 5 links per 10 minutes."
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  expiresAt:
+                    type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "429":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/me/mcp/connections/:
     get:
       tags:
@@ -18290,6 +18385,256 @@ paths:
                   message:
                     type: string
         "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+  /api/public/oauth2/step-up:
+    get:
+      tags:
+        - oauth
+      description: "What a second-factor refresh link would refresh, for login-ui (the
+        visitor's Kratos cookies; nothing is consumed): {action:'show', kind,
+        client_id, client_name, expiresAt, hours}. 401 without a session, 403
+        wrong_account (not the holder) | protected_actions_off | mcp_disabled,
+        404 request_unknown (expired or used), 409 protected_actions_not_allowed
+        | credential_gone."
+      parameters:
+        - schema:
+            type: string
+            minLength: 16
+            maxLength: 64
+            pattern: ^[A-Za-z0-9_-]+$
+          in: query
+          name: req
+          required: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - show
+                      - redirect
+                      - done
+                  to:
+                    type: string
+                  kind:
+                    type: string
+                    enum:
+                      - oauth
+                      - personal
+                  client_id:
+                    type: string
+                  client_name:
+                    type: string
+                  expiresAt:
+                    type: string
+                  hours:
+                    type: integer
+                    description: "How long protected actions last after the refresh: the admin
+                      window for a sign-in, 720 (30 days) for a key"
+                  step_up_at:
+                    type: string
+                  step_up_until:
+                    type:
+                      - "null"
+                      - string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+    post:
+      tags:
+        - oauth
+      description: "Complete a second-factor refresh link, for login-ui's server
+        action (the visitor's Kratos cookies, Origin = the auth host). The
+        visitor must be the credential's holder with a second factor proven in
+        the last 2 minutes, else {action:'redirect', to} (Kratos aal2 refresh,
+        back to the link). Then the key or sign-in gets a fresh proof for
+        protected actions: {action:'done', kind, client_id, client_name,
+        step_up_at, step_up_until}. Single use."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - req
+              additionalProperties: false
+              properties:
+                req:
+                  type: string
+                  minLength: 16
+                  maxLength: 64
+                  pattern: ^[A-Za-z0-9_-]+$
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum:
+                      - show
+                      - redirect
+                      - done
+                  to:
+                    type: string
+                  kind:
+                    type: string
+                    enum:
+                      - oauth
+                      - personal
+                  client_id:
+                    type: string
+                  client_name:
+                    type: string
+                  expiresAt:
+                    type: string
+                  hours:
+                    type: integer
+                    description: "How long protected actions last after the refresh: the admin
+                      window for a sign-in, 720 (30 days) for a key"
+                  step_up_at:
+                    type: string
+                  step_up_until:
+                    type:
+                      - "null"
+                      - string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "409":
           description: Default Response
           content:
             application/json:

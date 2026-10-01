@@ -137,6 +137,9 @@ export function delegationRefusal(request: FastifyRequest, permission?: string):
   if (redirect) return `delegation_refused:${redirect}`
 
   if (required) return scopeGrants(delegation.scopes, required) ? null : `scope_missing:${required}`
+  // An assistant asking for a link to refresh its OWN protected-actions proof: it changes nothing until
+  // the holder proves a second factor in a browser (oauth/step-up-refresh.ts).
+  if (method === 'POST' && pattern.replace(/\/$/, '') === '/api/me/mcp/step-up-requests') return null
   // Revoking one of the holder's own keys needs no scope: it can only take power away (item d).
   if (method === 'DELETE' && (KEY_REVOKE[0].test(pattern) || KEY_REVOKE[1].test(pattern))) return null
   const row = declaredRoute(method, pattern)

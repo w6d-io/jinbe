@@ -6,7 +6,7 @@ import { catalogEntry, type AuditEventType } from '../audit/v1/catalog.js'
  * counted by the emitter and never fails the sign-in.
  */
 export function oauthAudit(
-  event: Extract<AuditEventType, `mcp.oauth.${string}`>,
+  event: Extract<AuditEventType, `mcp.${string}`>,
   e: { actor: AuditActor & { requestId?: string | null }; targetId: string; targetType?: 'oauth2_client' | 'user'; result?: AuditResult; reason?: string; details?: Record<string, unknown> },
 ): void {
   const { severity } = catalogEntry(event)

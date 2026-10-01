@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   forgetClient: vi.fn(),
   lastUsed: new Map<string, string>(),
   emit: vi.fn(async () => 'id'),
+  refreshed: new Map<string, string>(),
 }))
 
 vi.mock('../../config/index.js', async (orig) => {
@@ -47,6 +48,7 @@ vi.mock('../../services/hydra.service.js', async (orig) => {
 vi.mock('../../services/delegated-token.service.js', () => ({ delegatedTokenService: { forgetClient: h.forgetClient } }))
 vi.mock('../../services/api-key-last-used.js', () => ({ lastUsedOf: vi.fn(async () => h.lastUsed), forgetApiKeyUse: vi.fn() }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
+vi.mock('../../oauth/step-up-proof.js', async (orig) => ({ ...((await orig()) as object), refreshedOAuthProof: vi.fn(async (_s: string, c: string) => h.refreshed.get(c) ?? null) }))
 vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
 vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
@@ -97,6 +99,7 @@ beforeEach(() => {
   h.listAllClients.mockReset().mockResolvedValue([])
   h.lastUsed = new Map([['c-2', iso(NOW - 60_000)]])
   h.emit.mockClear()
+  h.refreshed.clear()
   resetMcpSettingsCache()
 })
 
@@ -115,6 +118,12 @@ describe('GET /api/me/mcp/connections', () => {
     const c2 = data.find((c: { client_id: string }) => c.client_id === 'c-2')
     expect(c2).toMatchObject({ scope_mode: 'chosen', scopes: ['sites:read'], step_up_actions: false, step_up_until: null, last_used_at: iso(NOW - 60_000) })
     expect(h.listConsentSessions).toHaveBeenCalledWith('user-1')
+  })
+
+  it('a proof refreshed through a step-up link moves the protected-actions window', async () => {
+    h.refreshed.set('c-1', iso(NOW - 60_000))
+    const { data } = (await app.inject({ method: 'GET', url: '/api/me/mcp/connections' })).json()
+    expect(data.find((c: { client_id: string }) => c.client_id === 'c-1').step_up_until).toBe(iso(NOW - 60_000 + 12 * 3600_000))
   })
 
   it('is 404 while MCP is off, and refused to a delegated or machine caller', async () => {

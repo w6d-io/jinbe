@@ -15,6 +15,7 @@ const s = vi.hoisted(() => ({
   held: ['admin:read', 'users:read'] as string[],
   heldFails: false,
   revokeConsent: vi.fn(async () => undefined),
+  refreshed: null as string | null,
   audit: vi.fn(),
 }))
 
@@ -33,6 +34,7 @@ vi.mock('../../../services/platform-scopes.js', () => ({
 vi.mock('../../../services/api-key-last-used.js', () => ({ touchApiKeyUse: s.touch }))
 vi.mock('../../../services/hydra-flows.service.js', () => ({ hydraFlows: { revokeConsentSessions: s.revokeConsent } }))
 vi.mock('../../../oauth/audit.js', () => ({ oauthAudit: s.audit }))
+vi.mock('../../../oauth/step-up-proof.js', async (orig) => ({ ...((await orig()) as object), refreshedOAuthProof: vi.fn(async () => s.refreshed) }))
 
 import { DelegatedTokenService } from '../../../services/delegated-token.service.js'
 import { resetMcpSettingsCache } from '../../../mcp/settings.js'
@@ -58,6 +60,7 @@ beforeEach(() => {
   s.getClient.mockReset().mockResolvedValue(mcpClient())
   s.revokeConsent.mockReset().mockResolvedValue(undefined)
   s.audit.mockReset()
+  s.refreshed = null
   s.getIdentity.mockReset().mockResolvedValue({ id: 'user-1', state: 'active', traits: { email: 'ann@acme.io', name: { first: 'Ann', last: 'Lee' } } })
   s.groups = ['staff']
   s.held = ['admin:read', 'users:read']
@@ -133,6 +136,21 @@ describe('DelegatedTokenService.resolve', () => {
       expect(await svc.resolve('p3', NOW)).toMatchObject({ principal: { stepUpUntil: end } })
       s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: false, second_factor_at: at }) }))
       expect((await svc.resolve('p2', NOW) as { principal: Record<string, unknown> }).principal.stepUpUntil).toBeUndefined()
+    })
+
+    it('a proof refreshed through a step-up link wins when newer than the consent stamp (only with protected actions)', async () => {
+      const consented = new Date(NOW - 20 * 3600_000).toISOString()
+      const refreshed = new Date(NOW - 60_000).toISOString()
+      s.refreshed = refreshed
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: true, second_factor_at: consented }) }))
+      expect(await svc.resolve('r1', NOW)).toMatchObject({ principal: { stepUpAt: refreshed, stepUpUntil: new Date(NOW - 60_000 + 12 * 3600_000).toISOString() } })
+      s.refreshed = new Date(NOW - 30 * 3600_000).toISOString()
+      expect(await svc.resolve('r2', NOW)).toMatchObject({ principal: { stepUpAt: consented } })
+      s.refreshed = refreshed
+      s.introspect.mockResolvedValue(oauth({ ext: oauthExt({ step_up_actions: false, second_factor_at: consented }) }))
+      const r = (await svc.resolve('r3', NOW)) as { principal: Record<string, unknown> }
+      expect(r.principal.stepUpAt).toBe(consented)
+      expect(r.principal.stepUpUntil).toBeUndefined()
     })
 
     it('an administrator turning browser sign-in off refuses OAuth tokens at once (keys keep working)', async () => {
