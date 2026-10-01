@@ -223,13 +223,14 @@ class RbacBundleService {
   }
 
   /**
-   * The groups whose grants this import changes, with what each grants afterwards: the groups it
-   * leaves (the bundle's, over the current ones unless a full restore), resolved against the roles it
-   * leaves (validateBindings' reading of the roles section, services and defaults).
+   * What this import asks the holding rule about (rbac.delegation, via assertBundleWithinOwn): the
+   * groups it leaves (the bundle's, over the current ones unless a full restore) whose grants change,
+   * the roles it leaves (validateBindings' reading of the roles section, services and defaults), and
+   * which of those roles change while a resulting group binds them.
    */
-  private async changedGroupGrants(
+  private async holdingQuestion(
     bundle: AuthBundle, want: (s: BundleSection) => boolean, isFull: boolean,
-  ): Promise<Array<{ name: string; after: PermissionsByScope }>> {
+  ): Promise<Parameters<typeof assertBundleWithinOwn>[0]> {
     const { services, groups, roles } = bundle.rbac
     const current = await redisRbacRepository.getGroups()
     const afterGroups = want('groups') ? (isFull ? groups : { ...current, ...groups }) : current
@@ -243,10 +244,20 @@ class RbacBundleService {
       else after[svc] = before[svc]
     }
     const same = (a: PermissionsByScope, b: PermissionsByScope) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort())
-    return Object.entries(afterGroups)
-      .map(([name, def]) => ({ name, after: groupGrants(def, after), before: groupGrants(current[name], before) }))
-      .filter((g) => !same(g.after, g.before))
-      .map(({ name, after: grants }) => ({ name, after: grants }))
+    const groupsChanged = Object.entries(afterGroups)
+      .filter(([name, def]) => !same(groupGrants(def, after), groupGrants(current[name], before)))
+      .map(([name, definition]) => ({ name, definition }))
+    const bound = (svc: string) => new Set(Object.values(afterGroups).flatMap((d) => d?.[svc] ?? []))
+    const sorted = (xs: readonly string[] = []) => JSON.stringify([...xs].sort())
+    const rolesChanged: Record<string, Record<string, string[]>> = {}
+    for (const [svc, map] of Object.entries(after)) {
+      if (!map) continue
+      const b = bound(svc)
+      const changed = Object.entries(map).filter(([role, perms]) => b.has(role) && sorted(perms) !== sorted(before[svc]?.[role]))
+      if (changed.length) rolesChanged[svc] = Object.fromEntries(changed)
+    }
+    const proposedRoles = Object.fromEntries(Object.entries(after).filter((e): e is [string, FlatRolesMap] => !!e[1]))
+    return { roles: rolesChanged, groups: groupsChanged, proposedRoles }
   }
 
   async import(incoming: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
@@ -273,7 +284,7 @@ class RbacBundleService {
     if (want('groups')) await this.validateBindings(bundle, want, isFull)
     // Grant only what you hold: a non-super-admin's import changes no group beyond what they hold
     // (rbac-escalation-guard.ts). The bootstrap's own restore names no actor and is not a person.
-    if (actor) await assertBundleWithinOwn(await this.changedGroupGrants(bundle, want, isFull), actor)
+    if (actor) await assertBundleWithinOwn(await this.holdingQuestion(bundle, want, isFull), actor)
 
     // Pre-apply snapshot → rollback point. Taken AFTER validation so a rejected
     // import leaves no trace, but BEFORE any write so a partial failure (below)

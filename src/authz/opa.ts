@@ -214,7 +214,10 @@ export type GrantQuestion =
   | { kind: 'unassign'; actor: string; org: string }
   | { kind: 'add_to_group'; actor: string; group: string }
   | { kind: 'remove_from_group'; actor: string }
-  | { kind: 'define_group'; actor: string; definition: Record<string, readonly string[]> }
+  /** A group as it will be; `roles` (app → role → permissions) resolves its roles to proposed ones (a bundle). */
+  | { kind: 'define_group'; actor: string; definition: Record<string, readonly string[]>; roles?: Record<string, Record<string, readonly string[]>> }
+  /** Roles as they will be, only the changed or new ones: app → role → permissions. */
+  | { kind: 'define_roles'; actor: string; roles: Record<string, Record<string, readonly string[]>> }
   /** A per-person direct grant: one role or one permission of `app`, platform-wide or in one org. */
   | { kind: 'grant_direct'; actor: string; grantee: string; scope: string; app: string; grantKind: 'role' | 'permission'; name: string }
   | { kind: 'revoke_direct'; actor: string; scope: string }
@@ -239,7 +242,8 @@ export function grantInput(q: GrantQuestion): { rule: string; input: Record<stri
     case 'unassign': return { rule: 'rbac/delegation/unassign_verdict', input: { actor, org: q.org } }
     case 'add_to_group': return { rule: 'rbac/delegation/add_to_group_verdict', input: { actor, group: q.group } }
     case 'remove_from_group': return { rule: 'rbac/delegation/remove_from_group_verdict', input: { actor } }
-    case 'define_group': return { rule: 'rbac/delegation/define_group_verdict', input: { actor, definition: q.definition } }
+    case 'define_group': return { rule: 'rbac/delegation/define_group_verdict', input: { actor, definition: q.definition, ...(q.roles ? { roles: q.roles } : {}) } }
+    case 'define_roles': return { rule: 'rbac/delegation/define_roles_verdict', input: { actor, roles: q.roles } }
     // A platform grant names no org; an org grant names it (`org`), as delegation.rego reads them.
     case 'grant_direct': return { rule: 'rbac/delegation/grant_direct_verdict', input: { actor, grantee: { email: q.grantee }, app: q.app, kind: q.grantKind, name: q.name, ...(q.scope === 'platform' ? {} : { org: q.scope }) } }
     case 'revoke_direct': return { rule: 'rbac/delegation/revoke_direct_verdict', input: { actor, ...(q.scope === 'platform' ? {} : { org: q.scope }) } }

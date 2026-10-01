@@ -2,8 +2,8 @@ import { AuthzUnavailableError, grantVerdict, rights, type GrantQuestion, type G
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { redisRbacRepository, type GroupDefinition } from './redis-rbac.repository.js'
 import { auditEventService, type AuditActorInput } from './audit-event.service.js'
-import { exceeding, flatten, isEmpty, isStaffGroup, type PermissionsByScope } from './grant-subset.js'
-import { hintFor, refusalDetails } from './permission-refusal.js'
+import { flatten, isStaffGroup } from './grant-subset.js'
+import { hintFor } from './permission-refusal.js'
 
 /**
  * Nobody grants what they do not hold — THE HOLDING RULE (authz-v2-design §1.1, §2.5).
@@ -14,9 +14,9 @@ import { hintFor, refusalDetails } from './permission-refusal.js'
  * (the every-org part included) and which groups would cover it. A super admin passes because they
  * hold everything, never because they are special. jinbe keeps no rule of its own to drift from it.
  *
- * Two changes the policy cannot judge, because what they grant is not in its data yet — widening a
- * role, importing a bundle — ask only that the actor holds, as OPA resolves it (`rbac.user_info`),
- * every permission they add. That is a subset test on OPA's answer, not a second rule.
+ * What is not in the policy's data yet travels in the question: a changed role (`define_roles`, the
+ * roles as they will be) and an imported bundle (`define_roles` for its roles, then `define_group`
+ * per group with the proposed `roles`). The actor's own holdings always come from the data.
  *
  * Objects defined in code — the staff groups and super_admins, jinbe's roles and route map — are not
  * changed through the API at all, whoever asks: 409 `defined_in_code`.
@@ -107,33 +107,13 @@ function authenticated(actor?: AuditActorInput): asserts actor is AuditActorInpu
   }
 }
 
-/** What of `added` (app → permissions) the actor does not hold, as OPA resolves their roles per app. */
-async function notHeld(email: string, added: PermissionsByScope): Promise<PermissionsByScope> {
-  const held: PermissionsByScope = {}
-  try {
-    for (const app of Object.keys(added)) held[app] = (await rights(email, app)).permissions
-  } catch (err) {
-    unavailable(err)
-  }
-  return exceeding(added, held)
-}
-
-async function refuseNotHeld(missing: PermissionsByScope, what: string, change: RbacChange, actor: AuditActorInput): Promise<never> {
-  const names = flatten(missing)
-  refuse('grant_exceeds_own', `${what} grants what you do not hold: ${names.join(', ')}`, change, actor, {
-    missing: names, missingByScope: missing, ...(await refusalDetails(missing)),
-  })
-}
-
-/** What a roles change adds to the roles some group binds under `service`, as `{ service: [...] }`. */
-async function addedToBoundRoles(service: string, roles: Record<string, string[]>): Promise<PermissionsByScope> {
+/** The roles a change alters that some group binds under `service` (a role nobody holds grants nothing yet). */
+async function changedBoundRoles(service: string, roles: Record<string, string[]>): Promise<Record<string, string[]>> {
   const current = (await redisRbacRepository.getRoles(service)) ?? {}
   const defs = await redisRbacRepository.getGroups()
   const bound = new Set(Object.values(defs).flatMap((d) => d[service] ?? []))
-  const added = Object.entries(roles)
-    .filter(([role]) => bound.has(role))
-    .flatMap(([role, perms]) => perms.filter((p) => !(current[role] ?? []).includes(p)))
-  return added.length > 0 ? { [service]: [...new Set(added)].sort() } : {}
+  const same = (a: readonly string[] = [], b: readonly string[] = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
+  return Object.fromEntries(Object.entries(roles).filter(([role, perms]) => bound.has(role) && !same(perms, current[role])))
 }
 
 /** Throws unless `actor` may make `change` (see the module comment). */
@@ -148,12 +128,12 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
       return
     }
     case 'roles': {
-      // Widening a role is widening every group that binds it: what it adds must be held too. A role
-      // no group binds grants nobody anything yet (a new service's roles).
-      const added = await addedToBoundRoles(change.service, change.roles)
-      if (isEmpty(added)) return
-      const missing = await notHeld(actor.email, added)
-      if (!isEmpty(missing)) await refuseNotHeld(missing, `This change to the roles of '${change.service}'`, change, actor)
+      // Changing a role is changing every group that binds it: the policy's define_roles verdict over
+      // the roles as they will be. A role no group binds grants nobody anything yet (a new service's).
+      const changed = await changedBoundRoles(change.service, change.roles)
+      if (Object.keys(changed).length === 0) return
+      const v = await ask({ kind: 'define_roles', actor: actor.email, roles: { [change.service]: changed } })
+      if (!v.allow) refuseVerdict(v, `This change to the roles of '${change.service}'`, change, actor)
       return
     }
     case 'routes': {
@@ -188,19 +168,33 @@ export async function assertMayRemoveFromGroups(groups: readonly string[], actor
 }
 
 /**
- * A bundle import: every group whose grants the import changes (resolved against the roles the import
- * leaves) — never a code-defined group, nothing the actor does not hold (as OPA resolves it).
+ * A bundle import, as the policy judges it: the roles it changes that a group will bind
+ * (define_roles), then each group whose grants it changes, its roles resolved to the proposed ones
+ * (define_group with `roles`) — never a code-defined group.
  */
 export async function assertBundleWithinOwn(
-  changed: ReadonlyArray<{ name: string; after: PermissionsByScope }>,
+  change: {
+    /** app → role → permissions: the changed or new roles some group of the result binds. */
+    roles: Record<string, Record<string, string[]>>
+    /** The groups whose grants change, as they will be. */
+    groups: ReadonlyArray<{ name: string; definition: GroupDefinition }>
+    /** app → the roles the import leaves (what the groups' role names resolve to). */
+    proposedRoles: Record<string, Record<string, string[]>>
+  },
   actor?: AuditActorInput,
 ): Promise<void> {
   authenticated(actor)
-  if (changed.length === 0) return
-  for (const { name, after } of changed) {
-    const change: RbacChange = { kind: 'group', name, after: null }
-    if (isStaffGroup(name)) refuseDefinedInCode(`Group '${name}'`, change, actor)
-    const missing = await notHeld(actor.email, after)
-    if (!isEmpty(missing)) await refuseNotHeld(missing, `Imported group '${name}'`, change, actor)
+  for (const { name } of change.groups) {
+    if (isStaffGroup(name)) refuseDefinedInCode(`Group '${name}'`, { kind: 'group', name, after: null }, actor)
+  }
+  const roles = Object.fromEntries(Object.entries(change.roles).filter(([, r]) => Object.keys(r).length > 0))
+  if (Object.keys(roles).length > 0) {
+    const v = await ask({ kind: 'define_roles', actor: actor.email, roles })
+    if (!v.allow) refuseVerdict(v, 'The imported roles', { kind: 'roles', service: Object.keys(roles).join(','), roles: {} }, actor)
+  }
+  for (const { name, definition } of change.groups) {
+    const proposed = Object.fromEntries(Object.keys(definition).filter((app) => change.proposedRoles[app]).map((app) => [app, change.proposedRoles[app]]))
+    const v = await ask({ kind: 'define_group', actor: actor.email, definition, roles: proposed })
+    if (!v.allow) refuseVerdict(v, `Imported group '${name}'`, { kind: 'group', name, after: definition }, actor)
   }
 }

@@ -50,7 +50,7 @@ vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-au
 
 import { rbacBundleService, BundleValidationError, type AuthBundle } from '../../../services/rbac-bundle.service.js'
 import { redisRbacRepository, type OathkeeperRule } from '../../../services/redis-rbac.repository.js'
-import { opaWorld, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
+import { opaWorld, refused, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 
 const ADMIN = { id: 'id-admin', email: 'admin@example.com' }
 
@@ -332,6 +332,18 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       // What OPA resolves for them in billing: the ops role.
       opaWorld.groups[OPS.email] = ['ops-team']
       opaWorld.permissions[OPS.email] = ['sites:read', 'zones:write']
+      // A stand-in for the policy's verdicts (proven in opal-policies): what the proposal confers
+      // beyond what the actor holds is missing.
+      opaWorld.verdict = (q) => {
+        const held = opaWorld.permissions[q.actor] ?? []
+        const confers = q.kind === 'define_roles'
+          ? Object.values(q.roles as Record<string, Record<string, string[]>>).flatMap((r) => Object.values(r).flat())
+          : q.kind === 'define_group'
+            ? Object.entries(q.definition as Record<string, string[]>).flatMap(([app, rs]) => rs.flatMap((r) => (q.roles as Record<string, Record<string, string[]>>)?.[app]?.[r] ?? []))
+            : []
+        const missing = [...new Set(confers.filter((p) => !held.includes(p)))].sort()
+        return missing.length ? refused({ missing: { billing: missing } }) : null
+      }
     }
     const bundleWith = async (groups: Record<string, Record<string, string[]>>) => {
       const current = await rbacBundleService.export()

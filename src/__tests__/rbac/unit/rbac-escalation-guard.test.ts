@@ -99,24 +99,36 @@ describe('defined in code', () => {
   it('the staff groups and super_admins: 409 for everybody, before the policy is asked', async () => {
     for (const g of ['super_admins', 'staff-viewers']) {
       expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: g, after: { jinbe: ['viewer'] } }, ADMIN))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
-      expect(await refusal(assertBundleWithinOwn([{ name: g, after: {} }], ADMIN))).toMatchObject({ statusCode: 409 })
+      expect(await refusal(assertBundleWithinOwn({ roles: {}, groups: [{ name: g, definition: {} }], proposedRoles: {} }, ADMIN))).toMatchObject({ statusCode: 409 })
     }
     expect(grantVerdict).not.toHaveBeenCalled()
   })
 })
 
-describe('what the policy cannot see yet: a widened role, an imported bundle', () => {
-  it('widening a role some group binds needs what it adds, as OPA resolves the actor', async () => {
-    expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'] } }, ADMIN))).toBeNull()
+describe('roles and bundles: the policy judges the proposal too', () => {
+  it('changing a role some group binds asks define_roles with the role as it will be; an unbound or unchanged role asks nothing', async () => {
+    expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))).toBeNull()
+    expect(grantVerdict).toHaveBeenCalledWith({ kind: 'define_roles', actor: ADMIN.email, roles: { billing: { viewer: ['invoices:read', 'payments:write'] } } })
+    vi.mocked(grantVerdict).mockClear()
+    await assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'], fresh: ['payments:write'] } }, ADMIN)
+    expect(grantVerdict).not.toHaveBeenCalled()
+    opaWorld.verdict = () => refused({ missing: { billing: ['payments:write'] }, grantedBy: [] })
     const e = await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))
     expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own', refusal: { missing: ['payments:write'] } })
-    // A role no group binds grants nobody anything yet.
-    expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { fresh: ['payments:write'] } }, ADMIN))).toBeNull()
   })
 
-  it('an imported group changing what it grants clears the same subset test', async () => {
-    expect(await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN))).toBeNull()
-    expect((await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['payments:write'] } }], ADMIN)))?.statusCode).toBe(403)
+  it('a bundle: define_roles for the changed bound roles, then define_group per changed group with the proposed roles', async () => {
+    await assertBundleWithinOwn({
+      roles: { billing: { viewer: ['invoices:read', 'payments:read'] } },
+      groups: [{ name: 'billing', definition: { billing: ['viewer'] } }],
+      proposedRoles: { billing: { viewer: ['invoices:read', 'payments:read'] }, other: { x: ['a:b'] } },
+    }, ADMIN)
+    expect(vi.mocked(grantVerdict).mock.calls.map(([q]) => q)).toEqual([
+      { kind: 'define_roles', actor: ADMIN.email, roles: { billing: { viewer: ['invoices:read', 'payments:read'] } } },
+      { kind: 'define_group', actor: ADMIN.email, definition: { billing: ['viewer'] }, roles: { billing: { viewer: ['invoices:read', 'payments:read'] } } },
+    ])
+    opaWorld.verdict = (q) => (q.kind === 'define_group' ? refused({ missing: { billing: ['payments:read'] } }) : null)
+    expect((await refusal(assertBundleWithinOwn({ roles: {}, groups: [{ name: 'billing', definition: { billing: ['viewer'] } }], proposedRoles: {} }, ADMIN)))?.statusCode).toBe(403)
   })
 
   it("the routes of a service the actor holds a role in are not theirs to change", async () => {
@@ -132,6 +144,7 @@ describe('fails closed', () => {
     expect((await refusal(assertMayAssignGroup('billing', ADMIN)))?.statusCode).toBe(503)
     expect((await refusal(assertMayRemoveFromGroups(['billing'], ADMIN)))?.statusCode).toBe(503)
     expect((await refusal(assertNoSelfEscalation({ kind: 'group', name: 'x', after: { billing: ['viewer'] } }, ADMIN)))?.statusCode).toBe(503)
-    expect((await refusal(assertBundleWithinOwn([{ name: 'billing', after: { billing: ['invoices:read'] } }], ADMIN)))?.statusCode).toBe(503)
+    expect((await refusal(assertBundleWithinOwn({ roles: {}, groups: [{ name: 'billing', definition: { billing: ['viewer'] } }], proposedRoles: {} }, ADMIN)))?.statusCode).toBe(503)
+    expect((await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'x:y'] } }, ADMIN)))?.statusCode).toBe(503)
   })
 })

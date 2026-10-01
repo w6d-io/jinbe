@@ -41,6 +41,8 @@ describe('grantVerdict', () => {
     await grantVerdict({ kind: 'add_to_group', actor: 'a@example.com', group: 'staff-support' })
     await grantVerdict({ kind: 'remove_from_group', actor: 'a@example.com' })
     await grantVerdict({ kind: 'define_group', actor: 'a@example.com', definition: { jinbe: ['viewer'] } })
+    await grantVerdict({ kind: 'define_roles', actor: 'a@example.com', roles: { billing: { viewer: ['invoices:read'] } } })
+    await grantVerdict({ kind: 'define_group', actor: 'a@example.com', definition: { billing: ['viewer'] }, roles: { billing: { viewer: ['invoices:read'] } } })
     await grantVerdict({ kind: 'grant_direct', actor: 'a@example.com', grantee: 'b@example.com', scope: 'platform', app: 'payroll', grantKind: 'role', name: 'editor' })
     await grantVerdict({ kind: 'grant_direct', actor: 'a@example.com', grantee: 'b@example.com', scope: 'acme', app: 'jinbe', grantKind: 'permission', name: 'org.keys:read' })
     await grantVerdict({ kind: 'revoke_direct', actor: 'a@example.com', scope: 'platform' })
@@ -51,6 +53,8 @@ describe('grantVerdict', () => {
       { rule: 'rbac/delegation/add_to_group_verdict', input: { actor: { email: 'a@example.com' }, group: 'staff-support' } },
       { rule: 'rbac/delegation/remove_from_group_verdict', input: { actor: { email: 'a@example.com' } } },
       { rule: 'rbac/delegation/define_group_verdict', input: { actor: { email: 'a@example.com' }, definition: { jinbe: ['viewer'] } } },
+      { rule: 'rbac/delegation/define_roles_verdict', input: { actor: { email: 'a@example.com' }, roles: { billing: { viewer: ['invoices:read'] } } } },
+      { rule: 'rbac/delegation/define_group_verdict', input: { actor: { email: 'a@example.com' }, definition: { billing: ['viewer'] }, roles: { billing: { viewer: ['invoices:read'] } } } },
       // A platform direct grant names no org; an org one names it.
       { rule: 'rbac/delegation/grant_direct_verdict', input: { actor: { email: 'a@example.com' }, grantee: { email: 'b@example.com' }, app: 'payroll', kind: 'role', name: 'editor' } },
       { rule: 'rbac/delegation/grant_direct_verdict', input: { actor: { email: 'a@example.com' }, grantee: { email: 'b@example.com' }, app: 'jinbe', kind: 'permission', name: 'org.keys:read', org: 'acme' } },
