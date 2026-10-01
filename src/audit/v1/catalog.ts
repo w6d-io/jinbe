@@ -134,6 +134,9 @@ export const AUDIT_EVENTS = {
   'mcp.oauth.revoked': ['secret', 'delete'],
   'mcp.oauth.revoked_all': ['secret', 'delete', 'warn'],
   'mcp.oauth.grant_expired': ['secret', 'delete'],
+  // A person refreshed, through the link their assistant asked for, the second factor a key or a sign-in
+  // stands on for protected actions (oauth/step-up-refresh.ts).
+  'mcp.step_up.refreshed': ['auth', 'verify', 'warn'],
 
   'infra.cluster.created': ['infra', 'create'],
   'infra.cluster.updated': ['infra', 'update'],

@@ -7,6 +7,8 @@ import { getMcpSettings } from '../mcp/settings.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { isMcpClient, redirectHost } from './flow.js'
 import { oauthStepUpUntil } from './step-up-window.js'
+import { laterProof, oauthProofKey, refreshedOAuthProof } from './step-up-proof.js'
+import { getRedisClient } from '../services/redis-client.service.js'
 
 /**
  * A person's MCP sign-ins ("Signed-in apps" in kuma Connections): Hydra's consent sessions of
@@ -50,13 +52,14 @@ export async function listConnections(subject: string): Promise<McpConnection[]>
   const sessions = mcpSessions(await hydraFlows.listConsentSessions(subject))
   const settings = await getMcpSettings().catch(() => null)
   const used = await lastUsedOf(sessions.map((s) => s.consent_request!.client.client_id))
-  return sessions.map((s): McpConnection => {
+  const refreshed = await Promise.all(sessions.map((s) => refreshedOAuthProof(subject, s.consent_request!.client.client_id)))
+  return sessions.map((s, i): McpConnection => {
     const client = s.consent_request!.client
     const ext = s.session?.access_token ?? {}
     const mode: McpConnection['scope_mode'] = ext.scope_mode === 'chosen' ? 'chosen' : 'all'
     const stepUpActions = ext.step_up_actions === true
     const grantExpiresAt = str(ext.grant_expires_at)
-    const until = settings ? oauthStepUpUntil(settings, { stepUpActions, stepUpAt: str(ext.second_factor_at), grantExpiresAt }) : null
+    const until = settings ? oauthStepUpUntil(settings, { stepUpActions, stepUpAt: laterProof(str(ext.second_factor_at), refreshed[i]), grantExpiresAt }) : null
     return {
       client_id: client.client_id,
       client_name: client.client_name || 'MCP client',
@@ -89,6 +92,8 @@ export async function revokeConnection(subject: string, clientId: string): Promi
   const boundToSubject = client.metadata?.bound_subject === subject
   if (!hasSession && !boundToSubject) return false
   await hydraFlows.revokeConsentSessions(subject, clientId)
+  // A refreshed step-up proof goes with the sign-in (it would expire with it anyway).
+  try { void getRedisClient().del(oauthProofKey(subject, clientId)).catch(() => {}) } catch { /* no Redis: it expires */ }
   delegatedTokenService.forgetClient(clientId)
   if (boundToSubject) {
     await hydraService.deleteClient(clientId).catch((err) => {

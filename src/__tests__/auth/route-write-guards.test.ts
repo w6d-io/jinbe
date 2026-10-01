@@ -33,6 +33,8 @@ const EXCEPTIONS: Record<string, string> = {
   'DELETE /api/audit/saved-queries/:id': "deletes only the caller's own saved query (keyed on the caller)",
   'POST /api/me/api-keys': "the caller's own personal key, scopes capped at what they hold; refused to delegated callers",
   'DELETE /api/me/api-keys/:clientId': "revokes the caller's own personal key; refused to delegated callers",
+  'POST /api/me/mcp/step-up-requests': "the calling credential asks a link for itself; nothing changes until its holder proves a second factor",
+  'POST /api/public/oauth2/step-up': "the visitor's own credential: session must be the holder's with a factor < 2 min, Origin = the auth host, single use",
   'DELETE /api/me/mcp/connections': "disconnects all of the caller's own MCP sign-ins; protective; refused to delegated callers (a token deletes one at most)",
   'DELETE /api/me/mcp/connections/:clientId': "disconnects the caller's own MCP sign-in (consent + tokens); protective, the one call a token may make here",
   'POST /api/public/oauth2/consent': "the visitor's own consent: their Kratos session must own the Hydra challenge, Origin = the auth host, scopes capped at what they hold",

@@ -39,7 +39,7 @@ import { organizationUserRoutes } from './routes/organization-user.routes.js'
 import { apiKeyRoutes } from './routes/api-key.routes.js'
 import { personalKeyRoutes } from './routes/personal-key.routes.js'
 import { mcpRoutes } from './routes/mcp.routes.js'
-import { mcpConnectionsAdminRoutes, mcpConnectionsRoutes, oauthAuthorizationServerRoutes, oauthProviderRoutes } from './oauth/routes.js'
+import { mcpConnectionsAdminRoutes, mcpConnectionsRoutes, oauthAuthorizationServerRoutes, oauthProviderRoutes, stepUpRequestRoutes } from './oauth/routes.js'
 import { startOAuthBackground } from './oauth/gc.js'
 import { delegationGate } from './middleware/delegation-gate.js'
 import { registerIdempotency } from './middleware/idempotency.js'
@@ -170,6 +170,7 @@ export async function buildServer() {
       await api.register(catalogRoutes) // the permission catalogue and roles, for kuma and auth-mcp
       await api.register(meRoutes, { prefix: '/me' })
       await api.register(personalKeyRoutes, { prefix: '/me/api-keys' }) // own keys; 404 unless MCP is on (env ceiling + admin switch)
+      await api.register(stepUpRequestRoutes, { prefix: '/me/mcp/step-up-requests' }) // an assistant asks for a link to refresh its protected-actions proof
       await api.register(mcpConnectionsRoutes, { prefix: '/me/mcp/connections' }) // own MCP browser sign-ins (kuma "Signed-in apps"); 404 unless MCP is on
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
       await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification

@@ -12,6 +12,7 @@ import { consentScreen, decideConsent, type ConsentDecision } from './consent.js
 import { listConnections, revokeAllConnections, revokeConnection } from './connections.js'
 import { FlowError } from './flow.js'
 import { oauthAudit } from './audit.js'
+import { StepUpRefusal, completeStepUpRequest, createStepUpRequest, describeStepUpRequest } from './step-up-refresh.js'
 import { PER_CALLER_PER_MINUTE, providerCeiling, providerRateKey } from './provider-limit.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { notFoundResponseSchema, serviceUnavailableResponseSchema, unauthorizedResponseSchema, forbiddenResponseSchema } from '../schemas/response-schemas.js'
@@ -141,6 +142,10 @@ async function sessionOnly(request: FastifyRequest, reply: FastifyReply) {
 
 function flowFailed(err: unknown, reply: FastifyReply) {
   if (err instanceof FlowError) return reply.status(err.status).send({ error: err.code, message: err.message })
+  if (err instanceof StepUpRefusal) {
+    if (err.retryAfter) reply.header('Retry-After', String(err.retryAfter))
+    return reply.status(err.status).send({ error: err.code, message: err.message })
+  }
   throw err
 }
 
@@ -224,6 +229,64 @@ export async function oauthProviderRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     try {
       return await consentScreen((request.query as { consent_challenge: string }).consent_challenge, ctxOf(request))
+    } catch (err) {
+      return flowFailed(err, reply)
+    }
+  })
+
+  const REQ = { type: 'string', minLength: 16, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$' }
+  const stepUpAnswer = {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['show', 'redirect', 'done'] },
+      to: { type: 'string' },
+      kind: { type: 'string', enum: ['oauth', 'personal'] },
+      client_id: { type: 'string' },
+      client_name: { type: 'string' },
+      expiresAt: { type: 'string' },
+      step_up_at: { type: 'string' },
+      step_up_until: { type: ['string', 'null'] },
+    },
+  }
+
+  fastify.get('/step-up', {
+    config: { access: 'public', rateLimit: limit },
+    schema: {
+      description:
+        "What a second-factor refresh link would refresh, for login-ui (the visitor's Kratos cookies; nothing is consumed): " +
+        "{action:'show', kind, client_id, client_name, expiresAt}. 401 without a session, 403 wrong_account (not the holder) | " +
+        'protected_actions_off | mcp_disabled, 404 request_unknown (expired or used), 409 protected_actions_not_allowed | credential_gone.',
+      tags: ['oauth'],
+      querystring: { type: 'object', required: ['req'], properties: { req: REQ } },
+      response: { 200: stepUpAnswer, 400: flowError, 401: flowError, 403: flowError, 404: flowError, 409: flowError, 503: flowError },
+    },
+  }, async (request, reply) => {
+    try {
+      return await describeStepUpRequest((request.query as { req: string }).req, ctxOf(request))
+    } catch (err) {
+      return flowFailed(err, reply)
+    }
+  })
+
+  fastify.post('/step-up', {
+    config: { access: 'public', rateLimit: limit },
+    schema: {
+      description:
+        "Complete a second-factor refresh link, for login-ui's server action (the visitor's Kratos cookies, Origin = the auth " +
+        "host). The visitor must be the credential's holder with a second factor proven in the last 2 minutes, else " +
+        "{action:'redirect', to} (Kratos aal2 refresh, back to the link). Then the key or sign-in gets a fresh proof for " +
+        "protected actions: {action:'done', kind, client_id, client_name, step_up_at, step_up_until}. Single use.",
+      tags: ['oauth'],
+      body: { type: 'object', required: ['req'], additionalProperties: false, properties: { req: REQ } },
+      response: { 200: stepUpAnswer, 400: flowError, 401: flowError, 403: flowError, 404: flowError, 409: flowError, 503: flowError },
+    },
+  }, async (request, reply) => {
+    const expected = authOrigin()
+    if (!expected || request.headers.origin !== expected) {
+      return reply.status(403).send({ error: 'bad_origin', message: 'This must come from the sign-in page.' })
+    }
+    try {
+      return await completeStepUpRequest((request.body as { req: string }).req, ctxOf(request))
     } catch (err) {
       return flowFailed(err, reply)
     }
@@ -357,6 +420,46 @@ export async function mcpConnectionsRoutes(fastify: FastifyInstance) {
     if (!revoked) return reply.status(404).send({ error: 'Not Found', message: 'No such signed-in app.' })
     oauthAudit('mcp.oauth.revoked', { actor: auditActor(request), targetId: request.params.clientId, details: { subject: me } })
     return reply.status(204).send()
+  })
+}
+
+/**
+ * POST /api/me/mcp/step-up-requests — a key or a signed-in assistant asks for a link to refresh the
+ * second factor IT stands on for protected actions (step-up-refresh.ts). The credential asks for
+ * itself: a delegated caller only (the delegation gate lets this one write through).
+ */
+export async function stepUpRequestRoutes(fastify: FastifyInstance) {
+  fastify.post('/', {
+    ...open('self'),
+    schema: {
+      description:
+        'For an AI assistant acting through a personal key or a browser sign-in: a single-use link (10 minutes) that its ' +
+        'holder opens to prove a second factor again, renewing the protected-actions window of THIS credential. 400 ' +
+        'not_delegated from a browser session; 409 protected_actions_not_allowed when the key or the sign-in was given none ' +
+        '(reconnect / new key); 403 protected_actions_off | mcp_disabled; 429 with Retry-After past 5 links per 10 minutes.',
+      tags: ['oauth'],
+      response: {
+        201: { type: 'object', properties: { url: { type: 'string' }, expiresAt: { type: 'string' } } },
+        400: flowError, 401: unauthorizedResponseSchema, 403: flowError, 409: flowError, 429: flowError, 503: flowError,
+      },
+    },
+  }, async (request, reply) => {
+    const uc = request.userContext
+    const d = uc?.delegation
+    if (uc?.authVia !== 'delegated' || !d) {
+      return reply.status(400).send({ error: 'not_delegated', message: 'Ask from your assistant: the link refreshes the key or sign-in that asks for it.' })
+    }
+    try {
+      const link = await createStepUpRequest({
+        subject: uc.id,
+        clientId: d.clientId,
+        kind: d.kind,
+        stepUpActions: d.kind === 'oauth' ? d.stepUpActions === true : d.keyStepUpActions !== false,
+      })
+      return reply.status(201).header('cache-control', 'no-store').send(link)
+    } catch (err) {
+      return flowFailed(err, reply)
+    }
   })
 }
 

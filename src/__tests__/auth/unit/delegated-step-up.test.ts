@@ -50,6 +50,8 @@ beforeAll(async () => {
   app.delete('/api/me/mcp/connections/:clientId', ok)
   app.get('/api/me/mcp/connections', ok)
   app.delete('/api/me/mcp/connections', ok)
+  app.post('/api/me/mcp/step-up-requests', ok)
+  app.post('/api/me/mcp/other-self-write', ok)
   app.delete('/api/organizations/:organizationId/api-keys/:clientId', { preHandler: guard('org.keys:revoke') }, ok)
   app.delete('/api/admin/rbac/groups/:name/members/:email', { preHandler: guard('groups.members:revoke') }, ok)
   app.delete('/api/admin/sites/:name', { preHandler: guard('sites:delete') }, ok)
@@ -144,6 +146,9 @@ describe('signed-in apps through a token', () => {
     const list = await app.inject({ method: 'GET', url: '/api/me/mcp/connections', headers: { 'x-who': JSON.stringify({ kind: 'oauth' }) } })
     expect(list.statusCode).toBe(403)
     expect(list.json().reason).toBe('delegation_ineligible:api_keys')
+    // Asking for a link to refresh its own proof is the one self-write a token may make here.
+    expect((await call('POST', '/api/me/mcp/step-up-requests', { kind: 'oauth' })).statusCode).toBe(200)
+    expect((await call('POST', '/api/me/mcp/other-self-write', { kind: 'oauth' })).json().reason).toBe('delegation_no_scope_for_write')
     // Disconnecting ALL of them is a person's call, not a token's.
     expect((await call('DELETE', '/api/me/mcp/connections', { kind: 'oauth' })).statusCode).toBe(403)
   })

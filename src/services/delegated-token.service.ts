@@ -13,6 +13,7 @@ import { getStore } from '../cache/runtime.js'
 import { hydraFlows } from './hydra-flows.service.js'
 import { oauthStepUpUntil } from '../oauth/step-up-window.js'
 import { oauthAudit } from '../oauth/audit.js'
+import { laterProof, refreshedOAuthProof } from '../oauth/step-up-proof.js'
 
 const log = () => componentLogger('delegated-token')
 
@@ -266,7 +267,9 @@ export class DelegatedTokenService {
       return { error: 'grant_expired' }
     }
     const org = ext.org
-    const stepUpAt = typeof ext.second_factor_at === 'string' && ext.second_factor_at ? ext.second_factor_at : undefined
+    // The consent-time proof, or a later one the person gave through a step-up link (oauth/step-up-refresh.ts).
+    const consented = typeof ext.second_factor_at === 'string' && ext.second_factor_at ? ext.second_factor_at : undefined
+    const stepUpAt = laterProof(consented, ext.step_up_actions === true ? await refreshedOAuthProof(subject, clientId) : null)
     return {
       subject,
       kind: 'oauth',
