@@ -1,5 +1,6 @@
 import { FastifyError, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
+import { schemaDetails, validationFailed, zodDetails } from '../utils/validation-error.js'
 import { KratosApiError } from '../services/kratos.service.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { InvalidBindingError } from '../services/group-bindings.js'
@@ -35,15 +36,11 @@ export function errorHandler(
     'Request error'
   )
 
-  // Zod validation errors (400)
-  if (error instanceof ZodError) {
-    return reply.status(400).send({
-      error: 'Validation failed',
-      details: error.errors.map((e) => ({
-        path: e.path.join('.'),
-        message: e.message,
-      })),
-    })
+  // Validation errors (400), zod's or the route JSON schema's: one shape, `details[]` naming each
+  // field, and a `message` a client can show as it is.
+  if (error instanceof ZodError) return reply.status(400).send(validationFailed(zodDetails(error)))
+  if (Array.isArray(error.validation) && error.statusCode === 400) {
+    return reply.status(400).send(validationFailed(schemaDetails(error.validation, error.validationContext)))
   }
 
   // Kratos API errors (external service)

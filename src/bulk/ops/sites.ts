@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { routeSchema, type Route } from '../../sites/schemas.js'
+import { routeSchema, SITE_NAME_PATTERN, type Route } from '../../sites/schemas.js'
 import { sitesRepository } from '../../sites/repository.js'
 import { assertNotSystem, siteError } from '../../sites/checks.js'
 import { putDraft } from '../../sites/sites.service.js'
@@ -10,7 +10,7 @@ type Params = { site: string }
 type DraftSite = { name?: string; gates?: Array<{ id?: string }>; routes?: { items?: Route[] } & Record<string, unknown> } & Record<string, unknown>
 type State = { site: DraftSite; baseVersion: number; changed: number }
 
-const siteName = z.string().regex(/^[a-z][a-z0-9-]{1,39}$/)
+const siteName = z.string().regex(SITE_NAME_PATTERN)
 
 function canonical(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value

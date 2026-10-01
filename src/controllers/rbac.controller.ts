@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { rbacService } from '../services/rbac.service.js'
+import { rbacService, SERVICE_NAME_PATTERN } from '../services/rbac.service.js'
 import { faviconService } from '../services/favicon.service.js'
 import { getEnabledHandlers } from '../services/oathkeeper-handlers.js'
 import {
@@ -12,6 +12,9 @@ import { auditActor } from '../utils/audit-actor.js'
 import { getGroupSecondFactorFlags } from '../second-factor/settings.js'
 import { groupSecondFactor } from '../second-factor/requirements.js'
 import { z } from 'zod'
+
+// Built per request, not at import: SERVICE_NAME_PATTERN is read when it is used.
+const serviceName = () => z.string().min(1).regex(SERVICE_NAME_PATTERN, 'a site or service name: lowercase letters, digits, - and _')
 
 // =============================================================================
 // Controller — Redis-backed RBAC management
@@ -112,7 +115,7 @@ export class RbacController {
     reply: FastifyReply
   ) {
     const { name } = z
-      .object({ name: z.string().min(1).regex(/^[a-z0-9_-]+$/) })
+      .object({ name: serviceName() })
       .parse(request.params)
     const favicon = await faviconService.getFavicon(name)
     if (!favicon) {
@@ -199,7 +202,7 @@ export class RbacController {
     // mapping is DELETE /org-service-map/:organizationId.
     const body = z.object({
       organizationId: z.string().uuid(),
-      services: z.array(z.string().min(1).regex(/^[a-z0-9_]+$/)).min(1),
+      services: z.array(serviceName()).min(1),
     }).parse(request.body)
     await rbacService.setOrgServiceMapping(body.organizationId, body.services, this.actor(request))
     return reply.status(201).send({ success: true, message: `Mapped ${body.organizationId} → [${body.services.join(', ')}]` })
