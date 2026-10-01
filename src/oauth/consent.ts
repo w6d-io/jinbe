@@ -164,22 +164,25 @@ export async function consentScreen(challenge: string, ctx: ConsentContext): Pro
 }
 
 /**
- * Binds a registration to the person consenting, once: a JSON Patch `test` makes two first consents
- * race safely. False when somebody else holds it.
+ * Binds a registration to the person consenting, once. False when somebody else holds it.
+ *
+ * Hydra's JSON Patch has no `test` (it answers 500 "unsupported operation"), so: read the live client,
+ * refuse when another person holds it, write, then read again — of two first consents racing, the one
+ * whose subject is not there afterwards is refused (the other's write won).
  */
 async function bindClient(clientId: string, metadata: Record<string, unknown> | undefined, subject: string): Promise<boolean> {
   if (metadata?.bound_subject === subject) return true
-  const patch = metadata && 'bound_subject' in metadata
-    ? [{ op: 'test', path: '/metadata/bound_subject', value: null }, { op: 'replace', path: '/metadata/bound_subject', value: subject }]
-    : [{ op: 'add', path: '/metadata/bound_subject', value: subject }]
+  const live = (await hydraService.getClient(clientId).catch(hydraFailure)).metadata ?? {}
+  if (live.bound_subject === subject) return true
+  if (typeof live.bound_subject === 'string' && live.bound_subject) return false
+  const op = 'bound_subject' in live ? 'replace' : 'add'
   try {
-    await hydraFlows.patchClient(clientId, patch)
-    return true
+    await hydraFlows.patchClient(clientId, [{ op, path: '/metadata/bound_subject', value: subject }])
   } catch (err) {
     if (!(err instanceof HydraApiError) || ![400, 409, 422].includes(err.statusCode)) hydraFailure(err)
-    const now = (await hydraService.getClient(clientId).catch(hydraFailure)).metadata?.bound_subject
-    return now === subject
   }
+  const now = (await hydraService.getClient(clientId).catch(hydraFailure)).metadata?.bound_subject
+  return now === subject
 }
 
 export async function decideConsent(d: ConsentDecision, ctx: ConsentContext): Promise<FlowAnswer> {

@@ -91,8 +91,13 @@ beforeEach(() => {
   for (const f of Object.values(h.flows)) f.mockClear()
   h.flows.getLoginRequest.mockReset().mockResolvedValue(loginReq())
   h.flows.getConsentRequest.mockReset().mockResolvedValue(consentReq())
-  h.flows.patchClient.mockReset().mockResolvedValue({})
-  h.getClient.mockReset()
+  // Hydra's client store, as getClient reads it and patchClient writes it (no JSON Patch `test` in Hydra).
+  let stored: Record<string, unknown> = { ...CLIENT.metadata }
+  h.flows.patchClient.mockReset().mockImplementation(async (_id: string, ops: { path: string; value: unknown }[]) => {
+    for (const o of ops) stored = { ...stored, [o.path.replace('/metadata/', '')]: o.value }
+    return {}
+  })
+  h.getClient.mockReset().mockImplementation(async () => ({ ...CLIENT, metadata: { ...stored } }))
   h.emit.mockClear()
   resetMcpSettingsCache()
 })
@@ -239,8 +244,9 @@ describe('consent decision', () => {
     expect(body.remember).toBe(false)
     expect(body.session.access_token).toMatchObject({ kind: 'oauth', scope_mode: 'all', second_factor_at: minutesAgo(2).toISOString(), step_up_actions: false })
     expect(Date.parse(body.session.access_token.grant_expires_at as string) - Date.parse(body.session.access_token.granted_at as string)).toBe(30 * 24 * 3600_000)
-    // First consent binds the registration, race-safe.
-    expect(h.flows.patchClient).toHaveBeenCalledWith('c-1', [{ op: 'test', path: '/metadata/bound_subject', value: null }, { op: 'replace', path: '/metadata/bound_subject', value: 'user-1' }])
+    // First consent binds the registration (no JSON Patch `test`: Hydra answers 500 on it), then re-reads it.
+    expect(h.flows.patchClient).toHaveBeenCalledWith('c-1', [{ op: 'replace', path: '/metadata/bound_subject', value: 'user-1' }])
+    expect(h.flows.patchClient.mock.calls[0][1].some((o: { op: string }) => o.op === 'test')).toBe(false)
     expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ v1Event: 'mcp.oauth.consent_granted', targetId: 'c-1' }))
   })
 
@@ -275,9 +281,17 @@ describe('consent decision', () => {
     expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ v1Event: 'mcp.oauth.consent_denied' }))
   })
 
-  it('a registration someone else bound first (lost race) is refused, never granted', async () => {
-    h.flows.patchClient.mockRejectedValue(new HydraApiError(400, 'test failed'))
+  it('a registration someone else already bound is refused without writing, never granted', async () => {
     h.getClient.mockResolvedValue({ ...CLIENT, metadata: { ...CLIENT.metadata, bound_subject: 'user-2' } })
+    expect((await decide({ decision: 'allow', mode: 'all' })).json()).toMatchObject({ action: 'refused', reason: 'client_bound_elsewhere' })
+    expect(h.flows.patchClient).not.toHaveBeenCalled()
+    expect(h.flows.acceptConsent).not.toHaveBeenCalled()
+  })
+
+  it('a lost race (the other write landed after ours) is refused on the re-read', async () => {
+    h.getClient
+      .mockResolvedValueOnce({ ...CLIENT })
+      .mockResolvedValueOnce({ ...CLIENT, metadata: { ...CLIENT.metadata, bound_subject: 'user-2' } })
     expect((await decide({ decision: 'allow', mode: 'all' })).json()).toMatchObject({ action: 'refused', reason: 'client_bound_elsewhere' })
     expect(h.flows.acceptConsent).not.toHaveBeenCalled()
   })
