@@ -107,13 +107,15 @@ function authenticated(actor?: AuditActorInput): asserts actor is AuditActorInpu
   }
 }
 
-/** The roles a change alters that some group binds under `service` (a role nobody holds grants nothing yet). */
-async function changedBoundRoles(service: string, roles: Record<string, string[]>): Promise<Record<string, string[]>> {
+/**
+ * Every role a change alters or adds under `service` — bound by a group or not: a role no group binds
+ * can still be held through a direct grant (bindings.direct), or brought into use by a later group
+ * change, so widening it is a grant like any other.
+ */
+async function changedRoles(service: string, roles: Record<string, string[]>): Promise<Record<string, string[]>> {
   const current = (await redisRbacRepository.getRoles(service)) ?? {}
-  const defs = await redisRbacRepository.getGroups()
-  const bound = new Set(Object.values(defs).flatMap((d) => d[service] ?? []))
   const same = (a: readonly string[] = [], b: readonly string[] = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
-  return Object.fromEntries(Object.entries(roles).filter(([role, perms]) => bound.has(role) && !same(perms, current[role])))
+  return Object.fromEntries(Object.entries(roles).filter(([role, perms]) => !same(perms, current[role])))
 }
 
 /** Throws unless `actor` may make `change` (see the module comment). */
@@ -128,9 +130,9 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
       return
     }
     case 'roles': {
-      // Changing a role is changing every group that binds it: the policy's define_roles verdict over
-      // the roles as they will be. A role no group binds grants nobody anything yet (a new service's).
-      const changed = await changedBoundRoles(change.service, change.roles)
+      // Changing a role is changing everybody who holds it (through a group or directly): the
+      // policy's define_roles verdict over every changed or new role, as it will be.
+      const changed = await changedRoles(change.service, change.roles)
       if (Object.keys(changed).length === 0) return
       const v = await ask({ kind: 'define_roles', actor: actor.email, roles: { [change.service]: changed } })
       if (!v.allow) refuseVerdict(v, `This change to the roles of '${change.service}'`, change, actor)
@@ -168,13 +170,13 @@ export async function assertMayRemoveFromGroups(groups: readonly string[], actor
 }
 
 /**
- * A bundle import, as the policy judges it: the roles it changes that a group will bind
- * (define_roles), then each group whose grants it changes, its roles resolved to the proposed ones
+ * A bundle import, as the policy judges it: every role it changes or adds (define_roles), then each
+ * group whose grants it changes, its roles resolved to the proposed ones
  * (define_group with `roles`) — never a code-defined group.
  */
 export async function assertBundleWithinOwn(
   change: {
-    /** app → role → permissions: the changed or new roles some group of the result binds. */
+    /** app → role → permissions: every changed or new role. */
     roles: Record<string, Record<string, string[]>>
     /** The groups whose grants change, as they will be. */
     groups: ReadonlyArray<{ name: string; definition: GroupDefinition }>

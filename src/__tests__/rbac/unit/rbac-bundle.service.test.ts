@@ -374,6 +374,15 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       expect(err?.refusal).toMatchObject({ missing: ['users:delete'] })
     })
 
+    it('a role no group binds is checked too: it may be held through a direct grant', async () => {
+      await seed()
+      const current = await rbacBundleService.export()
+      const bundle = { ...current, rbac: { ...current.rbac, roles: { ...current.rbac.roles, billing: { ...current.rbac.roles.billing, unbound: ['users:delete'] } } } }
+      const err = await refusal(rbacBundleService.import(bundle, OPS))
+      expect(err).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own' })
+      expect(err?.refusal).toMatchObject({ missing: ['users:delete'] })
+    })
+
     it('fails closed when OPA cannot be asked', async () => {
       await seed()
       opaWorld.down = true

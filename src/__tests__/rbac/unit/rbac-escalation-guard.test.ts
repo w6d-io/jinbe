@@ -106,15 +106,33 @@ describe('defined in code', () => {
 })
 
 describe('roles and bundles: the policy judges the proposal too', () => {
-  it('changing a role some group binds asks define_roles with the role as it will be; an unbound or unchanged role asks nothing', async () => {
+  it('changing a role asks define_roles with every changed or new role as it will be; an unchanged one is not sent', async () => {
     expect(await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))).toBeNull()
     expect(grantVerdict).toHaveBeenCalledWith({ kind: 'define_roles', actor: ADMIN.email, roles: { billing: { viewer: ['invoices:read', 'payments:write'] } } })
     vi.mocked(grantVerdict).mockClear()
     await assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'], fresh: ['payments:write'] } }, ADMIN)
+    expect(grantVerdict).toHaveBeenCalledWith({ kind: 'define_roles', actor: ADMIN.email, roles: { billing: { fresh: ['payments:write'] } } })
+    vi.mocked(grantVerdict).mockClear()
+    await assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read'] } }, ADMIN)
     expect(grantVerdict).not.toHaveBeenCalled()
     opaWorld.verdict = () => refused({ missing: { billing: ['payments:write'] }, grantedBy: [] })
     const e = await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'payments:write'] } }, ADMIN))
     expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own', refusal: { missing: ['payments:write'] } })
+  })
+
+  it('widening a role no group binds but somebody holds directly is refused to an actor lacking what it adds', async () => {
+    // `auditor` is bound by no group; a person holds it through a direct grant (bindings.direct).
+    store.roles.billing = { ...store.roles.billing, auditor: ['invoices:read'] }
+    // The policy's answer (rbac.delegation.define_roles_verdict): what the roles carry beyond the actor.
+    opaWorld.verdict = (q) => {
+      if (q.kind !== 'define_roles') return null
+      const held = opaWorld.permissions[q.actor] ?? []
+      const missing = Object.values(q.roles as Record<string, Record<string, string[]>>).flatMap((r) => Object.values(r).flat()).filter((p) => !held.includes(p))
+      return missing.length ? refused({ missing: { billing: missing } }) : null
+    }
+    const e = await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { auditor: ['invoices:read', 'payments:write'] } }, ADMIN))
+    expect(e).toMatchObject({ statusCode: 403, code: 'grant_exceeds_own', refusal: { missing: ['payments:write'] } })
+    expect(grantVerdict).toHaveBeenCalledWith({ kind: 'define_roles', actor: ADMIN.email, roles: { billing: { auditor: ['invoices:read', 'payments:write'] } } })
   })
 
   it('a bundle: define_roles for the changed bound roles, then define_group per changed group with the proposed roles', async () => {

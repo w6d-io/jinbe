@@ -226,7 +226,7 @@ class RbacBundleService {
    * What this import asks the holding rule about (rbac.delegation, via assertBundleWithinOwn): the
    * groups it leaves (the bundle's, over the current ones unless a full restore) whose grants change,
    * the roles it leaves (validateBindings' reading of the roles section, services and defaults), and
-   * which of those roles change while a resulting group binds them.
+   * every one of those roles that changes or is new.
    */
   private async holdingQuestion(
     bundle: AuthBundle, want: (s: BundleSection) => boolean, isFull: boolean,
@@ -247,13 +247,12 @@ class RbacBundleService {
     const groupsChanged = Object.entries(afterGroups)
       .filter(([name, def]) => !same(groupGrants(def, after), groupGrants(current[name], before)))
       .map(([name, definition]) => ({ name, definition }))
-    const bound = (svc: string) => new Set(Object.values(afterGroups).flatMap((d) => d?.[svc] ?? []))
+    // Every changed or new role, bound or not: a role no group binds can be held directly.
     const sorted = (xs: readonly string[] = []) => JSON.stringify([...xs].sort())
     const rolesChanged: Record<string, Record<string, string[]>> = {}
     for (const [svc, map] of Object.entries(after)) {
       if (!map) continue
-      const b = bound(svc)
-      const changed = Object.entries(map).filter(([role, perms]) => b.has(role) && sorted(perms) !== sorted(before[svc]?.[role]))
+      const changed = Object.entries(map).filter(([role, perms]) => sorted(perms) !== sorted(before[svc]?.[role]))
       if (changed.length) rolesChanged[svc] = Object.fromEntries(changed)
     }
     const proposedRoles = Object.fromEntries(Object.entries(after).filter((e): e is [string, FlatRolesMap] => !!e[1]))
