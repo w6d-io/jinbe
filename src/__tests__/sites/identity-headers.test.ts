@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { GatewaySpec } from '../../gateway/kube-gateway.js'
-import { PLATFORM_IDENTITY_HEADERS, SESSION_HEADERS, gatewayIdentity } from '../../sites/identity-headers.js'
+import { PLATFORM_IDENTITY_HEADERS, SESSION_HEADERS, STRIPPED_COOKIE_HEADER, gatewayIdentity } from '../../sites/identity-headers.js'
 import { render } from '../../sites/render.js'
 import type { Site } from '../../sites/schemas.js'
 import { payrollSite, platform } from './fixtures.js'
 
-const blanks = (names: readonly string[]) => Object.fromEntries([...names, 'x-user-aal', 'x-user-2fa-at'].map((n) => [n, '']))
+const blanks = (names: readonly string[]) => ({ ...Object.fromEntries([...names, 'x-user-aal', 'x-user-2fa-at'].map((n) => [n, ''])), ...STRIPPED_COOKIE_HEADER })
 const gate = (r: ReturnType<typeof render>, name: string) => r.siteCr.spec.gates.find((g) => g.name === name)!
 
 describe('identity headers on gates that set none', () => {
@@ -27,7 +27,7 @@ describe('identity headers on gates that set none', () => {
 
   it('keeps the gateway config\'s spellings, so the rule key replaces each global key', () => {
     const r = render(payrollSite(), { ...platform, identityHeaders: ['x-User-Email', 'x-user-email'] })
-    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', 'x-user-aal': '', 'x-user-2fa-at': '' } } }])
+    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', 'x-user-aal': '', 'x-user-2fa-at': '', ...STRIPPED_COOKIE_HEADER } } }])
   })
 
   it('leaves the headers the gate\'s authorizer forwards from its decision', () => {
@@ -95,7 +95,7 @@ describe('identity headers on gates that set none', () => {
 describe('gates with their own header mutator', () => {
   it('are rendered as written, plus the sign-in strength headers (X-User-AAL, X-User-2FA-At)', () => {
     const r = render(payrollSite(), platform)
-    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: SESSION_HEADERS } }])
+    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: { ...SESSION_HEADERS, ...STRIPPED_COOKIE_HEADER } } }])
     expect(SESSION_HEADERS['x-user-aal']).toContain('.Extra.authenticator_assurance_level')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.Extra.authentication_methods')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.completed_at')
@@ -108,7 +108,7 @@ describe('gates with their own header mutator', () => {
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ] }
     expect(gate(render(site, platform), 'web').mutators).toEqual([
-      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'] } } },
+      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'], ...STRIPPED_COOKIE_HEADER } } },
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ])
   })
@@ -150,5 +150,67 @@ describe('decisionUrlOf', () => {
   it('gatewayIdentity reads the global remote_json remote', () => {
     const spec = { mutators: {}, authorizers: { remote_json: { config: { remote: 'http://p/v1/data/rbac/allow' } } } } as unknown as GatewaySpec
     expect(gatewayIdentity(spec).policyRemote).toBe('http://p/v1/data/rbac/allow')
+  })
+})
+
+/**
+ * STRIPPED_COOKIE_HEADER run with Go text/template + sprig semantics for exactly the functions it
+ * uses: regexReplaceAll (regexp ReplaceAllString), trimPrefix (strings.TrimPrefix), trim
+ * (strings.TrimSpace). The regex is RE2-compatible and means the same in JS. Checked once by hand
+ * against Go's own text/template as well.
+ */
+function runCookieTemplate(cookie: string | undefined): string {
+  const tpl = STRIPPED_COOKIE_HEADER.Cookie
+  const m = /^\{\{ \$c := \.MatchContext\.Header\.Get "Cookie" \}\}\{\{ \$c = regexReplaceAll `([^`]+)` \$c "" \}\}\{\{ trimPrefix ";" \$c \| trim \}\}$/.exec(tpl)
+  if (!m) throw new Error(`unexpected template shape: ${tpl}`)
+  const replaced = (cookie ?? '').replace(new RegExp(m[1], 'g'), '')
+  return (replaced.startsWith(';') ? replaced.slice(1) : replaced).trim()
+}
+
+describe('the platform session cookie never reaches a site app', () => {
+  it.each([
+    ['only the session cookie', 'ory_kratos_session=s3cr3t', ''],
+    ['session first', 'ory_kratos_session=s; a=1; b=2', 'a=1; b=2'],
+    ['session in the middle', 'a=1; ory_kratos_session=s; b=2', 'a=1; b=2'],
+    ['session last', 'a=1; b=2; ory_kratos_session=s', 'a=1; b=2'],
+    ['no spaces', 'a=1;ory_kratos_session=s;b=2', 'a=1;b=2'],
+    ['the sandbox variant', 'ory_kratos_session_sandbox=s; a=1', 'a=1'],
+    ['both variants', 'ory_kratos_session=s; ory_kratos_session_sandbox=t; a=1', 'a=1'],
+    ['a lookalike name is kept', 'my_ory_kratos_session=1; ory_kratos_session=s', 'my_ory_kratos_session=1'],
+    ['no Cookie header', undefined, ''],
+  ])('%s', (_label, cookie, expected) => {
+    expect(runCookieTemplate(cookie)).toBe(expected)
+  })
+
+  it('reads the incoming request and anchors the name at a cookie start', () => {
+    expect(STRIPPED_COOKIE_HEADER.Cookie).toContain('.MatchContext.Header.Get "Cookie"')
+    expect(STRIPPED_COOKIE_HEADER.Cookie).toContain('`(^|;)\\s*ory_kratos_session[A-Za-z0-9_-]*=[^;]*`')
+  })
+
+  it('is set on every gate: public, nothing, identity, enrich, pre-flight', () => {
+    const site = payrollSite()
+    site.gates.push({ id: 'nothing', label: 'Nothing', authenticators: [{ handler: 'cookie_session' }], authorizer: 'policy', mutators: [{ handler: 'noop' }], errors: 'api' })
+    site.gates.push({ id: 'enrich', label: 'Enrich', authenticators: [{ handler: 'cookie_session' }], authorizer: 'policy', mutators: [{ handler: 'hydrator', config: { api: { url: 'http://e.e.svc.cluster.local' } } }, { handler: 'header' }], errors: 'api' })
+    site.routes.items.push(
+      { id: 'n', methods: ['GET'], path: '/n', gate: 'nothing', access: { kind: 'signed-in' }, source: 'manual' },
+      { id: 'e', methods: ['GET'], path: '/e', gate: 'enrich', access: { kind: 'signed-in' }, source: 'manual' },
+    )
+    const r = render(site, { ...platform, enabled: { ...platform.enabled, mutators: [...platform.enabled.mutators, 'hydrator'] } })
+    for (const name of ['public', 'nothing', 'web', 'web-preflight', 'enrich']) {
+      const header = gate(r, name).mutators.find((m) => m.handler === 'header')!
+      expect((header.config as { headers: Record<string, string> }).headers.Cookie, name).toBe(STRIPPED_COOKIE_HEADER.Cookie)
+    }
+  })
+
+  it('a gate\'s own header mutators cannot drop or override it', () => {
+    const site = payrollSite()
+    site.gates[0] = { ...site.gates[0], mutators: [
+      { handler: 'header', config: { headers: { cookie: '{{ .MatchContext.Header.Get "Cookie" }}', 'X-App': 'a' } } },
+      { handler: 'header', config: { headers: { COOKIE: 'raw', 'X-Other': 'b' } } },
+    ] }
+    const [first, second] = gate(render(site, platform), 'web').mutators as Array<{ config: { headers: Record<string, string> } }>
+    expect(Object.keys(first.config.headers).filter((k) => k.toLowerCase() === 'cookie')).toEqual(['Cookie'])
+    expect(first.config.headers.Cookie).toBe(STRIPPED_COOKIE_HEADER.Cookie)
+    expect(second.config.headers).toEqual({ 'X-Other': 'b' })
   })
 })
