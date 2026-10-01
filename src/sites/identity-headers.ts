@@ -34,6 +34,27 @@ export const SESSION_HEADERS: Record<string, string> = {
   'x-user-2fa-at': '{{ $at := "" }}{{ if .Extra }}{{ range .Extra.authentication_methods }}{{ if .aal }}{{ if eq (print .aal) "aal2" }}{{ $at = print .completed_at }}{{ end }}{{ end }}{{ end }}{{ end }}{{ $at }}',
 }
 
+/** The platform session cookie: ory_kratos_session, and every variant (ory_kratos_session_sandbox…). */
+export const SESSION_COOKIE_PREFIX = 'ory_kratos_session'
+
+const BT = '`'
+/**
+ * The Cookie header a site app receives: the client's, minus the platform session cookie.
+ *
+ * Oathkeeper proxies the whole Cookie header to the upstream, and the session cookie's domain covers
+ * every site: without this every app got a session it could replay on the console and on jinbe. The
+ * header mutator sets it (Header.Set replaces the client's value) from the incoming request
+ * (.MatchContext.Header), removing each cookie whose NAME starts with SESSION_COOKIE_PREFIX — the
+ * match is anchored at a cookie start, so `my_ory_kratos_session=1` stays — and keeping the others in
+ * order. sprig (regexReplaceAll, trimPrefix, trim) is in Oathkeeper's template functions. Set on
+ * every gate of every site, whatever its own mutators say.
+ */
+export const STRIPPED_COOKIE_HEADER: Record<string, string> = {
+  Cookie: `{{ $c := .MatchContext.Header.Get "Cookie" }}{{ $c = regexReplaceAll ${BT}(^|;)\\s*${SESSION_COOKIE_PREFIX}[A-Za-z0-9_-]*=[^;]*${BT} $c "" }}{{ trimPrefix ";" $c | trim }}`,
+}
+
+const withoutCookie = (headers: Record<string, unknown>) => Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== 'cookie'))
+
 /** What the gateway config makes upstreams trust, read from the Gateway spec. */
 export interface GatewayIdentity {
   /** Global header-mutator headers whose value is a template (session data), as spelled there. */
@@ -75,26 +96,31 @@ function authorizerHeaders(authorizer: Handler, forwarded: Record<string, string
   return own !== undefined ? strings(own) : forwarded[authorizer.handler] ?? []
 }
 
-/** A header mutator that also sets the SESSION_HEADERS it does not name itself. */
+/** A header mutator that also sets the SESSION_HEADERS it does not name itself, and the stripped Cookie. */
 function withSessionHeaders(m: Handler): Handler {
-  const own = headerMap(m)
+  const own = withoutCookie(headerMap(m))
   const named = new Set(Object.keys(own).map((k) => k.toLowerCase()))
   const add = Object.entries(SESSION_HEADERS).filter(([k]) => !named.has(k))
-  return add.length === 0 ? m : { ...m, config: { ...(m.config ?? {}), headers: { ...own, ...Object.fromEntries(add) } } }
+  return { ...m, config: { ...(m.config ?? {}), headers: { ...own, ...Object.fromEntries(add), ...STRIPPED_COOKIE_HEADER } } }
+}
+
+/** A later header mutator of the gate: it may not set Cookie (the last Header.Set would win). */
+function withoutOwnCookie(m: Handler): Handler {
+  const own = headerMap(m)
+  return Object.keys(own).some((k) => k.toLowerCase() === 'cookie') ? { ...m, config: { ...(m.config ?? {}), headers: withoutCookie(own) } } : m
 }
 
 /**
  * The gate's mutators with identity headers owned by the gateway. A gate that has a header mutator
  * keeps its own (every header it names is overwritten, never merged with the client's), plus the
  * SESSION_HEADERS on the first one. One that has none gets a header mutator blanking every identity
- * header its authorizer does not set, in place of noop.
+ * header its authorizer does not set, in place of noop. Every gate sets the stripped Cookie.
  */
 export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handler, names: readonly string[], forwarded: Record<string, string[]>): Handler[] {
   const first = gate.mutators.findIndex((m) => m.handler === 'header')
-  if (first >= 0) return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m) : m))
+  if (first >= 0) return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m) : m.handler === 'header' ? withoutOwnCookie(m) : m))
   const fromDecision = new Set(authorizerHeaders(authorizer, forwarded).map((h) => h.toLowerCase()))
-  const blank = names.filter((n) => !fromDecision.has(n.toLowerCase()))
+  const blank = names.filter((n) => !fromDecision.has(n.toLowerCase()) && n.toLowerCase() !== 'cookie')
   const rest = gate.mutators.filter((m) => m.handler !== 'noop')
-  if (blank.length === 0) return rest.length > 0 ? rest : [{ handler: 'noop' }]
-  return [{ handler: 'header', config: { headers: Object.fromEntries(blank.map((n) => [n, ''])) } }, ...rest]
+  return [{ handler: 'header', config: { headers: { ...Object.fromEntries(blank.map((n) => [n, ''])), ...STRIPPED_COOKIE_HEADER } } }, ...rest]
 }
