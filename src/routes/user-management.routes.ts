@@ -167,7 +167,7 @@ export async function userManagementRoutes(fastify: FastifyInstance) {
   }, adminController.createUser.bind(adminController) as never)
 
   fastify.put('/users/:id', {
-    ...needs('users:update'),
+    ...needs('users:update', { alsoAccepts: ['users:update_email'] }),
     preHandler: enforcing(requireEditPermissions, 'users:update'),
     schema: {
       description:

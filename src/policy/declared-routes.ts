@@ -24,10 +24,18 @@ export type DeclaredRoute = {
   stepUp?: boolean
   /** Org-scoped: the route parameter naming the organisation. */
   org?: string
+  /** Machine routes only: reachable through the gateway (SCIM). Default false: no gateway row. */
+  edge?: boolean
+  /** Permissions the route's own guard also accepts on part of its input (one more row each). */
+  alsoAccepts?: string[]
+  /** Its own guard narrows the answer per caller (the audit scope): the gateway lets any signed-in person through. */
+  scopedBy?: string
+  /** The authorization model the route exists in; absent = both (authz-v2). */
+  model?: 'v1' | 'v2'
 }
 
 /** What a route declared about itself, as the route-access hook read it. */
-export type Declaration = Pick<DeclaredRoute, 'permission' | 'access' | 'stepUp' | 'org'>
+export type Declaration = Pick<DeclaredRoute, 'permission' | 'access' | 'stepUp' | 'org' | 'edge' | 'alsoAccepts' | 'scopedBy' | 'model'>
 
 /** The property a guard carries to say what it enforces. */
 export const ENFORCES = Symbol.for('jinbe.enforces')
@@ -42,6 +50,21 @@ export function enforcing<T extends object>(guard: T, permission: string): T {
 export function enforcedBy(guard: unknown): string | null {
   if (guard === null || (typeof guard !== 'function' && typeof guard !== 'object')) return null
   return (guard as Record<symbol, string | undefined>)[ENFORCES] ?? null
+}
+
+/** The property a guard carries to say it narrows the answer per caller (the audit scope). */
+export const SCOPED_BY = Symbol.for('jinbe.scopedBy')
+
+/** Marks a guard as deciding per caller, so the gateway admits any signed-in person to its route. */
+export function scopedBy<T extends object>(guard: T, by: string): T {
+  Object.defineProperty(guard, SCOPED_BY, { value: by, enumerable: false })
+  return guard
+}
+
+/** What a guard says it narrows by, or null. */
+export function scopedByOf(guard: unknown): string | null {
+  if (guard === null || (typeof guard !== 'function' && typeof guard !== 'object')) return null
+  return (guard as Record<symbol, string | undefined>)[SCOPED_BY] ?? null
 }
 
 const collected = new Map<string, DeclaredRoute>()
@@ -68,6 +91,11 @@ export function recordRoute(
   if (declared?.access) extra.access = declared.access
   if (declared?.stepUp) extra.stepUp = true
   if (declared?.org) extra.org = declared.org
+  if (declared?.edge) extra.edge = true
+  if (declared?.alsoAccepts?.length) extra.alsoAccepts = [...declared.alsoAccepts]
+  if (declared?.model) extra.model = declared.model
+  const by = declared?.scopedBy ?? [guards].flat(2).map(scopedByOf).find((b) => b !== null)
+  if (by) extra.scopedBy = by
   for (const verb of [method].flat()) {
     collected.set(`${verb} ${path}`, permission
       ? { method: verb, path, class: 'authorized', permission, ...extra }

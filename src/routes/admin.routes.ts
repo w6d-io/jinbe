@@ -307,7 +307,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/users/:email/groups',
     {
-      ...needs('groups.members:revoke'),
+      ...needs('groups.members:revoke', { alsoAccepts: ['groups.members:write'] }),
       preHandler: requireMembershipChange,
       schema: {
         description:

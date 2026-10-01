@@ -35,7 +35,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireOrgAdmin('organizationId'))
 
   fastify.get('/grants', {
-    ...needs('org.members:read', ORG),
+    ...needs('org.members:read', { ...ORG, model: 'v1' }),
     schema: {
       description: "Groups handed out in this organization, per member (data.org_grants[org]). Org admin or super_admin.",
       tags: ['organization-users'],
@@ -53,7 +53,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   }, orgGrantsController.list.bind(orgGrantsController) as never)
 
   fastify.put('/users/:id/grants', {
-    ...needs('org.members:write', ORG),
+    ...needs('org.members:write', { ...ORG, model: 'v1' }),
     schema: {
       description:
         "Replace a member's grants in this organization. Every group being added must pass OPA " +
@@ -92,7 +92,7 @@ export async function orgGrantsRoutes(fastify: FastifyInstance) {
   }, orgGrantsController.replace.bind(orgGrantsController) as never)
 
   fastify.get('/assignable-groups', {
-    ...needs('org.members:read', ORG),
+    ...needs('org.members:read', { ...ORG, model: 'v1' }),
     schema: {
       description:
         'Groups the caller may grant in this organization (OPA data.rbac.delegation.assignable_groups, kept ' +

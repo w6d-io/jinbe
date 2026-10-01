@@ -184,6 +184,7 @@ export const ALIASES: Readonly<Record<string, readonly Permission[]>> = {
  * of the model it belongs to.
  */
 export function grants(held: readonly string[], required: string): boolean {
+  if (grantsModel) return grantsModel(held, required)
   if (held.includes(EVERYTHING)) return true
   if (required === EVERYTHING) return false
   if (held.includes(required)) return true
@@ -191,6 +192,17 @@ export function grants(held: readonly string[], required: string): boolean {
     return held.some((h) => ALIASES[h]?.includes(required) ?? false)
   }
   return held.some((h) => coversByAncestry(h, required))
+}
+
+/**
+ * The rule `grants` follows instead of the one above while another authorization model is active
+ * (authz-v2/model.ts installs it on the switch, null puts v1 back). A hook rather than an import, so
+ * this file keeps loading on its own.
+ */
+let grantsModel: ((held: readonly string[], required: string) => boolean) | null = null
+
+export function setGrantsModel(rule: ((held: readonly string[], required: string) => boolean) | null): void {
+  grantsModel = rule
 }
 
 /**

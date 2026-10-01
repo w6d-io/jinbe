@@ -23,6 +23,9 @@ import { oathkeeperHandlerCatalogJsonSchema } from '../schemas/rbac/oathkeeper-h
 // RBAC Routes — Redis-backed, no branch prefix
 // =============================================================================
 
+
+/** Retired by authz v2 (org roles replace the roster and the service map): no v2 gateway row, 404 once v2 is active. */
+const V1_ONLY = { model: 'v1' } as const
 export async function rbacRoutes(fastify: FastifyInstance) {
   // Each route declares its catalogue permission; there is no plugin-wide gate.
   await fastify.register(accessCheckRoutes)
@@ -295,7 +298,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // ===========================================================================
 
   fastify.get('/org-service-map', {
-    ...needs('org:read'),
+    ...needs('org:read', V1_ONLY),
     schema: {
       description: 'List all organization → service bundle mappings (each org maps to an array of service names).',
       tags: ['rbac'],
@@ -316,7 +319,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.getOrgServiceMap.bind(rbacController))
 
   fastify.put('/org-service-map', {
-    ...needs('groups:write'),
+    ...needs('groups:write', V1_ONLY),
     // groups:write (step-up from the catalogue): which services an org's members reach.
     schema: {
       description: 'Set an organization → service bundle mapping. Replaces the org\'s entire bundle with the provided (non-empty) list of service names.',
@@ -344,7 +347,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
 
   // Org → admin roster (per-org admin list; feeds data.org_admin_map).
   fastify.get('/org-admin-map', {
-    ...needs('org:read'),
+    ...needs('org:read', V1_ONLY),
     schema: {
       description: 'List all organization → admin roster mappings (each org maps to an array of admin emails).',
       tags: ['rbac'],
@@ -364,7 +367,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   // Set an org's admin roster. super_admin + a RECENT second factor (R2 step-up)
   // are required — assigning who administers an org is a privileged action.
   fastify.put('/org-admin-map', {
-    ...needs('org.admins:write'),
+    ...needs('org.admins:write', V1_ONLY),
     schema: {
       description: "Set an organization's admin roster (emails). Replaces the org's entire roster; an empty list clears it. Requires org.admins:write + a second factor proven within 15 minutes.",
       tags: ['rbac'],
@@ -387,7 +390,7 @@ export async function rbacRoutes(fastify: FastifyInstance) {
   }, rbacController.setOrgAdmins.bind(rbacController))
 
   fastify.delete('/org-service-map/:organizationId', {
-    ...needs('groups:write'),
+    ...needs('groups:write', V1_ONLY),
     // groups:write (step-up from the catalogue): which services an org's members reach.
     schema: {
       description: 'Delete an organization → service bundle mapping (clears the org\'s bundle).',

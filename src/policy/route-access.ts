@@ -4,6 +4,8 @@ import { requirePermission } from '../middleware/require-permission.js'
 import { requireGlobalSuperAdmin, requireRecentMfa } from '../middleware/require-admin.js'
 import { isPublicRoute } from '../middleware/require-auth.js'
 import { recordRouteContext } from './route-guards.js'
+import { V2NameError, v2Name } from '../authz-v2/catalogue.js'
+import { onlyInModel } from '../authz-v2/model.js'
 
 /**
  * Every route says what it needs, in its own options, and ONE hook turns that into the gate.
@@ -49,17 +51,29 @@ declare module 'fastify' {
      * across the platform.
      */
     org?: string
+    /** Machine routes only: the gateway forwards it (SCIM authenticates itself). Default: no gateway row. */
+    edge?: boolean
+    /** Catalogue permissions the route's own guard also accepts on part of its input. */
+    alsoAccepts?: Permission[]
+    /**
+     * The authorization model the route exists in (authz-v2). `v1`: retired by v2 (its gateway row is
+     * not generated and it answers 404 once v2 is active); `v2`: new in v2 (404 until then).
+     */
+    model?: 'v1' | 'v2'
   }
 }
 
 /** Route options that declare a permission. Spread into a route's options. */
-export function needs(permission: Permission | typeof EVERYTHING, extra: { stepUp?: boolean; org?: string } = {}) {
+export function needs(
+  permission: Permission | typeof EVERYTHING,
+  extra: { stepUp?: boolean; org?: string; alsoAccepts?: Permission[]; model?: 'v1' | 'v2' } = {},
+) {
   return { config: { permission, ...extra } }
 }
 
 /** Route options that declare why no permission is needed. */
-export function open(access: Access) {
-  return { config: { access } }
+export function open(access: Access, extra: { edge?: boolean; model?: 'v1' | 'v2' } = {}) {
+  return { config: { access, ...extra } }
 }
 
 /** Registered by plugins that cannot take route options: the API documentation (ENABLE_SWAGGER). */
@@ -71,7 +85,10 @@ type RouteOptions = {
   method: string | string[]
   url: string
   preHandler?: unknown
-  config?: { permission?: string; access?: string; stepUp?: boolean; org?: string } & Record<string, unknown>
+  config?: {
+    permission?: string; access?: string; stepUp?: boolean; org?: string
+    edge?: boolean; alsoAccepts?: string[]; model?: 'v1' | 'v2'
+  } & Record<string, unknown>
 }
 
 /**
@@ -80,7 +97,10 @@ type RouteOptions = {
  */
 export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) => boolean): void {
   const where = `${[route.method].flat().join(',')} ${route.url}`
-  const { permission, access, stepUp, org } = route.config ?? {}
+  const { permission, access, stepUp, org, edge, alsoAccepts, model } = route.config ?? {}
+  if (model !== undefined && model !== 'v1' && model !== 'v2') throw new RouteAccessError(`${where}: unknown model '${model}'`)
+  if (edge !== undefined && access !== 'machine') throw new RouteAccessError(`${where}: edge is for machine routes only`)
+  const modelGate = model ? [onlyInModel(model)] : []
 
   if (!permission && !access) {
     if (UNDECLARED.test(route.url)) {
@@ -98,7 +118,10 @@ export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) 
     if (access === 'public' && !isPublic(route.url)) {
       throw new RouteAccessError(`${where} declares access 'public' but the session gate does not let it through`)
     }
-    recordRoute(route.method, route.url, chain, isPublic, { access: access as Access })
+    if (modelGate.length) route.preHandler = [...modelGate, ...chain]
+    recordRoute(route.method, route.url, chain, isPublic, {
+      access: access as Access, ...(edge ? { edge } : {}), ...(model ? { model } : {}),
+    })
     return
   }
 
@@ -111,17 +134,31 @@ export function attachRouteAccess(route: RouteOptions, isPublic: (path: string) 
   if (org !== undefined && !route.url.split('/').includes(`:${org}`)) {
     throw new RouteAccessError(`${where} is org-scoped by ':${org}', which is not a parameter of its path`)
   }
+  for (const also of alsoAccepts ?? []) {
+    if (!isCatalogPermission(also)) throw new RouteAccessError(`${where} also accepts '${also}', which is not in the catalogue`)
+  }
+  // v2: an org permission on an org route, a platform one elsewhere — or the boot fails.
+  if (model !== 'v1' && permission !== EVERYTHING) {
+    try {
+      for (const p of [permission!, ...(alsoAccepts ?? [])]) v2Name(p, org !== undefined)
+    } catch (err) {
+      if (err instanceof V2NameError) throw new RouteAccessError(`${where}: ${err.message}`)
+      throw err
+    }
+  }
 
   const gate = own.length > 0 || org !== undefined
     ? []
     : [permission === EVERYTHING ? requireGlobalSuperAdmin : requirePermission(permission as Permission)]
   const wantsStepUp = (specOf(permission!)?.stepUp || stepUp === true) && !chain.includes(requireRecentMfa)
-  route.preHandler = [...gate, ...chain, ...(wantsStepUp ? [requireRecentMfa] : [])]
+  route.preHandler = [...modelGate, ...gate, ...chain, ...(wantsStepUp ? [requireRecentMfa] : [])]
 
   recordRoute(route.method, route.url, route.preHandler, isPublic, {
     permission: permission!,
     stepUp: wantsStepUp || chain.includes(requireRecentMfa),
     ...(org !== undefined ? { org } : {}),
+    ...(alsoAccepts?.length ? { alsoAccepts } : {}),
+    ...(model ? { model } : {}),
   })
 }
 

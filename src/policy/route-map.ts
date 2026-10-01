@@ -20,18 +20,6 @@ import type { RouteRule } from '../services/redis-rbac.repository.js'
  *     rows and the super-admin wildcard in build-route-map.ts cover them.
  */
 
-/** Permissions a route's own guard asks for on part of its input, beside the one it declares. */
-const ALSO_ACCEPTED: Record<string, readonly Permission[]> = {
-  'PUT /api/admin/users/:id': ['users:update_email'],
-  'PUT /api/admin/users/:email/groups': ['groups.members:write'],
-}
-
-/**
- * Routes whose own guard admits callers holding no platform permission (the audit scope lets an org
- * admin read their organisations' events): the policy must let any signed-in person through to it.
- */
-const SCOPED_BY_THEIR_GUARD = /^\/api\/audit\//
-
 const legacyNamesFor = (permission: Permission): string[] =>
   Object.entries(ALIASES).filter(([, leaves]) => leaves.includes(permission)).map(([name]) => name).sort()
 
@@ -46,7 +34,8 @@ export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
   }
 
   const sorted = [...declared]
-    .filter((r) => r.method !== 'HEAD')
+    // New in authz v2: not a v1 route until the cut-over.
+    .filter((r) => r.method !== 'HEAD' && r.model !== 'v2')
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
   for (const r of sorted) {
     if (r.access === 'self' || r.access === 'authenticated') {
@@ -54,9 +43,12 @@ export function routeMapRows(declared: readonly DeclaredRoute[]): RouteRule[] {
       continue
     }
     if (!r.permission || !isCatalogPermission(r.permission)) continue
-    if (SCOPED_BY_THEIR_GUARD.test(r.path)) push({ method: r.method, path: r.path })
+    // Its own guard admits callers holding no platform permission (the audit scope lets an org admin
+    // read their organisations' events): any signed-in person through.
+    if (r.scopedBy) push({ method: r.method, path: r.path })
     const orgParam = r.org ? { org_param: r.org } : {}
-    const accepted = [r.permission, ...(ALSO_ACCEPTED[`${r.method} ${r.path}`] ?? [])]
+    // Permissions the route's own guard also accepts on part of its input (config.alsoAccepts).
+    const accepted = [r.permission, ...(r.alsoAccepts ?? []).filter(isCatalogPermission)]
     for (const permission of accepted) push({ method: r.method, path: r.path, permission, ...orgParam })
     for (const permission of accepted) {
       for (const legacy of legacyNamesFor(permission)) {

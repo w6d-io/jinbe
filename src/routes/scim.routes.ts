@@ -213,7 +213,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/ServiceProviderConfig',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description: 'SCIM 2.0 service provider configuration (RFC 7643 §5).',
         tags: ['scim'],
@@ -229,7 +229,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/ResourceTypes',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description: 'SCIM 2.0 resource types (RFC 7643 §6). Users only in phase 1.',
         tags: ['scim'],
@@ -245,7 +245,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/Schemas',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description: 'SCIM 2.0 schema definitions (RFC 7643 §7).',
         tags: ['scim'],
@@ -263,7 +263,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/Users',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description:
           'List/filter SCIM users. Supports filter=userName eq "..." / externalId eq "..." and startIndex/count pagination.',
@@ -297,7 +297,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/Users/:id',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description: 'Get a SCIM user by Kratos identity id.',
         tags: ['scim'],
@@ -317,7 +317,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/Users',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description:
           'Create a SCIM user (Kratos identity, default group [users], scim.managed marking). 409 uniqueness on existing email.',
@@ -343,7 +343,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.put(
     '/Users/:id',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description: 'Replace a SCIM user (traits + active state; groups preserved).',
         tags: ['scim'],
@@ -370,7 +370,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.patch(
     '/Users/:id',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description:
           'PATCH a SCIM user (RFC 7644 PatchOp): active true/false at minimum, plus userName/name/externalId. active=false revokes sessions.',
@@ -397,7 +397,7 @@ export async function scimRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/Users/:id',
     {
-      ...open('machine'),
+      ...open('machine', { edge: true }),
       schema: {
         description:
           'Soft-delete a SCIM user: state → inactive + all sessions revoked. The Kratos identity is NEVER deleted (audit/grant provenance).',
