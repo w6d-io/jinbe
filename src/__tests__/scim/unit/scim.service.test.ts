@@ -176,7 +176,7 @@ describe('ScimService', () => {
         state: 'active',
         traits: { email: 'babs@jensen.org', name: 'Barbara Jensen' },
         metadata_admin: {
-          groups: ['users'],
+          groups: [],
           scim: expect.objectContaining({ externalId: 'ext-42', managed: true, idp: 'tok1' }),
         },
       })

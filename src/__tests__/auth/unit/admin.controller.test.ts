@@ -322,6 +322,16 @@ describe('AdminController', () => {
 
       expect(kratosService.createIdentity).toHaveBeenCalledWith(createData)
     })
+
+    it('puts nobody in the removed base group `users`: none by default, and asked for it is dropped', async () => {
+      const createData = { ...createIdentityRequest('plain@example.com'), metadata_admin: { groups: ['users'], note: 'x' } }
+      const reply = createMockReply()
+      await controller.createUser(createMockRequest({ body: createData }) as FastifyRequest<{ Body: typeof createData }>, reply)
+      expect(reply._statusCode).toBe(201)
+      const sent = vi.mocked(kratosService.createIdentity).mock.calls.at(-1)![0] as { metadata_admin?: Record<string, unknown> }
+      // No groups asked (after dropping `users`): no group write, and nothing in metadata_admin.groups.
+      expect(sent.metadata_admin).toEqual({ note: 'x' })
+    })
   })
 
   describe('updateUser', () => {

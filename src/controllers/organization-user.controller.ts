@@ -178,7 +178,8 @@ export class OrganizationUserController {
       state: 'active',
       traits: { email, ...(name ? { name } : {}) },
       organization_id: organizationId,
-      metadata_admin: { groups: ['users'] },
+      // No platform group: what a member may do here comes from their org roles.
+      metadata_admin: { groups: [] },
     }
 
     const identity = await kratosService.createIdentity(kratosBody)

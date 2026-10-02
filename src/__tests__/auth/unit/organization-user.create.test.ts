@@ -74,11 +74,11 @@ describe('OrganizationUserController.createUser — org roles', () => {
     vi.mocked(kratosService.createIdentity).mockResolvedValue(CREATED as never)
   })
 
-  it('creates with the base users group and no org role when none is asked', async () => {
+  it('creates with no platform group and no org role when none is asked', async () => {
     const reply = createReply()
     await organizationUserController.createUser(req({ email: 'new@example.com' }) as never, reply)
 
-    expect(kratosService.createIdentity).toHaveBeenCalledWith(expect.objectContaining({ metadata_admin: { groups: ['users'] } }))
+    expect(kratosService.createIdentity).toHaveBeenCalledWith(expect.objectContaining({ metadata_admin: { groups: [] } }))
     expect(orgRolesRepository.setForMember).not.toHaveBeenCalled()
     expect(reply._statusCode).toBe(201)
   })
@@ -107,7 +107,7 @@ describe('OrganizationUserController.createUser — org roles', () => {
     const reply = createReply()
     await organizationUserController.createUser(req({ email: 'new@example.com', groups: ['super_admins'] }) as never, reply)
 
-    expect(kratosService.createIdentity).toHaveBeenCalledWith(expect.objectContaining({ metadata_admin: { groups: ['users'] } }))
+    expect(kratosService.createIdentity).toHaveBeenCalledWith(expect.objectContaining({ metadata_admin: { groups: [] } }))
   })
 
   it('direct grants in this org, checked before anybody is created (the new member joining), written after', async () => {

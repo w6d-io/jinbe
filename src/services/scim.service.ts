@@ -111,7 +111,7 @@ export class ScimService {
     const email = identity.traits?.email as string
     const fullName = (identity.traits?.name as string | undefined) || undefined
     const scim = scimMetaOf(identity)
-    const groups = (metadataOf(identity).groups as string[] | undefined) || ['users']
+    const groups = (metadataOf(identity).groups as string[] | undefined) || []
 
     let name: ScimName | undefined
     if (fullName) {
@@ -210,7 +210,7 @@ export class ScimService {
   }
 
   /**
-   * POST /Users — create the Kratos identity with default group ['users'] and
+   * POST /Users — create the Kratos identity with no group and
    * scim.managed marking. Existing email → 409 uniqueness (adoption then goes
    * through the IdP's GET + PATCH, spec §4).
    */
@@ -233,7 +233,7 @@ export class ScimService {
       state: body.active === false ? 'inactive' : 'active',
       traits: { email, ...(name ? { name } : {}) },
       metadata_admin: {
-        groups: ['users'],
+        groups: [],
         scim: this.scimMetadata(body.externalId ?? null, tokenId),
       },
     })

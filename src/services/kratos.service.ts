@@ -35,7 +35,7 @@ interface ListIdentitiesResponse {
 
 /**
  * Per-identity RBAC binding extracted from Kratos, keyed by email.
- *   groups              → metadata_admin.groups (defaults to ['users'])
+ *   groups              → metadata_admin.groups (none when unset)
  *   organizations       → metadata_admin.organizations (multi-org membership;
  *                          defaults to [] — no writer yet, populated by the
  *                          org-delegation phase)
@@ -534,7 +534,7 @@ export class KratosService {
           | { groups?: string[]; organizations?: string[] }
           | null
           | undefined
-        const groups = metadataAdmin?.groups || ['users']
+        const groups = metadataAdmin?.groups || []
         const organizations = Array.isArray(metadataAdmin?.organizations)
           ? (metadataAdmin!.organizations as string[])
           : []
@@ -704,7 +704,7 @@ export class KratosService {
   /**
    * Get a single user's groups by email
    * @param email - User's email address
-   * @returns Array of group names (defaults to ['users'] if not set)
+   * @returns Array of group names (empty when unset)
    */
   async getUserGroups(email: string): Promise<string[]> {
     const response = await this.listIdentities(1, undefined, email)
@@ -718,7 +718,7 @@ export class KratosService {
       | { groups?: string[] }
       | null
       | undefined
-    return metadataAdmin?.groups || ['users']
+    return metadataAdmin?.groups || []
   }
 
   /**
@@ -839,9 +839,8 @@ export class KratosService {
           const current = await this.getUserGroups(email)
           if (!current.includes(groupName)) return false
           const newGroups = current.filter((g) => g !== groupName)
-          // Ensure user always has at least ['users'] group
-          const finalGroups = newGroups.length > 0 ? newGroups : ['users']
-          await this.updateUserGroups(email, finalGroups)
+          // Holding no group is a legitimate state: no base group is put back.
+          await this.updateUserGroups(email, newGroups)
           return true
         })
         if (updated) updatedCount++

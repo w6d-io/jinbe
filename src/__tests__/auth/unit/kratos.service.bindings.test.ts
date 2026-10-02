@@ -75,7 +75,7 @@ describe('KratosService - getAllIdentitiesWithBindings', () => {
     })
   })
 
-  it('defaults groups to ["users"] and organizations to [] when metadata_admin is missing', async () => {
+  it('no groups and no organizations when metadata_admin is missing (no base group)', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -85,7 +85,7 @@ describe('KratosService - getAllIdentitiesWithBindings', () => {
     const result = await service.getAllIdentitiesWithBindings()
 
     expect(result.get('orgless@example.com')).toMatchObject({
-      groups: ['users'],
+      groups: [],
       organizations: [],
       primaryOrganization: null,
     })

@@ -303,16 +303,15 @@ export class AdminController {
       }
     }
 
-    // Base `users` confers nothing → no grant check (Kratos' default resolves an
-    // ungrouped identity to `users` anyway). Any other group must clear the same
-    // super_admin + MFA + validation gate as PUT /users/:email/groups.
-    const desiredGroups = requestedGroups && requestedGroups.length > 0 ? requestedGroups : ['users']
-    const needsGrantCheck = !(desiredGroups.length === 1 && desiredGroups[0] === 'users')
+    // No group by default: the previous model's base group `users` no longer exists, and a new
+    // identity holds nothing until somebody gives it something. Asked for, it is ignored for the same
+    // reason. Any group asked for clears the same gate as PUT /users/:email/groups.
+    const desiredGroups = (requestedGroups ?? []).filter((g) => g !== 'users')
+    const needsGrantCheck = desiredGroups.length > 0
 
     const identity = await kratosService.createIdentity(kratosBody)
 
-    // A new identity bumps total/active (and perGroup['users'] via the default)
-    // even when no groups are passed — the groups-gated notify below can miss
+    // A new identity bumps total/active even when no groups are passed — the groups-gated notify below can miss
     // it, so bust stats unconditionally.
     rbacService.invalidateDirectoryStats().catch(() => {})
 

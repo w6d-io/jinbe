@@ -57,7 +57,7 @@ describe('KratosService - User Groups Management', () => {
       )
     })
 
-    it('should return ["users"] when metadata_admin is null', async () => {
+    it('should return no group when metadata_admin is null', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -69,10 +69,10 @@ describe('KratosService - User Groups Management', () => {
 
       const result = await service.getUserGroups('user@example.com')
 
-      expect(result).toEqual(['users'])
+      expect(result).toEqual([])
     })
 
-    it('should return ["users"] when groups is missing', async () => {
+    it('should return no group when groups is missing', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -84,7 +84,7 @@ describe('KratosService - User Groups Management', () => {
 
       const result = await service.getUserGroups('user@example.com')
 
-      expect(result).toEqual(['users'])
+      expect(result).toEqual([])
     })
 
     it('should throw 404 when user not found', async () => {
@@ -293,7 +293,7 @@ describe('KratosService - User Groups Management', () => {
       expect(result).toBe(2) // Two users had 'devs' group
     })
 
-    it('should default to ["users"] when removing last group', async () => {
+    it('leaves no group when removing the last one (no base group put back)', async () => {
       const identities = [
         {
           id: 'user-1',
@@ -338,10 +338,9 @@ describe('KratosService - User Groups Management', () => {
 
       await service.removeGroupFromAllUsers('devs')
 
-      // Verify update was called with ['users'] as default (the PATCH is the 5th
-      // fetch: getAll, re-read, find, get, PATCH).
+      // The PATCH (the 5th fetch: getAll, re-read, find, get, PATCH) writes an empty list.
       const patchCall = mockFetch.mock.calls[4]
-      expect(JSON.parse(patchCall[1].body)).toEqual([{ op: 'add', path: '/metadata_admin/groups', value: ['users'] }])
+      expect(JSON.parse(patchCall[1].body)).toEqual([{ op: 'add', path: '/metadata_admin/groups', value: [] }])
     })
 
     it('should return 0 when no users have the group', async () => {

@@ -70,7 +70,7 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
 
     expect(result.get('admin@example.com')).toEqual(['admins', 'users'])
     expect(result.get('dev@example.com')).toEqual(['devs'])
-    expect(result.get('newuser@example.com')).toEqual(['users']) // Default
+    expect(result.get('newuser@example.com')).toEqual([]) // No base group
   })
 
   it('should cache results for 30 seconds', async () => {
@@ -120,7 +120,7 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
-  it('should default to ["users"] when metadata_admin.groups is missing', async () => {
+  it('holds no group when metadata_admin.groups is missing (no base group)', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -151,8 +151,8 @@ describe('KratosService - getAllIdentitiesWithGroups', () => {
 
     const result = await service.getAllIdentitiesWithGroups()
 
-    expect(result.get('nogroups@example.com')).toEqual(['users'])
-    expect(result.get('nulladmin@example.com')).toEqual(['users'])
+    expect(result.get('nogroups@example.com')).toEqual([])
+    expect(result.get('nulladmin@example.com')).toEqual([])
   })
 
   it('should skip identities without email', async () => {

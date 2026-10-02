@@ -308,7 +308,8 @@ describe('groups live on the identity, once', () => {
   })
 
   it('gives the policy bundle everybody’s groups keyed by subject', async () => {
-    expect(await store.allGroupMemberships()).toEqual(new Map([[ALICE, ['ops']], [BOB, ['users']]]))
+    // Bob holds no group: no base `users` group is invented for him.
+    expect(await store.allGroupMemberships()).toEqual(new Map([[ALICE, ['ops']]]))
     expect(await store.membersOfGroup('ops')).toEqual([ALICE])
   })
 })
@@ -350,7 +351,7 @@ describe('the OPAL bindings are the same shape', () => {
     const bindings = await new RbacService().getBindingsFromKratos()
     expect(bindings.user_organizations).toEqual({ 'bob@example.com': [GLOBEX, ACME] })
     expect(bindings.user_organization_primary).toEqual({ 'bob@example.com': ACME })
-    expect(bindings.group_membership).toEqual({ 'bob@example.com': ['users'], 'alice@example.com': ['ops'] })
+    expect(bindings.group_membership).toEqual({ 'bob@example.com': [], 'alice@example.com': ['ops'] })
   })
 })
 
