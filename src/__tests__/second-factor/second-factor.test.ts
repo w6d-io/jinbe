@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
   methods: vi.fn(),
   config: {} as Record<string, string>,
   // The default switch follows the roles: ops can write and super_admins holds '*' (on); readers and
-  // staff-viewers only read, and staff-auditors is off by the owner's decision (off).
+  // staff-viewers only read (off); staff-auditors is on by the owner's decision, whatever its roles.
   groups: {
     super_admins: { global: ['super_admin'] },
     ops: { jinbe: ['operator'] },
@@ -138,21 +138,24 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
   const flagsStored = () => JSON.parse(h.config.second_factor_group_flags ?? '{}')
   const WRITE = { 'x-test-write': '1', 'x-test-mfa': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }
 
-  it('defaults: on for a group that can write or holds *, off for read-only groups, staff-viewers and staff-auditors', async () => {
-    expect(await opal()).toEqual({ groups: ['ops', 'super_admins'] })
-    expect(defaultRequired('staff-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(false)
+  it('defaults: on for a group that can write or holds *, and for staff-auditors; off for read-only groups and staff-viewers', async () => {
+    expect(await opal()).toEqual({ groups: ['ops', 'staff-auditors', 'super_admins'] })
+    expect(defaultRequired('staff-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true)
+    // On by name, even with read-only roles.
+    expect(defaultRequired('staff-auditors', { global: ['viewer'] }, { global: h.roles.global })).toBe(true)
+    expect(defaultRequired('staff-viewers', { global: ['auditor'] }, { global: h.roles.global })).toBe(false)
     expect(defaultRequired('other-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true) // audit:export writes
     expect(defaultRequired('users', {}, {})).toBe(false)
   })
 
   it('a stored value overrides the default either way', async () => {
-    h.config.second_factor_group_flags = JSON.stringify({ super_admins: false, readers: true })
+    h.config.second_factor_group_flags = JSON.stringify({ super_admins: false, readers: true, 'staff-auditors': false })
     expect(await opal()).toEqual({ groups: ['ops', 'readers'] })
   })
 
   it('the legacy list counts as explicit ON for the groups it named, hyphens included', async () => {
     h.config.second_factor_groups = JSON.stringify(['staff-viewers'])
-    expect(await opal()).toEqual({ groups: ['ops', 'staff-viewers', 'super_admins'] })
+    expect(await opal()).toEqual({ groups: ['ops', 'staff-auditors', 'staff-viewers', 'super_admins'] })
     expect(parseGroups('["staff-ops","admins","staff-ops"]')).toEqual(['admins', 'staff-ops'])
     expect(parseGroups('["Bad Name"]')).toBeNull()
     expect(parseFlags('{"staff-ops":true,"Bad Name":true,"x":"yes"}')).toEqual({ 'staff-ops': true })
@@ -162,11 +165,23 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
     h.config.second_factor_group_flags = JSON.stringify({ ops: false })
     const { pinned } = await migrateSecondFactorFlags({ info: () => {} })
     expect(pinned.sort()).toEqual(['readers', 'staff-auditors', 'staff-viewers', 'super_admins', 'users'])
-    expect(flagsStored()).toEqual({ ops: false, readers: false, 'staff-auditors': false, 'staff-viewers': false, super_admins: true, users: false })
+    expect(flagsStored()).toEqual({ ops: false, readers: false, 'staff-auditors': true, 'staff-viewers': false, super_admins: true, users: false })
     expect(h.schedule).toHaveBeenCalledWith('second_factor')
     h.schedule.mockClear()
     expect((await migrateSecondFactorFlags({ info: () => {} })).pinned).toEqual([])
     expect(h.schedule).not.toHaveBeenCalled()
+  })
+
+  it('an install that already pinned staff-auditors off keeps it: the new default never overrides a stored value', async () => {
+    h.config.second_factor_group_flags = JSON.stringify({ 'staff-auditors': false })
+    const { pinned } = await migrateSecondFactorFlags({ info: () => {} })
+    expect(pinned).not.toContain('staff-auditors')
+    expect(flagsStored()['staff-auditors']).toBe(false)
+    expect((await opal()).groups).not.toContain('staff-auditors')
+    // A fresh install pins it on.
+    h.config.second_factor_group_flags = JSON.stringify({})
+    await migrateSecondFactorFlags({ info: () => {} })
+    expect(flagsStored()['staff-auditors']).toBe(true)
   })
 
   it('the OPAL data source answers 503 when the store cannot be read, so OPA keeps what it holds', async () => {
@@ -184,7 +199,7 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
   it('the settings screen reads the groups switched on, with the default-on groups beside them', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/admin/settings/second-factor', headers: { 'x-test-admin': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' } })
     expect(res.statusCode, res.body).toBe(200)
-    expect(res.json()).toEqual({ groups: ['ops', 'super_admins'], defaultGroups: ['ops', 'super_admins'] })
+    expect(res.json()).toEqual({ groups: ['ops', 'staff-auditors', 'super_admins'], defaultGroups: ['ops', 'staff-auditors', 'super_admins'] })
   })
 
   it('PUT one group: stored, published to OPA, audited, and read back as group_setting', async () => {
@@ -197,7 +212,7 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
       target: 'second-factor-groups',
       details: { group: 'staff-viewers', before: { required: false, explicit: false }, after: { required: true } },
     }))
-    expect(await opal()).toEqual({ groups: ['ops', 'staff-viewers', 'super_admins'] })
+    expect(await opal()).toEqual({ groups: ['ops', 'staff-auditors', 'staff-viewers', 'super_admins'] })
   })
 
   it('PUT one group: groups.mfa:write (super admin alone) and a recent second factor; unknown group 404', async () => {
@@ -218,7 +233,7 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json().groups).toEqual(['readers', 'super_admins'])
     expect(flagsStored()).toEqual({ ops: false, readers: true, 'staff-auditors': false, 'staff-viewers': false, super_admins: true, users: false })
-    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ target: 'second-factor-groups', details: { before: ['ops', 'super_admins'], after: ['readers', 'super_admins'] } }))
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ target: 'second-factor-groups', details: { before: ['ops', 'staff-auditors', 'super_admins'], after: ['readers', 'super_admins'] } }))
   })
 
   it('refuses unknown or malformed group names, and changes nothing', async () => {

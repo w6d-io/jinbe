@@ -14,8 +14,8 @@ import { flatten, groupGrants, loadRoles, type RolesByScope } from '../services/
  * Stored in rbac:config `second_factor_group_flags`, a JSON object group → boolean. A group with no
  * stored value gets its DEFAULT, which the boot migration then writes down so it stops moving with the
  * group's roles: ON for a group that can change anything (a permission whose verb is not read / list /
- * check) or holds `*`; OFF for a read-only group and for staff-viewers and staff-auditors (reading,
- * checks and evidence exports — the owner's call). The legacy list (`second_factor_groups`, set
+ * check) or holds `*`, and for staff-auditors (they read every person, session and the audit log — the
+ * owner's call, 2026-10-02); OFF for a read-only group and for staff-viewers. The legacy list (`second_factor_groups`, set
  * through the settings screen before the switch existed) counts as explicit ON for every group it named.
  *
  * Only a super admin changes it (routes.ts); every change is audited.
@@ -28,8 +28,10 @@ export const SECOND_FACTOR_KEY = 'second_factor_groups'
 export const GROUP_NAME = /^[a-z][a-z0-9_-]{0,63}$/
 export const MAX_GROUPS = 200
 
-/** Read-only by the owner's decision, whatever their roles say. */
-export const READ_ONLY_GROUPS: readonly string[] = ['staff-viewers', 'staff-auditors']
+/** Read-only by the owner's decision, whatever their roles say: 2FA off by default. */
+export const READ_ONLY_GROUPS: readonly string[] = ['staff-viewers']
+/** 2FA on by default by the owner's decision, whatever their roles say: they read people data and the audit log. */
+export const REQUIRED_GROUPS: readonly string[] = ['staff-auditors']
 const READ_VERBS = new Set(['read', 'list', 'check'])
 
 export interface GroupFlag {
@@ -72,8 +74,9 @@ export function parseFlags(raw: string | undefined): Record<string, boolean> {
   }
 }
 
-/** The default: on for a group that can change anything or holds `*`, off for a read-only one. */
+/** The default: on for a group that can change anything or holds `*` (and REQUIRED_GROUPS), off for a read-only one. */
 export function defaultRequired(name: string, definition: GroupDefinition | undefined, roles: RolesByScope): boolean {
+  if (REQUIRED_GROUPS.includes(name)) return true
   if (READ_ONLY_GROUPS.includes(name)) return false
   return flatten(groupGrants(definition, roles)).some((p) => !READ_VERBS.has(p.split(':')[1] ?? ''))
 }

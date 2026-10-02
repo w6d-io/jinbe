@@ -10535,7 +10535,8 @@ paths:
                             before enrolling a second factor
                             (enrolBeforeJoining, always equal). source:
                             group_setting (stored) | default (not stored yet: on
-                            for a group that can write or holds *).
+                            for a group that can write or holds *, and for
+                            staff-auditors; off for staff-viewers).
                             defaultRequired: what the default would be."
                           properties:
                             required:
@@ -12815,7 +12816,8 @@ paths:
                             before enrolling a second factor
                             (enrolBeforeJoining, always equal). source:
                             group_setting (stored) | default (not stored yet: on
-                            for a group that can write or holds *).
+                            for a group that can write or holds *, and for
+                            staff-auditors; off for staff-viewers).
                             defaultRequired: what the default would be."
                           properties:
                             required:
@@ -13007,8 +13009,9 @@ paths:
                       route, and nobody is added before enrolling a second
                       factor (enrolBeforeJoining, always equal). source:
                       group_setting (stored) | default (not stored yet: on for a
-                      group that can write or holds *). defaultRequired: what
-                      the default would be."
+                      group that can write or holds *, and for staff-auditors;
+                      off for staff-viewers). defaultRequired: what the default
+                      would be."
                     properties:
                       required:
                         type: boolean

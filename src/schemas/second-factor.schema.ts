@@ -43,7 +43,7 @@ export const groupSecondFactorJsonSchema = {
   description:
     'The group\'s "Members must use 2FA" switch. required: members need two-step sign-in (aal2) on every permission-carrying ' +
     'route, and nobody is added before enrolling a second factor (enrolBeforeJoining, always equal). source: group_setting ' +
-    '(stored) | default (not stored yet: on for a group that can write or holds *). defaultRequired: what the default would be.',
+    '(stored) | default (not stored yet: on for a group that can write or holds *, and for staff-auditors; off for staff-viewers). defaultRequired: what the default would be.',
   properties: {
     required: { type: 'boolean' },
     source: { type: 'string', enum: ['group_setting', 'default'] },
