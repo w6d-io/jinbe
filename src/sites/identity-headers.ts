@@ -126,8 +126,8 @@ function authorizerHeaders(authorizer: Handler, forwarded: Record<string, string
 
 /**
  * A header mutator that also sets the SESSION_HEADERS it does not name itself, blanks the role
- * headers in `blankRoles` (the authorizer does not set them, and no global template does), and sets
- * the stripped Cookie.
+ * headers in `blankRoles` (neither the gate's authorizer nor a global header template sets them), and
+ * sets the stripped Cookie.
  */
 function withSessionHeaders(m: Handler, blankRoles: readonly string[]): Handler {
   const own = withoutCookie(headerMap(m))
@@ -146,15 +146,22 @@ function withoutOwnCookie(m: Handler): Handler {
 /**
  * The gate's mutators with identity headers owned by the gateway. A gate that has a header mutator
  * keeps its own (every header it names is overwritten, never merged with the client's), plus the
- * SESSION_HEADERS and the blanked role headers on the first one. One that has none gets a header mutator blanking every identity
- * header its authorizer does not set, in place of noop. Every gate sets the stripped Cookie.
+ * SESSION_HEADERS and the blanked role headers on the first one. One that has none gets a header
+ * mutator blanking every identity header its authorizer does not set, in place of noop. Every gate
+ * sets the stripped Cookie.
+ *
+ * `templated`: the headers the gateway's global header mutator fills from a template (the session,
+ * a trusted source). On a header-mutator gate that template still runs, so such a role header — the
+ * global x-user-groups some gateways set — is left to it rather than blanked.
  */
-export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handler, names: readonly string[], forwarded: Record<string, string[]>): Handler[] {
+export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handler, names: readonly string[], forwarded: Record<string, string[]>, templated: readonly string[] = []): Handler[] {
   const fromDecision = new Set(authorizerHeaders(authorizer, forwarded).map((h) => h.toLowerCase()))
   const first = gate.mutators.findIndex((m) => m.handler === 'header')
   if (first >= 0) {
-    // The role headers have no global template: unless the decision sets them, the client's would pass.
-    const blankRoles = names.filter((n) => ROLE_NAMES.has(n.toLowerCase()) && !fromDecision.has(n.toLowerCase()))
+    // A role header nothing sets here — no decision forwarding it, no global template — would carry
+    // the client's value: blank it. One a global template fills keeps the template's value.
+    const fromTemplate = new Set(templated.map((h) => h.toLowerCase()))
+    const blankRoles = names.filter((n) => ROLE_NAMES.has(n.toLowerCase()) && !fromDecision.has(n.toLowerCase()) && !fromTemplate.has(n.toLowerCase()))
     return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m, blankRoles) : m.handler === 'header' ? withoutOwnCookie(m) : m))
   }
   const blank = names.filter((n) => !fromDecision.has(n.toLowerCase()) && n.toLowerCase() !== 'cookie')

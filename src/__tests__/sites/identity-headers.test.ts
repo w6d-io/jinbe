@@ -238,3 +238,42 @@ describe('role headers: opt-in per gate (passRoles), never by default', () => {
     expect(before.siteCr.metadata.annotations['auth.w6d.io/spec-hash']).not.toBe(optedIn.siteCr.metadata.annotations['auth.w6d.io/spec-hash'])
   })
 })
+
+describe('a role header the gateway fills from a template is left to it', () => {
+  /** payroll with an enrich gate (hydrator + header) on a policy authorizer, no passRoles. */
+  const site = (): Site => {
+    const s = payrollSite()
+    s.gates.push({ id: 'enrich', label: 'Enrich', authenticators: [{ handler: 'cookie_session' }], authorizer: 'policy', mutators: [{ handler: 'hydrator', config: { api: { url: 'http://e.e.svc.cluster.local' } } }, { handler: 'header' }], errors: 'api' })
+    s.routes.items.push({ id: 'e', methods: ['GET'], path: '/e', gate: 'enrich', access: { kind: 'signed-in' }, source: 'manual' })
+    return s
+  }
+  const plat = (extra: object) => ({ ...platform, enabled: { ...platform.enabled, mutators: [...platform.enabled.mutators, 'hydrator'] }, ...extra })
+  const headersOf = (r: ReturnType<typeof render>, name: string) => (gate(r, name).mutators.find((m) => m.handler === 'header')!.config as { headers: Record<string, string> }).headers
+
+  it('an enrich gate keeps the global x-user-groups template; roles and permissions stay blanked', () => {
+    const r = render(site(), plat({ identityHeaders: [...PLATFORM_IDENTITY_HEADERS, 'x-user-groups'], templatedHeaders: ['x-user-id', 'x-user-email', 'x-user-groups'] }))
+    for (const name of ['enrich', 'web']) {
+      const h = headersOf(r, name)
+      expect(h, name).not.toHaveProperty('x-user-groups')
+      expect(h, name).toMatchObject({ 'x-user-roles': '', 'x-user-permissions': '' })
+    }
+  })
+
+  it('whatever the gateway\'s spelling: neither spelling is blanked', () => {
+    const r = render(site(), plat({ identityHeaders: [...PLATFORM_IDENTITY_HEADERS, 'X-User-Groups'], templatedHeaders: ['X-User-Groups'] }))
+    const h = headersOf(r, 'enrich')
+    expect(h).not.toHaveProperty('x-user-groups')
+    expect(h).not.toHaveProperty('X-User-Groups')
+  })
+
+  it('a gateway without that template: groups are blanked like roles and permissions', () => {
+    const r = render(site(), plat({ templatedHeaders: ['x-user-id', 'x-user-email'] }))
+    expect(headersOf(r, 'enrich')).toMatchObject(ROLE_BLANKS)
+    expect(headersOf(render(site(), plat({})), 'enrich')).toMatchObject(ROLE_BLANKS)
+  })
+
+  it('a gate that passes no identity still blanks a templated x-user-groups', () => {
+    const r = render(site(), plat({ templatedHeaders: ['x-user-groups'] }))
+    expect(headersOf(r, 'public')['x-user-groups']).toBe('')
+  })
+})

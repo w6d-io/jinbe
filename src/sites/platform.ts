@@ -46,7 +46,7 @@ function readiness(z: ZoneCrObject): { ready?: boolean } {
  * from a decision. Read with the zones, and like them a cluster failure is the caller's 503 rather
  * than a silently shorter list (a different list renames the rules).
  */
-async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'authorizerHeaders' | 'decisionUrl'>> {
+async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'authorizerHeaders' | 'decisionUrl' | 'templatedHeaders'>> {
   const cfg = sitesConfig()
   if (cfg.SITES_KUBE === 'off') {
     const url = decisionUrlOf(cfg.SITES_AUTHZ_DECISION_URL, undefined)
@@ -57,6 +57,7 @@ async function loadIdentity(): Promise<Pick<Platform, 'identityHeaders' | 'autho
   return {
     identityHeaders: [...new Set([...PLATFORM_IDENTITY_HEADERS, ...gw.headers, ...Object.values(gw.forwarded).flat()])],
     authorizerHeaders: gw.forwarded,
+    templatedHeaders: gw.headers,
     ...(url ? { decisionUrl: url } : {}),
   }
 }

@@ -39,6 +39,8 @@ export interface Platform {
   identityHeaders?: string[]
   /** Headers each remote authorizer forwards from its decision, per handler (gateway config). */
   authorizerHeaders?: Record<string, string[]>
+  /** Headers the gateway's global header mutator fills from a template (the session), as spelled there. */
+  templatedHeaders?: string[]
 }
 
 export interface Check {
@@ -411,7 +413,7 @@ export function render(site: Site, platform: Platform): Rendered {
     ...(site.upstream.stripPath ? { strip_path: site.upstream.stripPath } : {}),
   }
   const identity = identityHeaderNames(site, platform.identityHeaders ?? PLATFORM_IDENTITY_HEADERS)
-  const guard = (gate: Pick<Gate, 'mutators'>, authorizer: Handler) => guardedMutators(gate, authorizer, identity, platform.authorizerHeaders ?? {})
+  const guard = (gate: Pick<Gate, 'mutators'>, authorizer: Handler) => guardedMutators(gate, authorizer, identity, platform.authorizerHeaders ?? {}, platform.templatedHeaders ?? [])
   const enumerated = [...byGate.entries()].filter(([id]) => id !== catchAllGate?.id)
   const rules: OathkeeperRule[] = []
   const crGates: SiteCrGate[] = []
