@@ -50,6 +50,13 @@ export async function syncOnce(): Promise<SyncResult> {
     try {
       const live = await kube.get(name)
       const differs = live ? specDiff(cr.spec, live.spec, 'spec') : []
+      // The applied version moved without the spec changing (a stored wildcard made explicit,
+      // sites/republish.ts): the CR's version annotation follows, like any drift.
+      const wantedVersion = cr.metadata.annotations?.['auth.w6d.io/version']
+      const liveVersion = live?.metadata?.annotations?.['auth.w6d.io/version']
+      if (live && version !== null && wantedVersion !== undefined && liveVersion !== wantedVersion) {
+        differs.push({ field: 'metadata.annotations.auth.w6d.io/version', expected: wantedVersion, actual: liveVersion ?? null })
+      }
       if (live && differs.length === 0) continue
       if (out.recreated.length + out.rewritten.length >= max || now - (lastWrite.get(name) ?? 0) < COOLDOWN_MS) {
         out.deferred.push(name)

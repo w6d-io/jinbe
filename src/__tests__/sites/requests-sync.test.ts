@@ -187,6 +187,17 @@ describe('sync loop', () => {
     expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'sync', targetId: 'payroll' }))
   })
 
+  it("rewrites a CR whose version annotation lags the applied version (same spec, e.g. roles made explicit)", async () => {
+    await applied()
+    cluster.crs.get('payroll')!.metadata.annotations['auth.w6d.io/version'] = '0'
+    const out = await syncOnce()
+    expect(out.rewritten).toEqual(['payroll'])
+    expect(cluster.crs.get('payroll')!.metadata.annotations['auth.w6d.io/version']).toBe('1')
+    expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'sync', targetId: 'payroll', details: expect.objectContaining({ fields: ['metadata.annotations.auth.w6d.io/version'] }) }))
+    // In step afterwards: nothing to do.
+    expect((await syncOnce()).rewritten).toEqual([])
+  })
+
   it('is rate limited: at most SITES_SYNC_MAX_PER_TICK per tick, and a site not twice within the cooldown', async () => {
     process.env.SITES_SYNC_MAX_PER_TICK = '1'
     resetSitesConfig()
