@@ -2,7 +2,7 @@ import { env } from '../config/env.js'
 import type { Platform } from './render.js'
 import type { Zone } from './host.js'
 import { sitesConfig } from './config.js'
-import { kubeSites, type ZoneCrObject } from './kube-sites.js'
+import { kubeSites, type ZoneCr, type ZoneCrObject } from './kube-sites.js'
 import { currentSpec } from '../gateway/service.js'
 import { PLATFORM_IDENTITY_HEADERS, decisionUrlOf, gatewayIdentity } from './identity-headers.js'
 
@@ -14,11 +14,35 @@ import { PLATFORM_IDENTITY_HEADERS, decisionUrlOf, gatewayIdentity } from './ide
  * cookie domain, so a SITES_ZONES entry for the same domain may still set one. When the cluster
  * cannot be read the caller gets 503; config is never silently substituted for the cluster.
  */
+/**
+ * Zone CRs are cluster-scoped, and one cluster may run several releases (auth-dev, auth-qualif): a
+ * release sees only its OWN zones — the ones SITES_ZONES names (by suffix) and the ones it created
+ * itself (labelled with its namespace, ZONE_OWNER_LABEL). Another release's Zone is not listed, not
+ * found, not editable, and no site of this release may stand on it.
+ */
+export const ZONE_OWNER_LABEL = 'auth.w6d.io/zone-owner'
+
+export function ownsZone(cr: Pick<ZoneCrObject | ZoneCr, 'metadata' | 'spec'>): boolean {
+  const cfg = sitesConfig()
+  return cfg.SITES_ZONES.some((z) => z.suffix === cr.spec.domain) || cr.metadata.labels?.[ZONE_OWNER_LABEL] === cfg.namespace
+}
+
+/** This release's Zone CRs (ownsZone). */
+export async function ownZoneCrs(): Promise<ZoneCrObject[]> {
+  return (await kubeSites().listZones()).filter(ownsZone)
+}
+
+/** What a refusal says this environment has: its zones' domains, or that it has none. */
+export async function ownZoneDomains(): Promise<string> {
+  const domains = (await loadZones()).map((z) => z.suffix)
+  return domains.length > 0 ? domains.join(', ') : 'none configured'
+}
+
 export async function loadZones(): Promise<Zone[]> {
   const cfg = sitesConfig()
   const configured = cfg.SITES_ZONES.map((z) => ({ ...z, source: 'config' as const }))
   if (cfg.SITES_KUBE === 'off') return configured
-  const crs = await kubeSites().listZones()
+  const crs = await ownZoneCrs()
   return crs.map((z) => ({
     name: z.metadata.name,
     suffix: z.spec.domain,

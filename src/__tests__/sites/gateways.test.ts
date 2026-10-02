@@ -75,7 +75,7 @@ const livePolicies = (): EdgePolicy[] => [
 
 const cond = (type: string, status: string, reason: string, message = '') => ({ type, status, reason, message, observedGeneration: 1, lastTransitionTime: '2026-09-28T10:00:00Z' })
 const sandboxZone = (): ZoneCrObject => ({
-  metadata: { name: 'dev', generation: 1, resourceVersion: '7' },
+  metadata: { name: 'dev', generation: 1, resourceVersion: '7', labels: { 'auth.w6d.io/zone-owner': 'auth-dev' } },
   spec: { domain: 'dev.example.com', ingress: 'per-site', ingressClass: 'nginx', tls: { mode: 'default' } },
   status: { observedGeneration: 1, conditions: [cond('Ready', 'True', 'Ready')] },
 })
@@ -97,7 +97,7 @@ const kube = {
   getZone: async (name: string) => (cluster.zones.has(name) ? structuredClone(cluster.zones.get(name)!) : null),
   createZone: async (cr: ZoneCr) => {
     cluster.created.push(structuredClone(cr))
-    cluster.zones.set(cr.metadata.name, { metadata: { name: cr.metadata.name, generation: 1 }, spec: cr.spec })
+    cluster.zones.set(cr.metadata.name, { metadata: { name: cr.metadata.name, generation: 1, labels: cr.metadata.labels }, spec: cr.spec })
   },
   deleteZone: async () => {},
   updateZone: async (cr: ZoneCrObject) => {
@@ -406,7 +406,7 @@ describe('WAF by default (owner decision 2026-09-28)', () => {
 
   it('sites carry their protection in the list and in their status', async () => {
     cluster.zones.set('dev', { ...sandboxZone(), spec: { ...sandboxZone().spec, ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } } })
-    cluster.zones.set('fleet', { metadata: { name: 'fleet' }, spec: { domain: 'dev.stairfleet.com' } })
+    cluster.zones.set('fleet', { metadata: { name: 'fleet', labels: { 'auth.w6d.io/zone-owner': 'auth-dev' } }, spec: { domain: 'dev.stairfleet.com' } })
     records = [record('echo', 'echo-sandbox-tes.dev.example.com'), record('shop', 'shop.dev.stairfleet.com')]
     vi.spyOn(sitesRepository, 'drafts').mockResolvedValue([])
     vi.spyOn(sitesRepository, 'get').mockImplementation(async (name: string) => records.find((r) => r.site.name === name) ?? null)

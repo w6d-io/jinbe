@@ -59,7 +59,7 @@ const redis = (redisClient as unknown as { __redis: import('./mocks.js').InlineR
 const W = { 'x-test-write': '1' }
 const cond = (type: string, status: string) => ({ type, status, reason: status === 'True' ? 'Ok' : 'Pending', message: '', observedGeneration: 1 })
 const zone = (name: string, domain: string, ready: boolean): ZoneCrObject => ({
-  metadata: { name, generation: 1 }, spec: { domain }, status: { observedGeneration: 1, conditions: [cond('Ready', ready ? 'True' : 'False')] },
+  metadata: { name, generation: 1, labels: { 'auth.w6d.io/zone-owner': 'auth' } }, spec: { domain }, status: { observedGeneration: 1, conditions: [cond('Ready', ready ? 'True' : 'False')] },
 })
 const ing = (namespace: string, name: string, hosts: string[], paths: string[] = ['/']): IngressHosts =>
   ({ namespace, name, hosts, labels: {}, paths: Object.fromEntries(hosts.map((x) => [x, paths])) })

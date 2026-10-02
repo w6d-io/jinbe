@@ -17,7 +17,7 @@ const kube = {
   listZones: vi.fn(async () => {
     if (!kube.up) throw new KubeUnavailable('down')
     return [
-      { metadata: { name: 'apps' }, spec: { domain: 'apps.dev.example.com', ingressClass: 'nginx', tls: { mode: 'issuer' } } },
+      { metadata: { name: 'apps', labels: { 'auth.w6d.io/zone-owner': 'auth' } }, spec: { domain: 'apps.dev.example.com', ingressClass: 'nginx', tls: { mode: 'issuer' } } },
       { metadata: { name: 'fleet' }, spec: { domain: 'dev.stairfleet.com', tls: { mode: 'default' } } },
     ]
   }),
@@ -25,6 +25,7 @@ const kube = {
 
 beforeEach(() => {
   kube.up = true
+  process.env.SITES_NAMESPACE = 'auth'
   process.env.SITES_ZONES = '[{"suffix":"dev.example.com"},{"suffix":"dev.stairfleet.com","cookieDomain":".stairfleet.com"}]'
   process.env.SITES_COOKIE_DOMAIN = '.dev.example.com'
   vi.spyOn(sitesRepository, 'list').mockResolvedValue([])

@@ -31,8 +31,11 @@ const WM = { 'x-test-write': '1', 'x-test-mfa': '1' }
 
 const cond = (type: string, status: string, reason: string, message = '') => ({ type, status, reason, message, observedGeneration: 1, lastTransitionTime: '2026-09-26T10:00:00Z' })
 
+/** This release's zones carry its namespace (SITES_NAMESPACE=auth here). */
+const OWN = { 'auth.w6d.io/zone-owner': 'auth' }
+
 const devZone = (): ZoneCrObject => ({
-  metadata: { name: 'dev', generation: 1, creationTimestamp: '2026-09-01T00:00:00Z' },
+  metadata: { name: 'dev', generation: 1, creationTimestamp: '2026-09-01T00:00:00Z', labels: OWN },
   spec: { domain: 'dev.example.com', tls: { mode: 'issuer', issuer: 'letsencrypt-dns' } },
   status: {
     observedGeneration: 1,
@@ -76,11 +79,14 @@ const kube = {
     if (!cluster.up) throw new KubeUnavailable('down')
     if (cluster.refuse) throw cluster.refuse
     cluster.created.push(structuredClone(cr))
-    cluster.zones.set(cr.metadata.name, { metadata: { name: cr.metadata.name, generation: 1 }, spec: cr.spec })
+    cluster.zones.set(cr.metadata.name, { metadata: { name: cr.metadata.name, generation: 1, labels: cr.metadata.labels }, spec: cr.spec })
   },
   deleteZone: async (name: string) => {
     cluster.deleted.push(name)
     cluster.zones.delete(name)
+  },
+  updateZone: async (cr: ZoneCrObject) => {
+    cluster.zones.set(cr.metadata.name, structuredClone(cr))
   },
 } satisfies KubeSites
 
@@ -198,7 +204,7 @@ describe('GET /zones/:name', () => {
 
   it('says when the domain already belongs to an older zone', async () => {
     cluster.zones.set('dev-copy', {
-      metadata: { name: 'dev-copy', generation: 1 },
+      metadata: { name: 'dev-copy', generation: 1, labels: OWN },
       spec: { domain: 'dev.example.com' },
       status: { observedGeneration: 1, conditions: [cond('Validated', 'False', 'DomainTaken', 'domain dev.example.com already belongs to zone dev')] },
     })
@@ -207,7 +213,7 @@ describe('GET /zones/:name', () => {
   })
 
   it('a zone the operator has not reconciled yet is not ready, and says so', async () => {
-    cluster.zones.set('new', { metadata: { name: 'new', generation: 1 }, spec: { domain: 'new.stairfleet.com' } })
+    cluster.zones.set('new', { metadata: { name: 'new', generation: 1, labels: OWN }, spec: { domain: 'new.stairfleet.com' } })
     expect((await app.inject({ method: 'GET', url: '/sites/zones/new' })).json().status).toMatchObject({ observed: false, ready: false, message: 'waiting for the operator' })
   })
 
@@ -227,7 +233,7 @@ describe('POST /zones', () => {
     expect(cluster.created).toEqual([{
       apiVersion: 'auth.w6d.io/v1alpha1',
       kind: 'Zone',
-      metadata: { name: 'apps-stairfleet-com', labels: { 'app.kubernetes.io/managed-by': 'jinbe' } },
+      metadata: { name: 'apps-stairfleet-com', labels: { 'app.kubernetes.io/managed-by': 'jinbe', 'auth.w6d.io/zone-owner': 'auth' } },
       spec: { domain: 'apps.stairfleet.com', ingress: 'wildcard', tls: { mode: 'issuer', issuer: 'letsencrypt-dns' } },
     }])
     expect(res.json()).toMatchObject({
@@ -298,14 +304,14 @@ describe('DELETE /zones/:name', () => {
   })
 
   it('a site served by a more specific zone does not hold the parent zone', async () => {
-    cluster.zones.set('apps', { metadata: { name: 'apps' }, spec: { domain: 'apps.dev.example.com' } })
+    cluster.zones.set('apps', { metadata: { name: 'apps', labels: OWN }, spec: { domain: 'apps.dev.example.com' } })
     records = [record('shop', 'shop.apps.dev.example.com')]
     expect((await app.inject({ method: 'DELETE', url: '/sites/zones/dev', headers: WM })).statusCode).toBe(200)
     expect((await app.inject({ method: 'DELETE', url: '/sites/zones/apps', headers: WM })).statusCode).toBe(409)
   })
 
   it('a duplicate zone (DomainTaken) can go even though sites use the domain', async () => {
-    cluster.zones.set('dev-copy', { metadata: { name: 'dev-copy' }, spec: { domain: 'dev.example.com' } })
+    cluster.zones.set('dev-copy', { metadata: { name: 'dev-copy', labels: OWN }, spec: { domain: 'dev.example.com' } })
     records = [record('payroll', 'payroll.dev.example.com')]
     expect((await app.inject({ method: 'DELETE', url: '/sites/zones/dev-copy', headers: WM })).statusCode).toBe(200)
   })
@@ -495,5 +501,60 @@ describe('per-site zones and host collisions with other Ingresses', () => {
   it('503 when the cluster\'s Ingresses cannot be read', async () => {
     cluster.up = false
     expect((await app.inject({ method: 'POST', url: '/sites/check-host', headers: W, payload: { host: 'x.dev.example.com' } })).statusCode).toBe(503)
+  })
+})
+
+describe('a release sees only its own zones (Zone CRs are cluster-scoped)', () => {
+  /** auth-qualif's zone on the same cluster: its namespace's label, a domain this release does not configure. */
+  const foreign = (name = 'qualif', domain = 'qualif.example.com'): ZoneCrObject => ({
+    metadata: { name, generation: 1, labels: { 'auth.w6d.io/zone-owner': 'auth-qualif' } },
+    spec: { domain, ingress: 'none', gateway: { namespace: 'envoy-gateway-system', name: 'eg' } },
+    status: { observedGeneration: 1, conditions: [cond('Ready', 'True', 'Ready')] },
+  })
+  beforeEach(() => { cluster.zones.set('qualif', foreign()) })
+
+  it('another release\'s zone is not listed; this release\'s are, by label or by SITES_ZONES suffix', async () => {
+    cluster.zones.set('fleet', { metadata: { name: 'fleet', generation: 1 }, spec: { domain: 'stairfleet.com' } })
+    const list = (await app.inject({ method: 'GET', url: '/sites/zones' })).json() as Array<{ suffix: string }>
+    expect(list.map((z) => z.suffix).sort()).toEqual(['dev.example.com', 'stairfleet.com'])
+  })
+
+  it('GET, PATCH and DELETE on it answer 404, naming this environment\'s zones; nothing is written', async () => {
+    const got = await app.inject({ method: 'GET', url: '/sites/zones/qualif' })
+    expect(got.statusCode).toBe(404)
+    expect(got.json().message).toContain('dev.example.com')
+    expect((await app.inject({ method: 'PATCH', url: '/sites/zones/qualif', headers: WM, payload: { ingress: 'wildcard' } })).statusCode).toBe(404)
+    expect((await app.inject({ method: 'DELETE', url: '/sites/zones/qualif', headers: WM })).statusCode).toBe(404)
+    expect(cluster.zones.get('qualif')).toEqual(foreign())
+    expect(cluster.deleted).toEqual([])
+  })
+
+  it('a site host under it is outside this environment\'s zones, and says which they are', async () => {
+    const out = (await app.inject({ method: 'POST', url: '/sites/check-host', headers: W, payload: { host: 'shop.qualif.example.com' } })).json()
+    expect(out.zone).toBeNull()
+    expect(out.checks).toContainEqual(expect.objectContaining({ code: 'host_outside_zones', message: expect.stringContaining('dev.example.com') }))
+    const { render } = await import('../../sites/render.js')
+    const { loadPlatform } = await import('../../sites/platform.js')
+    const r = render(payrollSite({ address: { host: 'shop.qualif.example.com' } }), await loadPlatform())
+    expect(r.checks).toContainEqual(expect.objectContaining({ level: 'error', code: 'host_outside_zones', message: expect.stringMatching(/none of this environment's zones \(dev\.example\.com\)/) }))
+  })
+
+  it('creating a zone for its domain is refused (domains are unique on the cluster); a created zone carries this release\'s label', async () => {
+    process.env.SITES_ZONE_ALLOWED_PARENTS = 'dev.example.com,stairfleet.com,example.com'
+    resetSitesConfig()
+    const taken = await app.inject({ method: 'POST', url: '/sites/zones', headers: WM, payload: { domain: 'qualif.example.com', acknowledgeNoWaf: true } })
+    expect(taken.statusCode).toBe(409)
+    expect(taken.json()).toMatchObject({ error: 'zone_taken', message: expect.stringContaining('another environment') })
+    const made = await app.inject({ method: 'POST', url: '/sites/zones', headers: WM, payload: { domain: 'apps.stairfleet.com', tls: { mode: 'issuer', issuer: 'letsencrypt-dns' } } })
+    expect(made.statusCode).toBe(201)
+    expect(cluster.created.at(-1)!.metadata.labels).toMatchObject({ 'auth.w6d.io/zone-owner': 'auth' })
+  })
+
+  it('deleting this release\'s zone is not unblocked by another release\'s twin of the same domain', async () => {
+    cluster.zones.set('dev-elsewhere', foreign('dev-elsewhere', 'dev.example.com'))
+    records = [record('payroll', 'payroll.dev.example.com')]
+    const res = await app.inject({ method: 'DELETE', url: '/sites/zones/dev', headers: WM })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error).toBe('zone_in_use')
   })
 })

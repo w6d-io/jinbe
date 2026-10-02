@@ -10,7 +10,9 @@ import type { Zone } from './host.js'
  *   SITES_KUBE             in-cluster | kubeconfig | off (default off = apply/pause/delete answer 503).
  *   SITES_NAMESPACE        where Site CRs live (default: the pod's namespace, else "auth").
  *   SITES_ZONES            JSON [{suffix, wildcardTls?, cookieDomain?}] — admin-defined wildcard
- *                          zones; a site host must be exactly one label under one.
+ *                          zones; a site host must be exactly one label under one. With the cluster on,
+ *                          they also say which Zone CRs are this release's (with the ones it created,
+ *                          labelled auth.w6d.io/zone-owner=<namespace>); another release's are ignored.
  *   SITES_COOKIE_DOMAIN    Kratos session cookie domain (e.g. .dev.example.com): SSO coverage.
  *   SITES_PLATFORM_NAMESPACES  comma-separated namespaces no site upstream may point into.
  *   SITES_UPSTREAM_ALLOW       exact `namespace/service` exceptions to it (e.g. auth-dev/echo).

@@ -371,7 +371,7 @@ export async function checkHost(body: { host: string; pathPrefix?: string; site?
   const legacy = (await redisRbacRepository.getAccessRules()).some((r) => r.match.url.includes(`://${body.host}/`) || r.match.url.includes(`://${body.host}<`))
   const checks = [
     ...(placement.tooDeep ? [{ level: 'error', code: 'host_too_deep', message: 'A site host must be exactly one label under a zone' }] : []),
-    ...(placement.zone || placement.tooDeep ? [] : [{ level: 'error', code: 'host_outside_zones', message: 'No zone covers this host; sites are mapped under the configured wildcard zones only' }]),
+    ...(placement.zone || placement.tooDeep ? [] : [{ level: 'error', code: 'host_outside_zones', message: `None of this environment's zones covers this host (${zones.map((z) => z.suffix).join(', ') || 'none configured'}); sites are mapped under its own wildcard zones only` }]),
     ...(reserved ? [{ level: 'error', code: 'host_reserved', message: 'This is a platform host' }] : []),
     ...(owner ? [{ level: 'error', code: 'host_taken', message: moving ? `Still served by site '${owner}' until its address change is applied` : `Already served by site '${owner}'` }] : []),
     ...taken,

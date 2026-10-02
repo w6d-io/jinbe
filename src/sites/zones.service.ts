@@ -9,7 +9,7 @@ import { kubeSites, KubeRefused, type IngressHosts, type SiteCondition, type Zon
 import { clusterIngresses, collisionChecks, wildcardConflicts, type IngressRef } from './host-collisions.js'
 import { coveringListener, gatewayView, listGateways, type GatewayView } from './gateways.service.js'
 import { anyProtected, defaultGateway, protectionFor, type ProtectionStatus } from './protection.js'
-import { loadZones } from './platform.js'
+import { ZONE_OWNER_LABEL, loadZones, ownZoneCrs, ownZoneDomains, ownsZone } from './platform.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { liveAddresses } from './address.js'
 import type { CreateZoneBody, UpdateZoneBody } from './schemas.js'
@@ -281,9 +281,15 @@ function zoneView(cr: ZoneCrObject, sites: ReturnType<typeof sitesOn>, gateways:
   }
 }
 
-export async function getZone(name: string) {
+/** A Zone CR of this release by name; another release's (cluster-scoped, same API) is not found here. */
+async function ownZone(name: string): Promise<ZoneCrObject> {
   const cr = await kubeSites().getZone(name)
-  if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
+  if (!cr || !ownsZone(cr)) throw siteError(404, 'not_found', `Zone not found: ${name} (this environment's zones: ${await ownZoneDomains()})`)
+  return cr
+}
+
+export async function getZone(name: string) {
+  const cr = await ownZone(name)
   const zones = await loadZones()
   const records = await sitesRepository.list()
   const gw = cr.spec.gateway && sitesConfig().SITES_GATEWAYS.includes(keyOf(cr.spec.gateway)) ? [await gatewayView(keyOf(cr.spec.gateway))] : []
@@ -311,9 +317,11 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
   if (body.tls.mode === 'issuer' && body.tls.issuer && !cfg.SITES_ZONE_ISSUERS.includes(body.tls.issuer)) {
     throw siteError(422, 'issuer_not_allowed', `issuer ${body.tls.issuer} is not offered here (${cfg.SITES_ZONE_ISSUERS.join(', ') || 'operator default only'})`)
   }
+  // Domains are unique cluster-wide (the operator's DomainTaken): another release's zone counts too.
   const crs = await kubeSites().listZones()
   const same = crs.find((z) => z.spec.domain === body.domain)
-  if (same) throw siteError(409, 'zone_exists', `*.${body.domain} is already zone ${same.metadata.name}`)
+  if (same && ownsZone(same)) throw siteError(409, 'zone_exists', `*.${body.domain} is already zone ${same.metadata.name}`)
+  if (same) throw siteError(409, 'zone_taken', `*.${body.domain} is already zone ${same.metadata.name} of another environment on this cluster; this environment's zones: ${await ownZoneDomains()}`)
   // WAF by default (owner decision 2026-09-28): with neither a gateway nor an ingress mode asked, the
   // zone goes on the first WAF-protected Gateway that can serve it, without an Ingress. The nginx
   // Ingress is the fallback when there is none; choosing it while there is one must be explicit.
@@ -342,7 +350,8 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
   const cr: ZoneCr = {
     apiVersion: 'auth.w6d.io/v1alpha1',
     kind: 'Zone',
-    metadata: { name, labels: MANAGED_BY },
+    // Owned by this release (its namespace): listed, editable and usable here only.
+    metadata: { name, labels: { ...MANAGED_BY, [ZONE_OWNER_LABEL]: cfg.namespace } },
     spec: { domain: body.domain, ingress, ...(body.ingressClass ? { ingressClass: body.ingressClass } : {}), tls, ...(ref ? { gateway: ref } : {}) },
   }
   try {
@@ -373,8 +382,7 @@ export async function createZone(body: CreateZoneBody, actor: Actor) {
 export async function updateZone(name: string, body: UpdateZoneBody, actor: Actor) {
   const kube = kubeSites()
   if (!kube.updateZone) throw siteError(503, 'kubernetes_unavailable', 'Zones cannot be changed on this server')
-  const cr = await kube.getZone(name)
-  if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
+  const cr = await ownZone(name)
   const before = cr.spec
   const spec: ZoneCrObject['spec'] = { ...before }
   if (body.ingress !== undefined) spec.ingress = body.ingress
@@ -438,10 +446,10 @@ export async function updateZone(name: string, body: UpdateZoneBody, actor: Acto
 }
 
 export async function deleteZone(name: string, actor: Actor) {
-  const cr = await kubeSites().getZone(name)
-  if (!cr) throw siteError(404, 'not_found', `Zone not found: ${name}`)
+  const cr = await ownZone(name)
   // A duplicate Zone (DomainTaken) serves nothing its older twin does not: removing it strands no site.
-  const twin = (await kubeSites().listZones()).some((z) => z.metadata.name !== name && z.spec.domain === cr.spec.domain)
+  // Only a twin of this release counts: another release's would not serve this one's sites.
+  const twin = (await ownZoneCrs()).some((z) => z.metadata.name !== name && z.spec.domain === cr.spec.domain)
   const records = twin ? [] : await sitesRepository.list()
   const using = twin ? [] : sitesOn(cr.spec.domain, await loadZones(), records, await liveAddresses(records))
   if (using.length > 0) {

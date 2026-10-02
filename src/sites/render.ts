@@ -525,7 +525,7 @@ export function render(site: Site, platform: Platform): Rendered {
   if (crGates.length > 32) fail('too_many_gates', `${crGates.length} gateway rules; a Site holds at most 32 (pre-flight rules count)`, 'gates')
   const placement = placeHost(host, platform.zones ?? [], platform.cookieDomain)
   if (placement.tooDeep) fail('host_too_deep', `${host} must be exactly one label under a zone`, 'address.host')
-  else if (!placement.zone) fail('host_outside_zones', `${host} is under no zone; the platform maps hosts under its wildcard zones only`, 'address.host')
+  else if (!placement.zone) fail('host_outside_zones', `${host} is under none of this environment's zones (${(platform.zones ?? []).map((z) => z.suffix).join(', ') || 'none configured'}); the platform maps hosts under its own wildcard zones only`, 'address.host')
   else if (!placement.sso) warn('no_sso', `the login cookie does not reach ${placement.zone}; browser sign-in will not work on ${host}`, 'address.host')
   const u = site.upstream
   const spec: SiteCr['spec'] = {
