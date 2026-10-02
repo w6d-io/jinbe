@@ -197,12 +197,13 @@ describe('role headers: opt-in per gate (passRoles), never by default', () => {
   const authz = (r: ReturnType<typeof render>, name: string) => gate(r, name).authorizer as { config: Record<string, unknown> }
   const headersOf = (r: ReturnType<typeof render>, name: string) => (gate(r, name).mutators.find((m) => m.handler === 'header')!.config as { headers: Record<string, string> }).headers
 
-  it('default (no passRoles), switch on: the global /allow, an empty forward list, all three blanked on every gate', () => {
-    const r = render(site(), { ...on, authorizerHeaders: { remote_json: ['X-User-Groups'] } })
+  it('default (no passRoles), switch on: the gateway\'s global remote, its forwarded X-User-Groups kept, roles and permissions blanked', () => {
+    const r = render(site(), { ...on, authorizerHeaders: { remote_json: ['X-User-Groups', 'X-User-Roles'] } })
     for (const name of ['web', 'public']) {
       expect(authz(r, name).config).not.toHaveProperty('remote')
-      expect(authz(r, name).config.forward_response_headers_to_upstream).toEqual([])
-      expect(headersOf(r, name)).toMatchObject(ROLE_BLANKS)
+      expect(authz(r, name).config.forward_response_headers_to_upstream).toEqual(['X-User-Groups'])
+      expect(headersOf(r, name)).not.toHaveProperty('x-user-groups')
+      expect(headersOf(r, name)).toMatchObject({ 'x-user-roles': '', 'x-user-permissions': '' })
     }
   })
 
@@ -275,5 +276,46 @@ describe('a role header the gateway fills from a template is left to it', () => 
   it('a gate that passes no identity still blanks a templated x-user-groups', () => {
     const r = render(site(), plat({ templatedHeaders: ['x-user-groups'] }))
     expect(headersOf(r, 'public')['x-user-groups']).toBe('')
+  })
+})
+
+describe('X-User-Groups as before on every gateway shape (no passRoles)', () => {
+  /** payroll with an enrich gate on the policy, beside web (identity) and public (no identity, made a policy gate). */
+  const site = (): Site => {
+    const s = payrollSite()
+    s.gates[1] = { ...s.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
+    s.gates.push({ id: 'enrich', label: 'Enrich', authenticators: [{ handler: 'cookie_session' }], authorizer: 'policy', mutators: [{ handler: 'hydrator', config: { api: { url: 'http://e.e.svc.cluster.local' } } }, { handler: 'header' }], errors: 'api' })
+    s.routes.items.push({ id: 'e', methods: ['GET'], path: '/e', gate: 'enrich', access: { kind: 'signed-in' }, source: 'manual' })
+    return s
+  }
+  const plat = (extra: object) => ({ ...platform, enabled: { ...platform.enabled, mutators: [...platform.enabled.mutators, 'hydrator'] }, roleHeaders: true, decisionUrl: 'http://p/v1/data/rbac/decision', ...extra })
+  const forward = (r: ReturnType<typeof render>, name: string) => (gate(r, name).authorizer as { config: Record<string, unknown> }).config.forward_response_headers_to_upstream
+  const headersOf = (r: ReturnType<typeof render>, name: string) => (gate(r, name).mutators.find((m) => m.handler === 'header')!.config as { headers: Record<string, string> }).headers
+
+  it('a template gateway (x-user-groups from the global header mutator): unchanged — groups left to the template, nothing forwarded', () => {
+    const r = render(site(), plat({ identityHeaders: [...PLATFORM_IDENTITY_HEADERS], templatedHeaders: ['x-user-id', 'x-user-groups'] }))
+    for (const name of ['web', 'enrich']) {
+      expect(forward(r, name)).toEqual([])
+      expect(headersOf(r, name)).not.toHaveProperty('x-user-groups')
+      expect(headersOf(r, name)).toMatchObject({ 'x-user-roles': '', 'x-user-permissions': '' })
+    }
+  })
+
+  it('a forwarding gateway (global remote_json forwards X-User-Groups, the chart default): groups kept on every policy gate, roles and permissions blanked', () => {
+    const r = render(site(), plat({ authorizerHeaders: { remote_json: ['X-User-Groups'] } }))
+    for (const name of ['web', 'enrich', 'public']) {
+      expect(forward(r, name), name).toEqual(['X-User-Groups'])
+      expect((gate(r, name).authorizer as { config: Record<string, unknown> }).config, name).not.toHaveProperty('remote')
+      expect(headersOf(r, name), name).not.toHaveProperty('x-user-groups')
+      expect(headersOf(r, name), name).toMatchObject({ 'x-user-roles': '', 'x-user-permissions': '' })
+    }
+  })
+
+  it('a gateway with neither: all three blanked, nothing forwarded', () => {
+    const r = render(site(), plat({}))
+    for (const name of ['web', 'enrich', 'public']) {
+      expect(forward(r, name)).toEqual([])
+      expect(headersOf(r, name)).toMatchObject(ROLE_BLANKS)
+    }
   })
 })

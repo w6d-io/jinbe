@@ -150,6 +150,9 @@ export function twoFactorOn(site: Pick<Site, 'login'>): boolean {
 
 const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
 
+/** What only an opted-in gate forwards; X-User-Groups is the gateway's to forward as before. */
+const OPT_IN_HEADERS = new Set(['x-user-roles', 'x-user-permissions'])
+
 /** Whether a gate forwards the role headers: a policy gate asking (passRoles), on a platform that can. */
 export const rolesForwarded = (gate: Pick<Gate, 'authorizer' | 'passRoles'>, platform: Pick<Platform, 'roleHeaders' | 'decisionUrl'>): boolean =>
   gate.authorizer === 'policy' && gate.passRoles === true && !!platform.roleHeaders && !!platform.decisionUrl
@@ -427,12 +430,13 @@ export function render(site: Site, platform: Platform): Rendered {
   const gateRule = (gate: Gate, url: string, methods: string[]) => {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
-    // Role headers only on a policy gate that opts in (passRoles), and need the decision endpoint: the
-    // global remote (/allow) answers a bare boolean. Every other policy gate forwards nothing — an
-    // explicit [] replaces the global forward list (X-User-Groups) — so all three stay blanked.
+    // Role headers only on a policy gate that opts in (passRoles), asking the decision endpoint. Every
+    // other policy gate keeps the gateway's global remote and what its global remote_json forwards
+    // (X-User-Groups, as before), minus roles and permissions: the explicit list replaces the global
+    // one, so those two stay blanked.
     const roleHeaders = rolesForwarded(gate, platform)
       ? { remote: platform.decisionUrl, forward_response_headers_to_upstream: ROLE_HEADERS }
-      : { forward_response_headers_to_upstream: [] as string[] }
+      : { forward_response_headers_to_upstream: (platform.authorizerHeaders?.remote_json ?? []).filter((h) => !OPT_IN_HEADERS.has(h.toLowerCase())) }
     const authorizer: Handler = gate.authorizer === 'policy'
       ? { handler: 'remote_json', config: { payload: platformPayload(name), ...roleHeaders } }
       : gate.authorizer
