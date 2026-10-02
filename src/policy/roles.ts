@@ -27,9 +27,17 @@ export interface RoleSpec {
   permissions: readonly Permission[]
 }
 
-const VIEWER: readonly Permission[] = [
+/**
+ * Reading the platform's configuration: sites, zones, the gateway, groups, organisations, settings
+ * and the counts. support, ops and security hold it whole; viewer, developer and auditor each spell
+ * their own, narrower list, so trimming one role never changes another.
+ */
+const PLATFORM_READ: readonly Permission[] = [
   'sites:read', 'zones:read', 'gateway:read', 'groups:read', 'orgs:read', 'settings:read', 'stats:read',
 ]
+
+/** What every staff member needs to find their way: sites, groups, organisations. */
+const DIRECTORY_READ: readonly Permission[] = ['sites:read', 'groups:read', 'orgs:read']
 
 /** Reading about people: what a desk, an auditor and incident response all need. */
 const PEOPLE_READ: readonly Permission[] = ['users:read', 'sessions:read', 'access:read', 'audit:read', 'access:check']
@@ -37,14 +45,14 @@ const PEOPLE_READ: readonly Permission[] = ['users:read', 'sessions:read', 'acce
 export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   viewer: {
     group: 'staff-viewers',
-    label: 'Read-only staff: sites, zones, gateway, groups, organisations, settings. No personal data',
-    permissions: VIEWER,
+    label: 'Read-only staff: sites, groups, organisations and the counts. No personal data, no platform configuration',
+    permissions: [...DIRECTORY_READ, 'stats:read'],
   },
   support: {
     group: 'staff-support',
     label: 'Support desk: find the person, fix sign-in, manage organisation members',
     permissions: [
-      ...VIEWER, ...PEOPLE_READ,
+      ...PLATFORM_READ, ...PEOPLE_READ,
       'users:create', 'users:update', 'users:recovery', 'users:verify', 'users:send_login_link',
       'sessions:revoke', 'orgs.members:write',
     ],
@@ -53,7 +61,7 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
     group: 'staff-ops',
     label: 'Edge operations: publish sites, zones and the gateway, approve requests',
     permissions: [
-      ...VIEWER, 'audit:read', 'access:check',
+      ...PLATFORM_READ, 'audit:read', 'access:check',
       'sites:write', 'sites:apply', 'sites:delete', 'sites.requests:approve',
       'zones:write', 'zones:delete', 'gateway:apply',
     ],
@@ -61,18 +69,20 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   developer: {
     group: 'staff-developers',
     label: 'Plug and change sites, import OpenAPI',
-    permissions: [...VIEWER, 'access:check', 'sites:write'],
+    // No settings:read: no site flow reads the sign-in, 2FA or MCP settings (kuma's Settings sections
+    // and the group 2FA switch hide themselves when refused).
+    permissions: [...DIRECTORY_READ, 'zones:read', 'gateway:read', 'stats:read', 'access:check', 'sites:write'],
   },
   auditor: {
     group: 'staff-auditors',
-    label: 'Compliance: read everything, export evidence',
-    permissions: [...VIEWER, ...PEOPLE_READ, 'audit:export', 'policy.bundle:read', 'recert:read', 'users.grants:read'],
+    label: 'Compliance: people, access and audit evidence',
+    permissions: [...DIRECTORY_READ, ...PEOPLE_READ, 'audit:export', 'policy.bundle:read', 'recert:read', 'users.grants:read'],
   },
   security: {
     group: 'staff-security',
     label: 'Incident response and access hygiene',
     permissions: [
-      ...VIEWER, ...PEOPLE_READ,
+      ...PLATFORM_READ, ...PEOPLE_READ,
       'sessions:revoke', 'users:disable', 'users:update_email', 'users:reset_second_factor', 'users:verify',
       'groups.members:revoke', 'audit:export', 'policy.bundle:read', 'recert:read', 'recert:manage', 'recert:delete',
       'users.grants:read',

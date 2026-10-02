@@ -100,11 +100,27 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
     expect(isStaffGroup('platform-admins')).toBe(false)
   })
 
-  it('every staff role reads the platform surfaces; viewer reads no personal data', () => {
-    for (const r of STAFF_ROLES) for (const p of ['sites:read', 'zones:read', 'gateway:read', 'groups:read', 'orgs:read', 'settings:read', 'stats:read']) {
+  it('every staff role reads sites, groups and organisations; support, ops and security the whole platform configuration', () => {
+    for (const r of STAFF_ROLES) for (const p of ['sites:read', 'groups:read', 'orgs:read']) expect(grants(ROLES[r].permissions, p), `${r} ${p}`).toBe(true)
+    for (const r of ['support', 'ops', 'security'] as const) for (const p of ['zones:read', 'gateway:read', 'settings:read', 'stats:read']) {
       expect(grants(ROLES[r].permissions, p), `${r} ${p}`).toBe(true)
     }
-    for (const p of ['users:read', 'sessions:read', 'audit:read', 'access:read']) expect(grants(ROLES.viewer.permissions, p)).toBe(false)
+  })
+
+  it('viewer: exactly sites, groups, organisations and the counts; no personal data, no platform configuration', () => {
+    expect([...ROLES.viewer.permissions].sort()).toEqual(['groups:read', 'orgs:read', 'sites:read', 'stats:read'])
+  })
+
+  it('auditor: people, access and audit evidence plus the directory; no settings, gateway, zones or counts', () => {
+    expect([...ROLES.auditor.permissions].sort()).toEqual([
+      'access:check', 'access:read', 'audit:export', 'audit:read', 'groups:read', 'orgs:read', 'policy.bundle:read', 'recert:read',
+      'sessions:read', 'sites:read', 'users.grants:read', 'users:read',
+    ])
+    expect(ROLES.auditor.label).toBe('Compliance: people, access and audit evidence')
+  })
+
+  it('developer keeps what a site flow needs, without settings:read', () => {
+    expect([...ROLES.developer.permissions].sort()).toEqual(['access:check', 'gateway:read', 'groups:read', 'orgs:read', 'sites:read', 'sites:write', 'stats:read', 'zones:read'])
   })
 
   it.each([

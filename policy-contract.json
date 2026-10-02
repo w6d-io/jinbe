@@ -330,13 +330,10 @@
   "roles": {
     "jinbe": {
       "viewer": [
-        "gateway:read",
         "groups:read",
         "orgs:read",
-        "settings:read",
         "sites:read",
-        "stats:read",
-        "zones:read"
+        "stats:read"
       ],
       "support": [
         "access:check",
@@ -382,7 +379,6 @@
         "gateway:read",
         "groups:read",
         "orgs:read",
-        "settings:read",
         "sites:read",
         "sites:write",
         "stats:read",
@@ -393,18 +389,14 @@
         "access:read",
         "audit:export",
         "audit:read",
-        "gateway:read",
         "groups:read",
         "orgs:read",
         "policy.bundle:read",
         "recert:read",
         "sessions:read",
-        "settings:read",
         "sites:read",
-        "stats:read",
         "users.grants:read",
-        "users:read",
-        "zones:read"
+        "users:read"
       ],
       "security": [
         "access:check",
@@ -615,21 +607,15 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
-              "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
-              "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -794,7 +780,6 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
@@ -803,7 +788,6 @@
               "viewer"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
@@ -820,21 +804,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -862,21 +842,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -904,21 +880,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -930,21 +902,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -1305,21 +1273,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -1696,21 +1660,15 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
-              "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
-              "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -1736,21 +1694,15 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
-              "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
-              "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -1776,21 +1728,15 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
-              "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
-              "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -2858,21 +2804,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -2916,21 +2858,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -2958,21 +2896,17 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
               "super_admin",
-              "support",
-              "viewer"
+              "support"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
               "staff-support",
-              "staff-viewers",
               "super_admins"
             ]
           }
@@ -2984,7 +2918,6 @@
           "reach": {
             "kind": "platform",
             "roles": [
-              "auditor",
               "developer",
               "ops",
               "security",
@@ -2993,7 +2926,6 @@
               "viewer"
             ],
             "groups": [
-              "staff-auditors",
               "staff-developers",
               "staff-ops",
               "staff-security",
@@ -4699,13 +4631,10 @@
         },
         "expect": {
           "platform": [
-            "gateway:read",
             "groups:read",
             "orgs:read",
-            "settings:read",
             "sites:read",
-            "stats:read",
-            "zones:read"
+            "stats:read"
           ],
           "orgs": {}
         }
