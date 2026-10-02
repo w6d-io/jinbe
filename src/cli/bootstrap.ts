@@ -15,6 +15,8 @@
  *   6 — the stored RBAC is the previous model's and no reviewed plan approves moving it (nothing changed)
  *   7 — break-glass refused
  *   8 — apply refused: the rollback snapshot would not outlive the pod (nothing changed)
+ *   9 — first init with BACKUP_RESTORE_ON_FIRST_INIT=true and no restore: backup off, no latest.json,
+ *       or the import failed (no marker written; the next run tries again)
  *
  * Commands, run inside the jinbe pod (`kubectl exec deploy/jinbe -- node dist/cli/bootstrap.js …`):
  *
@@ -38,7 +40,7 @@
 import pino from 'pino'
 import { env } from '../config/env.js'
 import { redisClientService } from '../services/redis-client.service.js'
-import { runBootstrap, SchemaDowngradeError, MigrationNotApprovedError, SCHEMA_VERSION } from '../bootstrap/index.js'
+import { runBootstrap, SchemaDowngradeError, MigrationNotApprovedError, RestoreRequiredError, SCHEMA_VERSION } from '../bootstrap/index.js'
 import { readMarker, MarkerCorruptError } from '../bootstrap/marker.js'
 import { waitForRedis, waitForKratos, DependencyTimeoutError } from '../bootstrap/wait-deps.js'
 import { buildBuiltInRules, OPTIONAL_BUILT_IN_RULE_IDS } from '../bootstrap/build-rules.js'
@@ -63,6 +65,7 @@ const EXIT = {
   NOT_APPROVED: 6,
   BREAK_GLASS_REFUSED: 7,
   EPHEMERAL_SNAPSHOT: 8,
+  RESTORE_REQUIRED: 9,
 } as const
 
 const ALLOW_EPHEMERAL = process.argv.includes('--allow-ephemeral-snapshot')
@@ -322,6 +325,7 @@ async function main(): Promise<number> {
       snapshotDir: env.JINBE_SNAPSHOT_DIR,
       snapshotDirDurable: env.JINBE_SNAPSHOT_DIR_DURABLE,
       allowEphemeralSnapshot: ALLOW_EPHEMERAL,
+      restoreOnFirstInit: env.BACKUP_RESTORE_ON_FIRST_INIT,
     })
     logger.info({ outcome: result.outcome }, 'Bootstrap CLI finished')
     return EXIT.SUCCESS
@@ -340,6 +344,10 @@ async function main(): Promise<number> {
         'Schema downgrade — bootstrap aborted',
       )
       return EXIT.SCHEMA_DOWNGRADE
+    }
+    if (err instanceof RestoreRequiredError) {
+      logger.error({ err: err.message }, 'First init: the required restore from backup did not happen — bootstrap aborted')
+      return EXIT.RESTORE_REQUIRED
     }
     logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'Bootstrap failed')
     return EXIT.BOOTSTRAP_FAILED

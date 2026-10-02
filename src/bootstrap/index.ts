@@ -11,7 +11,7 @@ import { convergeJinbe } from './converge.js'
 import { applyModel } from './apply.js'
 import { persistExplicitRoles } from '../sites/republish.js'
 import { sweepBreakGlass } from './break-glass.js'
-import type { RunBootstrapOptions, BootstrapLogger } from './types.js'
+import type { RunBootstrapOptions, BootstrapLogger, RestoreOnFirstInit } from './types.js'
 import { backupStore } from '../services/backup-store.service.js'
 import { rbacBundleService } from '../services/rbac-bundle.service.js'
 
@@ -97,7 +97,7 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
       outcome = 'first-run'
       logger.info({ schemaVersion: SCHEMA_VERSION }, 'First bootstrap run — seeding the model from code')
       await applyModel({ logger, expect: null, firstRun: true, builtInRules, gitSha: opts.gitSha, snapshotDir })
-      await maybeRestoreFromBackup(logger)
+      await maybeRestoreFromBackup(logger, opts.restoreOnFirstInit ?? 'auto')
       if (config.admin) await seedDefaultAdmin(config.admin, logger)
     } else if (existing.schemaVersion < SCHEMA_VERSION) {
       if (!opts.expectPlan) throw new MigrationNotApprovedError(existing.schemaVersion)
@@ -144,22 +144,51 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
   }
 }
 
+/** BACKUP_RESTORE_ON_FIRST_INIT=true and the first-init restore could not happen: the run fails, no marker is written. */
+export class RestoreRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RestoreRequiredError'
+  }
+}
+
 /**
  * First init only (marker absent), after the model is seeded: when backup is enabled and a
  * `latest.json` exists in S3, restore the RBAC bundle from it (what code owns is skipped by the
- * importer). A failed restore leaves the freshly seeded model rather than blocking first init.
+ * importer). `mode` (BACKUP_RESTORE_ON_FIRST_INIT): `auto` leaves the freshly seeded model when there
+ * is nothing to restore or the restore fails, rather than blocking first init; `false` never restores
+ * (a deliberate fresh rebuild, no hand-moving latest.json aside); `true` is disaster recovery, where
+ * silence would be wrong — anything short of a restore throws RestoreRequiredError before the marker
+ * is written, so the next run tries again.
  */
-async function maybeRestoreFromBackup(logger: BootstrapLogger): Promise<void> {
-  if (!backupStore.enabled()) return
+async function maybeRestoreFromBackup(logger: BootstrapLogger, mode: RestoreOnFirstInit): Promise<void> {
+  if (mode === 'false') {
+    logger.info('first init: restore skipped (BACKUP_RESTORE_ON_FIRST_INIT=false)')
+    return
+  }
+  const required = mode === 'true'
+  if (!backupStore.enabled()) {
+    if (required) throw new RestoreRequiredError('BACKUP_RESTORE_ON_FIRST_INIT=true but backup is not configured (BACKUP_ENABLED, BACKUP_S3_BUCKET)')
+    return
+  }
+  let latest: Awaited<ReturnType<typeof backupStore.getLatest>>
   try {
-    const latest = await backupStore.getLatest()
-    if (!latest) {
-      logger.info('Backup enabled but no latest.json in S3 — keeping the seeded model')
-      return
-    }
-    logger.info('First init: restoring RBAC from the latest backup')
+    latest = await backupStore.getLatest()
+  } catch (e) {
+    if (required) throw new RestoreRequiredError(`BACKUP_RESTORE_ON_FIRST_INIT=true but latest.json could not be read: ${String(e)}`)
+    logger.warn({ err: String(e) }, 'Backup restore failed — keeping the seeded model')
+    return
+  }
+  if (!latest) {
+    if (required) throw new RestoreRequiredError('BACKUP_RESTORE_ON_FIRST_INIT=true but there is no latest.json in the backup bucket')
+    logger.info('Backup enabled but no latest.json in S3 — keeping the seeded model')
+    return
+  }
+  logger.info({ required }, 'First init: restoring RBAC from the latest backup')
+  try {
     await rbacBundleService.import(latest)
   } catch (e) {
+    if (required) throw new RestoreRequiredError(`BACKUP_RESTORE_ON_FIRST_INIT=true but importing latest.json failed: ${String(e)}`)
     logger.warn({ err: String(e) }, 'Backup restore failed — keeping the seeded model')
   }
 }

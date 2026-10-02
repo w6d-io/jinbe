@@ -522,6 +522,10 @@ export const envSchema = z.object({
   BACKUP_S3_REGION: z.string().default('eu-west-3'),
   // Cron for jinbe's own scheduled backup (UTC). Default daily 02:00.
   BACKUP_SCHEDULE: z.string().default('0 2 * * *'),
+  // First init (no bootstrap marker) and the backup: auto = restore latest.json when backup is on,
+  // keep the seeded model when there is none or it fails; false = never restore (a deliberate fresh
+  // rebuild); true = disaster recovery: restore or fail the bootstrap (exit 9). Chart: backup.restoreOnFirstInit.
+  BACKUP_RESTORE_ON_FIRST_INIT: z.enum(['auto', 'true', 'false']).default('auto'),
 })
 
 // Parse and validate environment variables

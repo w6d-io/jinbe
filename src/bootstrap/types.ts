@@ -73,6 +73,14 @@ export interface RunBootstrapOptions {
   snapshotDirDurable?: boolean
   /** `--allow-ephemeral-snapshot`: the only override of the durable-snapshot rule. */
   allowEphemeralSnapshot?: boolean
+  /**
+   * First init and the S3 backup (BACKUP_RESTORE_ON_FIRST_INIT): `auto` (default) restores latest.json
+   * when backup is on and keeps the seeded model when it is missing or fails; `false` never restores;
+   * `true` must restore — no backup, no latest.json or a failed import fails the run (RestoreRequiredError).
+   */
+  restoreOnFirstInit?: RestoreOnFirstInit
 }
+
+export type RestoreOnFirstInit = 'auto' | 'true' | 'false'
 
 export type { OathkeeperRule, RouteRule }

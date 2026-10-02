@@ -406,6 +406,7 @@ On first start with an empty Redis:
 3. Seeds Oathkeeper access rules templated from `AUTH_DOMAIN`, `APP_DOMAIN`, `API_DOMAIN`.
 4. Creates the bootstrap admin identity in Kratos (if `ADMIN_EMAIL` is set).
 5. Retries up to 15× in background if Redis or Kratos are not ready yet.
+6. With backup on, restores the RBAC from the backup's `latest.json`, as `BACKUP_RESTORE_ON_FIRST_INIT` says (see [Backup](#backup)).
 
 Subsequent restarts are idempotent — bootstrap is skipped when the bootstrap marker is present.
 
@@ -511,6 +512,19 @@ Every value in this group can be overridden via `jinbe.env.<NAME>` but you almos
 | `REDIS_PASSWORD` | unset | If your Redis requires AUTH. |
 | `REDIS_DB` | `0` | Logical DB index. |
 | `REDIS_AUDIT_STREAM` | `auth:audit:events` | Stream key for audit events. |
+
+#### Backup
+
+Chart: the `backup` block (`backup.enabled`, `backup.s3.*`, `backup.schedule`, `backup.restoreOnFirstInit`).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `BACKUP_ENABLED` | `false` | Read and write RBAC bundle snapshots in S3 (credentials from the default AWS chain, IRSA). |
+| `BACKUP_S3_BUCKET` | unset | The bucket. |
+| `BACKUP_S3_PREFIX` | `auth-backup` | Key prefix; `latest.json` sits under it. |
+| `BACKUP_S3_REGION` | `eu-west-3` | Bucket region. |
+| `BACKUP_SCHEDULE` | `0 2 * * *` | jinbe's own scheduled backup (cron, UTC). |
+| `BACKUP_RESTORE_ON_FIRST_INIT` | `auto` | First init only (no bootstrap marker). `auto`: restore `latest.json` when backup is on; keep the freshly seeded model when there is none or the import fails. `false`: never restore, for a deliberate fresh rebuild (logs `first init: restore skipped`). `true`: disaster recovery: restore or fail the bootstrap with exit code 9 (backup off, no `latest.json`, or a failed import). No marker is written, so the next run tries again. |
 
 #### Sidecar notification
 
