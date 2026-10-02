@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { GatewaySpec } from '../../gateway/kube-gateway.js'
-import { PLATFORM_IDENTITY_HEADERS, SESSION_HEADERS, STRIPPED_COOKIE_HEADER, gatewayIdentity } from '../../sites/identity-headers.js'
+import { PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, SESSION_HEADERS, STRIPPED_COOKIE_HEADER, gatewayIdentity } from '../../sites/identity-headers.js'
 import { render } from '../../sites/render.js'
 import type { Site } from '../../sites/schemas.js'
 import { payrollSite, platform } from './fixtures.js'
 
 const blanks = (names: readonly string[]) => ({ ...Object.fromEntries([...names, 'x-user-aal', 'x-user-2fa-at'].map((n) => [n, ''])), ...STRIPPED_COOKIE_HEADER })
 const gate = (r: ReturnType<typeof render>, name: string) => r.siteCr.spec.gates.find((g) => g.name === name)!
+const ROLE_BLANKS = { 'x-user-groups': '', 'x-user-roles': '', 'x-user-permissions': '' }
 
 describe('identity headers on gates that set none', () => {
   it('a public gate overwrites every platform identity header with an empty value', () => {
@@ -27,49 +28,17 @@ describe('identity headers on gates that set none', () => {
 
   it('keeps the gateway config\'s spellings, so the rule key replaces each global key', () => {
     const r = render(payrollSite(), { ...platform, identityHeaders: ['x-User-Email', 'x-user-email'] })
-    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', 'x-user-aal': '', 'x-user-2fa-at': '', ...STRIPPED_COOKIE_HEADER } } }])
+    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', ...ROLE_BLANKS, 'x-user-aal': '', 'x-user-2fa-at': '', ...STRIPPED_COOKIE_HEADER } } }])
   })
 
-  it('leaves the headers the gate\'s authorizer forwards from its decision', () => {
+  it('leaves the headers a non-policy authorizer forwards (the gateway\'s list for its handler)', () => {
     const site = payrollSite()
-    site.gates[1] = { ...site.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
-    const r = render(site, { ...platform, authorizerHeaders: { remote_json: ['X-User-Groups'] } })
+    site.gates[1] = { ...site.gates[1], authorizer: { handler: 'remote' } }
+    const r = render(site, { ...platform, enabled: { ...platform.enabled, authorizers: [...platform.enabled.authorizers, 'remote'] }, authorizerHeaders: { remote: ['X-User-Groups'] } })
     const headers = (gate(r, 'public').mutators[0].config as { headers: Record<string, string> }).headers
     expect(headers).not.toHaveProperty('x-user-groups')
+    expect(headers['x-user-roles']).toBe('')
     expect(headers['x-user-id']).toBe('')
-  })
-
-  it('X-User-Roles and X-User-Permissions are blanked on a gate that sets none, role headers on or off', () => {
-    for (const p of [platform, { ...platform, roleHeaders: true }]) {
-      const headers = (gate(render(payrollSite(), p), 'public').mutators[0].config as { headers: Record<string, string> }).headers
-      expect(headers['x-user-roles']).toBe('')
-      expect(headers['x-user-permissions']).toBe('')
-    }
-  })
-
-  it('with role headers on, a policy gate forwards groups, roles and permissions of this site\'s app from the decision, and does not blank them', () => {
-    const site = payrollSite()
-    site.gates[1] = { ...site.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
-    const decisionUrl = 'http://auth-opa-authz-proxy:8080/v1/data/rbac/decision'
-    const r = render(site, { ...platform, roleHeaders: true, decisionUrl })
-    const authorizer = gate(r, 'public').authorizer as { handler: string; config: { forward_response_headers_to_upstream: string[]; payload: string; remote: string } }
-    expect(authorizer.config.forward_response_headers_to_upstream).toEqual(['X-User-Groups', 'X-User-Roles', 'X-User-Permissions'])
-    // The decision endpoint, not the global /allow boolean: only /decision carries the X-User-* headers.
-    expect(authorizer.config.remote).toBe(decisionUrl)
-    expect(authorizer.config.payload).toContain('"app": "payroll"')
-    const headers = (gate(r, 'public').mutators[0].config as { headers: Record<string, string> }).headers
-    expect(headers).not.toHaveProperty('x-user-roles')
-    expect(headers).not.toHaveProperty('x-user-permissions')
-    expect(headers['x-user-id']).toBe('')
-    // Off: no remote and no forward list of its own, and the role headers stay blanked.
-    const off = render(site, { ...platform, decisionUrl })
-    expect((gate(off, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('forward_response_headers_to_upstream')
-    expect((gate(off, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('remote')
-    // On without a known decision endpoint: nothing forwarded (still blanked), and a warning says why.
-    const blind = render(site, { ...platform, roleHeaders: true })
-    expect((gate(blind, 'public').authorizer as { config: Record<string, unknown> }).config).not.toHaveProperty('forward_response_headers_to_upstream')
-    expect(blind.checks).toContainEqual(expect.objectContaining({ level: 'warn', code: 'role_headers_unavailable' }))
-    expect((gate(off, 'public').mutators[0].config as { headers: Record<string, string> }).headers['x-user-roles']).toBe('')
   })
 
   it('the pre-flight rule blanks them too; the deny rule never reaches the upstream', () => {
@@ -95,7 +64,7 @@ describe('identity headers on gates that set none', () => {
 describe('gates with their own header mutator', () => {
   it('are rendered as written, plus the sign-in strength headers (X-User-AAL, X-User-2FA-At)', () => {
     const r = render(payrollSite(), platform)
-    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: { ...SESSION_HEADERS, ...STRIPPED_COOKIE_HEADER } } }])
+    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: { ...SESSION_HEADERS, ...ROLE_BLANKS, ...STRIPPED_COOKIE_HEADER } } }])
     expect(SESSION_HEADERS['x-user-aal']).toContain('.Extra.authenticator_assurance_level')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.Extra.authentication_methods')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.completed_at')
@@ -108,7 +77,7 @@ describe('gates with their own header mutator', () => {
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ] }
     expect(gate(render(site, platform), 'web').mutators).toEqual([
-      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'], ...STRIPPED_COOKIE_HEADER } } },
+      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'], ...ROLE_BLANKS, ...STRIPPED_COOKIE_HEADER } } },
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ])
   })
@@ -212,5 +181,60 @@ describe('the platform session cookie never reaches a site app', () => {
     expect(Object.keys(first.config.headers).filter((k) => k.toLowerCase() === 'cookie')).toEqual(['Cookie'])
     expect(first.config.headers.Cookie).toBe(STRIPPED_COOKIE_HEADER.Cookie)
     expect(second.config.headers).toEqual({ 'X-Other': 'b' })
+  })
+})
+
+describe('role headers: opt-in per gate (passRoles), never by default', () => {
+  const decisionUrl = 'http://auth-opa-authz-proxy:8080/v1/data/rbac/decision'
+  const on = { ...platform, roleHeaders: true, decisionUrl }
+  /** payroll with its web (policy, header mutator) gate, and the public gate turned into a policy gate with no header mutator. */
+  const site = (passRoles?: boolean): Site => {
+    const s = payrollSite()
+    s.gates[0] = { ...s.gates[0], ...(passRoles === undefined ? {} : { passRoles }) }
+    s.gates[1] = { ...s.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy', ...(passRoles === undefined ? {} : { passRoles }) }
+    return s
+  }
+  const authz = (r: ReturnType<typeof render>, name: string) => gate(r, name).authorizer as { config: Record<string, unknown> }
+  const headersOf = (r: ReturnType<typeof render>, name: string) => (gate(r, name).mutators.find((m) => m.handler === 'header')!.config as { headers: Record<string, string> }).headers
+
+  it('default (no passRoles), switch on: the global /allow, an empty forward list, all three blanked on every gate', () => {
+    const r = render(site(), { ...on, authorizerHeaders: { remote_json: ['X-User-Groups'] } })
+    for (const name of ['web', 'public']) {
+      expect(authz(r, name).config).not.toHaveProperty('remote')
+      expect(authz(r, name).config.forward_response_headers_to_upstream).toEqual([])
+      expect(headersOf(r, name)).toMatchObject(ROLE_BLANKS)
+    }
+  })
+
+  it('passRoles on a policy gate, switch on: /decision and the three headers forwarded, not blanked', () => {
+    const r = render(site(true), on)
+    for (const name of ['web', 'public']) {
+      expect(authz(r, name).config).toMatchObject({ remote: decisionUrl, forward_response_headers_to_upstream: ROLE_HEADERS })
+      const h = headersOf(r, name)
+      for (const n of Object.keys(ROLE_BLANKS)) expect(h).not.toHaveProperty(n)
+    }
+  })
+
+  it('passRoles with the switch off, or no decision endpoint: nothing forwarded, all blanked', () => {
+    for (const p of [{ ...platform, decisionUrl }, { ...platform, roleHeaders: true }]) {
+      const r = render(site(true), p)
+      expect(authz(r, 'web').config).not.toHaveProperty('remote')
+      expect(authz(r, 'web').config.forward_response_headers_to_upstream).toEqual([])
+      expect(headersOf(r, 'public')).toMatchObject(ROLE_BLANKS)
+    }
+  })
+
+  it('a client cannot spoof them on a header-mutator gate: blanked unless the site names them itself', () => {
+    const s = site()
+    s.gates[0] = { ...s.gates[0], mutators: [{ handler: 'header', config: { headers: { 'X-User-Roles': 'static' } } }] }
+    const h = headersOf(render(s, on), 'web')
+    expect(h).toMatchObject({ 'X-User-Roles': 'static', 'x-user-groups': '', 'x-user-permissions': '' })
+    expect(h).not.toHaveProperty('x-user-roles')
+  })
+
+  it('the rule changes with passRoles, so the sync loop sees drift on every site published before', () => {
+    const before = render(site(), on)
+    const optedIn = render(site(true), on)
+    expect(before.siteCr.metadata.annotations['auth.w6d.io/spec-hash']).not.toBe(optedIn.siteCr.metadata.annotations['auth.w6d.io/spec-hash'])
   })
 })

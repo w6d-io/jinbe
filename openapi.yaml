@@ -5752,6 +5752,8 @@ paths:
                             minItems: 1
                           preflight:
                             type: boolean
+                          passRoles:
+                            type: boolean
                           expert:
                             type: object
                             properties:
@@ -6499,6 +6501,8 @@ paths:
                             minItems: 1
                           preflight:
                             type: boolean
+                          passRoles:
+                            type: boolean
                           expert:
                             type: object
                             properties:
@@ -7044,6 +7048,8 @@ paths:
                                 - OPTIONS
                             minItems: 1
                           preflight:
+                            type: boolean
+                          passRoles:
                             type: boolean
                           expert:
                             type: object
@@ -7617,6 +7623,8 @@ paths:
                                 - OPTIONS
                             minItems: 1
                           preflight:
+                            type: boolean
+                          passRoles:
                             type: boolean
                           expert:
                             type: object

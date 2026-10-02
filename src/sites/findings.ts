@@ -37,6 +37,8 @@ export interface FindingContext {
   groups: Record<string, GroupDefinition>
   /** Whether the site's host is behind the WAF; null when the cluster cannot say. */
   protection: ProtectionStatus | null
+  /** Whether this platform can forward role headers (SITES_ROLE_HEADERS on and a decision endpoint known). */
+  roleHeaders?: boolean
   /** Orgs that have the site now (org_service_map) but are not in its `orgs`: publishing takes it from them. */
   orgsRemoved?: ReadonlyArray<{ id: string; name?: string }>
 }
@@ -88,6 +90,13 @@ export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, 
 
   // ── who may pass ────────────────────────────────────────────
   site.gates.forEach((gate, i) => {
+    if (gate.passRoles === true && gate.authorizer !== 'policy') {
+      add('error', 'pass_roles_not_policy', `gate '${gate.id}' asks to pass roles, but only the policy knows a caller's roles and permissions (authorizer ${gate.authorizer.handler})`,
+        `Set Who may pass to the policy on gate '${gate.id}', or turn passRoles off`, `gates.${i}.passRoles`)
+    } else if (gate.passRoles === true && ctx.roleHeaders === false) {
+      add('warn', 'role_headers_unavailable', `gate '${gate.id}' asks to pass roles, but this platform forwards none (SITES_ROLE_HEADERS off, or no decision endpoint): X-User-Groups, X-User-Roles and X-User-Permissions stay blank`,
+        'Turn on SITES_ROLE_HEADERS (and SITES_AUTHZ_DECISION_URL when the gateway remote is not the authz proxy) on the platform, or turn passRoles off', `gates.${i}.passRoles`)
+    }
     const anonymous = gate.authenticators.some((h) => h.handler === 'noop' || h.handler === 'anonymous')
     if (!anonymous && gate.authorizer !== 'policy' && gate.authorizer.handler === 'allow') {
       add('confirm', 'gate_signed_in_only', `gate '${gate.id}': any signed-in person passes, no permission or two-step sign-in check (authorizer allow)`,

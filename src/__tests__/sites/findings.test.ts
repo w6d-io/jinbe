@@ -248,3 +248,20 @@ describe('a sign-in gate that passes no identity', () => {
     expect(codes(run(site({ authenticators: [{ handler: 'unauthorized' }], authorizer: { handler: 'deny' }, mutators: [{ handler: 'noop' }] })))).not.toContain('gate_passes_no_identity')
   })
 })
+
+describe('passRoles', () => {
+  const withPass = (over: Partial<Gate>) => tidy({ gates: [gate({ id: 'web', passRoles: true, ...over })] })
+  const runWith = (site: Site, roleHeaders?: boolean) => securityFindings(site, { roles: expandRoles(site) }, { groups: {}, protection: WAF, ...(roleHeaders === undefined ? {} : { roleHeaders }) })
+
+  it('on a non-policy gate is an error at gates.N.passRoles', () => {
+    const f = runWith(withPass({ authorizer: { handler: 'allow' } }), true)
+    expect(f).toContainEqual(expect.objectContaining({ code: 'pass_roles_not_policy', level: 'error', path: 'gates.0.passRoles', fix: expect.stringContaining("gate 'web'") }))
+    expect(publishState(f).blocked).toBe(true)
+  })
+
+  it('on a policy gate: warned when the platform forwards no role headers, silent when it does', () => {
+    expect(runWith(withPass({}), false)).toEqual([expect.objectContaining({ code: 'role_headers_unavailable', level: 'warn', path: 'gates.0.passRoles' })])
+    expect(runWith(withPass({}), true)).toEqual([])
+    expect(runWith(tidy(), false)).toEqual([])
+  })
+})

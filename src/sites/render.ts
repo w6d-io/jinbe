@@ -148,6 +148,10 @@ export function twoFactorOn(site: Pick<Site, 'login'>): boolean {
 
 const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
 
+/** Whether a gate forwards the role headers: a policy gate asking (passRoles), on a platform that can. */
+export const rolesForwarded = (gate: Pick<Gate, 'authorizer' | 'passRoles'>, platform: Pick<Platform, 'roleHeaders' | 'decisionUrl'>): boolean =>
+  gate.authorizer === 'policy' && gate.passRoles === true && !!platform.roleHeaders && !!platform.decisionUrl
+
 /** A gate of a 2FA site that never asks the policy, so the second factor is never checked there. */
 export interface SecondFactorGap { gate: string; why: 'anonymous' | 'authorizer'; authorizer: string }
 
@@ -325,10 +329,6 @@ export function render(site: Site, platform: Platform): Rendered {
   // A deny catch-all publishes no row: the policy then owns no route there and refuses.
   if (catchAllAccess.kind !== 'deny') routeMap.push(...rowsFor({ id: CATCH_ALL_ID, methods: catchAllMethods, path: catchAllPath }, catchAllAccess))
 
-  if (platform.roleHeaders && !platform.decisionUrl && site.gates.some((g) => g.authorizer === 'policy')) {
-    warn('role_headers_unavailable', 'role headers are on but no decision endpoint is known (SITES_AUTHZ_DECISION_URL): X-User-Roles and X-User-Permissions stay blank', 'gates')
-  }
-
   // ── per-site 2FA ────────────────────────────────────────────
   const with2fa = twoFactorOn(site)
   for (const id of site.login?.twoFactor.routes ?? []) {
@@ -425,11 +425,12 @@ export function render(site: Site, platform: Platform): Rendered {
   const gateRule = (gate: Gate, url: string, methods: string[]) => {
     const at = `gates.${site.gates.indexOf(gate)}`
     gate.authenticators.forEach((h) => handlerOk('authenticators', h, at))
-    // Role headers need the decision endpoint: the global remote (/allow) answers a bare boolean and
-    // the proxy sets no X-User-* header there. Without a decision URL the headers stay blanked.
-    const roleHeaders = platform.roleHeaders && platform.decisionUrl
+    // Role headers only on a policy gate that opts in (passRoles), and need the decision endpoint: the
+    // global remote (/allow) answers a bare boolean. Every other policy gate forwards nothing — an
+    // explicit [] replaces the global forward list (X-User-Groups) — so all three stay blanked.
+    const roleHeaders = rolesForwarded(gate, platform)
       ? { remote: platform.decisionUrl, forward_response_headers_to_upstream: ROLE_HEADERS }
-      : {}
+      : { forward_response_headers_to_upstream: [] as string[] }
     const authorizer: Handler = gate.authorizer === 'policy'
       ? { handler: 'remote_json', config: { payload: platformPayload(name), ...roleHeaders } }
       : gate.authorizer

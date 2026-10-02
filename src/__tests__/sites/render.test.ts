@@ -112,7 +112,8 @@ describe('render — gates become disjoint Oathkeeper rules', () => {
     expect(authz.config.payload).toBe(platformPayload('payroll'))
     expect(authz.config.payload).toContain('"app": "payroll"')
     expect(authz.config.payload).toContain('"object": "{{ .MatchContext.URL.Path }}"')
-    expect(Object.keys(authz.config)).toEqual(['payload'])
+    // No passRoles: an explicit empty forward list replaces the gateway's (X-User-Groups never forwarded).
+    expect(authz.config).toEqual({ payload: platformPayload('payroll'), forward_response_headers_to_upstream: [] })
   })
 
   it('every rule forwards to the site upstream', () => {
