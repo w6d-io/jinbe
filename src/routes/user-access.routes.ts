@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { kratosService } from '../services/kratos.service.js'
 import { organisationsOf } from '../services/org-membership.service.js'
 import { organisationStoreConfigured, organisationsById } from '../services/organisation-store.js'
+import { directGrantsRepository, isActive, type DirectGrant } from '../services/direct-grants.repository.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { needs } from '../policy/route-access.js'
@@ -54,14 +55,31 @@ async function namesFor(ids: readonly string[]): Promise<Record<string, string>>
   }
 }
 
+/** A direct grant as this view shows it: marked `direct`, with who, when, why and until when. */
+const directGrantView = {
+  type: 'object',
+  properties: {
+    source: { type: 'string', enum: ['direct'] },
+    id: { type: 'string' }, app: { type: 'string' }, kind: { type: 'string', enum: ['role', 'permission'] }, name: { type: 'string' },
+    grantedBy: { type: 'string' }, grantedAt: { type: 'string' }, reason: { type: 'string' }, expiresAt: { type: 'string' },
+    active: { type: 'boolean' },
+  },
+} as const
+
+const directView = (g: DirectGrant) => ({
+  source: 'direct' as const, id: g.id, app: g.app, kind: g.kind, name: g.name, grantedBy: g.grantedBy, grantedAt: g.grantedAt,
+  ...(g.reason ? { reason: g.reason } : {}), ...(g.expiresAt ? { expiresAt: g.expiresAt } : {}), active: isActive(g),
+})
+
 export async function userAccessRoutes(fastify: FastifyInstance) {
   fastify.get('/users/:id/access', {
     ...needs('access:read'),
     schema: {
       description:
-        "A user's site access (groups → roles per service) and org access (per org: the org roles assigned there and " +
-        'the org permissions held there, as OPA decides them), and secondFactor (requiredBecause, enrolled, ' +
-        'stepUpPermissions; session fields null). Needs access:read.',
+        "A user's site access (groups → roles per service, and `direct`: roles and permissions held directly, platform-wide) " +
+        'and org access (per org: the org roles assigned there, `direct` grants there, and the org permissions held there, ' +
+        'as OPA decides them), and secondFactor (requiredBecause, enrolled, stepUpPermissions; session fields null). ' +
+        'A direct grant carries source "direct", who granted it and when, its reason and expiry, and whether it still counts. Needs access:read.',
       tags: ['admin'],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
       response: {
@@ -70,7 +88,11 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
           properties: {
             site: {
               type: 'object',
-              properties: { groups: stringList, byService: { type: 'object', additionalProperties: stringList } },
+              properties: {
+                groups: stringList,
+                byService: { type: 'object', additionalProperties: stringList },
+                direct: { type: 'array', items: directGrantView, description: 'Roles and permissions held directly, platform-wide' },
+              },
             },
             orgs: {
               type: 'array',
@@ -81,6 +103,7 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
                   name: { type: 'string' },
                   roles: { ...stringList, description: 'Org roles assigned here (svc:role)' },
                   permissions: { ...stringList, description: 'Org permissions held here (OPA rbac.org_permissions_by_org)' },
+                  direct: { type: 'array', items: directGrantView, description: 'Org roles and permissions held directly here' },
                 },
               },
             },
@@ -107,18 +130,19 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
     // As the RBAC bindings key it: OPA is asked with this, never a lowercased copy.
     const address = String(identity.traits?.email ?? '')
     const metadata = identity.metadata_admin as { groups?: unknown } | null | undefined
-    // Same default the bindings apply to an identity carrying no groups.
+    // No groups is no groups: the base group `users` the previous model added is gone.
     const groups = Array.isArray(metadata?.groups)
       ? metadata.groups.filter((g): g is string => typeof g === 'string')
-      : ['users']
+      : []
 
-    let orgIds: string[], definitions, assignments, held: Record<string, string[]>
+    let orgIds: string[], definitions, assignments, held: Record<string, string[]>, direct: DirectGrant[]
     try {
-      ;[orgIds, definitions, assignments, held] = await Promise.all([
+      ;[orgIds, definitions, assignments, held, direct] = await Promise.all([
         organisationsOf(identity),
         redisRbacRepository.getGroups(),
         orgRolesRepository.getAll(),
         address ? orgPermissionsByOrg(address) : Promise.resolve({}),
+        directGrantsRepository.getFor(id),
       ])
     } catch (err) {
       request.log.warn({ err, id }, '[user-access] a store could not be read')
@@ -138,8 +162,10 @@ export async function userAccessRoutes(fastify: FastifyInstance) {
       name: names[orgId] ?? orgId,
       roles: assignments[orgId]?.[id] ?? [],
       permissions: held[orgId] ?? [],
+      direct: direct.filter((g) => g.scope === orgId).map(directView),
     }))
 
-    return reply.send({ site: { groups, byService }, orgs, secondFactor: await secondFactorOf(id, address, groups) })
+    const site = { groups, byService, direct: direct.filter((g) => g.scope === 'platform').map(directView) }
+    return reply.send({ site, orgs, secondFactor: await secondFactorOf(id, address, groups) })
   })
 }

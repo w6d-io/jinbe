@@ -5398,10 +5398,13 @@ paths:
     get:
       tags:
         - admin
-      description: "A user's site access (groups → roles per service) and org access
-        (per org: the org roles assigned there and the org permissions held
-        there, as OPA decides them), and secondFactor (requiredBecause,
-        enrolled, stepUpPermissions; session fields null). Needs access:read."
+      description: "A user's site access (groups → roles per service, and `direct`:
+        roles and permissions held directly, platform-wide) and org access (per
+        org: the org roles assigned there, `direct` grants there, and the org
+        permissions held there, as OPA decides them), and secondFactor
+        (requiredBecause, enrolled, stepUpPermissions; session fields null). A
+        direct grant carries source \"direct\", who granted it and when, its
+        reason and expiry, and whether it still counts. Needs access:read."
       parameters:
         - schema:
             type: string
@@ -5432,6 +5435,37 @@ paths:
                           type: array
                           items:
                             type: string
+                      direct:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            source:
+                              type: string
+                              enum:
+                                - direct
+                            id:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                              enum:
+                                - role
+                                - permission
+                            name:
+                              type: string
+                            grantedBy:
+                              type: string
+                            grantedAt:
+                              type: string
+                            reason:
+                              type: string
+                            expiresAt:
+                              type: string
+                            active:
+                              type: boolean
+                        description: Roles and permissions held directly, platform-wide
                   orgs:
                     type: array
                     items:
@@ -5451,6 +5485,37 @@ paths:
                           items:
                             type: string
                           description: Org permissions held here (OPA rbac.org_permissions_by_org)
+                        direct:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              source:
+                                type: string
+                                enum:
+                                  - direct
+                              id:
+                                type: string
+                              app:
+                                type: string
+                              kind:
+                                type: string
+                                enum:
+                                  - role
+                                  - permission
+                              name:
+                                type: string
+                              grantedBy:
+                                type: string
+                              grantedAt:
+                                type: string
+                              reason:
+                                type: string
+                              expiresAt:
+                                type: string
+                              active:
+                                type: boolean
+                          description: Org roles and permissions held directly here
                   secondFactor:
                     type: object
                     nullable: true

@@ -19,6 +19,11 @@ const s = vi.hoisted(() => ({
   opaDown: false,
   asked: [] as string[],
   askedRights: [] as string[],
+  direct: [] as Array<Record<string, unknown>>,
+}))
+vi.mock('../../../services/direct-grants.repository.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../services/direct-grants.repository.js')>()),
+  directGrantsRepository: { getFor: vi.fn(async () => s.direct) },
 }))
 
 vi.mock('../../../authz/opa.js', () => ({
@@ -114,6 +119,7 @@ beforeEach(() => {
   s.inOrg = { 'Bob@acme.test': { [GLOBEX]: ['org.keys:read', 'org.members:read', 'org.members:write'] } }
   s.opaDown = false
   s.asked = []
+  s.direct = []
 })
 
 describe('GET /api/admin/users/:id/access', () => {
@@ -124,10 +130,11 @@ describe('GET /api/admin/users/:id/access', () => {
       site: {
         groups: ['kuma-admins', 'fleet-viewers'],
         byService: { kuma: ['admin', 'reader'], fleet: ['viewer'] },
+        direct: [],
       },
       orgs: [
-        { orgId: ACME, name: 'Acme', roles: [], permissions: [] },
-        { orgId: GLOBEX, name: GLOBEX, roles: ['jinbe:owner'], permissions: ['org.keys:read', 'org.members:read', 'org.members:write'] },
+        { orgId: ACME, name: 'Acme', roles: [], permissions: [], direct: [] },
+        { orgId: GLOBEX, name: GLOBEX, roles: ['jinbe:owner'], permissions: ['org.keys:read', 'org.members:read', 'org.members:write'], direct: [] },
       ],
       // kuma-admins can write in kuma, so its switch defaults on; fleet-viewers only reads.
       secondFactor: {
@@ -143,6 +150,29 @@ describe('GET /api/admin/users/:id/access', () => {
     })
     // OPA is asked with the address as the bindings key it (as typed), not a lowercased copy.
     expect(s.asked).toEqual(['Bob@acme.test'])
+  })
+
+  it('shows direct grants, platform-wide and per org, marked direct with who, when, why and until when', async () => {
+    const at = '2026-10-01T10:00:00.000Z'
+    s.direct = [
+      { id: 'g1', scope: 'platform', app: 'jinbe', kind: 'role', name: 'viewer', grantedBy: 'root@example.com', grantedAt: at },
+      { id: 'g2', scope: 'platform', app: 'jinbe', kind: 'permission', name: 'audit:read', reason: 'incident 42', expiresAt: '2999-01-01T00:00:00.000Z', grantedBy: 'root@example.com', grantedAt: at },
+      { id: 'g3', scope: GLOBEX, app: 'jinbe', kind: 'permission', name: 'org.keys:read', expiresAt: '2020-01-01T00:00:00.000Z', grantedBy: 'owner@example.com', grantedAt: at },
+    ]
+    const body = (await app.inject({ url: '/api/admin/users/id-bob/access' })).json()
+    expect(body.site.direct).toEqual([
+      { source: 'direct', id: 'g1', app: 'jinbe', kind: 'role', name: 'viewer', grantedBy: 'root@example.com', grantedAt: at, active: true },
+      { source: 'direct', id: 'g2', app: 'jinbe', kind: 'permission', name: 'audit:read', grantedBy: 'root@example.com', grantedAt: at, reason: 'incident 42', expiresAt: '2999-01-01T00:00:00.000Z', active: true },
+    ])
+    expect(body.orgs.find((o: { orgId: string }) => o.orgId === GLOBEX).direct).toEqual([
+      { source: 'direct', id: 'g3', app: 'jinbe', kind: 'permission', name: 'org.keys:read', grantedBy: 'owner@example.com', grantedAt: at, expiresAt: '2020-01-01T00:00:00.000Z', active: false },
+    ])
+    expect(body.orgs.find((o: { orgId: string }) => o.orgId === ACME).direct).toEqual([])
+  })
+
+  it('an identity with no groups shows none (no base `users` group)', async () => {
+    s.identity = { id: 'id-bob', traits: { email: 'Bob@acme.test' }, metadata_admin: {} }
+    expect((await app.inject({ url: '/api/admin/users/id-bob/access' })).json().site.groups).toEqual([])
   })
 
   it('the second-factor picture asks OPA with the mixed-case address as bound, not a lowercased copy', async () => {
