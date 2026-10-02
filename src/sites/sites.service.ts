@@ -2,7 +2,7 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
-import { render, type Rendered } from './render.js'
+import { render, type Platform, type Rendered } from './render.js'
 import { DELETED_TTL_SECONDS, draftEtagOf, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
@@ -233,9 +233,9 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
 }
 
 /** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
-export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>): Promise<Finding[]> {
-  const [groups, protectionOf, orgsRemoved] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site)])
-  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved })
+export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>, platform?: Pick<Platform, 'roleHeaders' | 'decisionUrl'>): Promise<Finding[]> {
+  const [groups, protectionOf, orgsRemoved, p] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site), platform ?? loadPlatform()])
+  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved, roleHeaders: !!p.roleHeaders && !!p.decisionUrl })
 }
 
 /**
@@ -288,7 +288,7 @@ export async function preview(candidate: Site) {
   const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
   // What apply refuses on (render, context, gatekit, swap), then the security findings.
-  const findings = [...blockingFindings([...checks, ...ctx, ...gk, ...swap]), ...(await findingsFor(site, rendered))]
+  const findings = [...blockingFindings([...checks, ...ctx, ...gk, ...swap]), ...(await findingsFor(site, rendered, platform))]
   const resolvedGates = await resolvedGatesOf(site, rendered)
   return {
     resolvedGates,

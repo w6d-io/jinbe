@@ -198,6 +198,17 @@ describe('sync loop', () => {
     expect((await syncOnce()).rewritten).toEqual([])
   })
 
+  it('a Site CR rendered before passRoles (role headers forwarded on every policy gate) is rewritten once', async () => {
+    await applied()
+    // As e8f7a9b rendered it with SITES_ROLE_HEADERS on: /decision and the three headers on the policy gate.
+    const web = cluster.crs.get('payroll')!.spec.gates.find((g) => g.name === 'web')!
+    web.authorizer = { ...web.authorizer, config: { payload: (web.authorizer.config as { payload: string }).payload, remote: 'http://p/v1/data/rbac/decision', forward_response_headers_to_upstream: ['X-User-Groups', 'X-User-Roles', 'X-User-Permissions'] } }
+    expect((await syncOnce()).rewritten).toEqual(['payroll'])
+    const fixed = cluster.crs.get('payroll')!.spec.gates.find((g) => g.name === 'web')!.authorizer.config as Record<string, unknown>
+    expect(fixed).not.toHaveProperty('remote')
+    expect(fixed.forward_response_headers_to_upstream).toEqual([])
+  })
+
   it('is rate limited: at most SITES_SYNC_MAX_PER_TICK per tick, and a site not twice within the cooldown', async () => {
     process.env.SITES_SYNC_MAX_PER_TICK = '1'
     resetSitesConfig()

@@ -48,7 +48,8 @@ export async function apply(name: string, version: number, actor: Actor, acknowl
  * rollback does not — it puts back a version that was published already.
  */
 export async function assertAcknowledged(record: SiteRecord, acknowledge: readonly string[]): Promise<void> {
-  assertPublishable(await findingsFor(record.site, render(record.site, await loadPlatform())), acknowledge)
+  const platform = await loadPlatform()
+  assertPublishable(await findingsFor(record.site, render(record.site, platform), platform), acknowledge)
 }
 
 export async function applyRecord(record: SiteRecord, actor: Actor, verb: string, details: Record<string, unknown> = {}) {

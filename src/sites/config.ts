@@ -21,9 +21,10 @@ import type { Zone } from './host.js'
  *   SITES_SYNC_INTERVAL_MS re-create missing/drifted Site CRs from the intent every … (60 s; 0 = off).
  *   SITES_SYNC_MAX_PER_TICK  at most this many Site CRs rewritten per sync tick (3).
  *   SITES_ACCESS_URL       login-ui /access page; browser gates of 2FA sites redirect `forbidden` there.
- *   SITES_ROLE_HEADERS     true: policy gates forward X-User-Roles / X-User-Permissions (the caller's roles and
- *                          permissions in the site's app) beside X-User-Groups. Needs the gateway's decision
- *                          proxy to emit them; off (default), both are blanked like every unset identity header.
+ *   SITES_ROLE_HEADERS     the master switch: true lets a policy gate that opts in (gate passRoles) forward
+ *                          X-User-Groups / -Roles / -Permissions (the caller's groups, roles and permissions in
+ *                          the site's app). Needs the gateway's decision proxy to emit them; off (default), or a
+ *                          gate without passRoles, all three are blanked like every unset identity header.
  *   SITES_AUTHZ_DECISION_URL  the decision endpoint those gates ask instead of the boolean /allow (only with
  *                          SITES_ROLE_HEADERS). Unset: the gateway's remote_json remote, /allow → /decision.
  *   SITES_PUBLIC_RATE_LIMIT  requests per minute per IP on the public site endpoints (60).

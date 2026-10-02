@@ -54,6 +54,9 @@ export const gateSchema = z
     errors: z.union([z.enum(['platform', 'website', 'api']), z.array(handlerSchema).min(1).max(8)]),
     methods: z.array(method).min(1).optional(),
     preflight: z.boolean().optional(),
+    // Forward the caller's groups, roles and permissions in this app (X-User-Groups/-Roles/-Permissions)
+    // from the policy decision. Policy gates only, and only with SITES_ROLE_HEADERS on; absent = false.
+    passRoles: z.boolean().optional(),
     // Expert: a raw Oathkeeper match URL for this gate, compile- and overlap-checked by gatekit.
     // Other raw rule overrides (site-ux §6.5) are not accepted yet.
     expert: z.object({ matchUrl: z.string().min(1).max(2048).optional() }).strict().optional(),
