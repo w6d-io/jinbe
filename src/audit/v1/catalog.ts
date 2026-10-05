@@ -48,6 +48,10 @@ export const AUDIT_EVENTS = {
   'org.member.removed': ['directory', 'delete'],
   'org.member.updated': ['directory', 'update'],
   'org.grants.changed': ['authz', 'update'],
+  // Public sign-up through a site (sites/signup) and the domains an org proves it owns.
+  'org.domain.claimed': ['directory', 'create'],
+  'org.domain.verified': ['directory', 'update', 'warn'],
+  'org.domain.removed': ['directory', 'delete'],
   'org.grants.refused': ['authz', 'update', 'warn'],
   'org.admins.changed': ['authz', 'update'],
   // authz v2: org roles on the identity, and an org's owners named from the platform.
@@ -98,6 +102,8 @@ export const AUDIT_EVENTS = {
   'site.logo_removed': ['authz', 'delete'],
   'site.migration_changed': ['authz', 'apply', 'warn'],
   'site.address_changed': ['authz', 'update', 'warn'],
+  'site.signup.joined': ['directory', 'create'],
+  'site.signup.member_removed': ['directory', 'delete', 'warn'],
   // Ephemeral sites (sites/ephemeral.ts): an expiry set, cleared or moved, and the automatic pause.
   'site.ephemeral_set': ['authz', 'update'],
   'site.ephemeral_cleared': ['authz', 'update'],

@@ -6095,6 +6095,40 @@ paths:
                         - twoFactor
                         - reach
                       additionalProperties: false
+                    signUp:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - closed
+                            - open
+                            - domains
+                        domains:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$
+                          maxItems: 100
+                          default: []
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z][a-z0-9_-]{0,39}$
+                          maxItems: 20
+                        orgs:
+                          type: string
+                          enum:
+                            - personal
+                            - domain
+                            - invite
+                            - none
+                      required:
+                        - mode
+                        - roles
+                        - orgs
+                      additionalProperties: false
                     state:
                       type: string
                       enum:
@@ -6844,6 +6878,40 @@ paths:
                         - twoFactor
                         - reach
                       additionalProperties: false
+                    signUp:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - closed
+                            - open
+                            - domains
+                        domains:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$
+                          maxItems: 100
+                          default: []
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z][a-z0-9_-]{0,39}$
+                          maxItems: 20
+                        orgs:
+                          type: string
+                          enum:
+                            - personal
+                            - domain
+                            - invite
+                            - none
+                      required:
+                        - mode
+                        - roles
+                        - orgs
+                      additionalProperties: false
                     state:
                       type: string
                       enum:
@@ -7391,6 +7459,40 @@ paths:
                       required:
                         - twoFactor
                         - reach
+                      additionalProperties: false
+                    signUp:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - closed
+                            - open
+                            - domains
+                        domains:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$
+                          maxItems: 100
+                          default: []
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z][a-z0-9_-]{0,39}$
+                          maxItems: 20
+                        orgs:
+                          type: string
+                          enum:
+                            - personal
+                            - domain
+                            - invite
+                            - none
+                      required:
+                        - mode
+                        - roles
+                        - orgs
                       additionalProperties: false
                     state:
                       type: string
@@ -7967,6 +8069,40 @@ paths:
                         - twoFactor
                         - reach
                       additionalProperties: false
+                    signUp:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum:
+                            - closed
+                            - open
+                            - domains
+                        domains:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$
+                          maxItems: 100
+                          default: []
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                            pattern: ^[a-z][a-z0-9_-]{0,39}$
+                          maxItems: 20
+                        orgs:
+                          type: string
+                          enum:
+                            - personal
+                            - domain
+                            - invite
+                            - none
+                      required:
+                        - mode
+                        - roles
+                        - orgs
+                      additionalProperties: false
                     state:
                       type: string
                       enum:
@@ -8484,6 +8620,62 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/sign-up/members:
+    get:
+      tags: &a5
+        - sites
+        - sign-up
+      description: "Who joined this site's sign-up group (`<site>-users`): id, email,
+        name, joined organizations. At most `limit` (200 by default, 1000 at
+        most); `total` counts everyone"
+      x-permission: users:read
+      x-scope: platform
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    delete:
+      tags: *a5
+      description: Take everybody out of this site's sign-up group (close sign-up
+        first, or new people keep joining). Second factor within 15 minutes
+      x-permission: sites.signup:revoke
+      x-scope: platform
+      x-step-up: true
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/sign-up/members/{identityId}:
+    delete:
+      tags: *a5
+      description: Take one person out of this site's sign-up group. Their account and
+        organizations stay; they lose what the group gave on this site
+      x-permission: sites.signup:revoke
+      x-scope: platform
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: identityId
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/import/preview:
     post:
       tags:
@@ -8793,7 +8985,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration:
     get:
-      tags: &a5
+      tags: &a6
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
@@ -8804,7 +8996,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/preview:
     post:
-      tags: *a5
+      tags: *a6
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
       x-permission: sites:write
@@ -8814,7 +9006,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/parity:
     post:
-      tags: *a5
+      tags: *a6
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
       x-permission: sites:write
@@ -8824,7 +9016,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/dualrun:
     get:
-      tags: *a5
+      tags: *a6
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
       x-permission: sites:read
       x-scope: platform
@@ -8832,7 +9024,7 @@ paths:
         "200":
           description: Default Response
     post:
-      tags: *a5
+      tags: *a6
       description: Start or stop the dual run
       x-permission: sites:write
       x-scope: platform
@@ -8841,7 +9033,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/cutover:
     post:
-      tags: *a5
+      tags: *a6
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
       x-permission: sites:apply
@@ -8852,7 +9044,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/rollback:
     post:
-      tags: *a5
+      tags: *a6
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
       x-permission: sites:apply
@@ -8863,7 +9055,7 @@ paths:
           description: Default Response
   /api/admin/gateway:
     get:
-      tags: &a6
+      tags: &a7
         - gateway
       description: "Every Oathkeeper handler: enabled, global config (secrets masked),
         defaults, the sites using it, form fields; plus rollout status.
@@ -8875,7 +9067,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a6
+      tags: *a7
       description: "Write the Gateway resource (If-Match: the etag you edited). The
         site-operator rolls the gateway pods"
       requestBody:
@@ -8930,7 +9122,7 @@ paths:
           description: Default Response
   /api/admin/gateway/preview:
     post:
-      tags: *a6
+      tags: *a7
       description: "Validate a proposed gateway configuration: handler schemas, in-use
         handlers, fallback, risk flags. Writes nothing"
       requestBody:
@@ -8984,7 +9176,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout:
     get:
-      tags: *a6
+      tags: *a7
       description: Rollout progress of the last gateway change (from the Gateway status)
       x-permission: gateway:read
       x-scope: platform
@@ -8993,7 +9185,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout/events:
     get:
-      tags: *a6
+      tags: *a7
       description: Rollout progress as Server-Sent Events, until it settles
       x-permission: gateway:read
       x-scope: platform
@@ -9002,7 +9194,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollback:
     post:
-      tags: *a6
+      tags: *a7
       description: Restore the configuration before the last change, re-checked
         against the sites using each handler
       requestBody:
@@ -13577,7 +13769,7 @@ paths:
           description: Default Response
   /api/home:
     get:
-      tags: &a7
+      tags: &a8
         - home
       description: "The Home briefing: every module the caller may see, each with its
         own status, freshness and sources"
@@ -14885,7 +15077,7 @@ paths:
                       super_admins."
   /api/home/{module}:
     get:
-      tags: *a7
+      tags: *a8
       description: One Home module (retry after unavailable, or refresh a single
         tile). 403 with status "forbidden" for a module the caller may not see.
       parameters:
@@ -20106,6 +20298,95 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/organizations/{organizationId}/domains:
+    get:
+      tags: *a5
+      description: "This organization's email domains: verified ones bring people who
+        sign up with that domain into it (sites whose sign-up joins by domain);
+        an unverified one shows the TXT record to publish"
+      x-permission: org.members:read
+      x-scope: org
+      x-org-param: organizationId
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: organizationId
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    post:
+      tags: *a5
+      description: Claim an email domain for this organization. Returns the TXT record
+        to publish; nothing is joined by domain until it is verified. A domain
+        another organization has verified is refused
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: organizationId
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/organizations/{organizationId}/domains/{domain}/verify:
+    post:
+      tags: *a5
+      description: Check the domain's TXT record (_auth-verify.<domain> =
+        auth-verify=<token>) and mark the domain verified when it is there
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: organizationId
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: domain
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/organizations/{organizationId}/domains/{domain}:
+    delete:
+      tags: *a5
+      description: "Release a domain: people who sign up with it no longer join this
+        organization (those who did stay)"
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: organizationId
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: domain
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/me/sign-up/continue:
+    post:
+      tags: *a5
+      description: "Continue to <site>: the signed-in person joins the site at `host`
+        when its sign-up is open to them (verified address, allowed domain).
+        Idempotent. `joined: false` says why not"
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
   /api/mcp/token-info:
     post:
       tags:

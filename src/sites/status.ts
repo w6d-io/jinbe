@@ -1,5 +1,6 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import type { Site } from './schemas.js'
+import { signUpStore } from './signup/store.js'
 import { explicitWildcards, render, stableStringify, type Rendered, type SiteCr } from './render.js'
 import { sitesRepository, type SiteDraft, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
@@ -104,7 +105,7 @@ async function permissionItems(name: string, rendered: Rendered): Promise<DriftI
   if (!same(everyOrg, rendered.everyOrg)) items.push({ artefact: `every_org/${name}`, field: '*', expected: rendered.everyOrg, actual: everyOrg })
   const orgMap = await redisRbacRepository.getOrgSites()
   const liveOrgs = Object.entries(orgMap).filter(([, svcs]) => svcs.includes(name)).map(([o]) => o).sort()
-  const wantedOrgs = Object.keys(rendered.orgServiceMap).sort()
+  const wantedOrgs = [...new Set([...Object.keys(rendered.orgServiceMap), ...(await signUpStore.orgsOf(name))])].sort()
   if (!same(liveOrgs, wantedOrgs)) items.push({ artefact: 'org_sites', field: name, expected: wantedOrgs, actual: liveOrgs })
   return items
 }
@@ -161,7 +162,9 @@ export async function acceptDrift(name: string, actor: Actor): Promise<{ draft: 
     folded.push('groups.platform')
   }
   const orgMap = await redisRbacRepository.getOrgSites()
-  const orgs = Object.entries(orgMap).filter(([, svcs]) => svcs.includes(name)).map(([o]) => o)
+  // Orgs made by the site's sign-up stay out of the intent's list: they are kept beside it.
+  const signUpOrgs = new Set(await signUpStore.orgsOf(name))
+  const orgs = Object.entries(orgMap).filter(([o, svcs]) => svcs.includes(name) && !signUpOrgs.has(o)).map(([o]) => o)
   if (stableStringify([...orgs].sort()) !== stableStringify([...site.orgs].sort())) {
     site.orgs = orgs
     folded.push('orgs')

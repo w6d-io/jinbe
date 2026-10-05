@@ -25,6 +25,7 @@ import { adminDirectGrantsRoutes, orgDirectGrantsRoutes } from './routes/direct-
 import { startDirectGrantSweeper } from './services/direct-grants.service.js'
 import { rbacOpalRoutes } from './routes/rbac-opal.routes.js'
 import { publicSitesRoutes } from './sites/public.routes.js'
+import { orgDomainRoutes, signUpSelfRoutes } from './sites/signup/routes.js'
 import { startSitesBackground } from './sites/sync.js'
 import { startAccessRollup } from './audit/gateway/rollup.js'
 import { secondFactorRbacRoutes, secondFactorPublicRoutes, secondFactorSettingsRoutes } from './second-factor/routes.js'
@@ -199,6 +200,8 @@ export async function buildServer() {
       await api.register(orgOwnersRoutes, { prefix: '/admin/organizations/:organizationId' }) // name an org's owners (orgs.owners:write)
       await api.register(adminDirectGrantsRoutes, { prefix: '/admin' }) // per-person direct grants (users.grants:*), and everyone holding them
       await api.register(orgDirectGrantsRoutes, { prefix: '/organizations/:organizationId' }) // a member's direct grants in one org (org.members:*)
+      await api.register(orgDomainRoutes, { prefix: '/organizations/:organizationId' }) // email domains an org proves (sign-up by domain)
+      await api.register(signUpSelfRoutes, { prefix: '/me/sign-up' }) // "Continue to <site>" (site sign-up)
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })

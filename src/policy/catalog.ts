@@ -120,6 +120,10 @@ export const CATALOG = {
   // Approving a deletion request is a deletion: never through a key, never the requester (deletion-requests.ts).
   'sites:delete': p('sites', 'Delete a site; approve or reject a request to delete one', 'critical', { stepUp: true, delegable: 'never' }),
   'sites.requests:approve': p('sites', 'Approve or reject a publication request', 'high', { stepUp: true, delegable: 'never' }),
+  // Public sign-up through a site (sites/signup): drafting it is sites:write; publishing a version
+  // that opens or widens it also needs this, so who exposes a site to the internet is a named holder.
+  'sites.signup:write': p('sites', 'Open or widen public sign-up through a site', 'high', { stepUp: true, delegable: 'never' }),
+  'sites.signup:revoke': p('sites', "Remove people from a site's sign-up group", 'high', { delegable: 'never' }),
   'zones:read': p('sites', 'View zones', 'low'),
   'zones:write': p('sites', 'Create or change a zone', 'high', { stepUp: true, delegable: 'never' }),
   'zones:delete': p('sites', 'Delete a zone', 'critical', { stepUp: true, delegable: 'never' }),

@@ -31,6 +31,7 @@ const EXCEPTIONS: Record<string, string> = {
   // ── The caller's own objects ───────────────────────────────────────────────────────────────────
   'POST /api/audit/saved-queries': "the caller's own saved query; a shared one is refused outside the caller's audit scope",
   'DELETE /api/audit/saved-queries/:id': "deletes only the caller's own saved query (keyed on the caller)",
+  'POST /api/me/sign-up/continue': "the caller joins a site whose own published sign-up is open to them; the site's intent decides what they get, nothing is handed out by the caller",
   'POST /api/me/api-keys': "the caller's own personal key, scopes capped at what they hold; refused to delegated callers",
   'DELETE /api/me/api-keys/:clientId': "revokes the caller's own personal key; refused to delegated callers",
   'POST /api/me/mcp/step-up-requests': "the calling credential asks a link for itself; nothing changes until its holder proves a second factor",

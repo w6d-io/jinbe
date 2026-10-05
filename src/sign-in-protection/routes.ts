@@ -92,6 +92,7 @@ export async function signInGuardHook(request: FastifyRequest, reply: FastifyRep
     traits: b.traits,
     captchaToken: str(b.captcha_token),
     ip: str(b.ip)?.split(',')[0].trim() ?? null,
+    returnTo: str(b.return_to),
   }
   const decision: Decision = input ? await guardFlow(input) : guardSettings({ traits: b.traits, storedTraits: b.stored_traits })
   if (decision.allow) {

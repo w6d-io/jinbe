@@ -158,6 +158,13 @@ export interface GuardInput {
   traits?: unknown
   captchaToken?: string | null
   ip?: string | null
+  /** The flow's return_to: the site a registration signs up through (sites/signup). */
+  returnTo?: string | null
+}
+
+type SignUpSite = {
+  site: import('../sites/schemas.js').Site & { signUp: NonNullable<import('../sites/schemas.js').Site['signUp']> }
+  verdict: (site: SignUpSite['site'], email: string | null | undefined) => Promise<Decision | null>
 }
 
 /** Methods whose sign-in proves the first factor, and so gets the bot check. */
@@ -174,7 +181,19 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
     return { allow: true, result: 'fail_open' }
   }
 
-  if (input.flow === 'registration' && settings.registration.mode === 'closed') {
+  // A site whose own sign-up is open (its intent's signUp) takes the registration under its rules,
+  // even when the platform's sign-up is closed. Loaded lazily: sites/signup imports this module.
+  let signUpSite: SignUpSite | null = null
+  if (input.flow === 'registration' && input.returnTo) {
+    try {
+      const signup = await import('../sites/signup/service.js')
+      const site = await signup.siteForReturnTo(input.returnTo)
+      if (signup.signUpOpen(site)) signUpSite = { site, verdict: signup.siteSignUpVerdict }
+    } catch {
+      signUpSite = null // the sites store unreadable: the platform's own policy decides
+    }
+  }
+  if (input.flow === 'registration' && settings.registration.mode === 'closed' && !signUpSite) {
     return registrationVerdict(input.email, settings.registration) as Decision
   }
   let traits: Traits | undefined
@@ -200,8 +219,14 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
   }
 
   if (input.flow === 'registration') {
-    const verdict = registrationVerdict(input.email, settings.registration)
+    const verdict = signUpSite ? await signUpSite.verdict(signUpSite.site, input.email) : registrationVerdict(input.email, settings.registration)
     if (verdict) return verdict
+    if (signUpSite && input.email) {
+      // Joined once the address is verified (sites/signup onIdentityEvent). A store hiccup must not
+      // refuse the sign-up: the person can still use "Continue to <site>" after signing in.
+      const { signUpStore } = await import('../sites/signup/store.js')
+      await signUpStore.addPending(input.email, signUpSite.site.name).catch(() => {})
+    }
   }
   const patch = traits ? { traits } : {}
   if (failOpen) return { allow: true, result: 'fail_open', ...patch }

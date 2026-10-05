@@ -97,6 +97,24 @@ const maxRoutes = (items: unknown[], ctx: z.RefinementCtx) => {
   if (items.length > max) ctx.addIssue({ code: 'too_big', type: 'array', maximum: max, inclusive: true, message: `at most ${max} routes (SITES_MAX_ROUTES)` })
 }
 
+const SIGN_UP_DOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+export const SIGN_UP_MODES = ['closed', 'open', 'domains'] as const
+export const SIGN_UP_ORGS = ['personal', 'domain', 'invite', 'none'] as const
+export const signUpSchema = z
+  .object({
+    mode: z.enum(SIGN_UP_MODES),
+    domains: z.array(z.string().toLowerCase().regex(SIGN_UP_DOMAIN, 'a domain like example.com')).max(100).default([]),
+    roles: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/)).max(20),
+    orgs: z.enum(SIGN_UP_ORGS),
+  })
+  .strict()
+  .superRefine((s, ctx) => {
+    if (s.mode === 'domains' && s.domains.length === 0) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['domains'], message: 'list at least one domain, or choose open or closed' })
+  })
+export type SignUp = z.infer<typeof signUpSchema>
+/** The platform group a site's signed-up people join, bound to `signUp.roles` on that site only. */
+export const signUpGroupName = (site: string): string => `${site}-users`
+
 const rolesMap = z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/), z.array(z.union([permission, z.literal('*')])))
 
 export const siteSchema = z
@@ -169,9 +187,19 @@ export const siteSchema = z
       })
       .strict()
       .optional(),
+    // Public sign-up through this site (sites/signup): who may create an account from its sign-in
+    // page, the site roles they get (the generated `<site>-users` group) and what organisation they
+    // land in. Absent = closed. Closing keeps the people who already joined.
+    signUp: signUpSchema.optional(),
     state: z.enum(['active', 'paused']).default('active'),
   })
   .strict()
+  .superRefine((site, ctx) => {
+    const group = signUpGroupName(site.name)
+    if (site.groups.platform[group] || site.groups.orgGrantable[group]) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['groups'], message: `'${group}' is the site's sign-up group: set its roles under signUp.roles` })
+    }
+  })
 
 export type Site = z.infer<typeof siteSchema>
 export type Gate = z.infer<typeof gateSchema>

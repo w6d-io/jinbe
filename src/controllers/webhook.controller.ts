@@ -4,6 +4,7 @@ import { env } from '../config/env.js'
 import { auditEventService, type AuditEvent } from '../services/audit-event.service.js'
 import type { AuditEventType } from '../audit/v1/catalog.js'
 import { kratosService } from '../services/kratos.service.js'
+import { onIdentityEvent } from '../sites/signup/service.js'
 
 /**
  * Kratos after-hook webhook (A5).
@@ -170,6 +171,11 @@ export class WebhookController {
     }
 
     await auditEventService.emit(event)
+    // A sign-up through a site joins it once the address is verified: right at registration for a
+    // code sign-up (the code proved the address), else when the verification flow completes.
+    if (!failed && (flowType === 'registration' || flowType === 'verification')) {
+      await onIdentityEvent(identityId, request.log)
+    }
     return reply.status(200).send({ ok: true })
   }
 }

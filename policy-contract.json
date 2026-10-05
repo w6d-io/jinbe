@@ -230,6 +230,18 @@
       "delegable": "never",
       "four_eyes": false
     },
+    "sites.signup:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
+    "sites.signup:revoke": {
+      "scope": "platform",
+      "step_up": false,
+      "delegable": "never",
+      "four_eyes": false
+    },
     "zones:read": {
       "scope": "platform",
       "step_up": false,
@@ -365,6 +377,8 @@
         "orgs:read",
         "settings:read",
         "sites.requests:approve",
+        "sites.signup:revoke",
+        "sites.signup:write",
         "sites:apply",
         "sites:delete",
         "sites:read",
@@ -414,6 +428,7 @@
         "sessions:read",
         "sessions:revoke",
         "settings:read",
+        "sites.signup:revoke",
         "sites:read",
         "stats:read",
         "users.grants:read",
@@ -452,6 +467,8 @@
         "settings.signin:write",
         "settings:read",
         "sites.requests:approve",
+        "sites.signup:revoke",
+        "sites.signup:write",
         "sites:apply",
         "sites:delete",
         "sites:read",
@@ -2225,6 +2242,62 @@
             ],
             "groups": [
               "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/:name/sign-up/members",
+          "permission": "sites.signup:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "staff-security",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/:name/sign-up/members",
+          "permission": "users:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-auditors",
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/sites/:name/sign-up/members/:identityId",
+          "permission": "sites.signup:revoke",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "ops",
+              "security",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-ops",
+              "staff-security",
               "super_admins"
             ]
           }
@@ -4033,6 +4106,13 @@
           }
         },
         {
+          "method": "POST",
+          "path": "/api/me/sign-up/continue",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
           "method": "GET",
           "path": "/api/organizations/:organizationId/api-key-policy",
           "permission": "org.keys:read",
@@ -4153,6 +4233,79 @@
               "auditor",
               "security",
               "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/organizations/:organizationId/domains",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "auditor",
+              "security",
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/organizations/:organizationId/domains",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/organizations/:organizationId/domains/:domain",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/organizations/:organizationId/domains/:domain/verify",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin",
+              "support"
             ]
           }
         },

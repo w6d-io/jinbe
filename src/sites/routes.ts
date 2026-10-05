@@ -16,6 +16,7 @@ import { siteOpsRoutes } from './ops.routes.js'
 import { migrationRoutes } from './migration/routes.js'
 import { siteImportRoutes } from './openapi/routes.js'
 import { siteLifecycleRoutes } from './lifecycle.routes.js'
+import { siteSignUpRoutes } from './signup/routes.js'
 import { setEphemeral } from './ephemeral.js'
 import { sitesConfig } from './config.js'
 
@@ -180,6 +181,7 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   // import, and the one-time migration.
   await fastify.register(siteOpsRoutes)
   await fastify.register(siteLifecycleRoutes)
+  await fastify.register(siteSignUpRoutes)
   await fastify.register(siteImportRoutes)
   await fastify.register(migrationRoutes, { prefix: '/migration' })
 }

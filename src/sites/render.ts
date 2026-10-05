@@ -3,7 +3,7 @@ import type { FlatRolesMap, GroupDefinition, OathkeeperRule, RouteRule } from '.
 import { orgParamProblem } from '../policy/route-org-param.js'
 import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
 import { defaultServiceRoles } from '../services/rbac-defaults.js'
-import { HTTP_METHODS, SYSTEM_SITES, type Access, type Gate, type Handler, type Route, type Site } from './schemas.js'
+import { HTTP_METHODS, SYSTEM_SITES, signUpGroupName, type Access, type Gate, type Handler, type Route, type Site } from './schemas.js'
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
 import { placeHost, type Zone } from './host.js'
 import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
@@ -230,9 +230,17 @@ export function explicitWildcards<T extends Pick<Site, 'routes' | 'roles'> & { e
   return { ...site, roles, ...(everyOrg ? { everyOrg } : {}) }
 }
 
+/**
+ * `user`, in the standard set: somebody who uses the app — reads it and does what its routes ask
+ * `<site>:use` for — without the editor's or admin's reach. What signed-up people get by default.
+ */
+export function userRole(name: string): string[] {
+  return [`${name}:list`, `${name}:read`, `${name}:use`]
+}
+
 export function expandRoles(site: Pick<Site, 'name' | 'roles' | 'routes'>): FlatRolesMap {
   const d = defaultServiceRoles(site.name, declaredPermissions(site))
-  if (site.roles === 'standard') return { admin: d.admin, editor: d.editor, viewer: d.viewer }
+  if (site.roles === 'standard') return { admin: d.admin, editor: d.editor, viewer: d.viewer, user: userRole(site.name) }
   if (site.roles === 'readonly') return { viewer: d.viewer }
   if (site.roles === 'operator') return d
   return site.roles
@@ -377,6 +385,13 @@ export function render(site: Site, platform: Platform): Rendered {
     const unknown = groupRoles.filter((r) => !roles[r])
     if (unknown.length > 0) fail('unknown_role', `group '${group}' maps to unknown role(s) ${unknown.join(', ')}`, `groups.platform.${group}`)
     platformGroups[group] = { [name]: groupRoles }
+  }
+  // The sign-up group: bound to this site's roles only, whatever the mode (closing keeps who joined).
+  if (site.signUp) {
+    const group = signUpGroupName(name)
+    const unknown = site.signUp.roles.filter((r) => !roles[r])
+    if (unknown.length > 0) fail('unknown_role', `sign-up gives unknown role(s) ${unknown.join(', ')}`, 'signUp.roles')
+    if (site.signUp.roles.length > 0) platformGroups[group] = { [name]: [...site.signUp.roles] }
   }
   // Org-grantable entries are the site's org roles: `<site>-x` → org role `x` (assigned as `<site>:x`
   // in one organisation), carrying the permissions of the site roles it names.

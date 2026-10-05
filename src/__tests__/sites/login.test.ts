@@ -202,6 +202,7 @@ describe('S-4 — public branding', () => {
     expect(res.json()).toEqual({
       name: 'payroll', displayName: 'Payroll HQ', logoUrl: null, accent: '#1A2B3C', welcome: 'Hello',
       helpUrl: 'https://help.example.com/', minAal: 'aal2', scope: 'writes', defaultReturnUrl: null,
+      signUp: { open: false, mode: 'closed', domains: [], orgs: 'none' },
     })
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/dev.example.com' })).statusCode).toBe(404)
     expect((await app.inject({ method: 'GET', url: '/api/public/sites/by-host/x.payroll.dev.example.com' })).statusCode).toBe(404)

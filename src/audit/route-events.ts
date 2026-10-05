@@ -144,6 +144,14 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/sites/:name/verify': exempt('reads the rollout and sends anonymous GET/HEAD probes to the public URL; writes nothing (1 per site per 30 s)'),
   'POST /api/admin/sites/:name/drift/accept': route('site.drift_accepted', 'site'),
   'POST /api/admin/sites/:name/restore': route('site.restored', 'site'),
+  // Site sign-up (sites/signup): removals and org domains are emitted by the handler; Continue emits
+  // site.signup.joined from the join itself (only when somebody actually joins).
+  'DELETE /api/admin/sites/:name/sign-up/members/:identityId': by('site.signup.member_removed'),
+  'DELETE /api/admin/sites/:name/sign-up/members': by('site.signup.member_removed'),
+  'POST /api/me/sign-up/continue': by('site.signup.joined'),
+  'POST /api/organizations/:organizationId/domains': by('org.domain.claimed'),
+  'POST /api/organizations/:organizationId/domains/:domain/verify': by('org.domain.verified'),
+  'DELETE /api/organizations/:organizationId/domains/:domain': by('org.domain.removed'),
   'POST /api/admin/sites/:name/requests': route('site.apply_requested', 'site'),
   'POST /api/admin/sites/requests/:id/approve': route('site.request_approved', 'site'),
   'POST /api/admin/sites/requests/:id/reject': route('site.request_rejected', 'site'),

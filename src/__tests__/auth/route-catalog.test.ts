@@ -17,6 +17,7 @@ import { GENERATED_ROUTE_MAP } from '../../policy/route-map.generated.js'
  */
 const CHECKED_INSIDE_A_GUARD: Record<string, string> = {
   'org.audit:read': 'audit/query/scope.ts — the org part of the audit scope (the audit routes are scoped by their own guard)',
+  'sites.signup:write': 'sites/apply.service.ts assertMayWidenSignUp — publishing a version that opens or widens public sign-up (on top of sites:apply)',
 }
 
 let app: FastifyInstance

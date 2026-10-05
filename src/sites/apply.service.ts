@@ -12,7 +12,9 @@ import { assertPublishable } from './findings.js'
 import { auditSite, type Actor } from './audit.js'
 import { setStage, saveApply, startApply, watchApply, withVersion } from './applies.js'
 import { siteLoginStore } from './login-store.js'
-import { siteLoginOf } from './login.js'
+import { liveSite, siteLoginOf } from './login.js'
+import { holdsInJinbe } from '../authz/opa.js'
+import type { Site } from './schemas.js'
 import { assertNoApprovalNeeded } from './requests.js'
 import { assertApplyAllowed } from './migration/migration.service.js'
 import { deletionStore, ephemeralStore } from './lifecycle-store.js'
@@ -55,6 +57,7 @@ export async function assertAcknowledged(record: SiteRecord, acknowledge: readon
 export async function applyRecord(record: SiteRecord, actor: Actor, verb: string, details: Record<string, unknown> = {}) {
   const { site, version } = record
   await assertApplyAllowed()
+  await assertMayWidenSignUp(record.site, actor)
   const records = await sitesRepository.list()
   const rendered = render(site, await loadPlatform())
   if (errorsOf(rendered.checks).length > 0) throw siteError(422, 'invalid_site', 'This version does not render', rendered.checks)
@@ -185,4 +188,26 @@ export async function blastRadius(name: string) {
     apiKeys: null,
     requests24h: null,
   }
+}
+
+/**
+ * Opening a site to public sign-up, or widening it (open after domains, more domains, more roles), is
+ * `sites.signup:write` on top of the publish: whoever drafts a site's sign-up (sites:write) is not who
+ * exposes it. Closing or narrowing needs nothing more than the publish.
+ */
+export async function assertMayWidenSignUp(next: Site, actor: Actor): Promise<void> {
+  const live = await liveSite(next.name)
+  if (!signUpWidens(live?.signUp, next.signUp)) return
+  if (actor.email && (await holdsInJinbe(actor.email, 'sites.signup:write'))) return
+  throw siteError(403, 'sign_up_permission_missing', 'Opening or widening public sign-up on a site needs sites.signup:write: ask somebody who holds it to publish this version')
+}
+
+export function signUpWidens(before: Site['signUp'] | undefined, after: Site['signUp'] | undefined): boolean {
+  const open = (s: Site['signUp'] | undefined) => !!s && s.mode !== 'closed' && s.roles.length > 0
+  if (!open(after)) return false
+  if (!open(before)) return true
+  const b = before!, a = after!
+  if (a.mode === 'open' && b.mode === 'domains') return true
+  if (a.mode === 'domains' && a.domains.some((d) => !b.domains.includes(d))) return true
+  return a.roles.some((r) => !b.roles.includes(r))
 }

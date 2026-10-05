@@ -6,6 +6,7 @@ import { diffList } from '../services/audit-diff.js'
 import { findRouteTies, loadPublishedRouteRules, routeTieConflict, type PinnedHosts } from '../policy/route-ties.js'
 import { assertOrgParams } from '../policy/route-org-param.js'
 import type { Rendered } from './render.js'
+import { signUpStore } from './signup/store.js'
 
 /**
  * A site's permissions in the keys OPA is fed from (route_map, roles, services, groups, its org roles
@@ -97,9 +98,12 @@ async function reconcileGroups(name: string, perms: Permissions): Promise<void> 
  */
 async function reconcileOrgs(name: string, perms: Permissions, actor: AuditActorInput, why: 'published' | 'removed'): Promise<void> {
   const changed: Array<{ org: string; before: string[]; after: string[] }> = []
+  const signUpOrgs = why === 'published' ? await signUpStore.orgsOf(name) : []
   await withRedisLock('org_sites', async () => {
     const map = await redisRbacRepository.getOrgSites()
-    const wanted = new Set(Object.keys(perms.orgServiceMap))
+    // The intent's orgs, plus (while the site is published) the orgs its sign-up made: those are not
+    // in the intent's list (it caps at 500 and is edited by people) and must survive every republish.
+    const wanted = new Set([...Object.keys(perms.orgServiceMap), ...(why === 'published' ? signUpOrgs : [])])
     const write = async (org: string, before: string[], after: string[]) => {
       await redisRbacRepository.setOrgSites(org, after)
       changed.push({ org, before, after })

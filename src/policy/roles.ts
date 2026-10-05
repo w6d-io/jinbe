@@ -63,7 +63,7 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
     permissions: [
       ...PLATFORM_READ, 'audit:read', 'access:check',
       'sites:write', 'sites:apply', 'sites:delete', 'sites.requests:approve',
-      'zones:write', 'zones:delete', 'gateway:apply',
+      'zones:write', 'zones:delete', 'gateway:apply', 'sites.signup:write', 'sites.signup:revoke',
     ],
   },
   developer: {
@@ -85,7 +85,7 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
       ...PLATFORM_READ, ...PEOPLE_READ,
       'sessions:revoke', 'users:disable', 'users:update_email', 'users:reset_second_factor', 'users:verify',
       'groups.members:revoke', 'audit:export', 'policy.bundle:read', 'recert:read', 'recert:manage', 'recert:delete',
-      'users.grants:read',
+      'users.grants:read', 'sites.signup:revoke',
     ],
   },
   super_admin: {

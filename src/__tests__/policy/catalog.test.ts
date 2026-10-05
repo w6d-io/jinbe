@@ -34,6 +34,8 @@ describe('the catalogue', () => {
       'recert:manage', 'sites.requests:approve', 'users:reset_second_factor', 'groups.mfa:write',
       'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
       'users.grants:write',
+      // Site sign-up: exposing a site to the internet and removing people stay with a person.
+      'sites.signup:write', 'sites.signup:revoke',
     ].sort())
   })
 

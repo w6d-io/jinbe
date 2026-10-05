@@ -34,7 +34,7 @@ export async function liveSite(name: string): Promise<Site | null> {
 }
 
 // By the host the applied version serves: a saved, not yet applied, address change moves nothing here.
-async function liveSiteByHost(host: string): Promise<Site | null> {
+export async function liveSiteByHost(host: string): Promise<Site | null> {
   const wanted = host.toLowerCase()
   const live = await liveAddresses(await sitesRepository.list())
   const name = [...live.entries()].sort(([a], [b]) => a.localeCompare(b)).find(([, a]) => a.host === wanted)?.[0]
@@ -52,6 +52,11 @@ export interface PublicSiteLogin {
   scope: 'none' | 'writes' | 'all' | 'routes'
   /** Where login-ui sends the visitor after sign-in; null = Kratos' default return URL. */
   defaultReturnUrl: string | null
+  /**
+   * Public sign-up through this site: login-ui shows "Create account" (and the Company field when an
+   * org is made) only when `open`. `domains` only in domains mode, to say who may sign up.
+   */
+  signUp: { open: boolean; mode: 'closed' | 'open' | 'domains'; domains: string[]; orgs: 'personal' | 'domain' | 'invite' | 'none' }
 }
 
 async function publicView(site: Site | null): Promise<PublicSiteLogin> {
@@ -68,6 +73,12 @@ async function publicView(site: Site | null): Promise<PublicSiteLogin> {
     minAal: siteLoginOf(site) ? 'aal2' : 'aal1',
     scope: site.login?.twoFactor.scope ?? 'none',
     defaultReturnUrl: site.login?.defaultReturnUrl ?? null,
+    signUp: {
+      open: !!site.signUp && site.signUp.mode !== 'closed' && site.signUp.roles.length > 0 && site.state !== 'paused',
+      mode: site.signUp?.mode ?? 'closed',
+      domains: site.signUp?.mode === 'domains' ? site.signUp.domains : [],
+      orgs: site.signUp?.orgs ?? 'none',
+    },
   }
 }
 

@@ -23,6 +23,7 @@ import { addressChecks, addressUrl, liveAddresses, sameAddress, swapChecks } fro
 import { handlerDefaults } from '../gateway/service.js'
 import { resolveGates, type ResolvedGate } from './resolved-gates.js'
 import { organisationsById } from '../services/organisation-store.js'
+import { signUpStore } from './signup/store.js'
 
 /**
  * Reading and editing Sites: list, get, drafts, preview, diff, save, and the editor's helpers
@@ -245,7 +246,8 @@ export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>,
 async function orgsLeaving(site: Site): Promise<Array<{ id: string; name?: string }>> {
   try {
     const map = await redisRbacRepository.getOrgSites()
-    const ids = Object.entries(map).filter(([org, bundle]) => bundle.includes(site.name) && !site.orgs.includes(org)).map(([org]) => org).sort()
+    const signUpOrgs = new Set(await signUpStore.orgsOf(site.name))
+    const ids = Object.entries(map).filter(([org, bundle]) => bundle.includes(site.name) && !site.orgs.includes(org) && !signUpOrgs.has(org)).map(([org]) => org).sort()
     if (ids.length === 0) return []
     const named = new Map((await organisationsById(ids).catch(() => [])).map((o) => [o.id, o.name]))
     return ids.map((id) => (named.get(id) ? { id, name: named.get(id) } : { id }))
