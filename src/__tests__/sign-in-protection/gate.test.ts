@@ -41,6 +41,12 @@ vi.mock('../../services/redis-client.service.js', () => {
   }
 })
 
+vi.mock('../../sites/signup/service.js', () => ({
+  siteForReturnTo: async (url: string | null) => (url?.startsWith('https://shop.example.com') ? { name: 'shop', signUp: { mode: 'open', domains: [], roles: ['user'], orgs: 'personal' } } : null),
+  signUpOpen: (site: { signUp?: { mode: string } } | null) => !!site?.signUp && site.signUp.mode !== 'closed',
+  siteSignUpVerdict: async () => null,
+}))
+
 import { signInGateRoutes } from '../../sign-in-protection/gate-routes.js'
 import { classifySubmit, gateSubmit, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
 import { clientIp } from '../../utils/client-ip.js'
@@ -169,6 +175,16 @@ describe('gate decisions', () => {
     expect(await gateSubmit(send({ flowId: '6a1f2c3d-0000-4000-8000-000000000002', fields: { method: 'code', code: '1' } }), spent())).toMatchObject({ allow: false })
     const other = await gateSubmit(send({ token: 'OTHER.TOKEN', fields: { method: 'code', code: '1' } }), spent())
     expect(other).toMatchObject({ allow: false })
+  })
+
+  it('sign-up through a site whose own sign-up is open passes while the platform sign-up is closed', async () => {
+    const d = defaultSignInProtection()
+    h.config[SIGN_IN_PROTECTION_KEY] = JSON.stringify({ ...d, captcha: { flows: OFF, failMode: 'closed' }, registration: { ...d.registration, mode: 'closed' } })
+    resetSignInProtectionCache()
+    const reg = (returnTo: string | null) => send({ flow: 'registration', token: null, fields: { method: 'code', 'traits.email': 'jane@client.com' }, returnTo: async () => returnTo })
+    expect(await gateSubmit(reg('https://shop.example.com/home'), ok())).toMatchObject({ allow: true, step: 'send' })
+    expect(await gateSubmit(reg('https://kuma.example.com/'), ok())).toMatchObject({ allow: false, result: 'registration_closed' })
+    expect(await gateSubmit(reg(null), ok())).toMatchObject({ allow: false, result: 'registration_closed' })
   })
 
   it('sign-up: the details step’s solve also sends the one code for that address', async () => {

@@ -60,6 +60,25 @@ async function kratosSession(request: FastifyRequest, fetchImpl: typeof fetch): 
   }
 }
 
+/**
+ * Where a registration flow returns to (the site it signs up through, sites/signup): read from Kratos
+ * with the visitor's own cookies (a browser flow is bound to them) or the API flow's id alone.
+ */
+async function registrationReturnTo(request: FastifyRequest, flowId: string | null, fetchImpl: typeof fetch): Promise<string | null> {
+  if (!flowId) return null
+  try {
+    const res = await fetchImpl(`${env.KRATOS_PUBLIC_URL.replace(/\/+$/, '')}/self-service/registration/flows?id=${encodeURIComponent(flowId)}`, {
+      headers: { accept: 'application/json', ...(typeof request.headers.cookie === 'string' ? { cookie: request.headers.cookie } : {}) },
+      signal: AbortSignal.timeout(2000),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { return_to?: unknown }
+    return typeof body.return_to === 'string' ? body.return_to : null
+  } catch {
+    return null
+  }
+}
+
 /** The Kratos flow id from `?flow=`, when it looks like one. */
 function flowIdOf(query: unknown): string | null {
   const v = (query as Record<string, unknown> | null)?.flow
@@ -104,9 +123,11 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
     const ip = clientIp(request)
     const tokenHeader = request.headers[GATE_TOKEN_HEADER]
     const fields = parseSubmitBody(request.headers['content-type'], body)
+    const flowId = flowIdOf(request.query)
     const decision = await gateSubmit({
       flow,
-      flowId: flowIdOf(request.query),
+      flowId,
+      returnTo: () => registrationReturnTo(request, flowId, fetchImpl),
       fields,
       token: submitToken(typeof tokenHeader === 'string' && tokenHeader ? tokenHeader : null, fields),
       ip,

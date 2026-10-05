@@ -213,6 +213,8 @@ export interface GateInput {
   ip: string | null
   /** The live Kratos session this submit carries, if any (asked lazily): its email, or null. */
   session: () => Promise<{ email: string | null } | null>
+  /** A registration's return_to (asked lazily): the site whose own sign-up may take it (sites/signup). */
+  returnTo?: () => Promise<string | null>
 }
 
 const refusal = (step: GateStep, result: GateRefusal, status: 403 | 429 | 503, message: string): GateDecision =>
@@ -261,7 +263,18 @@ async function decide(input: GateInput, fetchImpl?: typeof fetch): Promise<GateD
   // A sign-up the policy refuses is refused here too, before Kratos emails a code to that address
   // (the guard hook would refuse it only once the code came back).
   if (input.flow === 'registration' && settings) {
-    const verdict = registrationVerdict(address, settings.registration)
+    let verdict = registrationVerdict(address, settings.registration)
+    // A site whose own sign-up is open takes the registration under its rules (sites/signup), as the
+    // guard hook does once the code comes back. Loaded lazily: sites/signup imports guard.ts.
+    if (input.returnTo) {
+      try {
+        const signup = await import('../sites/signup/service.js')
+        const site = await signup.siteForReturnTo(await input.returnTo())
+        if (signup.signUpOpen(site)) verdict = await signup.siteSignUpVerdict(site, address)
+      } catch {
+        // the sites store unreadable: the platform's own policy stands
+      }
+    }
     if (verdict && !verdict.allow) return refusal(step, verdict.result as GateRefusal, 403, verdict.message.text)
   }
 
