@@ -1,6 +1,6 @@
 import { redisRbacRepository, type OathkeeperRule } from '../services/redis-rbac.repository.js'
 import { findRouteTies, loadPublishedRouteRules, describeRouteTie, type PinnedHosts } from '../policy/route-ties.js'
-import { SYSTEM_SITES, type Site } from './schemas.js'
+import { SYSTEM_SITES, signUpGroupName, type Site } from './schemas.js'
 import type { Check, Rendered } from './render.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { gatekit, type Probe } from './gatekit.client.js'
@@ -95,6 +95,8 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
 
   const groups = await redisRbacRepository.getGroups()
   for (const group of Object.keys(rendered.groups.platform)) {
+    // The site's own sign-up group is made by its first publish (publish.ts reconcileGroups).
+    if (site.signUp && group === signUpGroupName(site.name)) continue
     if (!groups[group]) checks.push({ level: 'error', code: 'unknown_group', message: `platform group '${group}' does not exist`, path: `groups.platform.${group}` })
   }
 
