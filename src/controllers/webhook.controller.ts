@@ -5,6 +5,7 @@ import { auditEventService, type AuditEvent } from '../services/audit-event.serv
 import type { AuditEventType } from '../audit/v1/catalog.js'
 import { kratosService } from '../services/kratos.service.js'
 import { onIdentityEvent } from '../sites/signup/service.js'
+import { applyAwaiting } from '../second-factor/awaiting-apply.js'
 
 /**
  * Kratos after-hook webhook (A5).
@@ -175,6 +176,10 @@ export class WebhookController {
     // code sign-up (the code proved the address), else when the verification flow completes.
     if (!failed && (flowType === 'registration' || flowType === 'verification')) {
       await onIdentityEvent(identityId, request.log)
+    }
+    // A second factor just enrolled: the groups that waited for it (second-factor/awaiting.ts) apply now.
+    if (!failed && !removed && flowType === 'settings' && method && MFA_METHODS.has(method)) {
+      await applyAwaiting(identityId, request.log)
     }
     return reply.status(200).send({ ok: true })
   }

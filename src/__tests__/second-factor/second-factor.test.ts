@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   } as Record<string, Record<string, string[]>>,
   schedule: vi.fn(),
   emit: vi.fn(async () => 'id'),
+  applyAwaiting: vi.fn(async () => 'applied'),
 }))
 
 vi.mock('../../config/env.js', async (importOriginal) => {
@@ -58,6 +59,12 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
 vi.mock('../../services/redis-lock.js', () => ({ withRedisLock: (_n: string, fn: () => unknown) => fn() }))
 vi.mock('../../services/opal-publisher.js', () => ({ opalPublisher: { schedule: h.schedule } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: h.emit } }))
+vi.mock('../../services/redis-client.service.js', async () => {
+  const { InlineRedisMock } = await import('../sites/mocks.js')
+  const redis = new InlineRedisMock()
+  return { getRedisClient: () => redis, __redis: redis }
+})
+vi.mock('../../second-factor/awaiting-apply.js', () => ({ applyAwaiting: h.applyAwaiting }))
 vi.mock('../../middleware/require-permission.js', async () => (await import('../helpers/permission-stand-ins.js')).permissionStandIn({ readHeader: 'x-test-admin' }))
 vi.mock('../../middleware/require-admin.js', async () => (await import('../helpers/permission-stand-ins.js')).adminStandIn())
 
@@ -72,6 +79,7 @@ import { declaredRoute } from '../../policy/declared-routes.js'
 import { CATALOG } from '../../policy/catalog.js'
 import { ROLES, STAFF_ROLES } from '../../policy/roles.js'
 import { resetSecondFactorStatusCache } from '../../second-factor/status.js'
+import { awaitingSecondFactor } from '../../second-factor/awaiting.js'
 
 const OPAL = { authorization: 'Bearer opal-tok' }
 const COOKIE = 'ory_kratos_session=abc; other=x'
@@ -301,6 +309,19 @@ describe('GET /api/public/second-factor (login-ui, own session only)', () => {
     expect((await get(COOKIE)).json().hasSecondFactor).toBe(false)
     h.methods.mockResolvedValue(['totp'])
     expect((await get(COOKIE)).json().hasSecondFactor).toBe(true)
+  })
+
+  it('groups waiting for a second factor make it required, named, until enrolled; then they are applied', async () => {
+    await awaitingSecondFactor.add('id-nina@x.io', ['staff-developers'], { id: 'id-root', email: 'root@x.io' })
+    h.session.mockResolvedValue(sessionOf('nina@x.io', 'aal1'))
+    expect((await get(COOKIE)).json()).toMatchObject({ secondFactorRequired: true, hasSecondFactor: false, awaitingGroups: ['staff-developers'] })
+    expect(h.applyAwaiting).not.toHaveBeenCalled()
+    h.methods.mockResolvedValue(['totp'])
+    const enrolled = (await get(COOKIE)).json()
+    expect(enrolled).toMatchObject({ secondFactorRequired: true, hasSecondFactor: true })
+    expect(enrolled.awaitingGroups).toBeUndefined()
+    expect(h.applyAwaiting).toHaveBeenCalledWith('id-nina@x.io')
+    await awaitingSecondFactor.remove('id-nina@x.io')
   })
 
   it('other answers are cached briefly per identity + level', async () => {

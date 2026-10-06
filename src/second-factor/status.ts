@@ -3,6 +3,8 @@ import { KratosSessionService, kratosSessionService } from '../services/kratos-s
 import { kratosService, type MfaMethod } from '../services/kratos.service.js'
 import { secondFactorRequired } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { awaitingSecondFactor } from './awaiting.js'
+import { applyAwaiting } from './awaiting-apply.js'
 
 /**
  * `GET /api/public/second-factor` — for login-ui, right after the first factor: must THIS visitor
@@ -13,6 +15,8 @@ import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
  *   hasSecondFactor      — an enrolled TOTP, security key or set of backup codes (Kratos admin API)
  *   methods              — which of those are enrolled
  *   aal                  — the session's level, so the caller can tell "enrol" from "step up"
+ *   awaitingGroups       — groups added while they had no second factor (awaiting.ts): they count as
+ *                          required, so the person is sent to enrolment, and are applied once enrolled
  *
  * Failures are 503 with a code (`policy_unavailable`, `identity_unavailable`). login-ui then lets the
  * sign-in finish: the UI step is a convenience, and the refusal that matters happens server-side —
@@ -28,6 +32,8 @@ export interface SecondFactorStatus {
   hasSecondFactor: boolean
   methods: MfaMethod[]
   aal: string
+  /** Groups waiting for this person's second factor; present only when some are. */
+  awaitingGroups?: string[]
 }
 
 export type StatusError = Error & { statusCode: number; code: string }
@@ -66,7 +72,19 @@ export async function secondFactorStatus(cookieHeader: string | undefined): Prom
     throw statusError(503, 'identity_unavailable', 'Your second factors cannot be read right now')
   }
 
-  const status: SecondFactorStatus = { secondFactorRequired: required, hasSecondFactor: methods.length > 0, methods, aal: session.aal }
+  // Waiting groups: required now; applied as soon as a factor is enrolled (also done by the settings hook).
+  let awaitingGroups: string[] = []
+  try {
+    awaitingGroups = (await awaitingSecondFactor.get(session.identityId))?.groups ?? []
+    if (awaitingGroups.length > 0 && methods.length > 0) await applyAwaiting(session.identityId)
+  } catch {
+    /* the store unreadable: the policy's answer stands */
+  }
+  if (awaitingGroups.length > 0) required = true
+  const status: SecondFactorStatus = {
+    secondFactorRequired: required, hasSecondFactor: methods.length > 0, methods, aal: session.aal,
+    ...(awaitingGroups.length > 0 && methods.length === 0 ? { awaitingGroups } : {}),
+  }
   if (!(required && !status.hasSecondFactor)) {
     if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!)
     cache.set(key, { at: Date.now(), status })

@@ -8,6 +8,7 @@ import { withRedisLock } from './redis-lock.js'
 import { applyGroupChange, groupsForSubjects } from './organisation-store.js'
 import { STEP_UP_MAX_AGE_MS, stepUpFailure } from './step-up.js'
 import { secondFactorRefusal } from '../second-factor/requirements.js'
+import { awaitingSecondFactor } from '../second-factor/awaiting.js'
 import { getGroupSecondFactorFlags, type GroupFlag } from '../second-factor/settings.js'
 import {
   GroupCatalogueUnavailableError,
@@ -64,6 +65,8 @@ export type ApplyGroupUpdateInput = {
   actor: GroupUpdateActor
   auditEventType: string
   auditExtraDetails?: Record<string, unknown>
+  /** Replaying groups that waited for the target's second factor (awaiting.ts): the actor's step-up was asked when they added them. */
+  awaitedSecondFactor?: boolean
 }
 
 export type ApplyGroupUpdateResult =
@@ -238,25 +241,20 @@ class UserGroupsService {
         },
       }
     }
+    // Not enrolled yet: those groups wait for their second factor instead (second-factor/awaiting.ts),
+    // which sends the person straight to enrolment and applies them once enrolled. Never a membership.
     const requiring = newlyAdded.filter((g) => flags.get(g)?.required === true)
-    if (requiring.length > 0) {
-      const blocker = (await this.hasSecondFactor(identity.id)) ? null : requiring[0]
-      if (blocker) {
-        this.emitDenied('mfa_required', identity, actor, blocker, 422)
-        return {
-          ok: false,
-          status: 422,
-          body: {
-            applied: false,
-            error: 'mfa_required',
-            message: `Group '${blocker}' requires its members to use two-step sign-in; ${identity.email} must enroll a second factor (TOTP, security key, or backup codes) before being added.`,
-            targetEmail: identity.email,
-            targetGroups: requiring,
-            hint: 'Have the user complete /settings → Authenticator app, then retry.',
-            ...secondFactorRefusal('enrol_before_joining', { groups: requiring }),
-          },
-        }
-      }
+    const awaiting = requiring.length > 0 && !(await this.hasSecondFactor(identity.id)) ? requiring : []
+    const effective = finalGroups.filter((g) => !awaiting.includes(g))
+    // Kept as the adder's: without one to replay it as, it is refused as before.
+    if (awaiting.length > 0 && !(actor.id && actor.email)) {
+      this.emitDenied('mfa_required', identity, actor, awaiting[0], 422)
+      return { ok: false, status: 422, body: {
+        applied: false, error: 'mfa_required', targetEmail: identity.email, targetGroups: awaiting,
+        message: `Group '${awaiting[0]}' requires its members to use two-step sign-in; ${identity.email} must enroll a second factor before being added.`,
+        hint: 'Have the user complete /settings → Authenticator app, then retry.',
+        ...secondFactorRefusal('enrol_before_joining', { groups: awaiting }),
+      } }
     }
 
     // STEP-UP (R2, final gate): the actor is authorized and the target satisfies
@@ -265,13 +263,22 @@ class UserGroupsService {
     // actor still gets the precise authority denial (401/403/privilege_escalation),
     // and a stale factor blocks the WRITE. Fires only for a privilege-gated change;
     // fail-closed on missing AAL/timestamp.
-    if (gated.length > 0) {
+    if (gated.length > 0 && !input.awaitedSecondFactor) {
       const stale = this.stepUpDenial(actor, identity.email)
       if (stale) {
         const body = stale.ok ? {} : (stale.body as { error?: string; stepUp?: { observed?: unknown } })
         this.emitDenied(body.error || 'reauth_required', identity, actor, gated[0], 422, body.stepUp?.observed)
         return stale
       }
+    }
+
+    const waiting = awaiting.length > 0
+      ? { awaitingSecondFactor: await awaitingSecondFactor.add(identity.id, awaiting, { id: actor.id!, email: actor.email! }).then((e) => ({ groups: e.groups, expiresAt: e.expiresAt })) }
+      : {}
+    const response = () => ({ ok: true as const, response: { id: identity.id, organizationId: identity.organizationId, email: identity.email, groups: effective, updatedAt: new Date().toISOString(), ...waiting } })
+    if (awaiting.length > 0 && effective.length === oldGroups.length && effective.every((g) => oldGroups.includes(g))) {
+      this.emitAwaiting(identity, actor, awaiting)
+      return response()
     }
 
     // In the kratos organisation store the groups ARE metadata_admin.groups: applyGroupChange does
@@ -290,15 +297,15 @@ class UserGroupsService {
     // GRANTS GO TO THE ENFORCED STORE LAST, for the mirror reason: a right that is enforced before
     // anything shows it is a silent privilege. Shown-but-not-yet-enforced is merely broken, and
     // visibly so.
-    const revoked = oldGroups.filter((g) => !finalGroups.includes(g))
-    const granted = finalGroups.filter((g) => !oldGroups.includes(g))
+    const revoked = oldGroups.filter((g) => !effective.includes(g))
+    const granted = effective.filter((g) => !oldGroups.includes(g))
 
     // The revocations first and in ONE transaction. Applied a statement at a time, a failure halfway
     // left somebody holding part of what was asked and part of what was not — a state nobody
     // requested, that no gate decided, and that the screen would then read back as the truth.
     await applyGroupChange(identity.id, revoked, [], actor.email ?? undefined)
 
-    await kratosService.updateUserGroups(identity.email, finalGroups)
+    await kratosService.updateUserGroups(identity.email, effective)
 
     await applyGroupChange(identity.id, [], granted, actor.email ?? undefined)
 
@@ -315,29 +322,24 @@ class UserGroupsService {
       // Keep oldGroups/newGroups in details for back-compat; the structural
       // before→after (A3) lives in `changes`, and targetEmail powers the
       // per-user "done-to" trail (P1-4).
-      details: { ...(auditExtraDetails ?? {}), oldGroups, newGroups: finalGroups, targetEmail: identity.email },
-      changes: diffUserGroups(identity.id, oldGroups, finalGroups),
+      details: { ...(auditExtraDetails ?? {}), oldGroups, newGroups: effective, targetEmail: identity.email, ...(awaiting.length ? { awaitingSecondFactor: awaiting } : {}) },
+      changes: diffUserGroups(identity.id, oldGroups, effective),
       source: 'jinbe-api',
     }).catch(() => {})
 
-    return {
-      ok: true,
-      response: {
-        id: identity.id,
-        organizationId: identity.organizationId,
-        email: identity.email,
-        groups: finalGroups,
-        updatedAt: new Date().toISOString(),
-      },
-    }
+    return response()
     }) // end withRedisLock(user-groups:<email>)
   }
 
-  /**
-   * Emit a denied group-mutation (A2). These are the highest-signal audit
-   * events (an attempted privilege change that was refused) and were previously
-   * silent. Fail-open on the emit — never block the denial itself.
-   */
+  /** Groups kept until the target enrols (awaiting.ts): in the trail like any change, nothing granted yet. */
+  private emitAwaiting(identity: ResolvedIdentity, actor: GroupUpdateActor, groups: string[]): void {
+    auditEventService.emit({
+      category: 'access', kind: 'change', verb: 'assign', target: `user:${identity.email}`, result: 'ok', reason: 'awaiting_second_factor',
+      actor: { id: actor.id, email: actor.email ?? null, ip: actor.ip, name: actor.name, ua: actor.ua, sessionId: actor.sessionId, ...(actor.act ? { act: actor.act } : {}) },
+      requestId: actor.requestId, details: { awaitingSecondFactor: groups, targetEmail: identity.email }, source: 'jinbe-api',
+    }).catch(() => {})
+  }
+
   /**
    * Whether the target has a second factor enrolled. A lookup failure answers NO — refusing a
    * privileged grant we could not verify is the safe way to be wrong.
@@ -350,6 +352,7 @@ class UserGroupsService {
     }
   }
 
+  /** A denied group-mutation (A2), the highest-signal audit event. Fail-open on the emit. */
   private emitDenied(
     reason: string,
     identity: ResolvedIdentity,

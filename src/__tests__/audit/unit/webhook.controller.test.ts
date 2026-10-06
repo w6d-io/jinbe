@@ -17,6 +17,10 @@ vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn().mockResolvedValue('1-0') },
 }))
 
+// A second factor enrolled applies the groups that waited for it (second-factor/awaiting.ts).
+const awaiting = vi.hoisted(() => ({ apply: vi.fn(async () => 'none') }))
+vi.mock('../../../second-factor/awaiting-apply.js', () => ({ applyAwaiting: awaiting.apply }))
+
 import { webhookController, verifyKratosWebhookAuth } from '../../../controllers/webhook.controller.js'
 import { auditEventService, type AuditEvent } from '../../../services/audit-event.service.js'
 import { legacyToV1 } from '../../../audit/v1/legacy-map.js'
@@ -145,5 +149,15 @@ describe('Kratos webhook — the chart body carries the actor (AUD-0b)', () => {
     const e = await hook({ ...flow, ...chart })
     expect(e.v1Event).toBe(event)
     expect(e.actor.id).toBe('kratos-uuid-7')
+  })
+
+  it('a second factor enrolled applies the groups waiting for it; anything else does not', async () => {
+    await hook({ flow: 'settings', method: 'totp', ...chart })
+    expect(awaiting.apply).toHaveBeenCalledWith('kratos-uuid-7', expect.anything())
+    awaiting.apply.mockClear()
+    await hook({ flow: 'settings', method: 'password', ...chart })
+    await hook({ flow: 'settings', method: 'totp', outcome: 'removed', ...chart })
+    await hook({ flow: 'login', method: 'totp', ...chart })
+    expect(awaiting.apply).not.toHaveBeenCalled()
   })
 })

@@ -7,6 +7,7 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { addToGroup, groupsForSubjects, membersOfGroup, removeFromGroup } from '../services/organisation-store.js'
 import { getGroupSecondFactorFlags } from '../second-factor/settings.js'
+import { awaitingSecondFactor } from '../second-factor/awaiting.js'
 import { actorOf, handle, nameOf, parse } from './http.js'
 import { siteError } from './checks.js'
 import { liveSite } from './login.js'
@@ -69,7 +70,7 @@ async function publishedSite(name: string): Promise<Site> {
   return site
 }
 
-function audit(event: 'site.members.added' | 'site.members.removed', verb: string, site: string, group: string, who: { id: string; email: string | null }, actor: ReturnType<typeof actorOf>) {
+function audit(event: 'site.members.added' | 'site.members.removed' | 'site.members.awaiting_second_factor', verb: string, site: string, group: string, who: { id: string; email: string | null }, actor: ReturnType<typeof actorOf>) {
   Promise.resolve()
     .then(() => auditEventService.emit({
       category: 'access',
@@ -114,7 +115,7 @@ export async function siteMemberRoutes(fastify: FastifyInstance) {
 
   fastify.post('/:name/members', {
     ...needs('sites.members:write'),
-    schema: { description: "Add somebody who has an account to one of the site's own groups: they get its roles on this site. A group that requires two-step sign-in refuses a person without a second factor", tags: TAGS },
+    schema: { description: "Add somebody who has an account to one of the site's own groups: they get its roles on this site. A group that requires two-step sign-in waits for a person without a second factor (202): they are asked to set one up and join once they have", tags: TAGS },
   }, handle(async (request, reply) => {
     const site = await publishedSite(nameOf(request))
     const { group, email } = parse(addBody, request.body)
@@ -123,7 +124,12 @@ export async function siteMemberRoutes(fastify: FastifyInstance) {
     if (!identity) throw siteError(404, 'no_account', `Nobody has an account with ${email}: they sign up (when the site allows it), or support invites them`)
     const flags = await getGroupSecondFactorFlags()
     if (flags.get(group)?.required && !(await kratosService.hasMFA(identity.id))) {
-      throw siteError(422, 'mfa_required', `'${group}' requires two-step sign-in: ${email} must set up a second factor first`)
+      // They join once enrolled (second-factor/awaiting.ts), asked to set it up at their next visit.
+      const by = actorOf(request)
+      if (!by.id || !by.email) throw siteError(422, 'mfa_required', `'${group}' requires two-step sign-in: ${email} must set up a second factor first`)
+      const waiting = await awaitingSecondFactor.add(identity.id, [group], { id: by.id, email: by.email })
+      audit('site.members.awaiting_second_factor', 'create', site.name, group, { id: identity.id, email }, by)
+      return reply.status(202).send({ added: false, group, id: identity.id, awaitingSecondFactor: { groups: waiting.groups, expiresAt: waiting.expiresAt } })
     }
     const current = (await groupsForSubjects([identity.id])).get(identity.id) ?? []
     if (current.includes(group)) return reply.status(200).send({ added: false, group, id: identity.id })

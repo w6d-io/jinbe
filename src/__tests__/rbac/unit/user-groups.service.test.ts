@@ -20,6 +20,12 @@ vi.mock('../../../services/organisation-store.js', () => ({
   organisationStoreConfigured: vi.fn().mockReturnValue(true),
 }))
 
+vi.mock('../../../services/redis-client.service.js', async () => {
+  const { InlineRedisMock } = await import('../../sites/mocks.js')
+  const redis = new InlineRedisMock()
+  return { getRedisClient: () => redis }
+})
+
 vi.mock('../../../services/redis-lock.js', () => ({
   withRedisLock: (_name: string, fn: () => unknown) => fn(),
 }))
@@ -58,6 +64,7 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 
 import { userGroupsService, type ResolvedIdentity } from '../../../services/user-groups.service.js'
 import { kratosService } from '../../../services/kratos.service.js'
+import { awaitingSecondFactor } from '../../../second-factor/awaiting.js'
 import { rbacService } from '../../../services/rbac.service.js'
 import { applyGroupChange, groupsForSubjects } from '../../../services/organisation-store.js'
 import { auditEventService } from '../../../services/audit-event.service.js'
@@ -435,6 +442,43 @@ describe('userGroupsService.applyGroupUpdate — MFA gate', () => {
       const message = (result as { body: { message: string } }).body.message
       expect(message).toContain("Group 'devs' requires its members to use two-step sign-in")
       expect(message).not.toContain('admin privileges')
+    })
+
+    // A named adder: the groups wait for the target's second factor (awaiting.ts) instead of a refusal.
+    const NAMED = { ...ACTOR, id: 'actor-1' }
+    it('added by a named actor, a target without a second factor waits for it: nothing granted, the wait kept and said', async () => {
+      secondFactorSwitch.flags.devs = true
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
+      const result = await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['devs'], actor: NAMED, auditEventType: 'user.groups_changed' })
+      expect(result).toMatchObject({ ok: true, response: { groups: [], awaitingSecondFactor: { groups: ['devs'] } } })
+      expect(allGranted()).toEqual([])
+      expect(kratosService.updateUserGroups).not.toHaveBeenCalled()
+      expect(await awaitingSecondFactor.get(IDENTITY.id)).toMatchObject({ groups: ['devs'], by: { id: 'actor-1', email: 'actor@example.com' } })
+      await awaitingSecondFactor.remove(IDENTITY.id)
+    })
+
+    it('the rest of the change applies; only the switched-on group waits', async () => {
+      secondFactorSwitch.flags.devs = true
+      groupCatalogue.groups = { ...groupCatalogue.groups, readers: { jinbe: ['viewer'] } }
+      secondFactorSwitch.flags.readers = false
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(false)
+      const result = await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: ['devs', 'readers'], actor: NAMED, auditEventType: 'user.groups_changed' })
+      expect(result).toMatchObject({ ok: true, response: { groups: ['readers'], awaitingSecondFactor: { groups: ['devs'] } } })
+      expect(allGranted()).toEqual(['readers'])
+      await awaitingSecondFactor.remove(IDENTITY.id)
+    })
+
+    it('replayed once enrolled, as the adder, without asking their step-up again', async () => {
+      secondFactorSwitch.flags.devs = true
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
+      const stale = { id: 'actor-1', email: 'actor@example.com' }
+      const result = await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: [], addGroups: ['devs'], actor: stale, auditEventType: 'user.groups_changed', awaitedSecondFactor: true })
+      expect(result).toMatchObject({ ok: true, response: { groups: ['devs'] } })
+      expect(allGranted()).toEqual(['devs'])
+      // Without the replay flag the same stale actor is asked to step up.
+      vi.clearAllMocks(); holds()
+      vi.mocked(kratosService.hasMFA).mockResolvedValue(true)
+      expect(await userGroupsService.applyGroupUpdate({ identity: IDENTITY, newGroups: [], addGroups: ['devs'], actor: stale, auditEventType: 'user.groups_changed' })).toMatchObject({ ok: false, status: 422 })
     })
 
     it('an enrolled target joins a switched-on group', async () => {

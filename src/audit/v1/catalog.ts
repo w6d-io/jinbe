@@ -110,6 +110,8 @@ export const AUDIT_EVENTS = {
   'site.signup.joined': ['directory', 'create'],
   'site.signup.member_removed': ['directory', 'delete', 'warn'],
   'site.members.added': ['access', 'create'],
+  // Added to a 2FA site group before enrolling: joins once they have (second-factor/awaiting.ts).
+  'site.members.awaiting_second_factor': ['access', 'create'],
   'site.members.removed': ['access', 'delete'],
   // Ephemeral sites (sites/ephemeral.ts): an expiry set, cleared or moved, and the automatic pause.
   'site.ephemeral_set': ['authz', 'update'],
