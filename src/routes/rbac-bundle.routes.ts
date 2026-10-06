@@ -78,16 +78,21 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      const raw = (request.query as { sections?: string })?.sections
+      // A section name this release does not know is refused, never dropped: an import filtered down to
+      // nothing would otherwise run as a FULL restore (e.g. ?sections=oathkeeperRules, no longer a section).
+      const asked = raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : undefined
+      const unknown = asked?.filter((s) => !(ALL_BUNDLE_SECTIONS as string[]).includes(s)) ?? []
+      if (asked && (asked.length === 0 || unknown.length > 0)) {
+        return reply.status(400).send({ error: 'unknown_section', message: `Unknown section(s): ${unknown.join(', ') || '(none given)'}. Known: ${ALL_BUNDLE_SECTIONS.join(', ')}` })
+      }
+      const sections = asked as BundleSection[] | undefined
+
       const bundle = request.body as AuthBundle
       // Uploaded file must still be a FULL snapshot — a selective import picks
       // which parts of that snapshot to apply, it does not accept a partial file.
       const err = bundleProblem(bundle)
       if (err) return reply.status(400).send({ error: 'Bad Request', message: err })
-
-      const raw = (request.query as { sections?: string })?.sections
-      const sections = raw
-        ? raw.split(',').map((s) => s.trim()).filter((s): s is BundleSection => (ALL_BUNDLE_SECTIONS as string[]).includes(s))
-        : undefined
 
       const result = await rbacBundleService.import(bundle, auditActor(request), sections)
       return { success: true, imported: result }

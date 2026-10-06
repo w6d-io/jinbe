@@ -81,3 +81,14 @@ describe('sensitive writes need a fresh second factor', () => {
     expect((await call(method, url, 'reader', true, body)).statusCode).toBe(403)
   })
 })
+
+describe('an import naming an unknown section', () => {
+  it('is refused (400) instead of running as a full restore', async () => {
+    const { rbacBundleService } = await import('../../../services/rbac-bundle.service.js')
+    const before = vi.mocked(rbacBundleService.import).mock.calls.length
+    const res = await call('POST', '/api/admin/rbac/bundle/import?sections=oathkeeperRules', 'root', true, { version: 1 })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toBe('unknown_section')
+    expect(vi.mocked(rbacBundleService.import).mock.calls.length).toBe(before)
+  })
+})
