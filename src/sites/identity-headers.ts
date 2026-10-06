@@ -25,6 +25,9 @@ import type { Gate, Handler, Site } from './schemas.js'
 export const PLATFORM_IDENTITY_HEADERS = [
   'x-user-id', 'x-user-email', 'x-user-groups', 'x-email', 'x-id', 'x-tenant-id', 'x-type',
   'x-person-uuid', 'x-applicant-uuid', 'x-client-id', 'x-token-scope', 'x-user-roles', 'x-user-permissions',
+  // Organization context: only the platform may say which organization a caller acts in. A copy the
+  // client sends never reaches the upstream (opa-authz-proxy emits X-User-Organizations).
+  'x-user-organizations', 'x-org-id', 'x-org-roles',
 ]
 
 /**
