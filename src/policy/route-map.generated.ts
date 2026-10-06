@@ -31,6 +31,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"PATCH","path":"/api/admin/organizations/:id","permission":"orgs:write"},
   {"method":"GET","path":"/api/admin/organizations/:id/api-keys","permission":"orgs:read"},
   {"method":"POST","path":"/api/admin/organizations/:id/api-keys","permission":"orgs.keys:write"},
+  {"method":"DELETE","path":"/api/admin/organizations/:id/api-keys/:clientId","permission":"orgs.keys:write"},
   {"method":"GET","path":"/api/admin/organizations/:id/api-keys/scopes","permission":"orgs.keys:write"},
   {"method":"PUT","path":"/api/admin/organizations/:organizationId/owners","permission":"orgs.owners:write"},
   {"method":"POST","path":"/api/admin/rbac/access-check","permission":"access:check"},

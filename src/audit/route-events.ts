@@ -73,6 +73,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'PUT /api/organizations/:organizationId/users/:id/grants': by(['user.grant.granted', 'user.grant.revoked', 'user.grant.refused']),
   'DELETE /api/organizations/:organizationId/users/:id/grants/:grantId': by(['user.grant.revoked', 'user.grant.refused']),
   'POST /api/admin/organizations/:id/api-keys': by('apikey.created'),
+  'DELETE /api/admin/organizations/:id/api-keys/:clientId': by('apikey.revoked'),
   'DELETE /api/organizations/:organizationId/api-keys/:clientId': by('apikey.revoked'),
   'PUT /api/organizations/:organizationId/api-key-policy': by('apikey.policy_changed'),
   'POST /api/me/api-keys': by('apikey.created'),

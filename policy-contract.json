@@ -942,6 +942,22 @@
           }
         },
         {
+          "method": "DELETE",
+          "path": "/api/admin/organizations/:id/api-keys/:clientId",
+          "permission": "orgs.keys:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "GET",
           "path": "/api/admin/organizations/:id/api-keys/scopes",
           "permission": "orgs.keys:write",

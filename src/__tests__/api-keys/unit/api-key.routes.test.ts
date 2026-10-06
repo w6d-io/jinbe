@@ -47,6 +47,7 @@ vi.mock('../../../services/api-key.service.js', async (importOriginal) => {
       }),
       list: vi.fn(async () => [{ client_id: 'k1', created_by: 'u2' }]),
       get: vi.fn(async () => ({ client_id: 'k1', created_by: 'u2' })),
+      revoke: vi.fn(async () => {}),
     },
   }
 })
@@ -95,6 +96,7 @@ describe('API-key routes', () => {
     expect(declaredRoute('POST', '/api/admin/organizations/:id/api-keys')).toMatchObject({ permission: 'orgs.keys:write', stepUp: true })
     expect(declaredRoute('GET', '/api/admin/organizations/:id/api-keys/scopes')?.permission).toBe('orgs.keys:write')
     expect(declaredRoute('GET', '/api/admin/organizations/:id/api-keys')?.permission).toBe('orgs:read')
+    expect(declaredRoute('DELETE', '/api/admin/organizations/:id/api-keys/:clientId')?.permission).toBe('orgs.keys:write')
     expect(s.platformAsked).toEqual(expect.arrayContaining(['orgs.keys:write', 'orgs:read']))
   })
 

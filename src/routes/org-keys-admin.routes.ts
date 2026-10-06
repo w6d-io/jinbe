@@ -121,4 +121,33 @@ export async function orgKeysAdminRoutes(fastify: FastifyInstance) {
       return handleError(err, reply)
     }
   })
+
+  fastify.delete('/organizations/:id/api-keys/:clientId', {
+    ...needs('orgs.keys:write'),
+    schema: {
+      description: "Revoke one of an organisation's API keys from the platform (the staff who create them). Its org's own " +
+        'org.keys:revoke holders revoke through /api/organizations/:organizationId/api-keys/:clientId.',
+      tags: ['api-keys'],
+      params: { type: 'object', required: ['id', 'clientId'], properties: { id: { type: 'string', format: 'uuid' }, clientId: { type: 'string', minLength: 1, maxLength: 128 } } },
+      response: { 204: { type: 'null' }, 401: unauthorizedResponseSchema, 403: forbiddenResponseSchema, 404: notFound, 503: serviceUnavailableResponseSchema },
+    },
+  }, async (request: FastifyRequest<{ Params: { id: string; clientId: string } }>, reply: FastifyReply) => {
+    const missing = await organisationMissing(request as unknown as OrgRequest, reply)
+    if (missing) return missing
+    const { id, clientId } = request.params
+    try {
+      await apiKeyService.revoke(id, clientId)
+      const a = auditActor(request)
+      auditEventService.emit({
+        type: 'api_key.revoked',
+        actor: { email: a.email ?? undefined, ip: a.ip },
+        target: { type: 'oauth2_client', id: clientId },
+        details: { organizationId: id, via: 'platform' },
+        source: 'jinbe-api',
+      }).catch(() => {})
+      return reply.status(204).send()
+    } catch (err) {
+      return handleError(err, reply)
+    }
+  })
 }
