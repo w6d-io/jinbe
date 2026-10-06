@@ -39,6 +39,19 @@ export function siteGroupsOf(site: Site): Record<string, string[]> {
   return out
 }
 
+/**
+ * Whether `group` is one site's own group (siteGroupsOf its published intent) binding that site and
+ * nothing else: whoever holds sites.members:write may hand it out anywhere a group is given (a new
+ * user, Users → groups, bulk), as from the site's page.
+ */
+export async function isOwnSiteGroup(group: string): Promise<boolean> {
+  const def = (await redisRbacRepository.getGroups())[group]
+  const apps = def ? Object.keys(def) : []
+  if (apps.length !== 1) return false
+  const site = await liveSite(apps[0])
+  return !!site && group in siteGroupsOf(site)
+}
+
 /** The published group, only when it binds this site and nothing else. */
 async function ownedGroup(site: Site, group: string): Promise<string[]> {
   const roles = siteGroupsOf(site)[group]

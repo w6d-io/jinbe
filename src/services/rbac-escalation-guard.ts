@@ -1,4 +1,4 @@
-import { AuthzUnavailableError, grantVerdict, rights, type GrantQuestion, type GrantVerdict } from '../authz/opa.js'
+import { AuthzUnavailableError, grantVerdict, holdsInJinbe, rights, type GrantQuestion, type GrantVerdict } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { redisRbacRepository, type GroupDefinition } from './redis-rbac.repository.js'
 import { auditEventService, type AuditActorInput } from './audit-event.service.js'
@@ -153,10 +153,22 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
 
 /**
  * Handing out a group (PUT /api/admin/users/:email/groups, the bulk add): the policy's
- * `add_to_group` verdict. A group nothing defines is refused earlier, as not in the model.
+ * `add_to_group` verdict. A group nothing defines is refused earlier, as not in the model. A site's
+ * own group (`<site>-…`, its sign-up group) follows the site-members rule instead (sites/members.ts):
+ * sites.members:write in jinbe, whatever the actor holds on that site.
  */
 export async function assertMayAssignGroup(group: string, actor?: AuditActorInput): Promise<void> {
   authenticated(actor)
+  const { isOwnSiteGroup } = await import('../sites/members.js')
+  if (await isOwnSiteGroup(group)) {
+    let may: boolean
+    try {
+      may = await holdsInJinbe(actor.email, 'sites.members:write')
+    } catch (err) {
+      unavailable(err)
+    }
+    if (may) return
+  }
   const v = await ask({ kind: 'add_to_group', actor: actor.email, group })
   if (!v.allow) refuseVerdict(v, `Group '${group}'`, { kind: 'group', name: group, after: null }, actor)
 }

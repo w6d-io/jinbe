@@ -13,6 +13,12 @@ const store = vi.hoisted(() => ({
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
 vi.mock('../../../services/redis-client.service.js', () => ({ redisClientService: { isConnected: true } }))
+// A published site `shop` whose own groups are shop-users (its sign-up group) and shop-viewers.
+vi.mock('../../../sites/login.js', () => ({
+  liveSite: vi.fn(async (name: string) => (name === 'shop'
+    ? { name: 'shop', groups: { platform: { 'shop-viewers': ['viewer'] } }, signUp: { mode: 'open', roles: ['reader'] } }
+    : null)),
+}))
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getGroups: vi.fn(async () => store.groups),
@@ -164,5 +170,25 @@ describe('fails closed', () => {
     expect((await refusal(assertNoSelfEscalation({ kind: 'group', name: 'x', after: { billing: ['viewer'] } }, ADMIN)))?.statusCode).toBe(503)
     expect((await refusal(assertBundleWithinOwn({ roles: {}, groups: [{ name: 'billing', definition: { billing: ['viewer'] } }], proposedRoles: {} }, ADMIN)))?.statusCode).toBe(503)
     expect((await refusal(assertNoSelfEscalation({ kind: 'roles', service: 'billing', roles: { viewer: ['invoices:read', 'x:y'] } }, ADMIN)))?.statusCode).toBe(503)
+  })
+})
+
+describe("a site's own group", () => {
+  beforeEach(() => {
+    store.groups = { ...store.groups, 'shop-users': { shop: ['reader'] }, 'shop-viewers': { shop: ['viewer'] }, 'shop-wide': { shop: ['viewer'], billing: ['viewer'] } }
+    opaWorld.verdict = () => refused({ reasons: ['missing_permissions'], missing: { shop: ['shop:read'] }, grantedBy: ['shop-users'] })
+  })
+
+  it('is handed out by whoever holds sites.members:write, without holding the site\'s roles (as from the site page)', async () => {
+    opaWorld.permissions[ADMIN.email] = ['sites.members:write']
+    expect(await refusal(assertMayAssignGroup('shop-users', ADMIN))).toBeNull()
+    expect(await refusal(assertMayAssignGroup('shop-viewers', ADMIN))).toBeNull()
+    expect(grantVerdict).not.toHaveBeenCalled()
+  })
+
+  it('without sites.members:write, or a group reaching beyond the site, stays under the holding rule', async () => {
+    expect((await refusal(assertMayAssignGroup('shop-users', ADMIN)))?.code).toBe('grant_exceeds_own')
+    opaWorld.permissions[ADMIN.email] = ['sites.members:write']
+    expect((await refusal(assertMayAssignGroup('shop-wide', ADMIN)))?.code).toBe('grant_exceeds_own')
   })
 })
