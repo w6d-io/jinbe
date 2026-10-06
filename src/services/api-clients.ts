@@ -1,12 +1,13 @@
 import { hydraService, type HydraOAuth2Client } from './hydra.service.js'
 import { opalPublisher } from './opal-publisher.js'
 import type { ApiClientRecord } from './authorization-resolution.js'
-import { expandScopes, loadKeyModel, type KeyModel } from './api-key-scopes.js'
+import { expandScope, expandScopes, loadKeyModel, type KeyModel } from './api-key-scopes.js'
 
 /**
  * data.api_clients — what the policy needs to decide a MACHINE caller on a site: the organization an
  * org API key belongs to, the permissions its scopes stand for today (its permissions, site roles and
- * groups expanded: api-key-scopes.ts), and its expiry. Keyed by client_id, which the gateway passes
+ * groups expanded: api-key-scopes.ts), the same per scope (`by_scope`: a token asking for some of the
+ * key's scopes gets only those, OAuth's narrowing), and its expiry. Keyed by client_id, which the gateway passes
  * as `input.client_id` (Oathkeeper oauth2_introspection → .Extra.client_id).
  *
  * Hydra is the source (metadata.organization_id, set by jinbe on every key); jinbe keeps no copy. A
@@ -25,9 +26,11 @@ function recordOf(client: HydraOAuth2Client, model: KeyModel): ApiClientRecord |
   if (meta.kind === 'personal') return null
   const org = meta.organization_id
   if (typeof org !== 'string' || org === '') return null
+  const scopes = [...new Set((client.scope ?? '').split(' ').filter(Boolean))]
   return {
     org,
-    scopes: expandScopes(model, org, (client.scope ?? '').split(' ').filter(Boolean)),
+    scopes: expandScopes(model, org, scopes),
+    by_scope: Object.fromEntries(scopes.map((s) => [s, expandScope(model, org, s)])),
     ...(typeof meta.expires_at === 'string' ? { expires_at: meta.expires_at } : {}),
   }
 }

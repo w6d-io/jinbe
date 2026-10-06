@@ -32,6 +32,7 @@ vi.mock('../../../services/api-key-scopes.js', () => ({
   // The expansion itself is api-key-scopes.test.ts's: here, a key's scopes as they stand.
   loadKeyModel: vi.fn(async () => ({})),
   expandScopes: vi.fn((_m: unknown, _org: string, scopes: string[]) => [...scopes].sort()),
+  expandScope: vi.fn((_m: unknown, _org: string, scope: string) => [scope]),
 }))
 // What the holder holds (services/platform-scopes.ts, tested on its own).
 vi.mock('../../../services/platform-scopes.js', () => ({ personalScopeCatalog: s.catalog, platformScopes: s.held }))
@@ -216,7 +217,12 @@ describe('data.api_clients', () => {
       { client_id: 'pk', scope: 'payroll:read', metadata: { organization_id: 'acme', kind: 'personal', subject: 'u' } },
       { client_id: 'kuma-login', scope: 'openid', metadata: {} },
     ])
-    expect(await apiClientsDataset()).toEqual({ ci: { org: 'acme', scopes: ['payroll:read', 'payroll:write'], expires_at: '2027-01-01T00:00:00Z' } })
+    expect(await apiClientsDataset()).toEqual({ ci: {
+      org: 'acme',
+      scopes: ['payroll:read', 'payroll:write'],
+      by_scope: { 'payroll:write': ['payroll:write'], 'payroll:read': ['payroll:read'] },
+      expires_at: '2027-01-01T00:00:00Z',
+    } })
   })
 
   it('is cached briefly, dropped and pushed on a change', async () => {

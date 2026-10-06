@@ -31,6 +31,11 @@ export interface ApiClientRecord {
   org: string
   /** The permissions its scopes stand for (permissions, site roles and groups expanded: api-key-scopes.ts). */
   scopes: string[]
+  /**
+   * What each of its scopes stands for, by scope: a token that asks for some of them is narrowed to
+   * those (rbac.rego client_permissions). The union of the values is `scopes`.
+   */
+  by_scope?: Record<string, string[]>
   /** RFC 3339; absent = no expiry. */
   expires_at?: string
 }
