@@ -162,7 +162,7 @@ export function buildSelfserviceUiRule(authDomain: string, loginUiUrl: string): 
     id: 'selfservice-ui',
     upstream: { url: loginUiUrl, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|logout|_next|static|assets|logos|login|recovery|verify|verification|access|two-step|welcome|oauth2|api|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
+      url: `http<(s?)>://${authDomain}/<(app|error|register|settings|logout|_next|static|assets|logos|login|recovery|verify|verification|access|two-step|welcome|account|invitation|oauth2|api|public|favicon\\.ico|robots\\.txt|logo\\.svg|manifest\\.json|index\\.html)(.*)>`,
       methods: ['GET', 'POST', 'OPTIONS'],
     },
     authenticators: [{ handler: 'noop' }],

@@ -44,7 +44,9 @@ describe('bootstrap/build-rules', () => {
       const re = toRegex(buildSelfserviceUiRule('auth.example.com', URLS.loginUi).match.url)
       // kratos-login-ui src/app: every page and route handler (a missing one is a gateway 404).
       for (const path of ['/login', '/register', '/settings', '/logout', '/recovery', '/verification', '/error', '/access', '/two-step', '/welcome', '/oauth2/login', '/oauth2/consent', '/oauth2/refused',
-        '/api/access-reason', '/api/branding', '/api/branding/logo', '/api/config', '/api/health', '/api/landing', '/api/ready', '/api/second-factor', '/api/sites/mine']) {
+        '/account', '/invitation',
+        '/api/access-reason', '/api/branding', '/api/branding/logo', '/api/config', '/api/health', '/api/landing', '/api/ready', '/api/second-factor', '/api/sites/mine',
+        '/api/sign-up/continue', '/api/account/me/organizations']) {
         expect(re.test(`https://auth.example.com${path}`), path).toBe(true)
       }
     })
