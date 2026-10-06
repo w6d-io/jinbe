@@ -52,8 +52,8 @@ describe('resolution, app by app (as rbac.rego)', () => {
 
 describe('grantedBy', () => {
   it('lists the groups whose roles hold the permission, the narrowest first', async () => {
-    expect(await grantedBy(['users:reset_second_factor'])).toEqual(['staff-security', 'super_admins'])
-    expect(await grantedBy(['sites:read'])).toEqual(['staff-viewers', 'staff-developers', 'staff-auditors', 'staff-ops', 'staff-support', 'staff-security', 'super_admins'])
+    expect(await grantedBy(['users:reset_second_factor'])).toEqual(['staff-security', 'staff-support', 'super_admins'])
+    expect(await grantedBy(['sites:read'])).toEqual(['staff-developers', 'staff-ops', 'super_admins'])
   })
 
   it('answers an empty list, never an error, when the model cannot be read', async () => {

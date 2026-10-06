@@ -1,4 +1,4 @@
-import { ORG_PERMISSIONS, PLATFORM_PERMISSIONS, isCatalogPermission, scopeOf, type Permission } from './catalog.js'
+import { CATALOG, ORG_PERMISSIONS, PLATFORM_PERMISSIONS, isCatalogPermission, scopeOf, type Permission } from './catalog.js'
 
 /**
  * jinbe's roles, in code (authz-v2-design §1.1, §2.2, §2.4). Written by the bootstrap on every run and
@@ -19,7 +19,7 @@ import { ORG_PERMISSIONS, PLATFORM_PERMISSIONS, isCatalogPermission, scopeOf, ty
 
 export const JINBE = 'jinbe'
 
-export type StaffRole = 'viewer' | 'support' | 'ops' | 'developer' | 'auditor' | 'security' | 'super_admin'
+export type StaffRole = 'developer' | 'support' | 'ops' | 'security' | 'super_admin'
 
 export interface RoleSpec {
   group: string
@@ -28,64 +28,41 @@ export interface RoleSpec {
 }
 
 /**
- * Reading the platform's configuration: sites, zones, the gateway, groups, organisations, settings
- * and the counts. support, ops and security hold it whole; viewer, developer and auditor each spell
- * their own, narrower list, so trimming one role never changes another.
+ * The staff roles, one per job (owner decision 2026-10-06: as tight as the job allows). A person who
+ * does two jobs holds two groups; the roles never grow to cover a second job. What only super admins
+ * do: settings, the gateway, the bundle, the access model (groups, members, direct grants), deletions,
+ * recertification, audit export. Two rules hold at boot (roleProblems): a role that may write a site
+ * may not publish one (developers draft, ops publish), and every role whose permissions need a recent
+ * second factor belongs to a group that always requires one (staffGroupsRequiringSecondFactor).
  */
-const PLATFORM_READ: readonly Permission[] = [
-  'sites:read', 'zones:read', 'gateway:read', 'groups:read', 'orgs:read', 'settings:read', 'stats:read',
-]
-
-/** What every staff member needs to find their way: sites, groups, organisations. */
-const DIRECTORY_READ: readonly Permission[] = ['sites:read', 'groups:read', 'orgs:read']
-
-/** Reading about people: what a desk, an auditor and incident response all need. */
-const PEOPLE_READ: readonly Permission[] = ['users:read', 'sessions:read', 'access:read', 'audit:read', 'access:check']
-
 export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
-  viewer: {
-    group: 'staff-viewers',
-    label: 'Read-only staff: sites, groups, organisations and the counts. No personal data, no platform configuration',
-    permissions: [...DIRECTORY_READ, 'stats:read'],
+  developer: {
+    group: 'staff-developers',
+    label: "Build sites: routes, gates, roles and permissions, the site's groups and who is in them, sign-up drafts; check access. Publishing is ops'",
+    permissions: ['sites:read', 'sites:write', 'sites.members:write', 'zones:read', 'groups:read', 'orgs:read', 'access:check'],
   },
   support: {
     group: 'staff-support',
-    label: 'Support desk: find the person, fix sign-in, manage organisation members',
+    label: 'Help a person: find them, fix their profile, invite, verify, recovery and sign-in links, sign them out, reset a lost second factor, explain why they cannot get in',
     permissions: [
-      ...PLATFORM_READ, ...PEOPLE_READ,
-      'users:create', 'users:update', 'users:recovery', 'users:verify', 'users:send_login_link',
-      'sessions:revoke', 'orgs.members:write',
+      'users:read', 'users:create', 'users:update', 'users:verify', 'users:recovery', 'users:send_login_link',
+      'users:reset_second_factor', 'sessions:read', 'sessions:revoke', 'access:read', 'access:check',
     ],
   },
   ops: {
     group: 'staff-ops',
-    label: 'Edge operations: publish sites, zones and the gateway, approve requests',
+    label: 'Publish and run what is exposed: apply, pause, roll back, approve requests, zones, open or close public sign-up',
     permissions: [
-      ...PLATFORM_READ, 'audit:read', 'access:check',
-      'sites:write', 'sites:apply', 'sites:delete', 'sites.requests:approve',
-      'zones:write', 'zones:delete', 'gateway:apply', 'sites.signup:write', 'sites.signup:revoke',
+      'sites:read', 'zones:read', 'sites:apply', 'sites.requests:approve', 'zones:write',
+      'sites.signup:write', 'sites.signup:revoke',
     ],
-  },
-  developer: {
-    group: 'staff-developers',
-    label: 'Plug and change sites, import OpenAPI',
-    // No settings:read: no site flow reads the sign-in, 2FA or MCP settings (kuma's Settings sections
-    // and the group 2FA switch hide themselves when refused).
-    permissions: [...DIRECTORY_READ, 'zones:read', 'gateway:read', 'stats:read', 'access:check', 'sites:write'],
-  },
-  auditor: {
-    group: 'staff-auditors',
-    label: 'Compliance: people, access and audit evidence',
-    permissions: [...DIRECTORY_READ, ...PEOPLE_READ, 'audit:export', 'policy.bundle:read', 'recert:read', 'users.grants:read'],
   },
   security: {
     group: 'staff-security',
-    label: 'Incident response and access hygiene',
+    label: 'Incident response: lock an account, sign it out everywhere, take people out of groups, reset a second factor, read the audit trail',
     permissions: [
-      ...PLATFORM_READ, ...PEOPLE_READ,
-      'sessions:revoke', 'users:disable', 'users:update_email', 'users:reset_second_factor', 'users:verify',
-      'groups.members:revoke', 'audit:export', 'policy.bundle:read', 'recert:read', 'recert:manage', 'recert:delete',
-      'users.grants:read', 'sites.signup:revoke',
+      'users:read', 'sessions:read', 'sessions:revoke', 'users:disable', 'users:reset_second_factor', 'groups.members:revoke',
+      'access:read', 'access:check', 'users.grants:read', 'audit:read', 'sites.signup:revoke',
     ],
   },
   super_admin: {
@@ -101,8 +78,8 @@ const ORG_READ: readonly Permission[] = ['org.members:read', 'org.keys:read', 'o
 
 export const EVERY_ORG: Readonly<Partial<Record<StaffRole, readonly Permission[]>>> = {
   super_admin: ORG_PERMISSIONS,
-  support: ['org.members:read', 'org.members:write'],
-  auditor: ORG_READ,
+  // Incident response reads inside any organization (members, keys, its audit); nobody else reaches
+  // into organizations they do not belong to.
   security: ORG_READ,
 }
 
@@ -141,6 +118,15 @@ export function everyOrgDefinitions(): Record<string, string[]> {
   return Object.fromEntries(Object.entries(EVERY_ORG).map(([r, perms]) => [r, sortedSet(perms ?? [])]))
 }
 
+/**
+ * The staff groups whose role holds a permission that needs a recent second factor: they always
+ * require one (second-factor/settings.ts), whatever the switch says — a fresh second factor cannot be
+ * shown by somebody who has none.
+ */
+export function staffGroupsRequiringSecondFactor(): Set<string> {
+  return new Set(STAFF_ROLES.filter((r) => (ROLES[r].permissions as readonly string[]).some((p) => isCatalogPermission(p) && CATALOG[p].stepUp)).map((r) => ROLES[r].group))
+}
+
 /** Whether a group is one of the staff groups code defines (not editable through the API). */
 export function isStaffGroup(name: string): boolean {
   return STAFF_ROLES.some((r) => ROLES[r].group === name)
@@ -166,5 +152,10 @@ export function roleProblems(): string[] {
   if (!same(ROLES.super_admin.permissions, PLATFORM_PERMISSIONS)) problems.push('super_admin does not hold exactly every platform permission')
   if (!same(EVERY_ORG.super_admin ?? [], ORG_PERMISSIONS)) problems.push('super_admin does not hold exactly every org permission in every org')
   if (!same(ORG_ROLES.owner.permissions, ORG_PERMISSIONS)) problems.push('org owner does not hold exactly every org permission')
+  for (const r of STAFF_ROLES) {
+    if (r === 'super_admin') continue
+    const perms = ROLES[r].permissions as readonly string[]
+    if (perms.includes('sites:write') && perms.includes('sites:apply')) problems.push(`role ${r} may both write and publish a site (developers draft, ops publish)`)
+  }
   return problems
 }

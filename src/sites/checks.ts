@@ -95,8 +95,9 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
 
   const groups = await redisRbacRepository.getGroups()
   for (const group of Object.keys(rendered.groups.platform)) {
-    // The site's own sign-up group is made by its first publish (publish.ts reconcileGroups).
-    if (site.signUp && group === signUpGroupName(site.name)) continue
+    // The site's own groups (<site>-…, the sign-up group included) are made by its publish
+    // (publish.ts reconcileGroups) and managed from the site (sites/members.ts).
+    if (group.startsWith(`${site.name}-`) || (site.signUp && group === signUpGroupName(site.name))) continue
     if (!groups[group]) checks.push({ level: 'error', code: 'unknown_group', message: `platform group '${group}' does not exist`, path: `groups.platform.${group}` })
   }
 

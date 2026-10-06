@@ -214,6 +214,7 @@ export async function secondFactorRbacRoutes(fastify: FastifyInstance) {
         200: { type: 'object', properties: { name: { type: 'string' }, secondFactor: groupSecondFactorJsonSchema } },
         400: badRequestResponseSchema,
         404: badRequestResponseSchema,
+        409: badRequestResponseSchema,
       },
     },
   }, async (request, reply) => {
@@ -222,7 +223,15 @@ export async function secondFactorRbacRoutes(fastify: FastifyInstance) {
     if (!GROUP_NAME.test(name)) return reply.status(400).send({ error: 'invalid_group', message: `Not a group name: ${name}` })
     const known = await redisRbacRepository.getGroups()
     if (!(name in known)) return reply.status(404).send({ error: 'unknown_group', message: `No such group: ${name}` })
-    const { before, after } = await setGroupSecondFactor(name, required)
+    let set: Awaited<ReturnType<typeof setGroupSecondFactor>>
+    try {
+      set = await setGroupSecondFactor(name, required)
+    } catch (err) {
+      const e = err as { statusCode?: number; code?: string; message?: string }
+      if (e.code === 'second_factor_locked') return reply.status(409).send({ error: e.code, message: e.message })
+      throw err
+    }
+    const { before, after } = set
     const a = auditActor(request)
     auditEventService.emit({
       category: 'rbac', kind: 'change', verb: 'update', target: 'second-factor-groups',

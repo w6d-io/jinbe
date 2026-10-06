@@ -120,14 +120,14 @@ describe("requirePermission('users:read')", () => {
     it('stamps the role DEV_ROLE names, so local development exercises the real matrix', async () => {
       mockState.env.DEV_BYPASS_AUTH = true
       mockState.env.NODE_ENV = 'development'
-      mockState.env.DEV_ROLE = 'viewer'
+      mockState.env.DEV_ROLE = 'developer'
 
       const request = createMockRequest('dev@example.com')
       const reply = createMockReply()
 
       await requireAdmin(request, reply)
 
-      expect(request.rbacInfo?.permissions).toEqual([...ROLES.viewer.permissions])
+      expect(request.rbacInfo?.permissions).toEqual([...ROLES.developer.permissions])
       expect(reply._statusCode).toBe(403)
     })
 

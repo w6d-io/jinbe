@@ -138,19 +138,19 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
   const flagsStored = () => JSON.parse(h.config.second_factor_group_flags ?? '{}')
   const WRITE = { 'x-test-write': '1', 'x-test-mfa': '1', 'x-email': 'a@x.io', 'x-aal': 'aal2' }
 
-  it('defaults: on for a group that can write or holds *, and for staff-auditors; off for read-only groups and staff-viewers', async () => {
+  it('defaults: on for a group that can write or holds *, off for a read-only group', async () => {
     expect(await opal()).toEqual({ groups: ['ops', 'staff-auditors', 'super_admins'] })
     expect(defaultRequired('staff-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true)
-    // On by name, even with read-only roles.
-    expect(defaultRequired('staff-auditors', { global: ['viewer'] }, { global: h.roles.global })).toBe(true)
-    expect(defaultRequired('staff-viewers', { global: ['auditor'] }, { global: h.roles.global })).toBe(false)
+    // No group is on or off by name any more (staff-auditors and staff-viewers are gone): roles decide.
+    expect(defaultRequired('staff-auditors', { global: ['viewer'] }, { global: h.roles.global })).toBe(false)
     expect(defaultRequired('other-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true) // audit:export writes
     expect(defaultRequired('users', {}, {})).toBe(false)
   })
 
   it('a stored value overrides the default either way', async () => {
     h.config.second_factor_group_flags = JSON.stringify({ super_admins: false, readers: true, 'staff-auditors': false })
-    expect(await opal()).toEqual({ groups: ['ops', 'readers'] })
+    // super_admins stays on: a staff group whose role needs a recent second factor is locked on (policy/roles.ts).
+    expect(await opal()).toEqual({ groups: ['ops', 'readers', 'super_admins'] })
   })
 
   it('the legacy list counts as explicit ON for the groups it named, hyphens included', async () => {

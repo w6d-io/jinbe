@@ -87,11 +87,11 @@ function directGrantExamples(roles: Record<string, string[]>, orgRoles: Record<s
   const slot = (r: string[] = [], p: string[] = []) => ({ roles: r.map((name) => ({ name })), permissions: p.map((name) => ({ name })) })
   const cases: Array<Omit<DirectGrantExample, 'expect'>> = [
     { name: 'a platform permission, alone', email: 'perm@example.com', bindings: { direct: { 'perm@example.com': { platform: { [JINBE]: slot([], ['users:read']) } } }, user_organizations: {} } },
-    { name: 'a platform role', email: 'role@example.com', bindings: { direct: { 'role@example.com': { platform: { [JINBE]: slot(['viewer']) } } }, user_organizations: {} } },
+    { name: 'a platform role', email: 'role@example.com', bindings: { direct: { 'role@example.com': { platform: { [JINBE]: slot(['developer']) } } }, user_organizations: {} } },
     { name: 'an org role, for a member', email: 'member@example.com', bindings: { direct: { 'member@example.com': { orgs: { [ORG]: { [JINBE]: slot(['viewer']) } } } }, user_organizations: { 'member@example.com': [ORG] } } },
     { name: 'an org permission, for a member', email: 'orgperm@example.com', bindings: { direct: { 'orgperm@example.com': { orgs: { [ORG]: { [JINBE]: slot([], ['org.keys:read']) } } } }, user_organizations: { 'orgperm@example.com': [ORG] } } },
     { name: 'an expired grant counts for nothing (the policy checks expires_at too)', email: 'expired@example.com', bindings: { direct: { 'expired@example.com': { platform: { [JINBE]: { roles: [], permissions: [{ name: 'users:read', expires_at: '2000-01-01T00:00:00Z' }] } } } }, user_organizations: {} } },
-    { name: 'a direct role carries its every-org reach', email: 'support@example.com', bindings: { direct: { 'support@example.com': { platform: { [JINBE]: slot(['support']) } } }, user_organizations: {} } },
+    { name: 'a direct role carries its every-org reach', email: 'support@example.com', bindings: { direct: { 'support@example.com': { platform: { [JINBE]: slot(['security']) } } }, user_organizations: {} } },
     { name: 'an org grant without membership counts for nothing', email: 'outsider@example.com', bindings: { direct: { 'outsider@example.com': { orgs: { [ORG]: { [JINBE]: slot(['owner']) } } } }, user_organizations: {} } },
   ]
   return cases.map((c) => {

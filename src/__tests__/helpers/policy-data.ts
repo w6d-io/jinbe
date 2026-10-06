@@ -42,6 +42,8 @@ export function fakeRedis() {
         set(k: string, v: string) { ops.push(() => strings.set(k, v)); return tx },
         hset(k: string, f: string, v: string) { ops.push(() => { if (!hashes.has(k)) hashes.set(k, new Map()); hashes.get(k)!.set(f, v) }); return tx },
         sadd(k: string, m: string) { ops.push(() => { if (!sets.has(k)) sets.set(k, new Set()); sets.get(k)!.add(m) }); return tx },
+        hdel(k: string, f: string) { ops.push(() => { hashes.get(k)?.delete(f) }); return tx },
+        del(k: string) { ops.push(() => { strings.delete(k) }); return tx },
         discard() { ops.length = 0 },
         async exec() { for (const op of ops) op(); return ops.map(() => [null, 'OK']) },
       }

@@ -160,7 +160,7 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
       { name: 'super_admins', secondFactor: { required: true, source: 'default', enrolBeforeJoining: true, defaultRequired: true } },
     ])
     expect(body.permissions.find((p: { name: string }) => p.name === 'sites:apply').stepUpRule).toEqual({ required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, viaOAuthGrant: { maxAgeHours: 12, setting: 'mcp.oauth.protectedActionsHours', requiresConsentOptIn: true }, fourEyes: 'prod' })
-    expect(body.roles.find((r: { name: string }) => r.name === 'ops').stepUpPermissions).toContain('gateway:apply')
+    expect(body.roles.find((r: { name: string }) => r.name === 'ops').stepUpPermissions).toContain('sites:apply')
     expect(body.sites).toEqual([
       expect.objectContaining({ name: 'payroll', applied: true, secondFactor: expect.objectContaining({ scope: 'writes', minAal: 'aal2' }) }),
       expect.objectContaining({ name: 'wiki', applied: false, secondFactor: expect.objectContaining({ scope: 'none', minAal: 'aal1' }) }),
@@ -199,7 +199,8 @@ describe('GET /api/admin/rbac/second-factor-map', () => {
   it('/api/catalog carries each permission\'s rule and each role\'s step-up permissions', async () => {
     const body = (await app.inject({ url: '/api/catalog' })).json()
     expect(body.permissions.find((p: { name: string }) => p.name === 'groups:write')).toMatchObject({ stepUp: true, stepUpRule: { required: true, maxAgeMin: 15, viaPersonalKey: { maxAgeDays: 30 }, viaOAuthGrant: { maxAgeHours: 12, setting: 'mcp.oauth.protectedActionsHours', requiresConsentOptIn: true } } })
-    expect(body.roles.find((r: { name: string }) => r.name === 'viewer').stepUpPermissions).toEqual([])
+    expect(body.roles.find((r: { name: string }) => r.name === 'developer').stepUpPermissions).toEqual([])
+    expect([...body.roles.find((r: { name: string }) => r.name === 'support').stepUpPermissions].sort()).toEqual(['sessions:revoke', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link'])
   })
 
   it('the groups list badges each group (and survives the serializer)', async () => {

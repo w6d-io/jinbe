@@ -104,6 +104,8 @@ export const AUDIT_EVENTS = {
   'site.address_changed': ['authz', 'update', 'warn'],
   'site.signup.joined': ['directory', 'create'],
   'site.signup.member_removed': ['directory', 'delete', 'warn'],
+  'site.members.added': ['access', 'create'],
+  'site.members.removed': ['access', 'delete'],
   // Ephemeral sites (sites/ephemeral.ts): an expiry set, cleared or moved, and the automatic pause.
   'site.ephemeral_set': ['authz', 'update'],
   'site.ephemeral_cleared': ['authz', 'update'],

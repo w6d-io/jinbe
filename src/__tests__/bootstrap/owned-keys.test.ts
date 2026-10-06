@@ -21,12 +21,25 @@ describe('what jinbe owns: converged every run, replaced never merged', () => {
     await convergeOwned(asRedis(r), 'jinbe', jinbeOwned({ docs: false }), 'jinbe')
     expect(await convergeOwned(asRedis(r), 'jinbe', jinbeOwned({ docs: true }), 'jinbe')).toEqual({ created: [], updated: ['rbac:route_map:jinbe'], drifted: [] })
 
-    r.strings.set('rbac:roles:jinbe', '{"viewer":["*"]}')
-    r.hashes.get('rbac:groups')!.set('staff-viewers', '{"jinbe":["super_admin"]}')
+    r.strings.set('rbac:roles:jinbe', '{"developer":["*"]}')
+    r.hashes.get('rbac:groups')!.set('staff-ops', '{"jinbe":["super_admin"]}')
     const drift = await convergeOwned(asRedis(r), 'jinbe', jinbeOwned({ docs: true }), 'jinbe')
-    expect(drift.drifted.sort()).toEqual(['rbac:groups#staff-viewers', 'rbac:roles:jinbe'])
+    expect(drift.drifted.sort()).toEqual(['rbac:groups#staff-ops', 'rbac:roles:jinbe'])
     expect(r.strings.get('rbac:roles:jinbe')).not.toContain('*')
     expect(r.strings.get(OWNED_KEY('jinbe'))).toBeDefined()
+  })
+
+  it('a staff group removed from code is removed from the store (staff-auditors, staff-viewers)', async () => {
+    const r = fakeRedis()
+    await convergeOwned(asRedis(r), 'jinbe', jinbeOwned({ docs: false }), 'jinbe')
+    // As an older release left it: the group, and the owned record naming it.
+    r.hashes.get('rbac:groups')!.set('staff-viewers', '{"jinbe":["viewer"]}')
+    const owned = JSON.parse(r.strings.get(OWNED_KEY('jinbe'))!) as Record<string, string>
+    r.strings.set(OWNED_KEY('jinbe'), JSON.stringify({ ...owned, 'rbac:groups#staff-viewers': 'x' }))
+    const out = await convergeOwned(asRedis(r), 'jinbe', jinbeOwned({ docs: false }), 'jinbe')
+    expect(out.removed).toEqual(['rbac:groups#staff-viewers'])
+    expect(r.hashes.get('rbac:groups')!.has('staff-viewers')).toBe(false)
+    expect(r.strings.get(OWNED_KEY('jinbe'))).not.toContain('staff-viewers')
   })
 
   it('holds no wildcard; the docs row only with swagger', () => {

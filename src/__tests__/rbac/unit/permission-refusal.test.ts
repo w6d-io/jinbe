@@ -86,8 +86,8 @@ describe('a 403 for a missing permission', () => {
       code: 'permission_required',
       message: 'This needs users:reset_second_factor.',
       permission: 'users:reset_second_factor',
-      grantedBy: ['staff-security', 'super_admins'],
-      hint: 'Ask an administrator to add you to one of: staff-security, super_admins.',
+      grantedBy: ['staff-security', 'staff-support', 'super_admins'],
+      hint: 'Ask an administrator to add you to one of: staff-security, staff-support, super_admins.',
     })
   })
 

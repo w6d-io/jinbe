@@ -57,6 +57,8 @@ export interface ConvergeResult {
   drifted: string[]
   /** Slots written for the first time. */
   created: string[]
+  /** Slots this owner wrote before and no longer defines (a staff group removed from code): deleted. */
+  removed?: string[]
 }
 
 type Reader = Pick<Redis, 'get' | 'hget' | 'sismember' | 'multi'>
@@ -91,10 +93,19 @@ export async function convergeOwned(redis: Reader, owner: string, desired: Reado
     if (slot.field) tx.hset(slot.key, slot.field, value)
     else tx.set(slot.key, value)
   }
+  // What the owner wrote before and code no longer defines goes (a role removed in an upgrade).
+  const wanted = new Set(desired.map(({ slot }) => slotName(slot)))
+  const removed = Object.keys(lastWritten).filter((name) => !wanted.has(name))
+  for (const name of removed) {
+    const [key, field] = name.split('#')
+    if (field) tx.hdel(key, field)
+    else tx.del(key)
+  }
+  if (removed.length) result.removed = removed
   const registered = service ? (await redis.sismember('rbac:services', service)) === 1 : true
   if (!registered) tx.sadd('rbac:services', service!)
   const owned = canonicalJson(Object.fromEntries(desired.map(({ slot, value }) => [slotName(slot), sha(value)])))
-  if (result.created.length + result.updated.length + result.drifted.length === 0 && registered && ownedRaw === owned) {
+  if (result.created.length + result.updated.length + result.drifted.length + removed.length === 0 && registered && ownedRaw === owned) {
     tx.discard()
     return result
   }

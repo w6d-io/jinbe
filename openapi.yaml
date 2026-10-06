@@ -3104,6 +3104,7 @@ paths:
           required: true
       x-permission: users:recovery
       x-scope: platform
+      x-step-up: true
       responses:
         "204":
           description: Recovery email sent
@@ -3218,6 +3219,7 @@ paths:
           required: true
       x-permission: users:send_login_link
       x-scope: platform
+      x-step-up: true
       responses:
         "200":
           description: Default Response
@@ -3692,6 +3694,7 @@ paths:
           required: true
       x-permission: sessions:revoke
       x-scope: platform
+      x-step-up: true
       responses:
         "204":
           description: Default Response
@@ -3791,6 +3794,7 @@ paths:
           required: true
       x-permission: sessions:revoke
       x-scope: platform
+      x-step-up: true
       responses:
         "204":
           description: Default Response
@@ -4166,6 +4170,7 @@ paths:
           required: true
       x-permission: sessions:revoke
       x-scope: platform
+      x-step-up: true
       responses:
         "204":
           description: Default Response
@@ -8676,6 +8681,69 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/{name}/members:
+    get:
+      tags: &a6
+        - sites
+        - site-members
+      description: The site's own groups (<site>-…, the sign-up group included), the
+        roles each gives on this site, and who is in each (at most 500 listed
+        per group; total counts everyone)
+      x-permission: sites.members:write
+      x-scope: platform
+      x-also-accepts:
+        - users:read
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+    post:
+      tags: *a6
+      description: "Add somebody who has an account to one of the site's own groups:
+        they get its roles on this site. A group that requires two-step sign-in
+        refuses a person without a second factor"
+      x-permission: sites.members:write
+      x-scope: platform
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/{name}/members/{group}/{identityId}:
+    delete:
+      tags: *a6
+      description: Take somebody out of one of the site's own groups. Their account
+        stays; they lose that group's roles on this site
+      x-permission: sites.members:write
+      x-scope: platform
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: name
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: group
+          required: true
+        - schema:
+            type: string
+          in: path
+          name: identityId
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/{name}/import/preview:
     post:
       tags:
@@ -8985,7 +9053,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration:
     get:
-      tags: &a6
+      tags: &a7
         - sites
       description: "Migration state: legacy rule count, proposed groups, parity, dual
         run, cut-over, rollback window"
@@ -8996,7 +9064,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/preview:
     post:
-      tags: *a6
+      tags: *a7
       description: Convert the live legacy rules into proposed Sites / system sites
         (1:1); opt-in fixes and decisions per group/rule
       x-permission: sites:write
@@ -9006,7 +9074,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/parity:
     post:
-      tags: *a6
+      tags: *a7
       description: "Match every legacy probe against the legacy and the converted rule
         sets (gatekit): differences and regressions"
       x-permission: sites:write
@@ -9016,7 +9084,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/dualrun:
     get:
-      tags: *a6
+      tags: *a7
       description: "Dual-run status: compared, same, differences, regressions, eligibility"
       x-permission: sites:read
       x-scope: platform
@@ -9024,7 +9092,7 @@ paths:
         "200":
           description: Default Response
     post:
-      tags: *a6
+      tags: *a7
       description: Start or stop the dual run
       x-permission: sites:write
       x-scope: platform
@@ -9033,7 +9101,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/cutover:
     post:
-      tags: *a6
+      tags: *a7
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
         applied. 202, follow GET /migration
       x-permission: sites:apply
@@ -9044,7 +9112,7 @@ paths:
           description: Default Response
   /api/admin/sites/migration/rollback:
     post:
-      tags: *a6
+      tags: *a7
       description: "Within the rollback window: restore the frozen legacy rules and
         pause the migrated Site CRs"
       x-permission: sites:apply
@@ -9055,7 +9123,7 @@ paths:
           description: Default Response
   /api/admin/gateway:
     get:
-      tags: &a7
+      tags: &a8
         - gateway
       description: "Every Oathkeeper handler: enabled, global config (secrets masked),
         defaults, the sites using it, form fields; plus rollout status.
@@ -9067,7 +9135,7 @@ paths:
         "200":
           description: Default Response
     put:
-      tags: *a7
+      tags: *a8
       description: "Write the Gateway resource (If-Match: the etag you edited). The
         site-operator rolls the gateway pods"
       requestBody:
@@ -9122,7 +9190,7 @@ paths:
           description: Default Response
   /api/admin/gateway/preview:
     post:
-      tags: *a7
+      tags: *a8
       description: "Validate a proposed gateway configuration: handler schemas, in-use
         handlers, fallback, risk flags. Writes nothing"
       requestBody:
@@ -9176,7 +9244,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout:
     get:
-      tags: *a7
+      tags: *a8
       description: Rollout progress of the last gateway change (from the Gateway status)
       x-permission: gateway:read
       x-scope: platform
@@ -9185,7 +9253,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollout/events:
     get:
-      tags: *a7
+      tags: *a8
       description: Rollout progress as Server-Sent Events, until it settles
       x-permission: gateway:read
       x-scope: platform
@@ -9194,7 +9262,7 @@ paths:
           description: Default Response
   /api/admin/gateway/rollback:
     post:
-      tags: *a7
+      tags: *a8
       description: Restore the configuration before the last change, re-checked
         against the sites using each handler
       requestBody:
@@ -13240,6 +13308,18 @@ paths:
                     example: Bad Request
                   message:
                     type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
   /api/admin/settings/sign-in-protection:
     get:
       tags:
@@ -13769,7 +13849,7 @@ paths:
           description: Default Response
   /api/home:
     get:
-      tags: &a8
+      tags: &a9
         - home
       description: "The Home briefing: every module the caller may see, each with its
         own status, freshness and sources"
@@ -15077,7 +15157,7 @@ paths:
                       super_admins."
   /api/home/{module}:
     get:
-      tags: *a8
+      tags: *a9
       description: One Home module (retry after unavailable, or refresh a single
         tile). 403 with status "forbidden" for a module the caller may not see.
       parameters:

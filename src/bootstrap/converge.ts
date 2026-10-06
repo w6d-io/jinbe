@@ -26,8 +26,8 @@ export async function convergeJinbe(logger: Logger): Promise<ConvergeResult> {
     }).catch(() => {})
   }
   if (result.drifted.length) logger.warn({ drifted: result.drifted }, 'RBAC owned by jinbe was edited outside jinbe — converged back')
-  if (result.created.length || result.updated.length) {
-    logger.info({ created: result.created, updated: result.updated }, 'RBAC owned by jinbe written')
+  if (result.created.length || result.updated.length || result.removed?.length) {
+    logger.info({ created: result.created, updated: result.updated, removed: result.removed ?? [] }, 'RBAC owned by jinbe written')
   }
   return result
 }

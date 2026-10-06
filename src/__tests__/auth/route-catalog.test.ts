@@ -136,7 +136,7 @@ describe('GET /api/catalog', () => {
     const apply = body.permissions.find((p: { name: string }) => p.name === 'sites:apply')
     expect(apply).toMatchObject({ scope: 'platform', area: 'sites', sensitivity: 'high', stepUp: true, fourEyes: 'prod', delegable: 'direct' })
     expect(apply.routes).toContainEqual({ method: 'POST', path: '/api/admin/sites/:name/apply' })
-    expect(body.roles.find((r: { name: string }) => r.name === 'support')).toMatchObject({ group: 'staff-support', everyOrg: ['org.members:read', 'org.members:write'] })
+    expect(body.roles.find((r: { name: string }) => r.name === 'support')).toMatchObject({ group: 'staff-support', everyOrg: [] })
     expect(body.orgRoles.map((r: { name: string }) => r.name)).toContain('jinbe:owner')
     expect(body.aliases).toBeUndefined()
   })

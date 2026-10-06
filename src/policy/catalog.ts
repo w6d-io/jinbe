@@ -73,12 +73,12 @@ export const CATALOG = {
   'users.metadata:write': p('users', "Change a user's schema and public or admin metadata", 'high'),
   'users:disable': p('users', 'Deactivate or reactivate a user', 'high'),
   'users:delete': p('users', 'Delete a user', 'critical', { stepUp: true, delegable: 'never' }),
-  'users:recovery': p('users', 'Send a user a recovery email', 'high'),
+  'users:recovery': p('users', 'Send a user a recovery email', 'high', { stepUp: true }),
   'users:verify': p('users', 'Resend the verification email for an unverified address', 'low'),
-  'users:send_login_link': p('users', 'Email a user a one-click sign-in link', 'high'),
+  'users:send_login_link': p('users', 'Email a user a one-click sign-in link', 'high', { stepUp: true }),
   'users:reset_second_factor': p('users', "Remove a user's second factors", 'critical', { stepUp: true, delegable: 'never' }),
   'sessions:read': p('users', "See a user's sessions", 'medium'),
-  'sessions:revoke': p('users', "End a user's sessions", 'medium'),
+  'sessions:revoke': p('users', "End a user's sessions", 'medium', { stepUp: true }),
 
   // ── Access model ───────────────────────────────────────────────────────────────────────────────
   'access:read': p('access', 'See who can reach what: one user\'s access, the access review', 'medium'),
@@ -124,6 +124,9 @@ export const CATALOG = {
   // that opens or widens it also needs this, so who exposes a site to the internet is a named holder.
   'sites.signup:write': p('sites', 'Open or widen public sign-up through a site', 'high', { stepUp: true, delegable: 'never' }),
   'sites.signup:revoke': p('sites', "Remove people from a site's sign-up group", 'high', { delegable: 'never' }),
+  // People in a site's own groups (<site>-…, which bind only that site's roles): the site's builders
+  // manage who uses it. Never jinbe's or another site's groups (sites/members.ts).
+  'sites.members:write': p('sites', "Add or remove people in a site's own groups", 'high'),
   'zones:read': p('sites', 'View zones', 'low'),
   'zones:write': p('sites', 'Create or change a zone', 'high', { stepUp: true, delegable: 'never' }),
   'zones:delete': p('sites', 'Delete a zone', 'critical', { stepUp: true, delegable: 'never' }),

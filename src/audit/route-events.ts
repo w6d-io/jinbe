@@ -149,6 +149,8 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'DELETE /api/admin/sites/:name/sign-up/members/:identityId': by('site.signup.member_removed'),
   'DELETE /api/admin/sites/:name/sign-up/members': by('site.signup.member_removed'),
   'POST /api/me/sign-up/continue': by('site.signup.joined'),
+  'POST /api/admin/sites/:name/members': by('site.members.added'),
+  'DELETE /api/admin/sites/:name/members/:group/:identityId': by('site.members.removed'),
   'POST /api/organizations/:organizationId/domains': by('org.domain.claimed'),
   'POST /api/organizations/:organizationId/domains/:domain/verify': by('org.domain.verified'),
   'DELETE /api/organizations/:organizationId/domains/:domain': by('org.domain.removed'),

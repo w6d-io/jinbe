@@ -146,17 +146,21 @@ describe('support can do the support desk\'s work', () => {
     expect(res.json().error).toBe('use_email_endpoint')
   })
 
+  it('recovery, sign-in links and sign-outs need a recent second factor (catalogue stepUp)', async () => {
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}/sessions`, headers: as('support') })).statusCode).toBe(422)
+  })
+
   it('lists and revokes sessions', async () => {
     expect((await app.inject({ url: `/api/admin/users/${USER}/sessions`, headers: as('support') })).statusCode).toBe(200)
-    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}/sessions`, headers: as('support') })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/admin/users/${USER}/sessions`, headers: { ...as('support'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
     // Sign out everywhere also asks Hydra for the person's MCP browser sign-ins, to revoke them.
     expect(s.fetches.some((f) => f.url.includes(`/admin/oauth2/auth/sessions/consent?subject=${USER}`))).toBe(true)
-    expect((await app.inject({ method: 'DELETE', url: '/api/admin/sessions/sess-1', headers: as('support') })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: '/api/admin/sessions/sess-1', headers: { ...as('support'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
   })
 
   it('sends a recovery email and a sign-in link', async () => {
-    expect((await app.inject({ method: 'POST', url: `/api/admin/users/${USER}/recovery-email`, headers: as('support') })).statusCode).toBe(204)
-    expect((await app.inject({ method: 'POST', url: `/api/admin/users/${USER}/login-link`, headers: as('support') })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'POST', url: `/api/admin/users/${USER}/recovery-email`, headers: { ...as('support'), 'x-test-fresh': '1' } })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'POST', url: `/api/admin/users/${USER}/login-link`, headers: { ...as('support'), 'x-test-fresh': '1' } })).statusCode).toBe(200)
   })
 })
 
@@ -223,7 +227,7 @@ describe('administrators keep everything; a reader no longer writes', () => {
 
 describe('POST /users/:id/login-link', () => {
   const send = (payload?: unknown, who = 'support', id = USER) =>
-    app.inject({ method: 'POST', url: `/api/admin/users/${id}/login-link`, headers: as(who), ...(payload ? { payload: payload as never } : {}) })
+    app.inject({ method: 'POST', url: `/api/admin/users/${id}/login-link`, headers: { ...as(who), 'x-test-fresh': '1' }, ...(payload ? { payload: payload as never } : {}) })
 
   it('asks Kratos to mail a recovery LINK to the user\'s address and never returns it', async () => {
     const res = await send()

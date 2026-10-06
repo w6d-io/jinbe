@@ -1,4 +1,5 @@
 import { redisRbacRepository, type GroupDefinition } from '../services/redis-rbac.repository.js'
+import { staffGroupsRequiringSecondFactor } from '../policy/roles.js'
 import { opalPublisher } from '../services/opal-publisher.js'
 import { withRedisLock } from '../services/redis-lock.js'
 import { flatten, groupGrants, loadRoles, type RolesByScope } from '../services/grant-subset.js'
@@ -28,10 +29,10 @@ export const SECOND_FACTOR_KEY = 'second_factor_groups'
 export const GROUP_NAME = /^[a-z][a-z0-9_-]{0,63}$/
 export const MAX_GROUPS = 200
 
-/** Read-only by the owner's decision, whatever their roles say: 2FA off by default. */
-export const READ_ONLY_GROUPS: readonly string[] = ['staff-viewers']
-/** 2FA on by default by the owner's decision, whatever their roles say: they read people data and the audit log. */
-export const REQUIRED_GROUPS: readonly string[] = ['staff-auditors']
+/** Read-only by the owner's decision, whatever their roles say: 2FA off by default. (staff-viewers is gone.) */
+export const READ_ONLY_GROUPS: readonly string[] = []
+/** 2FA on by default by the owner's decision, whatever their roles say. (staff-auditors is gone.) */
+export const REQUIRED_GROUPS: readonly string[] = []
 const READ_VERBS = new Set(['read', 'list', 'check'])
 
 export interface GroupFlag {
@@ -87,9 +88,12 @@ async function compute(): Promise<{ flags: Map<string, GroupFlag>; stored: Recor
   const legacy = parseGroups(config[SECOND_FACTOR_KEY]) ?? []
   const roles = await loadRoles(new Set(Object.values(defs).flatMap((d) => Object.keys(d ?? {}))))
   const flags = new Map<string, GroupFlag>()
+  const locked = staffGroupsRequiringSecondFactor()
   for (const name of Object.keys(defs).sort()) {
     const dflt = defaultRequired(name, defs[name], roles)
-    if (name in stored) flags.set(name, { required: stored[name], explicit: true, default: dflt })
+    // A staff group whose role needs a recent second factor always requires one (policy/roles.ts).
+    if (locked.has(name)) flags.set(name, { required: true, explicit: name in stored || legacy.includes(name), default: true })
+    else if (name in stored) flags.set(name, { required: stored[name], explicit: true, default: dflt })
     else if (legacy.includes(name)) flags.set(name, { required: true, explicit: true, default: dflt })
     else flags.set(name, { required: dflt, explicit: false, default: dflt })
   }
@@ -141,6 +145,9 @@ async function writeFlags(mutate: (stored: Record<string, boolean>, flags: Map<s
 
 /** One group's switch. Returns the value before (effective) and after. */
 export async function setGroupSecondFactor(name: string, required: boolean): Promise<{ before: GroupFlag | null; after: boolean }> {
+  if (!required && staffGroupsRequiringSecondFactor().has(name)) {
+    throw Object.assign(new Error(`'${name}' always requires two-step sign-in: its role includes actions that need a recent second factor`), { statusCode: 409, code: 'second_factor_locked' })
+  }
   let before: GroupFlag | null = null
   await writeFlags((next, flags) => {
     before = flags.get(name) ?? null

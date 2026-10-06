@@ -3,7 +3,7 @@ import {
   CATALOG, ORG_PERMISSIONS, PERMISSIONS, PLATFORM_PERMISSIONS, catalogPermission, effectivePermissions, grants, scopeGrants, scopeOf,
 } from '../../policy/catalog.js'
 import {
-  EVERY_ORG, ORG_ROLES, ROLES, STAFF_ROLES, everyOrgDefinitions, isStaffGroup, roleDefinitions, roleProblems, staffGroups,
+  EVERY_ORG, ORG_ROLES, ROLES, STAFF_ROLES, everyOrgDefinitions, isStaffGroup, roleDefinitions, roleProblems, staffGroups, staffGroupsRequiringSecondFactor,
 } from '../../policy/roles.js'
 
 describe('the catalogue', () => {
@@ -82,65 +82,44 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
     expect([...ORG_ROLES.owner.permissions].sort()).toEqual([...ORG_PERMISSIONS].sort())
   })
 
-  it('every-org is the D1 table: support members r/w, auditor and security read, nobody else', () => {
-    expect(everyOrgDefinitions()).toEqual({
-      super_admin: [...ORG_PERMISSIONS].sort(),
-      support: ['org.members:read', 'org.members:write'],
-      auditor: ['org.audit:read', 'org.keys:read', 'org.members:read'],
-      security: ['org.audit:read', 'org.keys:read', 'org.members:read'],
-    })
+  it('every-org: only security reads inside organizations it does not belong to (and super_admin, everything)', () => {
+    expect(Object.keys(EVERY_ORG).sort()).toEqual(['security', 'super_admin'])
+    expect([...(EVERY_ORG.security ?? [])].sort()).toEqual(['org.audit:read', 'org.keys:read', 'org.members:read'])
   })
 
-  it('each staff role is bound to its own group under jinbe (no global scope)', () => {
-    expect(STAFF_ROLES.map((r) => ROLES[r].group)).toEqual([
-      'staff-viewers', 'staff-support', 'staff-ops', 'staff-developers', 'staff-auditors', 'staff-security', 'super_admins',
-    ])
-    for (const [g, def] of Object.entries(staffGroups())) {
-      expect(Object.keys(def)).toEqual(['jinbe'])
-      expect(isStaffGroup(g)).toBe(true)
-    }
-    expect(isStaffGroup('platform-admins')).toBe(false)
+  it('each staff role is bound to its own group under jinbe; auditors and viewers are gone', () => {
+    expect(Object.keys(staffGroups()).sort()).toEqual(['staff-developers', 'staff-ops', 'staff-security', 'staff-support', 'super_admins'])
+    for (const r of STAFF_ROLES) expect(staffGroups()[ROLES[r].group]).toEqual({ jinbe: [r] })
+    expect(isStaffGroup('staff-auditors')).toBe(false)
+    expect(isStaffGroup('staff-viewers')).toBe(false)
   })
 
-  it('every staff role reads sites, groups and organisations; support, ops and security the whole platform configuration', () => {
-    for (const r of STAFF_ROLES) for (const p of ['sites:read', 'groups:read', 'orgs:read']) expect(grants(ROLES[r].permissions, p), `${r} ${p}`).toBe(true)
-    for (const r of ['support', 'ops', 'security'] as const) for (const p of ['zones:read', 'gateway:read', 'settings:read', 'stats:read']) {
-      expect(grants(ROLES[r].permissions, p), `${r} ${p}`).toBe(true)
-    }
-  })
-
-  it('viewer: exactly sites, groups, organisations and the counts; no personal data, no platform configuration', () => {
-    expect([...ROLES.viewer.permissions].sort()).toEqual(['groups:read', 'orgs:read', 'sites:read', 'stats:read'])
-  })
-
-  it('auditor: people, access and audit evidence plus the directory; no settings, gateway, zones or counts', () => {
-    expect([...ROLES.auditor.permissions].sort()).toEqual([
-      'access:check', 'access:read', 'audit:export', 'audit:read', 'groups:read', 'orgs:read', 'policy.bundle:read', 'recert:read',
-      'sessions:read', 'sites:read', 'users.grants:read', 'users:read',
-    ])
-    expect(ROLES.auditor.label).toBe('Compliance: people, access and audit evidence')
-  })
-
-  it('developer keeps what a site flow needs, without settings:read', () => {
-    expect([...ROLES.developer.permissions].sort()).toEqual(['access:check', 'gateway:read', 'groups:read', 'orgs:read', 'sites:read', 'sites:write', 'stats:read', 'zones:read'])
-  })
-
+  // The table, pinned (owner decision 2026-10-06): a widening is a visible line here.
   it.each([
-    ['support', ['users:reset_second_factor', 'users:update_email', 'users:delete', 'users:disable', 'groups.members:write', 'sites:write', 'settings.signin:write']],
-    ['ops', ['users:read', 'users:update', 'groups:write', 'groups.members:write', 'settings.signin:write', 'policy.bundle:write']],
-    ['developer', ['sites:apply', 'sites.requests:approve', 'zones:write', 'gateway:apply', 'users:read']],
-    ['auditor', ['users:update', 'sites:write', 'groups.members:revoke', 'recert:manage', 'sessions:revoke']],
-    ['security', ['groups.members:write', 'groups:write', 'sites:write', 'sites:apply', 'settings.signin:write', 'users:recovery', 'users:send_login_link', 'users:delete']],
-  ] as const)('%s explicitly cannot', (role, denied) => {
-    for (const p of denied) expect(grants(ROLES[role].permissions, p), `${role} ${p}`).toBe(false)
+    ['developer', ['access:check', 'groups:read', 'orgs:read', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
+    ['support', ['access:check', 'access:read', 'sessions:read', 'sessions:revoke', 'users:create', 'users:read', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link', 'users:update', 'users:verify']],
+    ['ops', ['sites.requests:approve', 'sites.signup:revoke', 'sites.signup:write', 'sites:apply', 'sites:read', 'zones:read', 'zones:write']],
+    ['security', ['access:check', 'access:read', 'audit:read', 'groups.members:revoke', 'sessions:read', 'sessions:revoke', 'sites.signup:revoke', 'users.grants:read', 'users:disable', 'users:read', 'users:reset_second_factor']],
+  ] as const)('%s holds exactly its job', (role, perms) => {
+    expect([...ROLES[role].permissions].sort()).toEqual([...perms].sort())
   })
 
-  it('what no other staff role holds, only super_admin does', () => {
+  it('only super admins see settings, the gateway, the bundle, the access model, deletions, recertification and audit export', () => {
     const held = new Set(STAFF_ROLES.filter((r) => r !== 'super_admin').flatMap((r) => [...ROLES[r].permissions]))
-    expect(PLATFORM_PERMISSIONS.filter((p) => !held.has(p)).sort()).toEqual([
-      'groups.members:write', 'groups.mfa:write', 'groups:write', 'orgs.owners:write', 'orgs:delete', 'orgs:write', 'policy.bundle:write',
-      'settings.mcp:write', 'settings.signin:write', 'users.grants:write', 'users.metadata:write', 'users:delete',
-    ].sort())
+    for (const p of ['settings:read', 'settings.signin:write', 'settings.mcp:write', 'gateway:read', 'gateway:apply', 'policy.bundle:read', 'policy.bundle:write',
+      'groups:write', 'groups.members:write', 'groups.mfa:write', 'users.grants:write', 'users:delete', 'sites:delete', 'zones:delete', 'orgs:delete',
+      'recert:read', 'recert:manage', 'recert:delete', 'audit:export', 'stats:read', 'users:update_email'] as const) expect(held.has(p), p).toBe(false)
+  })
+
+  it('no role but super_admin both writes and publishes a site', () => {
+    for (const r of STAFF_ROLES.filter((x) => x !== 'super_admin')) {
+      const perms = ROLES[r].permissions as readonly string[]
+      expect(perms.includes('sites:write') && perms.includes('sites:apply'), r).toBe(false)
+    }
+  })
+
+  it('a staff group whose role needs a recent second factor always requires one', () => {
+    expect([...staffGroupsRequiringSecondFactor()].sort()).toEqual(['staff-ops', 'staff-security', 'staff-support', 'super_admins'])
   })
 
   it('roles.jinbe as the bootstrap writes it', () => {

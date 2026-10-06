@@ -138,18 +138,19 @@ describe('the v2 plan over a v1 inventory', () => {
     expect(p.after).toEqual({ platform: [], org: {} })
   })
 
-  it('staff roles keep their platform reach; the every-org map decides org reach (D1)', () => {
-    expect(person('desk@x.io')!.losses).toEqual([])
-    expect(person('opsy@x.io')!.losses.sort()).toEqual(['org.keys:read@*', 'org.keys:revoke@*'])
+  // The 2026-10-06 tightening: each staff role keeps its job only, so v1 staff lose the rest — listed for the owner.
+  it('staff roles keep their job; what they lose is listed (the 2026-10-06 tightening, and D1 for org reach)', () => {
+    expect(person('desk@x.io')!.losses.sort()).toEqual(['audit:read', 'gateway:read', 'groups:read', 'org.members:read@*', 'org.members:write@*', 'orgs.members:write', 'orgs:read', 'settings:read', 'sites:read', 'stats:read', 'zones:read'])
+    expect(person('opsy@x.io')!.losses.sort()).toEqual(['access:check', 'audit:read', 'gateway:apply', 'gateway:read', 'groups:read', 'org.keys:read@*', 'org.keys:revoke@*', 'orgs:read', 'settings:read', 'sites:delete', 'sites:write', 'stats:read', 'zones:delete'])
   })
 
   it('the D1 losses are shown once per group, first, for the owner to approve', () => {
-    expect(plan.lossesByGroup).toContainEqual({ group: 'staff-ops', members: ['opsy@x.io'], losses: ['org.keys:read@*', 'org.keys:revoke@*'], everyOrg: ['org.keys:read@*', 'org.keys:revoke@*'] })
+    expect(plan.lossesByGroup).toContainEqual({ group: 'staff-ops', members: ['opsy@x.io'], losses: ['access:check', 'audit:read', 'gateway:apply', 'gateway:read', 'groups:read', 'org.keys:read@*', 'org.keys:revoke@*', 'orgs:read', 'settings:read', 'sites:delete', 'sites:write', 'stats:read', 'zones:delete'], everyOrg: ['org.keys:read@*', 'org.keys:revoke@*'] })
     // A group whose members keep everything is not listed.
     expect(plan.lossesByGroup.map((l) => l.group)).not.toContain('super_admins')
     const md = renderPlanMarkdown(plan)
     expect(md.indexOf('## Losses to approve')).toBeLessThan(md.indexOf('## 1. Today'))
-    expect(md).toMatch(/\| staff-ops \| 1 \| org\.keys:read@\*, org\.keys:revoke@\* \|/)
+    expect(md).toMatch(/\| staff-ops \| 1 \| access:check, audit:read, gateway:apply/)
   })
 
   it('roster admins become jinbe:owner (members only), so they lose nothing in their org', () => {

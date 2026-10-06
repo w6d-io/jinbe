@@ -97,7 +97,7 @@ describe('a refused verdict', () => {
 
 describe('defined in code', () => {
   it('the staff groups and super_admins: 409 for everybody, before the policy is asked', async () => {
-    for (const g of ['super_admins', 'staff-viewers']) {
+    for (const g of ['super_admins', 'staff-ops']) {
       expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: g, after: { jinbe: ['viewer'] } }, ADMIN))).toMatchObject({ statusCode: 409, code: 'defined_in_code' })
       expect(await refusal(assertBundleWithinOwn({ roles: {}, groups: [{ name: g, definition: {} }], proposedRoles: {} }, ADMIN))).toMatchObject({ statusCode: 409 })
     }
