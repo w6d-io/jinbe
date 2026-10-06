@@ -47,6 +47,11 @@ function dropDeployments() {
   void deploymentsCache.invalidate()
 }
 
+/** Both hashes were written outside this module (a bundle restore): every replica reads them again. */
+export async function dropOrganisationCaches(): Promise<void> {
+  await Promise.all([registryCache.invalidate(), deploymentsCache.invalidate()])
+}
+
 /** Never an empty answer for a store that did not answer: "cannot tell" is not "none". */
 async function guarded<T>(what: string, fn: () => Promise<T>): Promise<T> {
   try {

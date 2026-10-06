@@ -513,8 +513,9 @@ export const envSchema = z.object({
   JINBE_SERVICE_URL: z.string().url().optional(),
 
   // ── RBAC-bundle backup (S3) ──────────────────────────────────────────────
-  // Mirrors the chart `backup.*` values. When enabled, jinbe reads the S3
-  // bucket the backup CronJob writes to (list snapshots, restore, first-init).
+  // Mirrors the chart `backup.*` values. When enabled, jinbe writes its own
+  // scheduled snapshots to the bucket and reads them back (list, download,
+  // restore, and the first-init restore, which runs after the model is seeded).
   // Credentials come from the default AWS chain (IRSA) — no static keys.
   BACKUP_ENABLED: z.string().default('false').transform((v) => v === 'true'),
   BACKUP_S3_BUCKET: z.string().optional(),

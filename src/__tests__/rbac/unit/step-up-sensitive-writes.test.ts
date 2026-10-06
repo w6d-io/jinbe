@@ -11,7 +11,7 @@ vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-au
 vi.mock('../../../services/audit-event.service.js', () => ({ auditEventService: { emit: vi.fn(async () => 'id') } }))
 vi.mock('../../../services/rbac-bundle.service.js', () => ({
   ALL_BUNDLE_SECTIONS: [],
-  BundleValidationError: class extends Error {},
+  bundleProblem: () => 'Invalid bundle format — missing version or rbac fields.',
   rbacBundleService: {
     import: vi.fn(async () => ({})),
     rollback: vi.fn(async () => ({ entry: { takenAt: 'now', reason: 'pre-import' }, result: {} })),

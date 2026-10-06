@@ -41,7 +41,7 @@ Where the others are protocol servers, Jinbe is the **API + audit + policy autho
 | **Machine-to-machine auth** | In-cluster callers authenticate with a Kubernetes ServiceAccount token; external ones with a Hydra `client_credentials` key |
 | **Privilege-escalation guards** | 422-gated assignment of admin-power groups, with optional MFA enforcement |
 | **Audit log** | Every mutation and authz decision appended to a Redis Stream |
-| **Backup / restore** | Bundle export + import for full RBAC + identity snapshots |
+| **Backup / restore** | Snapshots of the access model, people's org roles and direct grants, site intents, platform settings and organizations — as a file or in S3 (accounts and OAuth clients need a database backup) |
 | **Bootstrap** | Seeds default groups, roles and Oathkeeper rules on first start |
 
 ---
@@ -270,8 +270,9 @@ Every non-public route accepts either credential: an `ory_kratos_session` cookie
 ### Bundle
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/admin/rbac/bundle/export` | Export full RBAC + identities snapshot |
-| `POST` | `/api/admin/rbac/bundle/import` | Import a bundle (replaces RBAC, upserts identities) |
+| `GET` | `/api/admin/rbac/bundle/export` | Download the current snapshot (format 2; no accounts, no OAuth clients) |
+| `POST` | `/api/admin/rbac/bundle/import` | Restore a snapshot file (format 1 or 2; gateway rules never restored, organizations never deleted, applied sites published again) |
+| `GET` | `/api/admin/rbac/bundle/backups/download?key=` | Download one S3 snapshot |
 
 ### OPA / OPAL
 | Method | Path | Description |
@@ -404,9 +405,9 @@ On first start with an empty Redis:
 1. Creates default groups: `super_admins`, `admins`, `devs`, `viewers`, `users`.
 2. Creates default roles for `global` and `jinbe` services.
 3. Seeds Oathkeeper access rules templated from `AUTH_DOMAIN`, `APP_DOMAIN`, `API_DOMAIN`.
-4. Creates the bootstrap admin identity in Kratos (if `ADMIN_EMAIL` is set).
-5. Retries up to 15× in background if Redis or Kratos are not ready yet.
-6. With backup on, restores the RBAC from the backup's `latest.json`, as `BACKUP_RESTORE_ON_FIRST_INIT` says (see [Backup](#backup)).
+4. With backup on, restores the backup's `latest.json` over what was just seeded (what code defines is kept, applied sites are published again), as `BACKUP_RESTORE_ON_FIRST_INIT` says (see [Backup](#backup)).
+5. Creates the bootstrap admin identity in Kratos (if `ADMIN_EMAIL` is set).
+6. Retries up to 15× in background if Redis or Kratos are not ready yet.
 
 Subsequent restarts are idempotent — bootstrap is skipped when the bootstrap marker is present.
 
@@ -519,7 +520,7 @@ Chart: the `backup` block (`backup.enabled`, `backup.s3.*`, `backup.schedule`, `
 
 | Variable | Default | Notes |
 |---|---|---|
-| `BACKUP_ENABLED` | `false` | Read and write RBAC bundle snapshots in S3 (credentials from the default AWS chain, IRSA). |
+| `BACKUP_ENABLED` | `false` | Read and write snapshots in S3 (credentials from the default AWS chain, IRSA). |
 | `BACKUP_S3_BUCKET` | unset | The bucket. |
 | `BACKUP_S3_PREFIX` | `auth-backup` | Key prefix; `latest.json` sits under it. |
 | `BACKUP_S3_REGION` | `eu-west-3` | Bucket region. |

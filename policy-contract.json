@@ -945,6 +945,20 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/admin/rbac/bundle/backups/download",
+          "permission": "policy.bundle:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin"
+            ],
+            "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "POST",
           "path": "/api/admin/rbac/bundle/backups/now",
           "permission": "policy.bundle:write",

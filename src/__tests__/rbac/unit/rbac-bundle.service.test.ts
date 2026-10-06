@@ -9,7 +9,7 @@ const { redisMock, redisModule } = vi.hoisted(() => {
     private listStore = new Map<string, string[]>()
     async get(key: string) { return this.store.get(key) ?? null }
     async set(key: string, value: string) { this.store.set(key, value); return 'OK' as const }
-    async del(...keys: string[]) { let c = 0; for (const k of keys) { if (this.store.delete(k)) c++; if (this.hashStore.delete(k)) c++; if (this.setStore.delete(k)) c++ } return c }
+    async del(...keys: string[]) { let c = 0; for (const k of keys) { if (this.store.delete(k)) c++; if (this.hashStore.delete(k)) c++; if (this.setStore.delete(k)) c++; if (this.listStore.delete(k)) c++ } return c }
     async hget(key: string, field: string) { return this.hashStore.get(key)?.get(field) ?? null }
     async hset(key: string, field: string, value: string) { if (!this.hashStore.has(key)) this.hashStore.set(key, new Map()); const isNew = !this.hashStore.get(key)!.has(field); this.hashStore.get(key)!.set(field, value); return isNew ? 1 : 0 }
     async hdel(key: string, ...fields: string[]) { const h = this.hashStore.get(key); if (!h) return 0; let c = 0; for (const f of fields) { if (h.delete(f)) c++ } return c }
@@ -18,6 +18,8 @@ const { redisMock, redisModule } = vi.hoisted(() => {
     async srem(key: string, ...members: string[]) { const s = this.setStore.get(key); if (!s) return 0; let c = 0; for (const m of members) { if (s.delete(m)) c++ } return c }
     async smembers(key: string) { const s = this.setStore.get(key); return s ? Array.from(s) : [] }
     async sismember(key: string, member: string) { const s = this.setStore.get(key); return s?.has(member) ? 1 : 0 }
+    async rpush(key: string, ...values: string[]) { if (!this.listStore.has(key)) this.listStore.set(key, []); this.listStore.get(key)!.push(...values); return this.listStore.get(key)!.length }
+    async eval() { return 1 }
     async lpush(key: string, ...values: string[]) { if (!this.listStore.has(key)) this.listStore.set(key, []); const l = this.listStore.get(key)!; for (const v of values) l.unshift(v); return l.length }
     async ltrim(key: string, start: number, stop: number) { const l = this.listStore.get(key); if (l) { const end = stop < 0 ? l.length + stop + 1 : stop + 1; this.listStore.set(key, l.slice(start, end)) } return 'OK' as const }
     async lrange(key: string, start: number, stop: number) { const l = this.listStore.get(key) ?? []; const end = stop < 0 ? l.length + stop + 1 : stop + 1; return l.slice(start, end) }
@@ -45,10 +47,17 @@ vi.mock('../../../services/rbac.service.js', () => ({
 vi.mock('../../../services/audit-event.service.js', () => ({
   auditEventService: { emit: vi.fn().mockResolvedValue(undefined) },
 }))
+// Every import publishes the applied sites again (render + gateway platform): stubbed, asserted below.
+const { republish } = vi.hoisted(() => ({ republish: vi.fn() }))
+vi.mock('../../../sites/republish.js', () => ({ republishAppliedSites: republish }))
+vi.mock('../../../services/organisation-store/registry.js', () => ({ dropOrganisationCaches: vi.fn().mockResolvedValue(undefined) }))
 // A person's import clears the escalation guard (grant only what you hold), which asks OPA.
 vi.mock('../../../authz/opa.js', async () => (await import('../../helpers/opa-authz-mock.js')).opaAuthzMock())
 
-import { rbacBundleService, BundleValidationError, type AuthBundle } from '../../../services/rbac-bundle.service.js'
+import { rbacBundleService, type AuthBundle } from '../../../services/rbac-bundle.service.js'
+import { sitesRepository, type SiteRecord, type SiteVersion } from '../../../sites/repository.js'
+import { orgRolesRepository } from '../../../services/org-roles.repository.js'
+import { directGrantsRepository, type DirectGrant } from '../../../services/direct-grants.repository.js'
 import { redisRbacRepository, type OathkeeperRule } from '../../../services/redis-rbac.repository.js'
 import { opaWorld, refused, resetOpaWorld } from '../../helpers/opa-authz-mock.js'
 
@@ -62,6 +71,7 @@ async function adminHoldsBilling() {
   opaWorld.permissions[ADMIN.email] = ['billing:write']
 }
 
+/** A format-1 file (what every backup was before format 2): RBAC model plus gateway rules. */
 function makeBundle(overrides: Partial<AuthBundle['rbac']> = {}): AuthBundle {
   return {
     version: '1',
@@ -77,60 +87,51 @@ function makeBundle(overrides: Partial<AuthBundle['rbac']> = {}): AuthBundle {
   }
 }
 
+/** A saved site at version `v` (applied when `applied`), with its history. */
+function siteRecord(name: string, v = 2, applied = true): { record: SiteRecord; versions: SiteVersion[] } {
+  const site = { name, displayName: name } as unknown as SiteRecord['site']
+  const versions: SiteVersion[] = Array.from({ length: v }, (_, i) => ({ v: i + 1, at: '2026-10-01T00:00:00Z', by: 'ops@example.com', kind: 'save', etag: `e${i + 1}`, site }))
+  const record: SiteRecord = { site, version: v, etag: `e${v}`, savedAt: '2026-10-01T00:00:00Z', savedBy: 'ops@example.com', ...(applied ? { applied: { version: v, at: '2026-10-01T00:00:00Z', by: 'ops@example.com', rules: [] } } : {}) }
+  return { record, versions }
+}
+const sitesSection = (sites: Array<ReturnType<typeof siteRecord>>) => ({
+  records: sites.map((s) => s.record),
+  versions: Object.fromEntries(sites.map((s) => [s.record.site.name, s.versions])),
+})
+const grant = (name: string): DirectGrant => ({ id: `g-${name}`, scope: 'platform', app: 'billing', kind: 'role', name, grantedBy: 'ops@example.com', grantedAt: '2026-10-01T00:00:00Z' } as DirectGrant)
+
 describe('RbacBundleService — import validation, history, rollback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     redisMock.clear()
     resetOpaWorld()
+    republish.mockResolvedValue({ published: [], failed: [] })
   })
 
-  // Fail-closed: with the default enabled sets (cookie_session,noop /
-  // allow,remote_json / noop,header / redirect,json), a bundle carrying a rule
-  // that references any other handler must be rejected BEFORE any Redis write.
-  describe('fail-closed import validation', () => {
-    it('rejects a bundle with a rule using a disabled handler (jwt) — nothing written', async () => {
-      // Pre-existing state that must survive the rejected import untouched.
-      await redisRbacRepository.setAccessRules([createOathkeeperRule('existing') as OathkeeperRule])
-      await redisRbacRepository.setGroup('old-group', { billing: ['viewer'] })
-
-      const bad = makeBundle({
-        oathkeeperRules: [
-          createOathkeeperRule('good-rule') as OathkeeperRule,
-          createJwtAuthRule('jwt-rule') as OathkeeperRule,
-        ],
+  describe('gateway rules are never restored', () => {
+    it("ignores a format-1 file's rules, even a malformed one, and says so", async () => {
+      await redisRbacRepository.setAccessRules([createOathkeeperRule('current') as OathkeeperRule])
+      const old = makeBundle({
+        oathkeeperRules: [createOathkeeperRule('stale') as OathkeeperRule, createJwtAuthRule('jwt-rule') as OathkeeperRule],
       })
+      const result = await rbacBundleService.import(old)
+      expect((await redisRbacRepository.getAccessRules()).map((r) => r.id)).toEqual(['current'])
+      expect(result.notes.join(' ')).toMatch(/2 gateway rules were not restored/)
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+    })
 
-      const err = await rbacBundleService.import(bad).catch((e) => e)
-      expect(err).toBeInstanceOf(BundleValidationError)
+    it('a snapshot taken now carries no gateway rules', async () => {
+      await redisRbacRepository.setAccessRules([createOathkeeperRule('current') as OathkeeperRule])
+      const bundle = await rbacBundleService.export()
+      expect(bundle.version).toBe('2')
+      expect(bundle.rbac).not.toHaveProperty('oathkeeperRules')
+    })
+
+    it('refuses a format it cannot read — nothing written', async () => {
+      const err = await rbacBundleService.import({ ...makeBundle(), version: '3' }).catch((e) => e)
       expect(err.statusCode).toBe(400)
-      // names WHICH rule failed and why
-      expect(err.failures).toHaveLength(1)
-      expect(err.failures[0].id).toBe('jwt-rule')
-      expect(err.failures[0].reason).toContain("'jwt'")
-      expect(err.failures[0].reason).toContain('cookie_session')
-
-      // nothing was written: rules, groups and services untouched, no history entry
-      const rules = await redisRbacRepository.getAccessRules()
-      expect(rules.map((r) => r.id)).toEqual(['existing'])
-      expect(await redisRbacRepository.getGroups()).toEqual({ 'old-group': { billing: ['viewer'] } })
-      expect(await redisRbacRepository.getServices()).toEqual([])
+      expect(err.message).toMatch(/Unsupported bundle version: 3/)
       expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
-    })
-
-    it('rejects a structurally malformed rule with a schema reason', async () => {
-      const malformed = { id: 'broken', match: { url: 'x', methods: ['GET'] } } as unknown as OathkeeperRule
-      const err = await rbacBundleService.import(makeBundle({ oathkeeperRules: [malformed] })).catch((e) => e)
-      expect(err).toBeInstanceOf(BundleValidationError)
-      expect(err.failures[0].id).toBe('broken')
-      expect(err.failures[0].reason).toContain('schema:')
-      expect(err.failures[0].reason).toContain('upstream')
-    })
-
-    it('accepts a bundle whose rules all use enabled handlers', async () => {
-      const result = await rbacBundleService.import(makeBundle())
-      expect(result.rbac.oathkeeperRules).toBe(1)
-      const rules = await redisRbacRepository.getAccessRules()
-      expect(rules.map((r) => r.id)).toEqual(['billing'])
     })
   })
 
@@ -238,7 +239,6 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       expect(list[0]).not.toHaveProperty('bundle')
       // head snapshot = state after the first import
       expect(list[0].counts.services).toBe(1)
-      expect(list[0].counts.oathkeeperRules).toBe(1)
       expect(list[1].counts.services).toBe(0)
     })
   })
@@ -268,7 +268,7 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       // state A is back (full restore: kuma pruned, team-b gone)
       expect(await redisRbacRepository.getServices()).toEqual(['billing'])
       expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { billing: ['admin'] } })
-      expect((await redisRbacRepository.getAccessRules()).map((r) => r.id)).toEqual(['billing'])
+      expect(await redisRbacRepository.getAccessRules()).toEqual([])
 
       // and the rollback itself snapshotted state B first (reason pre-rollback)
       const history = await redisRbacRepository.getImportHistory()
@@ -286,17 +286,24 @@ describe('RbacBundleService — import validation, history, rollback', () => {
     it('restores the pre-import snapshot when a Redis write throws mid-way', async () => {
       await rbacBundleService.import(makeBundle({ groups: { 'team-a': { billing: ['admin'] } } }))
 
-      // Fail the rules write of the NEXT import only; the compensating
-      // applyBundle falls through to the real implementation.
-      const spy = vi.spyOn(redisRbacRepository, 'setAccessRules').mockRejectedValueOnce(new Error('redis down'))
+      // Fail the settings write of the NEXT import only (after its sites were written); the
+      // compensating applyBundle falls through to the real implementation.
+      const realHset = redisMock.hset.bind(redisMock)
+      const spy = vi.spyOn(redisMock, 'hset').mockImplementation(async (key: string, field: string, value: string) => {
+        if (key === 'rbac:config') throw new Error('redis down')
+        return realHset(key, field, value)
+      })
 
-      const bundleB = makeBundle({ services: ['billing', 'shop'], groups: { 'team-b': { shop: ['viewer'] } } })
+      const bundleB = { ...makeBundle({ services: ['billing', 'shop'], groups: { 'team-b': { shop: ['viewer'] } } }), version: '2' }
+      Object.assign(bundleB.rbac, { sites: sitesSection([siteRecord('shop-front')]), settings: { mcp: '{}' } })
       await expect(rbacBundleService.import(bundleB)).rejects.toThrow('redis down')
+      spy.mockRestore()
 
-      // pre-import state was restored (kuma pruned back out, team-a back)
+      // pre-import state was restored (shop pruned back out, team-a back, the written site taken back)
       expect(await redisRbacRepository.getServices()).toEqual(['billing'])
       expect(await redisRbacRepository.getGroups()).toEqual({ 'team-a': { billing: ['admin'] } })
-      spy.mockRestore()
+      expect(await sitesRepository.list()).toEqual([])
+      expect(republish).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -388,6 +395,208 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       opaWorld.down = true
       const err = await refusal(rbacBundleService.import(await bundleWith({ edge: { billing: ['ops'] } }), OPS))
       expect(err?.statusCode).toBe(503)
+    })
+  })
+  describe('applied sites are published again after every import', () => {
+    it('republishes after a full restore and reports the result', async () => {
+      republish.mockResolvedValueOnce({ published: ['shop-front'], failed: [{ site: 'blog', error: 'route tie' }] })
+      await adminHoldsBilling()
+      const result = await rbacBundleService.import(makeBundle(), ADMIN)
+      expect(republish).toHaveBeenCalledTimes(1)
+      expect(republish).toHaveBeenCalledWith(ADMIN)
+      expect(result.sites).toEqual({ published: ['shop-front'], failed: [{ site: 'blog', error: 'route tie' }] })
+    })
+
+    it('republishes after a sectioned import and after a rollback, as the bootstrap restore (no actor)', async () => {
+      await redisRbacRepository.setRoles('billing', { admin: ['billing:write'] })
+      await rbacBundleService.import(makeBundle({ groups: { v: { billing: ['admin'] } } }), undefined, ['groups'])
+      const [entry] = await rbacBundleService.listImportHistory()
+      await rbacBundleService.rollback(entry.id)
+      expect(republish).toHaveBeenCalledTimes(2)
+      expect(republish).toHaveBeenLastCalledWith({ email: 'jinbe (restore)' })
+    })
+
+    it('a republish that cannot run does not undo the import: it is reported', async () => {
+      republish.mockRejectedValueOnce(new Error('gateway platform unreadable'))
+      const result = await rbacBundleService.import(makeBundle())
+      expect(result.sites.failed).toEqual([{ site: '*', error: 'gateway platform unreadable' }])
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+    })
+  })
+
+  // A restore never deletes an organization: one created after the snapshot (a customer who signed
+  // up) keeps its record and everything scoped to it. The snapshot's orgs are restored exactly.
+  describe('organizations: restored exactly when in the snapshot, untouched otherwise', () => {
+    const ACME = '{"id":"acme","name":"Acme","tenant":"acme"}'
+    const orgGrant = (name: string, scope: string): DirectGrant => ({ ...grant(name), id: `g-${name}-${scope}`, scope })
+    const claim = (domain: string, org: string) => JSON.stringify({ domain, org, token: 't', verified: true, claimedAt: '2026-10-01T00:00:00Z' })
+    const seedOrgData = async () => {
+      await redisRbacRepository.setOrgSites('acme', ['billing'])
+      await redisRbacRepository.setOrgSites('new-org', ['billing'])
+      await orgRolesRepository.setForMember('acme', 'id-keep', ['billing:admin'])
+      await orgRolesRepository.setForMember('acme', 'id-stale', ['billing:admin'])
+      await orgRolesRepository.setForMember('new-org', 'id-x', ['billing:admin'])
+      await directGrantsRepository.restore('id-keep', [grant('admin')])
+      await directGrantsRepository.restore('id-stale', [grant('admin'), orgGrant('admin', 'acme'), orgGrant('admin', 'new-org')])
+      await redisMock.hset('rbac:organisations', 'acme', '{"id":"acme","name":"Acme renamed","tenant":"acme"}')
+      await redisMock.hset('rbac:organisations', 'new-org', '{"id":"new-org","name":"Signed up later","tenant":"new"}')
+      await redisMock.hset('rbac:signup:org_sites', 'acme', '["shop"]')
+      await redisMock.hset('rbac:signup:org_sites', 'new-org', '["shop"]')
+      await redisMock.hset('rbac:org_domains', 'acme-old.test', claim('acme-old.test', 'acme'))
+      await redisMock.hset('rbac:org_domains', 'new.test', claim('new.test', 'new-org'))
+    }
+    const snapshotWithAcmeOnly = () => {
+      const b = { ...makeBundle({
+        orgSites: { acme: ['billing'] },
+        orgAssignments: { acme: { 'id-keep': ['billing:admin'] } },
+        directGrants: { 'id-keep': [grant('admin')] },
+      }), version: '2' }
+      Object.assign(b.rbac, {
+        organizations: { registry: { acme: ACME } },
+        signup: { orgSites: {}, domains: { 'acme.test': claim('acme.test', 'acme'), 'new.test': claim('new.test', 'acme') } },
+      })
+      return b
+    }
+
+    it('a full restore: the snapshot\'s orgs exactly, an org created since untouched', async () => {
+      await seedOrgData()
+      await rbacBundleService.import(snapshotWithAcmeOnly())
+      // acme: back to the snapshot
+      expect(await redisMock.hget('rbac:organisations', 'acme')).toBe(ACME)
+      expect(await orgRolesRepository.getForOrg('acme')).toEqual({ 'id-keep': ['billing:admin'] })
+      expect(await redisMock.hget('rbac:signup:org_sites', 'acme')).toBeNull()
+      expect(await redisMock.hget('rbac:org_domains', 'acme-old.test')).toBeNull()
+      expect(await redisMock.hget('rbac:org_domains', 'acme.test')).toBe(claim('acme.test', 'acme'))
+      // new-org: record, entitlements, roles, sign-up sites, its domain claim and its grants kept
+      expect(await redisMock.hget('rbac:organisations', 'new-org')).not.toBeNull()
+      expect(await redisRbacRepository.getOrgSites()).toEqual({ acme: ['billing'], 'new-org': ['billing'] })
+      expect(await orgRolesRepository.getForOrg('new-org')).toEqual({ 'id-x': ['billing:admin'] })
+      expect(await redisMock.hget('rbac:signup:org_sites', 'new-org')).toBe('["shop"]')
+      expect(await redisMock.hget('rbac:org_domains', 'new.test')).toBe(claim('new.test', 'new-org'))
+      // platform grants and acme's exactly the file's; the grant in new-org stays
+      expect(await directGrantsRepository.getFor('id-keep')).toHaveLength(1)
+      expect((await directGrantsRepository.getFor('id-stale')).map((g) => g.scope)).toEqual(['new-org'])
+    })
+
+    it('a sectioned import of the same file removes nothing', async () => {
+      await seedOrgData()
+      await rbacBundleService.import(snapshotWithAcmeOnly(), undefined, ['orgSites', 'orgAssignments', 'directGrants', 'organizations', 'signup'])
+      expect(Object.keys(await redisRbacRepository.getOrgSites()).sort()).toEqual(['acme', 'new-org'])
+      expect(Object.keys(await orgRolesRepository.getForOrg('acme')).sort()).toEqual(['id-keep', 'id-stale'])
+      expect(await directGrantsRepository.getFor('id-stale')).toHaveLength(3)
+      expect(Object.keys(await redisMock.hgetall('rbac:organisations')).sort()).toEqual(['acme', 'new-org'])
+      expect(Object.keys(await redisMock.hgetall('rbac:org_domains')).sort()).toEqual(['acme-old.test', 'acme.test', 'new.test'])
+    })
+
+    it('organization deployments are neither in a snapshot nor restored', async () => {
+      await redisMock.hset('rbac:organisations', 'acme', ACME)
+      await redisMock.hset('rbac:organisation_deployments', 'acme', '{"billing":true}')
+      const bundle = await rbacBundleService.export()
+      expect(bundle.rbac.organizations).toEqual({ registry: { acme: ACME } })
+      const older = { ...makeBundle(), version: '2' }
+      Object.assign(older.rbac, { organizations: { registry: { acme: ACME }, deployments: { acme: '{"billing":false}' } } })
+      await rbacBundleService.import(older)
+      expect(await redisMock.hget('rbac:organisation_deployments', 'acme')).toBe('{"billing":true}')
+    })
+
+    it('a failed import takes back the organization records it added', async () => {
+      const realHset = redisMock.hset.bind(redisMock)
+      const spy = vi.spyOn(redisMock, 'hset').mockImplementation(async (key: string, field: string, value: string) => {
+        if (key === 'rbac:signup:org_sites') throw new Error('redis down')
+        return realHset(key, field, value)
+      })
+      const b = snapshotWithAcmeOnly()
+      Object.assign(b.rbac, { signup: { orgSites: { acme: '["shop"]' }, domains: {} } })
+      await expect(rbacBundleService.import(b)).rejects.toThrow('redis down')
+      spy.mockRestore()
+      expect(await redisMock.hgetall('rbac:organisations')).toEqual({})
+    })
+  })
+
+  describe('the stores beside the model (format 2)', () => {
+    const seedStores = async () => {
+      const shop = siteRecord('shop-front', 3)
+      await sitesRepository.put(shop.record, shop.versions)
+      await redisMock.hset('rbac:config', 'mcp', '{"enabled":true}')
+      await redisMock.hset('rbac:config', 'sign_in_protection', '{"captcha":"off"}')
+      await redisMock.hset('rbac:organisations', 'acme', '{"id":"acme","name":"Acme","tenant":"acme"}')
+      await redisMock.hset('rbac:signup:org_sites', 'acme', '["shop-front"]')
+      await redisMock.hset('rbac:org_domains', 'acme.test', '{"domain":"acme.test","org":"acme","verified":true}')
+      await redisMock.hset('rbac:services:meta', 'billing', '{"description":"Billing"}')
+      await redisMock.hset('rbac:services:meta', 'jinbe', '{"system":true}')
+      await redisMock.hset('rbac:groups:meta', 'admins', '{"description":"Admins"}')
+      await redisMock.hset('rbac:groups:meta', 'super_admins', '{"system":true}')
+    }
+
+    it('round-trip: what is exported comes back after a restore on an empty store', async () => {
+      await seedStores()
+      const before = await rbacBundleService.export()
+      expect(before.rbac.sites?.records.map((r) => r.site.name)).toEqual(['shop-front'])
+      expect(before.rbac.sites?.versions['shop-front']).toHaveLength(3)
+      // What code defines is not in a snapshot.
+      expect(before.rbac.metadata).toEqual({ services: { billing: '{"description":"Billing"}' }, groups: { admins: '{"description":"Admins"}' } })
+
+      redisMock.clear()
+      const result = await rbacBundleService.import(JSON.parse(JSON.stringify(before)))
+      expect(result.stores.sites).toEqual({ restored: ['shop-front'], kept: [] })
+      expect(result.notes).toEqual([])
+      const after = await rbacBundleService.export()
+      expect({ ...after.rbac }).toEqual({ ...before.rbac })
+      expect((await sitesRepository.get('shop-front'))?.applied?.version).toBe(3)
+    })
+
+    it('a site that exists now is kept as it is; a site gone since is written back', async () => {
+      const live = siteRecord('shop-front', 5)
+      await sitesRepository.put(live.record, live.versions)
+      const snapshot = { ...makeBundle(), version: '2' }
+      Object.assign(snapshot.rbac, { sites: sitesSection([siteRecord('shop-front', 2), siteRecord('blog', 1)]) })
+      const result = await rbacBundleService.import(snapshot)
+      expect(result.stores.sites).toEqual({ restored: ['blog'], kept: ['shop-front'] })
+      expect((await sitesRepository.get('shop-front'))?.version).toBe(5)
+      expect(await sitesRepository.versions('shop-front')).toHaveLength(5)
+      expect(await sitesRepository.versions('blog')).toHaveLength(1)
+    })
+
+    it('a full restore makes settings exactly the file\'s; a sectioned one only writes over', async () => {
+      await redisMock.hset('rbac:config', 'mcp', '{"enabled":false}')
+      await redisMock.hset('rbac:config', 'added_later', '1')
+      const snapshot = { ...makeBundle(), version: '2' }
+      Object.assign(snapshot.rbac, { settings: { mcp: '{"enabled":true}' } })
+      await rbacBundleService.import(snapshot, undefined, ['settings'])
+      expect(await redisMock.hgetall('rbac:config')).toEqual({ mcp: '{"enabled":true}', added_later: '1' })
+      await rbacBundleService.import(snapshot)
+      expect(await redisMock.hgetall('rbac:config')).toEqual({ mcp: '{"enabled":true}' })
+    })
+
+    it('refuses a malformed store section before anything is written', async () => {
+      const snapshot = { ...makeBundle(), version: '2' }
+      const bad = siteRecord('shop-front', 2)
+      Object.assign(snapshot.rbac, { settings: { mcp: { enabled: true } }, sites: { records: [bad.record], versions: { 'shop-front': bad.versions.slice(0, 1) } } })
+      const err = await rbacBundleService.import(snapshot).catch((e) => e)
+      expect(err.statusCode).toBe(400)
+      expect(err.message).toMatch(/settings: must map/)
+      expect(err.message).toMatch(/shop-front: version 2 is not its last saved version/)
+      expect(await redisRbacRepository.getImportHistory()).toHaveLength(0)
+    })
+  })
+
+  describe('a format-1 file still restores', () => {
+    it('leaves what it lacks as it is, and says so', async () => {
+      await redisMock.hset('rbac:config', 'mcp', '{"enabled":true}')
+      await redisMock.hset('rbac:organisations', 'acme', '{"id":"acme","name":"Acme","tenant":"acme"}')
+      await redisRbacRepository.setOrgSites('acme', ['billing'])
+      const shop = siteRecord('shop-front')
+      await sitesRepository.put(shop.record, shop.versions)
+
+      const result = await rbacBundleService.import(makeBundle())
+
+      expect(await redisRbacRepository.getServices()).toEqual(['billing'])
+      expect(await redisMock.hgetall('rbac:config')).toEqual({ mcp: '{"enabled":true}' })
+      expect(Object.keys(await redisMock.hgetall('rbac:organisations'))).toEqual(['acme'])
+      expect(await redisRbacRepository.getOrgSites()).toEqual({ acme: ['billing'] })
+      expect(await sitesRepository.get('shop-front')).not.toBeNull()
+      expect(result.notes.join(' ')).toMatch(/format 1\) has no orgSites, orgAssignments, directGrants, sites, settings, organizations, signup, metadata: left as they are/)
+      expect(republish).toHaveBeenCalledTimes(1)
     })
   })
 })

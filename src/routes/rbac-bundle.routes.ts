@@ -1,17 +1,18 @@
 import { FastifyInstance } from 'fastify'
 import { badRequestResponseSchema, conflictResponseSchema } from '../schemas/response-schemas.js'
 import { needs } from '../policy/route-access.js'
-import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, BundleValidationError } from '../services/rbac-bundle.service.js'
+import { rbacBundleService, type AuthBundle, ALL_BUNDLE_SECTIONS, type BundleSection, bundleProblem } from '../services/rbac-bundle.service.js'
 import { backupStore } from '../services/backup-store.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { auditActor } from '../utils/audit-actor.js'
 
 /**
- * Auth config bundle export / import + S3 backup routes.
+ * Backup & restore: the snapshot (rbac-bundle.service.ts) as a file, in S3, and the import history.
  *
- * GET  /api/admin/rbac/bundle/export           — download bundle (optionally ?sections=)
- * POST /api/admin/rbac/bundle/import           — restore from an uploaded bundle (full replace)
+ * GET  /api/admin/rbac/bundle/export           — download the current snapshot (optionally ?sections=)
+ * POST /api/admin/rbac/bundle/import           — restore from an uploaded snapshot (full replace, or ?sections=)
  * GET  /api/admin/rbac/bundle/backups          — list S3 backup snapshots
+ * GET  /api/admin/rbac/bundle/backups/download — download one S3 snapshot (?key=)
  * POST /api/admin/rbac/bundle/backups/restore  — restore from an S3 snapshot key
  * POST /api/admin/rbac/bundle/backups/now      — export current config and upload to S3
  * GET  /api/admin/rbac/bundle/history          — pre-import snapshot history (no bundle payloads)
@@ -23,19 +24,13 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
   const disabled = (reply: import('fastify').FastifyReply) =>
     reply.status(501).send({ error: 'Not Implemented', code: 'backup_disabled', message: 'S3 backup is not enabled on this deployment.' })
 
-  // Fail-closed rule validation → 400 listing WHICH rules failed and why. The
-  // global error handler only forwards `message`, so the failures array is
-  // attached here on every path that funnels into rbacBundleService.import().
-  const badBundle = (reply: import('fastify').FastifyReply, err: BundleValidationError) =>
-    reply.status(400).send({ error: 'Bad Request', message: err.message, failures: err.failures })
-
   // ── Export (optionally a subset of sections) ──
   fastify.get(
     '/bundle/export',
     {
       ...needs('policy.bundle:read'),
       schema: {
-        description: 'Export RBAC config as a portable JSON bundle. ?sections=services,groups,… narrows it; omitted = full 1:1 snapshot.',
+        description: 'Download the current snapshot (format 2): the RBAC model, people\'s org roles and direct grants, site intents and versions, platform settings, the organization records, sign-up stores and metadata. Not accounts or OAuth clients. ?sections=services,groups,… narrows it; omitted = full 1:1 snapshot.',
         tags: ['rbac', 'backup'],
         querystring: { type: 'object', properties: { sections: { type: 'string' } } },
         response: { 200: { type: 'object', additionalProperties: true } },
@@ -71,7 +66,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       ...needs('policy.bundle:write'),
       // A full replace of the access model: policy.bundle:write + a fresh second factor (catalogue).
       schema: {
-        description: 'Import an auth bundle — restores RBAC config. Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore. 409 (nothing written) when the resulting route maps tie two services on one route at the same specificity.',
+        description: 'Restore from a snapshot file (format 1 or 2). Body must be a full snapshot; ?sections=services,groups,… applies only those parts (override/add, no prune), omitted = full 1:1 restore (each section the file carries replaces what is there; sites that exist are kept; organizations are never deleted, and org data is restored only for the organizations the file has). Gateway rules in a format-1 file are never restored. Every applied site is published again afterwards (`imported.sites`). 409 (nothing written) when the resulting route maps tie two services on one route at the same specificity.',
         tags: ['rbac', 'backup'],
         querystring: { type: 'object', properties: { sections: { type: 'string' } } },
         body: { type: 'object', additionalProperties: true },
@@ -86,7 +81,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       const bundle = request.body as AuthBundle
       // Uploaded file must still be a FULL snapshot — a selective import picks
       // which parts of that snapshot to apply, it does not accept a partial file.
-      const err = validateFullBundle(bundle)
+      const err = bundleProblem(bundle)
       if (err) return reply.status(400).send({ error: 'Bad Request', message: err })
 
       const raw = (request.query as { sections?: string })?.sections
@@ -94,13 +89,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         ? raw.split(',').map((s) => s.trim()).filter((s): s is BundleSection => (ALL_BUNDLE_SECTIONS as string[]).includes(s))
         : undefined
 
-      try {
-        const result = await rbacBundleService.import(bundle, auditActor(request), sections)
-        return { success: true, imported: result }
-      } catch (e) {
-        if (e instanceof BundleValidationError) return badBundle(reply, e)
-        throw e
-      }
+      const result = await rbacBundleService.import(bundle, auditActor(request), sections)
+      return { success: true, imported: result }
     }
   )
 
@@ -112,6 +102,37 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       if (!backupStore.enabled()) return disabled(reply)
       const backups = await backupStore.listBackups()
       return { ...backupStore.config(), backups }
+    }
+  )
+
+  // ── Download one S3 snapshot: the same file a restore reads ──
+  fastify.get(
+    '/bundle/backups/download',
+    {
+      ...needs('policy.bundle:read'),
+      schema: {
+        description: 'Download one S3 backup snapshot as a file (?key= from the list).',
+        tags: ['rbac', 'backup'],
+        querystring: { type: 'object', required: ['key'], properties: { key: { type: 'string' } } },
+        response: { 200: { type: 'object', additionalProperties: true } },
+      },
+    },
+    async (request, reply) => {
+      if (!backupStore.enabled()) return disabled(reply)
+      const { key } = request.query as { key: string }
+      const bundle = await backupStore.getBackup(key)
+      // An exfil path like the export: audited the same way.
+      const a = auditActor(request)
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'export', target: `backup:${key}`,
+        result: 'applied', severity: 'warn',
+        actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+        requestId: a.requestId, details: { snapshotKey: key },
+      }).catch(() => {})
+      const filename = `auth-backup-${key.split('/').pop() ?? 'snapshot.json'}`
+      reply.header('Content-Disposition', `attachment; filename="${filename.replace(/[^\w.-]/g, '_')}"`)
+      reply.header('Content-Type', 'application/json')
+      return bundle
     }
   )
 
@@ -133,7 +154,7 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
       if (!key) return reply.status(400).send({ error: 'Bad Request', message: 'key is required' })
 
       const bundle = await backupStore.getBackup(key)
-      const err = validateFullBundle(bundle)
+      const err = bundleProblem(bundle)
       if (err) return reply.status(400).send({ error: 'Bad Request', message: `Backup ${key} is not a valid full snapshot: ${err}` })
 
       const a = auditActor(request)
@@ -145,13 +166,8 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
         requestId: a.requestId, details: { snapshotKey: key },
       }).catch(() => {})
-      try {
-        const result = await rbacBundleService.import(bundle, a, undefined, 'pre-restore')
-        return { success: true, restoredFrom: key, imported: result }
-      } catch (e) {
-        if (e instanceof BundleValidationError) return badBundle(reply, e)
-        throw e
-      }
+      const result = await rbacBundleService.import(bundle, a, undefined, 'pre-restore')
+      return { success: true, restoredFrom: key, imported: result }
     }
   )
 
@@ -225,35 +241,19 @@ export async function rbacBundleRoutes(fastify: FastifyInstance) {
         },
       },
     },
-    async (request, reply) => {
+    async (request) => {
       const { id } = request.params as { id: string }
       const a = auditActor(request)
-      try {
-        const { entry, result } = await rbacBundleService.rollback(id, a)
-        // Record the provenance of the rollback (import() emits the config-diff
-        // event; this records WHICH snapshot the state was rolled back to).
-        auditEventService.emit({
-          category: 'rbac', kind: 'change', verb: 'rollback', target: `history:${id}`,
-          result: 'applied', severity: 'high',
-          actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
-          requestId: a.requestId, details: { historyId: id, takenAt: entry.takenAt, reason: entry.reason },
-        }).catch(() => {})
-        return { success: true, rolledBackTo: entry, imported: result }
-      } catch (e) {
-        if (e instanceof BundleValidationError) return badBundle(reply, e)
-        throw e
-      }
+      const { entry, result } = await rbacBundleService.rollback(id, a)
+      // Record the provenance of the rollback (import() emits the config-diff
+      // event; this records WHICH snapshot the state was rolled back to).
+      auditEventService.emit({
+        category: 'rbac', kind: 'change', verb: 'rollback', target: `history:${id}`,
+        result: 'applied', severity: 'high',
+        actor: { email: a.email ?? null, ip: a.ip, name: a.name, ua: a.ua, sessionId: a.sessionId },
+        requestId: a.requestId, details: { historyId: id, takenAt: entry.takenAt, reason: entry.reason },
+      }).catch(() => {})
+      return { success: true, rolledBackTo: entry, imported: result }
     }
   )
-}
-
-/** A restore requires a FULL snapshot; a partial export must not silently wipe. */
-function validateFullBundle(bundle: AuthBundle | undefined): string | null {
-  if (!bundle?.version || !bundle?.rbac) return 'Invalid bundle format — missing version or rbac fields.'
-  if (bundle.version !== '1') return `Unsupported bundle version: ${bundle.version}`
-  const r = bundle.rbac as Record<string, unknown>
-  if (!Array.isArray(r.services) || !r.groups || !r.roles || !r.routeMaps || !Array.isArray(r.oathkeeperRules)) {
-    return 'Incomplete bundle — a restore requires a full snapshot (services, groups, roles, routeMaps, oathkeeperRules).'
-  }
-  return null
 }

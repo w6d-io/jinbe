@@ -32,6 +32,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"PUT","path":"/api/admin/organizations/:organizationId/owners","permission":"orgs.owners:write"},
   {"method":"POST","path":"/api/admin/rbac/access-check","permission":"access:check"},
   {"method":"GET","path":"/api/admin/rbac/bundle/backups","permission":"policy.bundle:read"},
+  {"method":"GET","path":"/api/admin/rbac/bundle/backups/download","permission":"policy.bundle:read"},
   {"method":"POST","path":"/api/admin/rbac/bundle/backups/now","permission":"policy.bundle:write"},
   {"method":"POST","path":"/api/admin/rbac/bundle/backups/restore","permission":"policy.bundle:write"},
   {"method":"GET","path":"/api/admin/rbac/bundle/export","permission":"policy.bundle:read"},

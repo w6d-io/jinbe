@@ -1,78 +1,22 @@
 import { randomUUID } from 'node:crypto'
-import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule, type ImportHistoryEntry, type ImportHistoryReason } from './redis-rbac.repository.js'
+import { redisRbacRepository, type FlatRolesMap, type RouteMap, type ImportHistoryEntry, type ImportHistoryReason } from './redis-rbac.repository.js'
 import { auditEventService, type AuditActorInput, type AuditFlag } from './audit-event.service.js'
 import { rbacService } from './rbac.service.js'
 import { defaultServiceRoles } from './rbac-defaults.js'
 import { InvalidBindingError, bindingProblems } from './group-bindings.js'
-import { oathkeeperRuleSchema } from '../schemas/rbac/access-rules.schema.js'
-import { isHandlerEnabled, getEnabledHandlerNames, type HandlerKind } from './oathkeeper-handlers.js'
 import { findAllRouteTies, loadPublishedRouteRules, routeTieConflict } from '../policy/route-ties.js'
 import { assertOrgParams } from '../policy/route-org-param.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { assertBundleWithinOwn } from './rbac-escalation-guard.js'
 import { groupGrants, loadRoles, type PermissionsByScope, type RolesByScope } from './grant-subset.js'
-import { directGrantsRepository, type DirectGrant } from './direct-grants.repository.js'
-import { orgRolesRepository, type OrgAssignments } from './org-roles.repository.js'
+import { directGrantsRepository, grantKey, type DirectGrant } from './direct-grants.repository.js'
+import { orgRolesRepository } from './org-roles.repository.js'
 import { JINBE, isStaffGroup } from '../policy/roles.js'
+import { republishAppliedSites } from '../sites/republish.js'
+import { applyStores, exportStores, newProgress, orgsInSnapshot, takeBack, type ImportProgress, type StoresResult } from './bundle-stores.js'
+import { BUNDLE_VERSION, bundleProblem, importNotes, isFullImport, withoutOwned, type AuthBundle, type BundleSection } from './bundle-format.js'
 
-export interface AuthBundle {
-  version: '1'
-  exportedAt: string
-  rbac: {
-    services: string[]
-    groups: Record<string, GroupDefinition>
-    roles: Record<string, FlatRolesMap>
-    routeMaps: Record<string, RouteMap>
-    oathkeeperRules: OathkeeperRule[]
-    /** Org → the sites it is entitled to (rbac:org_sites). */
-    orgSites?: Record<string, string[]>
-    /** Org → identity id → org roles (rbac:org_assignments): people's org roles, backed up with the rest. */
-    orgAssignments?: OrgAssignments
-    /** Identity id → direct grants (rbac:direct_grants): people's per-person roles and permissions. */
-    directGrants?: Record<string, DirectGrant[]>
-    /** Service → org roles; service → every-org map (with the roles section). */
-    orgRoles?: Record<string, FlatRolesMap>
-    everyOrg?: Record<string, FlatRolesMap>
-    /** A bundle exported before org entitlements: read as orgSites on import, jinbe and kuma left out. */
-    orgServiceMap?: Record<string, string[]>
-  }
-}
-
-export type BundleSection = 'services' | 'groups' | 'roles' | 'routeMaps' | 'oathkeeperRules' | 'orgSites' | 'orgAssignments' | 'directGrants'
-export const ALL_BUNDLE_SECTIONS: BundleSection[] = ['services', 'groups', 'roles', 'routeMaps', 'oathkeeperRules', 'orgSites', 'orgAssignments', 'directGrants']
-
-/**
- * What an import may never write: what jinbe defines in code (its roles, route map, org roles,
- * every-org map, the staff groups) — the next boot would converge it back anyway, and an import is
- * not a way around "defined in code". A bundle from before the in-place model is read too: its
- * `global` roles and `kuma` service are dropped, its org → service map becomes org entitlements.
- */
-export function withoutOwned(bundle: AuthBundle): AuthBundle {
-  const r = bundle.rbac
-  // `global` and `kuma` were services of the previous model; neither exists now.
-  const drop = (svc: string) => svc === JINBE || svc === 'global' || svc === 'kuma'
-  const keep = <T>(m: Record<string, T> | undefined) => Object.fromEntries(Object.entries(m ?? {}).filter(([svc]) => !drop(svc)))
-  const orgSites = r.orgSites ?? Object.fromEntries(Object.entries(r.orgServiceMap ?? {})
-    .map(([org, svcs]) => [org, (Array.isArray(svcs) ? svcs : [svcs as unknown as string]).filter((svc) => !drop(svc))] as const)
-    .filter(([, svcs]) => svcs.length > 0))
-  return {
-    ...bundle,
-    rbac: {
-      services: (r.services ?? []).filter((svc) => !drop(svc)),
-      groups: Object.fromEntries(Object.entries(r.groups ?? {})
-        .filter(([name]) => !isStaffGroup(name))
-        .map(([name, def]) => [name, Object.fromEntries(Object.entries(def).filter(([svc]) => !drop(svc)))])),
-      roles: keep(r.roles),
-      routeMaps: keep(r.routeMaps),
-      oathkeeperRules: r.oathkeeperRules ?? [],
-      orgSites,
-      orgAssignments: r.orgAssignments ?? {},
-      directGrants: r.directGrants ?? {},
-      orgRoles: keep(r.orgRoles),
-      everyOrg: keep(r.everyOrg),
-    },
-  }
-}
+export { ALL_BUNDLE_SECTIONS, BUNDLE_VERSION, READABLE_VERSIONS, bundleProblem, withoutOwned, type AuthBundle, type BundleSection } from './bundle-format.js'
 
 export interface ImportResult {
   rbac: {
@@ -80,26 +24,16 @@ export interface ImportResult {
     groups: number
     roles: number
     routeMaps: number
-    oathkeeperRules: number
+    orgSites: number
+    orgAssignments: number
+    directGrants: number
   }
-}
-
-export interface RuleValidationFailure { id: string; reason: string }
-
-/**
- * Fail-closed rejection of a bundle whose oathkeeperRules would break the
- * gateway. Carries the per-rule failures so the route layer can return a 400
- * body naming WHICH rules failed and why (the global error handler only
- * forwards `message`, so routes catch this class to attach `failures`).
- */
-export class BundleValidationError extends Error {
-  statusCode = 400
-  constructor(public failures: RuleValidationFailure[]) {
-    super(
-      `Bundle rejected — ${failures.length} invalid oathkeeper rule(s) (nothing was written): ` +
-        failures.map((f) => `${f.id}: ${f.reason}`).join('; '),
-    )
-  }
+  /** The stores written (sections the file carried and the import asked for). */
+  stores: StoresResult
+  /** Every applied site published again from its applied version, after the import. */
+  sites: { published: string[]; failed: Array<{ site: string; error: string }> }
+  /** What the import left out, and why (gateway rules of a format-1 file, sections it lacks). */
+  notes: string[]
 }
 
 /** History list item — the entry minus its (large) bundle payload, plus counts. */
@@ -108,20 +42,20 @@ export interface ImportHistorySummary {
   takenAt: string
   actor: string | null
   reason: ImportHistoryReason
-  counts: { services: number; groups: number; roles: number; routeMaps: number; oathkeeperRules: number; orgSites: number; orgAssignments: number; directGrants: number }
+  counts: { services: number; groups: number; roles: number; routeMaps: number; orgSites: number; orgAssignments: number; directGrants: number; sites: number; organizations: number }
 }
 
 class RbacBundleService {
   // `sections` (optional) narrows a MANUAL export/download to selected parts.
-  // Omitted → full 1:1 snapshot (what the backup CronJob + restore use).
+  // Omitted → full 1:1 snapshot (what the scheduled backup and every restore use).
   async export(sections?: BundleSection[]): Promise<AuthBundle> {
-    const [services, groups, oathkeeperRules, orgSites, orgAssignments, directGrants] = await Promise.all([
+    const [services, groups, orgSites, orgAssignments, directGrants, stores] = await Promise.all([
       redisRbacRepository.getServices(),
       redisRbacRepository.getGroups(),
-      redisRbacRepository.getAccessRules(),
       redisRbacRepository.getOrgSites(),
       orgRolesRepository.getAll(),
       directGrantsRepository.getAll(),
+      exportStores(),
     ])
 
     const [rolesEntries, routeMapEntries, orgRoleEntries, everyOrgEntries] = await Promise.all([
@@ -142,55 +76,15 @@ class RbacBundleService {
       if (rm) routeMaps[svc] = rm
     }
 
-    const fullRbac = { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, directGrants, orgRoles, everyOrg }
+    const fullRbac = { services, groups, roles, routeMaps, orgSites, orgAssignments, directGrants, orgRoles, everyOrg, ...stores }
     let rbac: AuthBundle['rbac'] = fullRbac
-    if (sections && sections.length && sections.length < ALL_BUNDLE_SECTIONS.length) {
+    if (sections && sections.length && !isFullImport(sections)) {
       const picked: Partial<typeof fullRbac> = {}
       for (const s of sections) if (s in fullRbac) (picked as Record<string, unknown>)[s] = fullRbac[s]
       if (sections.includes('roles')) Object.assign(picked, { orgRoles, everyOrg })
       rbac = picked as AuthBundle['rbac']
     }
-    return { version: '1', exportedAt: new Date().toISOString(), rbac }
-  }
-
-  /**
-   * Fail-closed guard mirroring the rule-CRUD path (rbac.service): every rule
-   * must pass the structural schema AND reference only handlers enabled in the
-   * running gateway. One malformed rule makes Oathkeeper reject the ENTIRE
-   * ruleset at load → total gateway outage, so an import that would store one
-   * is rejected BEFORE any Redis write. Throws BundleValidationError listing
-   * every offending rule (id + reason), not just the first.
-   */
-  validateOathkeeperRules(rules: OathkeeperRule[]): void {
-    const failures: RuleValidationFailure[] = []
-    for (const [i, rule] of rules.entries()) {
-      const id = typeof rule?.id === 'string' && rule.id ? rule.id : `(rule #${i})`
-
-      // (a) structural validation — same schema as the rule CRUD routes
-      const parsed = oathkeeperRuleSchema.safeParse(rule)
-      if (!parsed.success) {
-        const issues = parsed.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join(', ')
-        failures.push({ id, reason: `schema: ${issues}` })
-        continue
-      }
-
-      // (b) every stage's handler must be enabled in the gateway (fail-closed,
-      // same check as rbacService.assertHandlersEnabled on the CRUD path)
-      const stages: Array<{ kind: HandlerKind; name: string }> = []
-      for (const a of rule.authenticators ?? []) stages.push({ kind: 'authenticator', name: a.handler })
-      if (rule.authorizer) stages.push({ kind: 'authorizer', name: rule.authorizer.handler })
-      for (const m of rule.mutators ?? []) stages.push({ kind: 'mutator', name: m.handler })
-      for (const e of rule.errors ?? []) stages.push({ kind: 'error', name: e.handler })
-      for (const { kind, name } of stages) {
-        if (!isHandlerEnabled(kind, name)) {
-          failures.push({
-            id,
-            reason: `${kind} handler '${name}' is not enabled in the gateway (enabled: ${getEnabledHandlerNames(kind).join(', ') || '(none)'})`,
-          })
-        }
-      }
-    }
-    if (failures.length > 0) throw new BundleValidationError(failures)
+    return { version: BUNDLE_VERSION, exportedAt: new Date().toISOString(), rbac }
   }
 
   /**
@@ -260,19 +154,17 @@ class RbacBundleService {
   }
 
   async import(incoming: AuthBundle, actor?: AuditActorInput, sections?: BundleSection[], historyReason: ImportHistoryReason = 'pre-import'): Promise<ImportResult> {
+    const problem = bundleProblem(incoming)
+    if (problem) throw Object.assign(new Error(problem), { statusCode: 400 })
     // What jinbe defines in code is never imported (withoutOwned); a pre-in-place bundle is read too.
     const bundle = withoutOwned(incoming)
-    const { services, groups, roles, routeMaps, oathkeeperRules } = bundle.rbac
+    const { services, groups, roles, routeMaps } = bundle.rbac
     // `sections` (optional) restricts a selective import to the chosen parts.
     // Full 1:1 restore (prune orphans) happens ONLY when applying the whole
     // bundle; a selective import overrides/adds the chosen sections and NEVER
     // prunes anything outside them.
     const want = (s: BundleSection) => !sections || sections.length === 0 || sections.includes(s)
-    const isFull = !sections || sections.length === 0 || sections.length >= ALL_BUNDLE_SECTIONS.length
-
-    // Fail-closed: reject the whole import BEFORE any write if a rule is
-    // malformed or references a non-enabled handler (see validateOathkeeperRules).
-    if (want('oathkeeperRules')) this.validateOathkeeperRules(oathkeeperRules ?? [])
+    const isFull = isFullImport(sections)
 
     // Same refusals as a route write: an unreadable org_param, or two services tied on one route.
     if (want('routeMaps')) {
@@ -300,19 +192,31 @@ class RbacBundleService {
 
     // Apply with compensation: the write sequence is NOT transactional (many
     // sequential Redis writes), so a mid-way throw would leave half-applied
-    // state. Best-effort restore the just-taken snapshot, then re-throw.
-    let orphanServices: string[] = []
+    // state. Best-effort restore the just-taken snapshot (and take back the
+    // sites and organization records this import added), then re-throw.
+    const progress = newProgress()
+    let applied: { orphanServices: string[]; stores: StoresResult }
     try {
-      orphanServices = await this.applyBundle(bundle, sections)
+      applied = await this.applyBundle(bundle, sections, progress)
     } catch (err) {
       try {
-        await this.applyBundle(snapshot)
+        await takeBack(progress)
+        await this.applyBundle(snapshot, undefined, newProgress())
         componentLogger('rbac-bundle').error({ err }, 'import failed mid-way — pre-import snapshot restored')
       } catch (restoreErr) {
         componentLogger('rbac-bundle').fatal({ err, restoreError: restoreErr instanceof Error ? restoreErr.message : String(restoreErr) }, 'import failed mid-way AND compensating restore failed — state may be inconsistent')
       }
       throw err
     }
+
+    // The import rewrote the services, groups and org entitlements the published sites live in:
+    // every applied site is published again from its applied version (what its gateway rules serve),
+    // so a site published after the snapshot keeps its permissions. One site failing stops no other.
+    const sites = await republishAppliedSites(actor ?? { email: 'jinbe (restore)' })
+      .catch((err: unknown) => ({ published: [] as string[], failed: [{ site: '*', error: (err as Error).message }] }))
+    if (sites.failed.length) componentLogger('rbac-bundle').warn({ failed: sites.failed }, 'import applied, some sites could not be published again')
+
+    const notes = importNotes(incoming, want)
 
     // A full restore is high-signal — flag it if any imported group binds a role named super_admin
     // (structural, no secrets in the envelope).
@@ -333,12 +237,13 @@ class RbacBundleService {
       changes: {
         resource: 'bundle',
         added:    want('services') ? services : [],
-        removed:  orphanServices,
+        removed:  applied.orphanServices,
         flags:    flags.length ? flags : undefined,
         summary:  isFull
-          ? `full restore — ${services.length} services, ${Object.keys(groups).length} groups, ${oathkeeperRules.length} rules`
+          ? `full restore — ${services.length} services, ${Object.keys(groups).length} groups, ${applied.stores.sites?.restored.length ?? 0} sites written back, ${sites.published.length} sites published again`
           : `imported sections: ${(sections ?? []).join(', ')}`,
       },
+      details: { format: incoming.version, sitesFailed: sites.failed, notes },
     }).catch(() => {})
 
     // Propagate to OPAL/OPA immediately (the fix): etag bump + real-time push +
@@ -348,14 +253,20 @@ class RbacBundleService {
     // event above is the single audit record for the import.
     await rbacService.invalidateBundle(undefined, { type: 'bundle' }, actor)
 
+    const r = bundle.rbac
     return {
       rbac: {
         services: services.length,
         groups: Object.keys(groups).length,
         roles: Object.keys(roles).length,
         routeMaps: Object.keys(routeMaps).length,
-        oathkeeperRules: oathkeeperRules.length,
+        orgSites: Object.keys(r.orgSites ?? {}).length,
+        orgAssignments: Object.keys(r.orgAssignments ?? {}).length,
+        directGrants: Object.keys(r.directGrants ?? {}).length,
       },
+      stores: applied.stores,
+      sites,
+      notes,
     }
   }
 
@@ -363,11 +274,18 @@ class RbacBundleService {
    * The raw (non-transactional) Redis write sequence of an import — extracted
    * so import() can re-run it with the pre-import snapshot as compensation when
    * it throws mid-way. Returns the services pruned by a full restore.
+   *
+   * A full restore makes each section the file carries exactly the file's; a section the file lacks
+   * (an older format) is left as it is. Org data (entitlements, org roles, org-scoped direct grants)
+   * is restored exactly for the organizations the snapshot has, and an organization it does not have
+   * is left untouched: a restore never deletes an organization (bundle-stores.ts).
+   * Gateway rules are never written: built-in ones are code (bootstrap/upsert-rules.ts), site ones
+   * are the published sites' Rule CRs.
    */
-  private async applyBundle(bundle: AuthBundle, sections?: BundleSection[]): Promise<string[]> {
-    const { services, groups, roles, routeMaps, oathkeeperRules, orgSites, orgAssignments, directGrants, orgRoles, everyOrg } = bundle.rbac
+  private async applyBundle(bundle: AuthBundle, sections: BundleSection[] | undefined, progress: ImportProgress): Promise<{ orphanServices: string[]; stores: StoresResult }> {
+    const { services, groups, roles, routeMaps, orgSites, orgAssignments, directGrants, orgRoles, everyOrg } = bundle.rbac
     const want = (s: BundleSection) => !sections || sections.length === 0 || sections.includes(s)
-    const isFull = !sections || sections.length === 0 || sections.length >= ALL_BUNDLE_SECTIONS.length
+    const isFull = isFullImport(sections)
 
     const existingServices = await redisRbacRepository.getServices()
     let orphanServices: string[] = []
@@ -423,25 +341,48 @@ class RbacBundleService {
       }
     }
 
-    if (want('oathkeeperRules')) {
-      await redisRbacRepository.setAccessRules(oathkeeperRules)
+    // The snapshot's organizations: the only ones whose org data this import touches.
+    const orgs = orgsInSnapshot(bundle.rbac)
+    const ours = <T>(m: Record<string, T>) => Object.entries(m).filter(([org]) => orgs.has(org))
+
+    if (want('orgSites') && orgSites) {
+      if (isFull) {
+        for (const org of Object.keys(await redisRbacRepository.getOrgSites())) {
+          if (orgs.has(org) && !(org in orgSites)) await redisRbacRepository.setOrgSites(org, [])
+        }
+      }
+      for (const [orgId, sites] of ours(orgSites)) await redisRbacRepository.setOrgSites(orgId, sites)
     }
 
-    if (want('orgSites')) {
-      for (const [orgId, sites] of Object.entries(orgSites ?? {})) await redisRbacRepository.setOrgSites(orgId, sites)
-    }
-
-    if (want('orgAssignments')) {
-      for (const [orgId, members] of Object.entries(orgAssignments ?? {})) {
+    if (want('orgAssignments') && orgAssignments) {
+      if (isFull) {
+        for (const [orgId, members] of ours(await orgRolesRepository.getAll())) {
+          for (const subject of Object.keys(members)) {
+            if (!orgAssignments[orgId]?.[subject]) await orgRolesRepository.setForMember(orgId, subject, [])
+          }
+        }
+      }
+      for (const [orgId, members] of ours(orgAssignments)) {
         for (const [subject, orgRoleList] of Object.entries(members)) await orgRolesRepository.setForMember(orgId, subject, orgRoleList)
       }
     }
 
-    if (want('directGrants')) {
-      for (const [subject, grants] of Object.entries(directGrants ?? {})) await directGrantsRepository.restore(subject, grants)
+    if (want('directGrants') && directGrants) {
+      // Platform grants and those of the snapshot's orgs come from the file; a grant in any other org
+      // is kept. A full restore makes the former exactly the file's, a sectioned one adds to them.
+      const fromFile = (g: DirectGrant) => g.scope === 'platform' || orgs.has(g.scope)
+      const current = await directGrantsRepository.getAll()
+      for (const subject of new Set([...Object.keys(current), ...Object.keys(directGrants)])) {
+        const now = current[subject] ?? []
+        const file = (directGrants[subject] ?? []).filter(fromFile)
+        const kept = isFull ? now.filter((g) => !fromFile(g)) : now
+        const next = new Map([...kept, ...file].map((g) => [grantKey(g), g]))
+        if (subject in directGrants || isFull) await directGrantsRepository.restore(subject, [...next.values()])
+      }
     }
 
-    return orphanServices
+    const stores = await applyStores(bundle.rbac, want, isFull, progress, orgs)
+    return { orphanServices, stores }
   }
 
   /** History entries WITHOUT their bundle payload — id/takenAt/actor/reason + per-section counts. */
@@ -459,10 +400,11 @@ class RbacBundleService {
           groups: Object.keys(rbac?.groups ?? {}).length,
           roles: Object.keys(rbac?.roles ?? {}).length,
           routeMaps: Object.keys(rbac?.routeMaps ?? {}).length,
-          oathkeeperRules: rbac?.oathkeeperRules?.length ?? 0,
           orgSites: Object.keys(rbac?.orgSites ?? rbac?.orgServiceMap ?? {}).length,
           orgAssignments: Object.keys(rbac?.orgAssignments ?? {}).length,
           directGrants: Object.keys(rbac?.directGrants ?? {}).length,
+          sites: rbac?.sites?.records?.length ?? 0,
+          organizations: Object.keys(rbac?.organizations?.registry ?? {}).length,
         },
       }
     })

@@ -9,8 +9,8 @@ export interface BackupObject {
 }
 
 /**
- * Reads/writes RBAC-bundle backups in the same S3 bucket the chart's backup
- * CronJob writes to (`<prefix>/{timestamp}.json` + a rolling `<prefix>/latest.json`).
+ * Reads/writes snapshots (rbac-bundle.service.ts) in S3: jinbe's own scheduled backup and
+ * "Back up now" write `<prefix>/{timestamp}.json` + a rolling `<prefix>/latest.json`.
  * Credentials come from the default AWS chain (IRSA) — no static keys. All
  * methods no-op / throw cleanly when backup is not configured.
  */

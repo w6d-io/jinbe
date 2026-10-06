@@ -12397,8 +12397,11 @@ paths:
       tags:
         - rbac
         - backup
-      description: Export RBAC config as a portable JSON bundle.
-        ?sections=services,groups,… narrows it; omitted = full 1:1 snapshot.
+      description: "Download the current snapshot (format 2): the RBAC model, people's
+        org roles and direct grants, site intents and versions, platform
+        settings, the organization records, sign-up stores and metadata. Not
+        accounts or OAuth clients. ?sections=services,groups,… narrows it;
+        omitted = full 1:1 snapshot."
       parameters:
         - schema:
             type: string
@@ -12420,11 +12423,15 @@ paths:
       tags:
         - rbac
         - backup
-      description: Import an auth bundle — restores RBAC config. Body must be a full
+      description: Restore from a snapshot file (format 1 or 2). Body must be a full
         snapshot; ?sections=services,groups,… applies only those parts
-        (override/add, no prune), omitted = full 1:1 restore. 409 (nothing
-        written) when the resulting route maps tie two services on one route at
-        the same specificity.
+        (override/add, no prune), omitted = full 1:1 restore (each section the
+        file carries replaces what is there; sites that exist are kept;
+        organizations are never deleted, and org data is restored only for the
+        organizations the file has). Gateway rules in a format-1 file are never
+        restored. Every applied site is published again afterwards
+        (`imported.sites`). 409 (nothing written) when the resulting route maps
+        tie two services on one route at the same specificity.
       requestBody:
         required: true
         content:
@@ -12492,6 +12499,28 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/rbac/bundle/backups/download:
+    get:
+      tags:
+        - rbac
+        - backup
+      description: Download one S3 backup snapshot as a file (?key= from the list).
+      parameters:
+        - schema:
+            type: string
+          in: query
+          name: key
+          required: true
+      x-permission: policy.bundle:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /api/admin/rbac/bundle/backups/restore:
     post:
       tags:

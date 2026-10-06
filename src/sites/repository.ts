@@ -237,6 +237,28 @@ class SitesRepository {
     })
   }
 
+  /**
+   * A site written back from a backup, exactly as it was saved there: record (applied marker kept) and
+   * history. Refused when a site of that name exists — a restore never replaces a live intent.
+   */
+  async put(record: SiteRecord, versions: readonly SiteVersion[]): Promise<void> {
+    const name = record.site.name
+    await withRedisLock(`sites:${name}`, async () => {
+      if (await this.get(name)) throw status(`A site named ${name} exists`, 409, 'site_exists')
+      await this.redis.del(versionsKey(name))
+      for (const v of versions) await this.redis.rpush(versionsKey(name), JSON.stringify(v))
+      await this.redis.hset(SITES, name, JSON.stringify(record))
+    })
+  }
+
+  /** Take back a site `put` wrote (a failed restore's compensation): no deleted snapshot is kept. */
+  async purge(name: string): Promise<void> {
+    await withRedisLock(`sites:${name}`, async () => {
+      await this.redis.hdel(SITES, name)
+      await this.redis.del(versionsKey(name))
+    })
+  }
+
   /** Drop the site; its record and history are kept 30 days under rbac:sites:deleted:<name>. */
   async remove(name: string, by: string): Promise<void> {
     await withRedisLock(`sites:${name}`, async () => {

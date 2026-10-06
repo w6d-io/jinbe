@@ -153,9 +153,10 @@ export class RestoreRequiredError extends Error {
 }
 
 /**
- * First init only (marker absent), after the model is seeded: when backup is enabled and a
- * `latest.json` exists in S3, restore the RBAC bundle from it (what code owns is skipped by the
- * importer). `mode` (BACKUP_RESTORE_ON_FIRST_INIT): `auto` leaves the freshly seeded model when there
+ * First init only (marker absent), after the model is seeded and before the bootstrap admin: when
+ * backup is enabled and a `latest.json` exists in S3, restore the snapshot over the seeded model (what
+ * code owns is skipped by the importer, gateway rules are never restored, applied sites are published
+ * again by the import). `mode` (BACKUP_RESTORE_ON_FIRST_INIT): `auto` leaves the freshly seeded model when there
  * is nothing to restore or the restore fails, rather than blocking first init; `false` never restores
  * (a deliberate fresh rebuild, no hand-moving latest.json aside); `true` is disaster recovery, where
  * silence would be wrong — anything short of a restore throws RestoreRequiredError before the marker
@@ -186,7 +187,8 @@ async function maybeRestoreFromBackup(logger: BootstrapLogger, mode: RestoreOnFi
   }
   logger.info({ required }, 'First init: restoring RBAC from the latest backup')
   try {
-    await rbacBundleService.import(latest)
+    const result = await rbacBundleService.import(latest)
+    logger.info({ sitesPublished: result?.sites.published.length, sitesFailed: result?.sites.failed, notes: result?.notes }, 'First init: restored from the latest backup')
   } catch (e) {
     if (required) throw new RestoreRequiredError(`BACKUP_RESTORE_ON_FIRST_INIT=true but importing latest.json failed: ${String(e)}`)
     logger.warn({ err: String(e) }, 'Backup restore failed — keeping the seeded model')

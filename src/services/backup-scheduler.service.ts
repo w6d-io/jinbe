@@ -9,7 +9,7 @@ type Logger = { info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: s
 let task: ScheduledTask | null = null
 
 /**
- * Scheduled RBAC-bundle backup, run BY jinbe (not an external CronJob) — jinbe
+ * Scheduled snapshot backup, run BY jinbe (not an external CronJob) — jinbe
  * is already authenticated to itself and holds the S3 (IRSA) creds, so there is
  * no auth-bypass problem. Multi-replica safe: a short Redis claim key dedupes
  * the run when several replicas fire on the same cron tick.
