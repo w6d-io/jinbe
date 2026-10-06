@@ -9491,7 +9491,8 @@ paths:
       tags: *a6
       description: "Add somebody who has an account to one of the site's own groups:
         they get its roles on this site. A group that requires two-step sign-in
-        refuses a person without a second factor"
+        waits for a person without a second factor (202): they are asked to set
+        one up and join once they have"
       x-permission: sites.members:write
       x-scope: platform
       parameters:
