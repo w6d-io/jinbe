@@ -15,6 +15,12 @@ const state = vi.hoisted(() => ({
   env: { ORGANISATION_SOURCE: 'directory' as 'directory' | 'claim' },
   memberships: new Map<string, string[]>(),
   identities: new Map<string, Record<string, unknown>>(),
+  // Whether the caller holds orgs.members:write on the platform (adding an account by id).
+  platformMembers: true,
+}))
+vi.mock('../../../authz/opa.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../authz/opa.js')>()),
+  holdsInJinbe: vi.fn(async () => state.platformMembers),
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: state.env }))
@@ -205,6 +211,20 @@ describe('removing somebody from an organisation (story 8)', () => {
       organizationUserController.deleteUser(req({ organizationId: ACME, id: MIKE }), reply()),
     ).rejects.toMatchObject({ statusCode: 404 })
     expect(state.memberships.get(MIKE)).toEqual([GLOBEX])
+  })
+})
+
+describe('adding an existing account by id is the platform\'s (no org-admin takeover)', () => {
+  it('refuses an org admin without orgs.members:write on the platform: they invite instead', async () => {
+    state.platformMembers = false
+    try {
+      const r = reply()
+      await organizationUserController.addMembership(req({ organizationId: GLOBEX, id: MIKE }), r)
+      expect(r.code).toBe(403)
+      expect((r.body as { code: string }).code).toBe('invite_instead')
+    } finally {
+      state.platformMembers = true
+    }
   })
 })
 

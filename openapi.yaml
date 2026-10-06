@@ -16604,17 +16604,12 @@ paths:
               properties:
                 traits:
                   type: object
+                  additionalProperties: false
                   properties:
-                    email:
-                      type: string
-                      format: email
                     name:
                       type: string
-                state:
-                  type: string
-                  enum:
-                    - active
-                    - inactive
+                      maxLength: 200
+              additionalProperties: false
       parameters:
         - schema:
             type: string

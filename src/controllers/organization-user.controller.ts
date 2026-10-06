@@ -5,7 +5,7 @@ import { auditEventService } from '../services/audit-event.service.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { directGrantsRepository } from '../services/direct-grants.repository.js'
 import { orgRoleRefusals } from '../services/org-role-grants.js'
-import { AuthzUnavailableError } from '../authz/opa.js'
+import { AuthzUnavailableError, holdsInJinbe } from '../authz/opa.js'
 import { directGrantsService, GrantNeedsSecondFactorError, GrantsRefusedError } from '../services/direct-grants.service.js'
 
 /** A grant refusal at creation, as PUT …/users/:id/grants answers it. */
@@ -251,7 +251,9 @@ export class OrganizationUserController {
     const current = await kratosService.getIdentity(id)
     await assertOrganizationMatch(current, organizationId)
 
-    const identity = await kratosService.updateIdentity(id, body)
+    // Only the name, merged into the traits the account has (never its address or state).
+    const traits = { ...((current.traits ?? {}) as Record<string, unknown>), ...(body.traits?.name !== undefined ? { name: body.traits.name } : {}) }
+    const identity = await kratosService.updateIdentity(id, { traits } as never)
 
     kratosService.invalidateGroupsCache()
     rbacService.notifyBindingsChanged('user_updated', auditActor(request)).catch(() => {})
@@ -325,6 +327,17 @@ export class OrganizationUserController {
     reply: FastifyReply
   ) {
     const { organizationId, id } = request.params
+
+    // Adding somebody's existing account by id is the platform's (orgs.members:write): an org admin
+    // could otherwise pull any account into its org, then act on it as a member. Org admins invite.
+    const caller = request.userContext?.email
+    if (!caller || !(await holdsInJinbe(caller, 'orgs.members:write'))) {
+      return reply.status(403).send({
+        error: 'Forbidden',
+        code: 'invite_instead',
+        message: "Adding an existing account to an organization by its id is done by the platform. Invite the person by email instead.",
+      })
+    }
 
     const identity = await kratosService.getIdentity(id)
     try {

@@ -24,13 +24,14 @@ export const organizationUserCreateBodySchema = z.object({
 })
 
 // Update user in organization
+// An organization edits how a member is named, nothing global to the account: the sign-in address and
+// the account state belong to the platform (users:update_email with a recent second factor,
+// users:disable). Changing them here let an org admin take over any account it had just added.
 export const organizationUserUpdateBodySchema = z.object({
   traits: z.object({
-    email: z.string().email().optional(),
-    name: z.string().optional(),
-  }).optional(),
-  state: z.enum(['active', 'inactive']).optional(),
-})
+    name: z.string().max(200).optional(),
+  }).strict().optional(),
+}).strict()
 
 // Query params for listing organization users
 export const organizationUsersQuerySchema = z.object({
@@ -87,11 +88,11 @@ export const organizationUserUpdateBodyJsonSchema = {
   properties: {
     traits: {
       type: 'object',
+      additionalProperties: false,
       properties: {
-        email: { type: 'string', format: 'email' },
-        name: { type: 'string' },
+        name: { type: 'string', maxLength: 200 },
       },
     },
-    state: { type: 'string', enum: ['active', 'inactive'] },
   },
+  additionalProperties: false,
 }
