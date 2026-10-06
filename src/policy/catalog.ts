@@ -99,17 +99,20 @@ export const CATALOG = {
 
   // ── Organisations, from the platform (no org parameter) ────────────────────────────────────────
   'orgs:read': p('organizations', 'List organisations and their owners', 'low'),
-  'orgs:write': p('organizations', 'Create or edit an organisation', 'high'),
+  'orgs:write': p('organizations', 'Create an organisation for an owner, or edit one', 'high'),
   'orgs:delete': p('organizations', 'Delete an organisation', 'critical', { stepUp: true, delegable: 'never' }),
   'orgs.members:write': p('organizations', 'Move a person into or out of an organisation from the platform console', 'high'),
   // Onboarding and break-glass of one organisation: who owns it (jinbe:owner there).
   'orgs.owners:write': p('organizations', "Name an organisation's owners", 'critical', { stepUp: true, fourEyes: 'prod', delegable: 'never' }),
+  // An org API key is a machine acting in that organisation on every site serving it: made by staff
+  // only for now (owner decision 2026-10-06); the org's own people list and revoke them (org.keys:*).
+  'orgs.keys:write': p('organizations', "Create an organisation's API keys", 'critical', { stepUp: true, delegable: 'never' }),
 
   // ── Inside one organisation (org scope: routes under /api/organizations/:organizationId) ─────────
   'org.members:read': p('organizations', "See this organisation's members and their roles", 'medium', { scope: 'org' }),
   'org.members:write': p('organizations', "Invite and remove this organisation's members, assign their roles", 'high', { scope: 'org' }),
   'org.keys:read': p('organizations', "See this organisation's API keys and key policy", 'medium', { scope: 'org' }),
-  'org.keys:write': p('organizations', 'Create API keys, change the key policy', 'critical', { stepUp: true, delegable: 'never', scope: 'org' }),
+  'org.keys:write': p('organizations', 'Change the key policy (keys are created by the platform: orgs.keys:write)', 'critical', { stepUp: true, delegable: 'never', scope: 'org' }),
   'org.keys:revoke': p('organizations', 'Revoke an API key', 'high', { scope: 'org' }),
   'org.audit:read': p('organizations', "Read this organisation's audit events", 'medium', { scope: 'org' }),
 

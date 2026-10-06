@@ -1,7 +1,6 @@
 import { hydraService, HydraApiError, HydraOAuth2Client } from './hydra.service.js'
 import { ApiKeyCreateBody, ApiKeyView, ApiKeySecretView } from '../schemas/api-key.schema.js'
-import { scopeCatalog } from './api-key-scopes.js'
-import { isGrantableScope } from './authorization-resolution.js'
+import { isKeyScope, scopeCatalog } from './api-key-scopes.js'
 import { apiClientsChanged } from './api-clients.js'
 import { forgetApiKeyUse } from './api-key-last-used.js'
 
@@ -20,9 +19,9 @@ export class ApiKeyError extends Error {
 interface CreateArgs {
   organizationId: string
   body: ApiKeyCreateBody
-  /** Kratos identity id of the admin performing the action. */
+  /** Kratos identity id of the staff member performing the action. */
   createdBy?: string
-  /** Their address: the catalog is what THEY hold in this org. */
+  /** Their address, shown back once as the creator. */
   callerEmail: string
 }
 
@@ -67,7 +66,8 @@ export function isPersonal(client: HydraOAuth2Client): boolean {
  * `metadata.organization_id` and a mirrored `owner` for server-side listing.
  *
  * Security invariants (auth stack Hydra spec §6):
- *  - Requested scopes validated server-side against the allowed catalog.
+ *  - Requested scopes validated server-side against the org's catalog (api-key-scopes.ts): permissions,
+ *    site roles and groups of the sites serving the org. Created by staff only (orgs.keys:write).
  *  - `metadata.organization_id` is mandatory on every client.
  *  - The client_secret is returned to the caller exactly once, never stored.
  *  - Mutations verify the client belongs to the org (via Hydra metadata), not
@@ -75,13 +75,12 @@ export function isPersonal(client: HydraOAuth2Client): boolean {
  */
 export class ApiKeyService {
   /**
-   * Validate requested scopes ⊆ this org's catalog for this caller (services/api-key-scopes.ts).
-   * Throws 400 on violation. A wildcard is refused before the catalog is even read.
+   * Validate requested scopes ⊆ this org's catalog (services/api-key-scopes.ts): a wildcard, or a
+   * permission, role or group the org's sites do not have, is refused. Throws 400 on violation.
    */
-  async validateScopes(organizationId: string, callerEmail: string, scopes: string[]): Promise<void> {
-    const wildcard = scopes.filter((s) => !isGrantableScope(s))
-    const allowed = new Set((await scopeCatalog(organizationId, callerEmail)).map((e) => e.scope))
-    const invalid = [...new Set([...wildcard, ...scopes.filter((s) => !allowed.has(s))])]
+  async validateScopes(organizationId: string, scopes: string[]): Promise<void> {
+    const allowed = new Set((await scopeCatalog(organizationId)).map((e) => e.scope))
+    const invalid = [...new Set(scopes.filter((s) => !isKeyScope(s) || !allowed.has(s)))]
     if (invalid.length > 0) {
       throw new ApiKeyError(400, 'One or more requested scopes are not allowed', {
         invalid_scopes: invalid,
@@ -109,7 +108,7 @@ export class ApiKeyService {
 
   async create({ organizationId, body, createdBy, callerEmail }: CreateArgs): Promise<ApiKeySecretView> {
     const scopes = [...new Set(body.scopes)]
-    await this.validateScopes(organizationId, callerEmail, scopes)
+    await this.validateScopes(organizationId, scopes)
 
     const client = await hydraService.createClient({
       label: body.label,

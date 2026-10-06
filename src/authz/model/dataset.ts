@@ -3,6 +3,7 @@ import type { FlatRolesMap, GroupDefinition, RouteRule } from '../../services/re
 import type { OrgAssignments } from '../../services/org-roles.repository.js'
 import { directBinding, type DirectBinding, type DirectGrant } from '../../services/direct-grants.repository.js'
 import { JINBE } from '../../policy/roles.js'
+import { withOwnerRoles } from '../../services/org-owner-roles.js'
 
 /**
  * The policy data assembled from what the store holds (definitions) and who is in what (the
@@ -28,6 +29,8 @@ export interface StoredModel {
   routeMap: Record<string, { rules: RouteRule[] }>
   /** org → sites it is entitled to (jinbe is added for every org). */
   orgSites: Record<string, string[]>
+  /** site → the org role an organisation's owners hold there (rbac:org_owner_roles). */
+  ownerRoles?: Record<string, string>
 }
 
 export function buildPolicyData(
@@ -43,6 +46,7 @@ export function buildPolicyData(
   const user_organizations: Record<string, string[]> = {}
   const org_assignments: Record<string, Record<string, string[]>> = {}
   const orgs = new Set([...knownOrgs, ...Object.keys(model.orgSites)])
+  const owned = withOwnerRoles(assignments, model.ownerRoles ?? {}, model.orgSites)
 
   const put = <T>(map: Record<string, T>, email: string, value: T) => {
     map[email] = value
@@ -58,7 +62,7 @@ export function buildPolicyData(
     for (const o of memberOf) orgs.add(o)
     const mine: Record<string, string[]> = {}
     for (const org of memberOf) {
-      const roles = facts.id ? assignments[org]?.[facts.id] : undefined
+      const roles = facts.id ? owned[org]?.[facts.id] : undefined
       if (roles?.length) mine[org] = [...roles].sort()
     }
     if (Object.keys(mine).length) put(org_assignments, email, mine)

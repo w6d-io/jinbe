@@ -6,7 +6,8 @@ import {
 } from '../schemas/response-schemas.js'
 import { JINBE, qualified } from '../policy/roles.js'
 import { kratosService } from '../services/kratos.service.js'
-import { join, organisationsOn } from '../services/organisation-store/membership.js'
+import { organisationsOn } from '../services/organisation-store/membership.js'
+import { joinOrganisation } from '../services/org-membership.service.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { orgRoleRefusals, orgRoleRemovalRefusal, orgRolesFor } from '../services/org-role-grants.js'
 import { rbacService } from '../services/rbac.service.js'
@@ -195,8 +196,13 @@ export async function orgOwnersRoutes(fastify: FastifyInstance) {
     const owner = qualified(JINBE, 'owner')
     const current = await orgRolesRepository.holdersOf(organizationId, owner)
     const actor = auditActor(request)
-    for (const id of owners) {
-      await kratosService.updateAdminState(id, (s) => join(s, organizationId))
+    // Every account first: nothing is changed for a list naming one that does not exist.
+    const identities = await Promise.all(owners.map((id) => kratosService.getIdentity(id).catch(() => null)))
+    const unknown = owners.filter((_, i) => !identities[i])
+    if (unknown.length) return reply.status(404).send({ error: 'Not Found', message: `No account ${unknown.map((u) => `'${u}'`).join(', ')}` })
+    for (const [i, id] of owners.entries()) {
+      // Through the organisation store, like every membership: it refuses an org it does not hold (404).
+      await joinOrganisation(identities[i]!, organizationId)
       const roles = await orgRolesRepository.getForMember(organizationId, id)
       await orgRolesRepository.setForMember(organizationId, id, [...roles, owner])
     }

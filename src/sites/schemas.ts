@@ -115,6 +115,11 @@ export type SignUp = z.infer<typeof signUpSchema>
 /** The platform group a site's signed-up people join, bound to `signUp.roles` on that site only. */
 export const signUpGroupName = (site: string): string => `${site}-users`
 
+/** An org role's name after `<site>-` (render.ts orgGrantableProblem). */
+export const ORG_ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/
+/** The org role an organisation's owners hold on a site when `organizations.ownerRole` is left out. */
+export const DEFAULT_OWNER_ROLE = 'admin'
+
 const rolesMap = z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/), z.array(z.union([permission, z.literal('*')])))
 
 export const siteSchema = z
@@ -137,6 +142,14 @@ export const siteSchema = z
         scheme: z.enum(['http', 'https']).optional(),
         preserveHost: z.boolean().optional(),
         stripPath: z.string().max(256).regex(/^\/[^\s]*$/, 'an absolute path').optional(),
+        // A base path the upstream serves under, prepended to every request after stripPath is removed:
+        // /api/v1/earnings/days with stripPath /api/v1 and path /api/external → /api/external/earnings/days.
+        // Literal only (no :params), absolute, no trailing slash.
+        path: z
+          .string()
+          .max(256)
+          .regex(/^(\/[A-Za-z0-9._~@-]+)+$/, 'a literal absolute path like /api/external (no :params, no trailing slash)')
+          .optional(),
       })
       .strict(),
     // zone (default): rules only, the zone's wildcard already reaches the gateway. vanity: one Ingress.
@@ -159,6 +172,10 @@ export const siteSchema = z
         orgGrantable: z.record(z.string().min(1).max(64), z.object({ label: z.string().min(1).max(80), roles: z.array(z.string()).min(1) }).strict()),
       })
       .strict(),
+    // Organisations on this site (render.ts): off (absent) refuses every org feature — orgParam routes,
+    // org roles (groups.orgGrantable), everyOrg, the orgs list and a sign-up that makes organisations.
+    // On, an organisation's owners hold `ownerRole` (an org role of the site, default `admin`) in it.
+    organizations: z.object({ enabled: z.boolean(), ownerRole: z.string().regex(ORG_ROLE_NAME, 'an org role name (after <site>-)').optional() }).strict().optional(),
     orgs: z.array(z.string().uuid()).max(500),
     // What a site role carries into every org entitled to the site (rbac:every_org:<site>): role →
     // permissions of that role. Exact names; render refuses a wildcard and anything beyond the role.

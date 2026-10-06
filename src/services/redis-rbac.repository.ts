@@ -388,6 +388,8 @@ class RedisRbacRepository {
   //                           the site intent for a site)
   //   rbac:every_org:{app}    JSON({ role: [org permission] })            what a platform role carries
   //                           into every org (the only such path, design §2.4)
+  //   rbac:org_owner_roles    Hash: { site: role }                        the org role an org's owners
+  //                           hold on a site with organizations on (its intent's ownerRole)
   //
   // Who holds which org role in which org lives in rbac:org_assignments (org-roles.repository.ts).
   // ═══════════════════════════════════════════════════════════
@@ -435,6 +437,18 @@ class RedisRbacRepository {
 
   async deleteEveryOrg(service: string): Promise<void> {
     await this.redis.del(`rbac:every_org:${service}`)
+  }
+
+  /** site → the org role an organisation's owners hold there (sites with organizations on). */
+  async getOrgOwnerRoles(): Promise<Record<string, string>> {
+    const raw = await this.redis.hgetall('rbac:org_owner_roles')
+    return Object.fromEntries(Object.entries(raw).filter(([, role]) => typeof role === 'string' && role.length > 0))
+  }
+
+  /** null removes the site's entry (organizations off, or no owner role). */
+  async setOrgOwnerRole(service: string, role: string | null): Promise<void> {
+    if (role) await this.redis.hset('rbac:org_owner_roles', service, role)
+    else await this.redis.hdel('rbac:org_owner_roles', service)
   }
 
   // ═══════════════════════════════════════════════════════════

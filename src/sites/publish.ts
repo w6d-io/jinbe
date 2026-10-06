@@ -9,8 +9,8 @@ import type { Rendered } from './render.js'
 import { signUpStore } from './signup/store.js'
 
 /**
- * A site's permissions in the keys OPA is fed from (route_map, roles, services, groups, its org roles
- * and every-org map, the orgs entitled to it in org_sites) — written BEFORE its gateway rules, so a new route fails closed until its
+ * A site's permissions in the keys OPA is fed from (route_map, roles, services, groups, its org roles,
+ * every-org map and owner role, the orgs entitled to it in org_sites) — written BEFORE its gateway rules, so a new route fails closed until its
  * permission exists — and taken out again after its rules are gone.
  *
  * Reconciling, not diffing: every group and org entry naming the site is brought to exactly what
@@ -19,9 +19,9 @@ import { signUpStore } from './signup/store.js'
  * included), its leftover `<site>-…` groups, and the site's column in shared groups.
  */
 
-export type Permissions = Pick<Rendered, 'routeMap' | 'roles' | 'groups' | 'orgRoles' | 'everyOrg' | 'orgServiceMap'>
+export type Permissions = Pick<Rendered, 'routeMap' | 'roles' | 'groups' | 'orgRoles' | 'everyOrg' | 'orgServiceMap' | 'ownerRole'>
 
-const EMPTY: Permissions = { routeMap: [], roles: {}, groups: { platform: {} }, orgRoles: {}, everyOrg: {}, orgServiceMap: {} }
+const EMPTY: Permissions = { routeMap: [], roles: {}, groups: { platform: {} }, orgRoles: {}, everyOrg: {}, orgServiceMap: {}, ownerRole: null }
 
 export async function publishPermissions(
   name: string,
@@ -39,6 +39,7 @@ export async function publishPermissions(
     else await redisRbacRepository.deleteOrgRoles(name)
     if (Object.keys(perms.everyOrg).length) await redisRbacRepository.setEveryOrg(name, perms.everyOrg)
     else await redisRbacRepository.deleteEveryOrg(name)
+    await redisRbacRepository.setOrgOwnerRole(name, perms.ownerRole)
     await redisRbacRepository.setRouteMap(name, { rules: perms.routeMap })
     await redisRbacRepository.addService(name)
     await redisRbacRepository.setServiceMetadata(name, {
@@ -60,6 +61,7 @@ export async function unpublishPermissions(name: string, actor: AuditActorInput)
     await redisRbacRepository.deleteRoles(name)
     await redisRbacRepository.deleteOrgRoles(name)
     await redisRbacRepository.deleteEveryOrg(name)
+    await redisRbacRepository.setOrgOwnerRole(name, null)
     await redisRbacRepository.removeService(name)
     await redisRbacRepository.deleteServiceMetadata(name)
   })

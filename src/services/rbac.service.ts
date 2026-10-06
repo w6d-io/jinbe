@@ -2,6 +2,8 @@ import { allGroupMemberships } from './organisation-store.js'
 import { DERIVED_MAX_AGE_MS } from '../cache/swr.js'
 import { kratosService } from './kratos.service.js'
 import { directBinding, directGrantsRepository, type DirectBinding } from './direct-grants.repository.js'
+import { withOwnerRoles } from './org-owner-roles.js'
+import { resetApiClients } from './api-clients.js'
 import { orgRolesRepository } from './org-roles.repository.js'
 import { redisRbacRepository, type GroupDefinition, type FlatRolesMap, type RouteMap, type OathkeeperRule } from './redis-rbac.repository.js'
 import { withRedisLock } from './redis-lock.js'
@@ -316,6 +318,8 @@ export class RbacService {
     await redisRbacRepository.invalidateBundleEtag()
     // What OPA answers about anybody may have changed: drop the cached answers on every replica.
     invalidateAuthz()
+    // An org key's scopes expand over roles, groups and org_sites: refetched expanded again.
+    resetApiClients()
 
     // Directory counts (total/active/perGroup/perOrg) may have moved — drop the
     // stats cache so the next dashboard read recomputes. Best-effort; covers
@@ -1141,9 +1145,12 @@ export class RbacService {
   async getBindingsFromKratos(opts: { maxAgeMs?: number } = { maxAgeMs: AUTHZ_DIRECTORY_MAX_AGE_MS }): Promise<KratosBindingsResponse> {
     // Single directory scan → groups + org membership + primary org, so OPA's
     // group view and its tenant (org) view come from the same snapshot.
-    const [bindings, assignments, grants] = await Promise.all([
+    const [bindings, stored, grants, ownerRoles, orgSites] = await Promise.all([
       kratosService.getAllIdentitiesWithBindings(opts), orgRolesRepository.getAll(), directGrantsRepository.getAll(),
+      redisRbacRepository.getOrgOwnerRoles(), redisRbacRepository.getOrgSites(),
     ])
+    // Owners hold each serving site's owner role in their org (org-owner-roles.ts).
+    const assignments = withOwnerRoles(stored, ownerRoles, orgSites)
     const group_membership: Record<string, string[]> = {}
     const org_assignments: Record<string, Record<string, string[]>> = {}
     const direct: Record<string, DirectBinding> = {}

@@ -102,6 +102,7 @@ export async function loadPlatform(): Promise<Platform> {
     upstreamAllow: cfg.SITES_UPSTREAM_ALLOW,
     ...(cfg.SITES_ACCESS_URL ? { accessUrl: cfg.SITES_ACCESS_URL } : {}),
     ...(cfg.SITES_ROLE_HEADERS ? { roleHeaders: true } : {}),
+    ...(cfg.SITES_UPSTREAM_PATH ? { upstreamPath: true } : {}),
     ...(await loadIdentity()),
   }
 }

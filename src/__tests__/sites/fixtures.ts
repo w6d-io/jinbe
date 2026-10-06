@@ -48,6 +48,7 @@ export function payrollSite(overrides: Partial<Site> = {}): Site {
       platform: { admins: ['admin'] },
       orgGrantable: { 'payroll-editors': { label: 'Payroll editors', roles: ['editor'] } },
     },
+    organizations: { enabled: true },
     orgs: [ACME],
     state: 'active',
     ...overrides,

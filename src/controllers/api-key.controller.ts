@@ -5,15 +5,11 @@ import { auditEventService } from '../services/audit-event.service.js'
 import { decorateKeyViews } from '../services/api-key-views.js'
 import { AuthzUnavailableError } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
-import {
-  ApiKeyCreateBody,
-  apiKeyCreateBodySchema,
-} from '../schemas/api-key.schema.js'
 import { clientIp } from '../utils/client-ip.js'
 
 export function handleError(err: unknown, reply: FastifyReply): FastifyReply {
   if (err instanceof AuthzUnavailableError) {
-    // The scope catalog is what the caller holds, asked of OPA: "could not tell" is never a 400.
+    // OPA could not be asked: "could not tell" is never a 400.
     return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
   }
   if (err instanceof ApiKeyError) {
@@ -41,46 +37,8 @@ export function handleError(err: unknown, reply: FastifyReply): FastifyReply {
   throw err
 }
 
+/** An organisation's keys, from inside it: list, read, revoke (staff create them: org-keys-admin.routes.ts). */
 export class ApiKeyController {
-  /**
-   * Create an API key (Hydra client_credentials client) for an organization.
-   * POST /api/organizations/:organizationId/api-keys
-   * Returns the client_id + client_secret ONCE.
-   */
-  async create(
-    request: FastifyRequest<{
-      Params: { organizationId: string }
-      Body: ApiKeyCreateBody
-    }>,
-    reply: FastifyReply
-  ) {
-    const { organizationId } = request.params
-    const body = apiKeyCreateBodySchema.parse(request.body)
-
-    try {
-      const result = await apiKeyService.create({
-        organizationId,
-        body,
-        createdBy: request.userContext?.id,
-        callerEmail: request.userContext?.email ?? '',
-      })
-
-      auditEventService
-        .emit({
-          type: 'api_key.created',
-          actor: { email: request.userContext?.email, ip: clientIp(request) },
-          target: { type: 'oauth2_client', id: result.client_id },
-          details: { organizationId, label: body.label, scopes: result.scopes, expires_at: result.expires_at },
-          source: 'jinbe-api',
-        })
-        .catch(() => {})
-
-      return reply.status(201).send(result)
-    } catch (err) {
-      return handleError(err, reply)
-    }
-  }
-
   /**
    * List API keys for an organization (never returns secrets).
    * GET /api/organizations/:organizationId/api-keys

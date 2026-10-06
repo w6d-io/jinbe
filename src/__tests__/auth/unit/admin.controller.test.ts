@@ -442,6 +442,27 @@ describe('AdminController', () => {
     })
   })
 
+  describe('setUserOrganization', () => {
+    const change = async (organization_id: string | null) => {
+      vi.mocked(kratosService.updateAdminState).mockClear()
+      const request = createMockRequest({ params: { id: 'u1' }, body: { organization_id } })
+      await controller.setUserOrganization(request as FastifyRequest<{ Params: { id: string }; Body: { organization_id: string | null } }>, createMockReply()).catch(() => {})
+      return vi.mocked(kratosService.updateAdminState).mock.calls[0][1]
+    }
+
+    it('a new primary keeps the old one as a membership, and leaves the list once', async () => {
+      const set = await change('org-new')
+      expect(set({ organizationId: 'org-old', metadataAdmin: { organizations: ['org-new', 'org-b'] } })).toEqual({ organizationId: 'org-new', metadataAdmin: { organizations: ['org-b', 'org-old'] } })
+      expect(set({ organizationId: null, metadataAdmin: {} })).toEqual({ organizationId: 'org-new', metadataAdmin: {} })
+      expect(set({ organizationId: 'org-new', metadataAdmin: { organizations: ['org-b'] } })).toEqual({ organizationId: 'org-new', metadataAdmin: { organizations: ['org-b'] } })
+    })
+
+    it('null still removes the primary organization', async () => {
+      const set = await change(null)
+      expect(set({ organizationId: 'org-old', metadataAdmin: { organizations: ['org-b'] } })).toEqual({ organizationId: null, metadataAdmin: { organizations: ['org-b'] } })
+    })
+  })
+
   describe('deleteUser', () => {
     it('should delete user and return 204', async () => {
       const request = createMockRequest({

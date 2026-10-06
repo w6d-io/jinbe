@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
 import { callerRights } from '../middleware/require-permission.js'
-import { orgPermissionsByOrg } from '../authz/opa.js'
+import { orgPermissionsByOrg, orgsInApp } from '../authz/opa.js'
 import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
 import { userActions } from '../services/user-permissions.js'
 import { callerOrganisations, callerOrganisationsScope } from '../services/caller-organisations.js'
@@ -192,6 +192,63 @@ export async function meRoutes(fastify: FastifyInstance) {
         orgPermissionsPage,
         secondFactor: await ownSecondFactor(request, rights.groups, rights.permissions),
       })
+    },
+  )
+
+  // "What can I do in this org", for an app: the caller's organisations served by the site, with their
+  // org roles of the site there and its permissions they hold there (the policy's own answer).
+  fastify.get(
+    '/orgs',
+    {
+      ...open('self'),
+      schema: {
+        description:
+          "The caller's organizations served by the site `app`, each with its name, the caller's org roles of that site " +
+          "there (an owner's site role included) and the site's permissions they hold there. 503 when the policy cannot answer.",
+        tags: ['me'],
+        querystring: {
+          type: 'object',
+          required: ['app'],
+          properties: { app: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,39}$', description: 'The site (its RBAC service name)' } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              app: { type: 'string' },
+              organizations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    name: { type: 'string', nullable: true },
+                    roles: { type: 'array', items: { type: 'string' } },
+                    permissions: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              },
+            },
+          },
+          401: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+          503: { type: 'object', properties: { error: { type: 'string' }, message: { type: 'string' } } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const email = request.userContext?.email
+      if (!email || email === 'unknown') return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+      const { app } = request.query as { app: string }
+      let held: Record<string, { roles: string[]; permissions: string[] }>
+      try {
+        held = await orgsInApp(email, app)
+      } catch (err) {
+        request.log.warn({ err: (err as Error).message }, '[me/orgs] OPA could not answer')
+        return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Unable to verify authorization. Please try again later.' })
+      }
+      const ids = Object.keys(held).sort()
+      const names = await namesFor(ids)
+      return reply.send({ app, organizations: ids.map((id) => ({ id, name: names[id] ?? null, ...held[id] })) })
     },
   )
 

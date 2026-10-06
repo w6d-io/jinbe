@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GatewaySpec } from '../../gateway/kube-gateway.js'
-import { PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, SESSION_HEADERS, STRIPPED_COOKIE_HEADER, gatewayIdentity } from '../../sites/identity-headers.js'
+import { ORG_HEADERS, PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, SESSION_HEADERS, STRIPPED_COOKIE_HEADER, gatewayIdentity } from '../../sites/identity-headers.js'
 import { render } from '../../sites/render.js'
 import type { Site } from '../../sites/schemas.js'
 import { payrollSite, platform } from './fixtures.js'
@@ -8,6 +8,11 @@ import { payrollSite, platform } from './fixtures.js'
 const blanks = (names: readonly string[]) => ({ ...Object.fromEntries([...names, 'x-user-aal', 'x-user-2fa-at'].map((n) => [n, ''])), ...STRIPPED_COOKIE_HEADER })
 const gate = (r: ReturnType<typeof render>, name: string) => r.siteCr.spec.gates.find((g) => g.name === name)!
 const ROLE_BLANKS = { 'x-user-groups': '', 'x-user-roles': '', 'x-user-permissions': '' }
+const ORG_BLANKS = { 'x-org-id': '', 'x-org-roles': '', 'x-client-id': '' }
+/** What a header-mutator gate blanks: every header only a decision may fill. */
+const DECIDED_BLANKS = { ...ROLE_BLANKS, ...ORG_BLANKS, 'x-user-organizations': '' }
+/** payroll without organizations: its policy gates forward no organization header. */
+const noOrgs = (s: Site): Site => ({ ...s, organizations: undefined, orgs: [], groups: { ...s.groups, orgGrantable: {} }, routes: { ...s.routes, items: s.routes.items.map(({ orgParam: _, ...r }) => r) } })
 
 describe('identity headers on gates that set none', () => {
   it('a public gate overwrites every platform identity header with an empty value', () => {
@@ -28,7 +33,7 @@ describe('identity headers on gates that set none', () => {
 
   it('keeps the gateway config\'s spellings, so the rule key replaces each global key', () => {
     const r = render(payrollSite(), { ...platform, identityHeaders: ['x-User-Email', 'x-user-email'] })
-    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', ...ROLE_BLANKS, 'x-user-aal': '', 'x-user-2fa-at': '', ...STRIPPED_COOKIE_HEADER } } }])
+    expect(gate(r, 'public').mutators).toEqual([{ handler: 'header', config: { headers: { 'x-User-Email': '', 'x-user-email': '', ...ROLE_BLANKS, ...ORG_BLANKS, 'x-user-aal': '', 'x-user-2fa-at': '', ...STRIPPED_COOKIE_HEADER } } }])
   })
 
   it('leaves the headers a non-policy authorizer forwards (the gateway\'s list for its handler)', () => {
@@ -64,7 +69,7 @@ describe('identity headers on gates that set none', () => {
 describe('gates with their own header mutator', () => {
   it('are rendered as written, plus the sign-in strength headers (X-User-AAL, X-User-2FA-At)', () => {
     const r = render(payrollSite(), platform)
-    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: { ...SESSION_HEADERS, ...ROLE_BLANKS, ...STRIPPED_COOKIE_HEADER } } }])
+    expect(gate(r, 'web').mutators).toEqual([{ handler: 'header', config: { headers: { ...SESSION_HEADERS, ...DECIDED_BLANKS, ...STRIPPED_COOKIE_HEADER } } }])
     expect(SESSION_HEADERS['x-user-aal']).toContain('.Extra.authenticator_assurance_level')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.Extra.authentication_methods')
     expect(SESSION_HEADERS['x-user-2fa-at']).toContain('.completed_at')
@@ -77,7 +82,7 @@ describe('gates with their own header mutator', () => {
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ] }
     expect(gate(render(site, platform), 'web').mutators).toEqual([
-      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'], ...ROLE_BLANKS, ...STRIPPED_COOKIE_HEADER } } },
+      { handler: 'header', config: { headers: { 'X-User-AAL': 'mine', 'X-App': '{{ print .Subject }}', 'x-user-2fa-at': SESSION_HEADERS['x-user-2fa-at'], ...DECIDED_BLANKS, ...STRIPPED_COOKIE_HEADER } } },
       { handler: 'header', config: { headers: { 'X-Other': 'x' } } },
     ])
   })
@@ -189,7 +194,7 @@ describe('role headers: opt-in per gate (passRoles), never by default', () => {
   const on = { ...platform, roleHeaders: true, decisionUrl }
   /** payroll with its web (policy, header mutator) gate, and the public gate turned into a policy gate with no header mutator. */
   const site = (passRoles?: boolean): Site => {
-    const s = payrollSite()
+    const s = noOrgs(payrollSite())
     s.gates[0] = { ...s.gates[0], ...(passRoles === undefined ? {} : { passRoles }) }
     s.gates[1] = { ...s.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy', ...(passRoles === undefined ? {} : { passRoles }) }
     return s
@@ -282,7 +287,7 @@ describe('a role header the gateway fills from a template is left to it', () => 
 describe('X-User-Groups as before on every gateway shape (no passRoles)', () => {
   /** payroll with an enrich gate on the policy, beside web (identity) and public (no identity, made a policy gate). */
   const site = (): Site => {
-    const s = payrollSite()
+    const s = noOrgs(payrollSite())
     s.gates[1] = { ...s.gates[1], authenticators: [{ handler: 'cookie_session' }, { handler: 'anonymous' }], authorizer: 'policy' }
     s.gates.push({ id: 'enrich', label: 'Enrich', authenticators: [{ handler: 'cookie_session' }], authorizer: 'policy', mutators: [{ handler: 'hydrator', config: { api: { url: 'http://e.e.svc.cluster.local' } } }, { handler: 'header' }], errors: 'api' })
     s.routes.items.push({ id: 'e', methods: ['GET'], path: '/e', gate: 'enrich', access: { kind: 'signed-in' }, source: 'manual' })
@@ -316,6 +321,34 @@ describe('X-User-Groups as before on every gateway shape (no passRoles)', () => 
     for (const name of ['web', 'enrich', 'public']) {
       expect(forward(r, name)).toEqual([])
       expect(headersOf(r, name)).toMatchObject(ROLE_BLANKS)
+    }
+  })
+})
+
+describe('organization headers (X-Org-Id, X-Org-Roles, X-Client-Id)', () => {
+  const decisionUrl = 'http://auth-opa-authz-proxy:8080/v1/data/rbac/decision'
+  const authz = (r: ReturnType<typeof render>, name: string) => gate(r, name).authorizer as { config: Record<string, unknown> }
+  const headersOf = (r: ReturnType<typeof render>, name: string) => (gate(r, name).mutators.find((m) => m.handler === 'header')!.config as { headers: Record<string, string> }).headers
+
+  it('a site with organizations on: every policy gate asks /decision and forwards them, without blanking them', () => {
+    const r = render(payrollSite(), { ...platform, decisionUrl })
+    expect(authz(r, 'web').config).toMatchObject({ remote: decisionUrl, forward_response_headers_to_upstream: ORG_HEADERS })
+    for (const n of Object.keys(ORG_BLANKS)) expect(headersOf(r, 'web')).not.toHaveProperty(n)
+    // Not on a gate that does not ask the policy: blanked there.
+    expect(headersOf(r, 'public')).toMatchObject(ORG_BLANKS)
+  })
+
+  it('beside the role headers when the gate also forwards them', () => {
+    const s = payrollSite()
+    s.gates[0] = { ...s.gates[0], passRoles: true }
+    expect(authz(render(s, { ...platform, decisionUrl, roleHeaders: true }), 'web').config.forward_response_headers_to_upstream).toEqual([...ROLE_HEADERS, ...ORG_HEADERS])
+  })
+
+  it('organizations off, or no decision endpoint: never forwarded, always blanked (a client copy never reaches the app)', () => {
+    for (const [s, p] of [[noOrgs(payrollSite()), { ...platform, decisionUrl }], [payrollSite(), platform]] as const) {
+      const r = render(s, p)
+      expect(authz(r, 'web').config.forward_response_headers_to_upstream).toEqual([])
+      expect(headersOf(r, 'web')).toMatchObject({ ...ORG_BLANKS, 'x-user-organizations': '' })
     }
   })
 })

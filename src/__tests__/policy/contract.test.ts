@@ -24,7 +24,7 @@ describe('policy-contract.json (for opal-policies CI)', () => {
     const rows = c.route_map.jinbe.rules
     const del = rows.find((r) => r.method === 'DELETE' && r.path === '/api/admin/users/:id')!
     expect(del.reach).toEqual({ kind: 'platform', roles: ['super_admin'], groups: ['super_admins'] })
-    const invite = rows.find((r) => r.method === 'POST' && r.path === '/api/organizations/:organizationId/users')!
+    const invite = rows.find((r) => r.method === 'POST' && r.path === '/api/organizations/:organizationId/invitations')!
     expect(invite.reach).toEqual({ kind: 'org', orgRoles: ['member_manager', 'owner'], everyOrg: ['super_admin'] })
     expect(rows.find((r) => r.path === '/api/whoami')!.reach).toEqual({ kind: 'public' })
     const audit = rows.filter((r) => r.method === 'GET' && r.path === '/api/audit/events')

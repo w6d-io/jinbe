@@ -29,6 +29,9 @@ import type { Zone } from './host.js'
  *                          gate without passRoles, all three are blanked like every unset identity header.
  *   SITES_AUTHZ_DECISION_URL  the decision endpoint those gates ask instead of the boolean /allow (only with
  *                          SITES_ROLE_HEADERS). Unset: the gateway's remote_json remote, /allow → /decision.
+ *   SITES_UPSTREAM_PATH    true once site-operator renders `upstream.path` (a base path prepended to every
+ *                          request after stripPath). Off (default): an intent naming one is refused, since the
+ *                          operator would drop it and the upstream would get the wrong path.
  *   SITES_PUBLIC_RATE_LIMIT  requests per minute per IP on the public site endpoints (60).
  *   SITES_MIGRATION_DUALRUN_MIN_SEC   dual-run length before cut-over is allowed (3600).
  *   SITES_MIGRATION_ROLLBACK_DAYS     how long after cut-over a rollback is offered (7).
@@ -103,6 +106,7 @@ const schema = z.object({
   SITES_ACCESS_URL: z.string().url().optional(),
   SITES_ROLE_HEADERS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   SITES_AUTHZ_DECISION_URL: z.string().url().optional(),
+  SITES_UPSTREAM_PATH: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   SITES_PUBLIC_RATE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(60),
   SITES_MIGRATION_DUALRUN_MIN_SEC: z.coerce.number().int().min(0).max(30 * 86_400).default(3600),
   SITES_MIGRATION_ROLLBACK_DAYS: z.coerce.number().int().min(1).max(90).default(7),

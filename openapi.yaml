@@ -692,6 +692,73 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/me/orgs:
+    get:
+      tags:
+        - me
+      description: The caller's organizations served by the site `app`, each with its
+        name, the caller's org roles of that site there (an owner's site role
+        included) and the site's permissions they hold there. 503 when the
+        policy cannot answer.
+      parameters:
+        - schema:
+            type: string
+            pattern: ^[a-z][a-z0-9-]{0,39}$
+          in: query
+          name: app
+          required: true
+          description: The site (its RBAC service name)
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app:
+                    type: string
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                          nullable: true
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
   /api/me/organizations:
     get:
       tags:
@@ -4672,10 +4739,8 @@ paths:
       tags:
         - admin
       description: "Every organisation the directory holds, with its owners (identity
-        ids holding jinbe:owner there), the sites it is entitled to (org_sites:
-        jinbe and the sites whose intent lists it) and `applications`, what the
-        directory records as deployed for it (organisation_deployments — not an
-        access entitlement). Needs orgs:read."
+        ids holding jinbe:owner there) and the sites it is entitled to
+        (org_sites: jinbe and the sites serving it). Needs orgs:read."
       x-permission: orgs:read
       x-scope: platform
       responses:
@@ -4697,10 +4762,6 @@ paths:
                           type: string
                         tenant:
                           type: string
-                        applications:
-                          type: array
-                          items:
-                            type: string
                         owners:
                           type: array
                           items:
@@ -4800,8 +4861,11 @@ paths:
     post:
       tags:
         - admin
-      description: Create an organisation from a name. No service bundle is required.
-        Needs org:write.
+      description: "Create an organisation for its owner: a name and the owner's
+        address (never an id). An account with that address is named owner at
+        once; an address with no account is invited as owner — the token (and
+        `link` when INVITATION_URL is set) is returned ONCE, to send them. Needs
+        orgs:write."
       requestBody:
         required: true
         content:
@@ -4810,6 +4874,7 @@ paths:
               type: object
               required:
                 - name
+                - owner
               properties:
                 name:
                   type: string
@@ -4819,6 +4884,11 @@ paths:
                   type: string
                   pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
                   description: Namespace-shaped label; derived from the name when omitted.
+                owner:
+                  type: string
+                  format: email
+                  maxLength: 254
+                  description: The owner's address
               additionalProperties: false
       x-permission: orgs:write
       x-scope: platform
@@ -4837,14 +4907,35 @@ paths:
                     type: string
                   tenant:
                     type: string
-                  applications:
-                    type: array
-                    items:
-                      type: string
                   sites:
                     type: array
                     items:
                       type: string
+                  owner:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                      id:
+                        type: string
+                        nullable: true
+                      status:
+                        type: string
+                        enum:
+                          - owner
+                          - invited
+                  invitation:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      token:
+                        type: string
+                      link:
+                        type: string
+                        nullable: true
+                      expiresAt:
+                        type: string
         "400":
           description: Default Response
           content:
@@ -4950,10 +5041,8 @@ paths:
       tags:
         - admin
       description: "One organisation: its owners (identity ids holding jinbe:owner
-        there), the sites it is entitled to (org_sites: jinbe and the sites
-        whose intent lists it) and `applications`, what the organisation
-        directory records as deployed for it (organisation_deployments — not an
-        access entitlement). Needs orgs:read."
+        there) and the sites it is entitled to (org_sites: jinbe and the sites
+        serving it). Needs orgs:read."
       parameters:
         - schema:
             type: string
@@ -4977,10 +5066,6 @@ paths:
                     type: string
                   tenant:
                     type: string
-                  applications:
-                    type: array
-                    items:
-                      type: string
                   owners:
                     type: array
                     items:
@@ -5091,8 +5176,7 @@ paths:
     patch:
       tags:
         - admin
-      description: "Change an organisation: name, tenant, and/or the whole set of
-        applications it has. Needs org:write."
+      description: "Change an organisation: its name and/or tenant. Needs orgs:write."
       requestBody:
         required: true
         content:
@@ -5107,12 +5191,6 @@ paths:
                 tenant:
                   type: string
                   pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
-                applications:
-                  type: array
-                  items:
-                    type: string
-                    pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
-                  maxItems: 200
               additionalProperties: false
       parameters:
         - schema:
@@ -5138,10 +5216,6 @@ paths:
                     type: string
                   tenant:
                     type: string
-                  applications:
-                    type: array
-                    items:
-                      type: string
         "400":
           description: Default Response
           content:
@@ -5256,8 +5330,12 @@ paths:
     delete:
       tags:
         - admin
-      description: Delete an organisation that has no members left. Needs org:delete
-        and a recent second factor.
+      description: "Delete an organisation that has no members left, with everything
+        kept about it: its sites (org_sites and the sign-up entitlements), its
+        domains, org roles, direct grants and pending invitations. Site intents
+        still naming it are listed in the audit event and refused at their next
+        preview and publish (unknown_org). Needs orgs:delete and a recent second
+        factor."
       parameters:
         - schema:
             type: string
@@ -5385,6 +5463,527 @@ paths:
                     type: string
                   members:
                     type: integer
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/organizations/{id}/api-keys:
+    get:
+      tags:
+        - api-keys
+      description: An organisation's API keys (no secrets). Needs orgs:read.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: orgs:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        client_id:
+                          type: string
+                        organization_id:
+                          type: string
+                          format: uuid
+                        label:
+                          type: string
+                        scopes:
+                          type: array
+                          items:
+                            type: string
+                        created_by:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: Last use, to the minute; null when never seen
+                        created_by_email:
+                          type: string
+                          nullable: true
+                          description: The creator, when you are them or may see users
+                  total:
+                    type: number
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+    post:
+      tags:
+        - api-keys
+      description: "Create an API key (Hydra client_credentials client) of this
+        organisation, valid on every site serving it. Scopes from GET
+        …/api-keys/scopes: permissions, site roles, groups. Returns client_id +
+        client_secret ONCE. Needs orgs.keys:write and a recent second factor."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+                - scopes
+              properties:
+                label:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Human label for the key
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  maxItems: 100
+                  description: Permissions, site roles (role:<site>:<role>) or groups
+                    (group:<name>), from the organisation's catalog
+                audience:
+                  type: array
+                  items:
+                    type: string
+                  description: Optional token audience
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  description: Optional expiry in days; absent = never expires
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: orgs.keys:write
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "201":
+          description: Returned ONCE on creation. Copy the client_secret now — it cannot
+            be retrieved again.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Returned ONCE on creation. Copy the client_secret now — it cannot
+                  be retrieved again.
+                properties:
+                  client_id:
+                    type: string
+                  organization_id:
+                    type: string
+                    format: uuid
+                  label:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  created_by:
+                    type: string
+                    nullable: true
+                  created_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  expires_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  last_used_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Last use, to the minute; null when never seen
+                  created_by_email:
+                    type: string
+                    nullable: true
+                    description: The creator, when you are them or may see users
+                  client_secret:
+                    type: string
+                    description: Shown only once
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Bad Request
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/admin/organizations/{id}/api-keys/scopes:
+    get:
+      tags:
+        - api-keys
+      description: "What an API key of this organisation may be given, for the sites
+        serving it (never jinbe, kuma or global): each permission a route of
+        those sites asks for, each site role (`role:<site>:<role>`) and each
+        group binding only those sites' roles (`group:<name>`), with what it
+        stands for today, under API_KEY_ALLOWED_SCOPES when set. Sorted by
+        scope."
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: orgs.keys:write
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope:
+                          type: string
+                          description: A permission (resource:verb), a site role (role:<site>:<role>) or a
+                            group (group:<name>)
+                        kind:
+                          type: string
+                          enum:
+                            - permission
+                            - role
+                            - group
+                        sites:
+                          type: array
+                          items:
+                            type: string
+                          description: The sites where it opens something
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+                          description: What it stands for today
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
         "503":
           description: Default Response
           content:
@@ -5737,6 +6336,10 @@ paths:
                           type: string
                           maxLength: 256
                           pattern: ^\/[^\s]*$
+                        path:
+                          type: string
+                          maxLength: 256
+                          pattern: ^(\/[A-Za-z0-9._~@-]+)+$
                       required:
                         - service
                         - namespace
@@ -6021,6 +6624,17 @@ paths:
                       required:
                         - platform
                         - orgGrantable
+                      additionalProperties: false
+                    organizations:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        ownerRole:
+                          type: string
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,39}$
+                      required:
+                        - enabled
                       additionalProperties: false
                     orgs:
                       type: array
@@ -6528,6 +7142,10 @@ paths:
                           type: string
                           maxLength: 256
                           pattern: ^\/[^\s]*$
+                        path:
+                          type: string
+                          maxLength: 256
+                          pattern: ^(\/[A-Za-z0-9._~@-]+)+$
                       required:
                         - service
                         - namespace
@@ -6804,6 +7422,17 @@ paths:
                       required:
                         - platform
                         - orgGrantable
+                      additionalProperties: false
+                    organizations:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        ownerRole:
+                          type: string
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,39}$
+                      required:
+                        - enabled
                       additionalProperties: false
                     orgs:
                       type: array
@@ -7102,6 +7731,10 @@ paths:
                           type: string
                           maxLength: 256
                           pattern: ^\/[^\s]*$
+                        path:
+                          type: string
+                          maxLength: 256
+                          pattern: ^(\/[A-Za-z0-9._~@-]+)+$
                       required:
                         - service
                         - namespace
@@ -7386,6 +8019,17 @@ paths:
                       required:
                         - platform
                         - orgGrantable
+                      additionalProperties: false
+                    organizations:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        ownerRole:
+                          type: string
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,39}$
+                      required:
+                        - enabled
                       additionalProperties: false
                     orgs:
                       type: array
@@ -7711,6 +8355,10 @@ paths:
                           type: string
                           maxLength: 256
                           pattern: ^\/[^\s]*$
+                        path:
+                          type: string
+                          maxLength: 256
+                          pattern: ^(\/[A-Za-z0-9._~@-]+)+$
                       required:
                         - service
                         - namespace
@@ -7995,6 +8643,17 @@ paths:
                       required:
                         - platform
                         - orgGrantable
+                      additionalProperties: false
+                    organizations:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        ownerRole:
+                          type: string
+                          pattern: ^[a-z0-9][a-z0-9_-]{0,39}$
+                      required:
+                        - enabled
                       additionalProperties: false
                     orgs:
                       type: array
@@ -9585,7 +10244,9 @@ paths:
     patch:
       tags:
         - admin
-      description: Set or remove the organization_id on a user (Kratos JSON Patch)
+      description: Set or remove a user's primary organization (organization_id). A
+        new one keeps the old primary as one of their organizations; null
+        removes the primary one.
       requestBody:
         required: true
         content:
@@ -16134,294 +16795,6 @@ paths:
                       requiredAal:
                         type: string
                         example: aal2
-    post:
-      tags:
-        - organization-users
-      description: Create a new user in this organization
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - email
-              properties:
-                email:
-                  type: string
-                  format: email
-                name:
-                  type: string
-                sendInvite:
-                  type: boolean
-                  default: false
-                roles:
-                  type: array
-                  maxItems: 32
-                  items:
-                    type: string
-                    pattern: ^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$
-                grants:
-                  type: array
-                  maxItems: 32
-                  items:
-                    type: object
-                    required:
-                      - scope
-                      - app
-                      - kind
-                      - name
-                    additionalProperties: false
-                    properties:
-                      scope:
-                        type: string
-                        description: '"platform" or an organisation id'
-                      app:
-                        type: string
-                        pattern: ^[a-z0-9][a-z0-9_-]*$
-                      kind:
-                        type: string
-                        enum:
-                          - role
-                          - permission
-                      name:
-                        type: string
-                        minLength: 1
-                        maxLength: 120
-                      reason:
-                        type: string
-                        maxLength: 500
-                      expiresAt:
-                        type: string
-                        format: date-time
-              additionalProperties: false
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: organizationId
-          required: true
-          description: Organization identifier
-      x-permission: org.members:write
-      x-scope: org
-      x-org-param: organizationId
-      responses:
-        "201":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  schema_id:
-                    type: string
-                  schema_url:
-                    type: string
-                  state:
-                    type: string
-                    enum:
-                      - active
-                      - inactive
-                  state_changed_at:
-                    type: string
-                    format: date-time
-                  traits:
-                    type: object
-                    properties:
-                      email:
-                        type: string
-                        format: email
-                      name:
-                        type: string
-                        description: User display name
-                      picture:
-                        type: string
-                        format: uri
-                        description: User avatar URL
-                      providers:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            name:
-                              type: string
-                            issuer_url:
-                              type: string
-                            provider_type:
-                              type: string
-                    required:
-                      - email
-                  metadata_public:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  metadata_admin:
-                    type: object
-                    nullable: true
-                    additionalProperties: true
-                  organization_id:
-                    type: string
-                    nullable: true
-                  created_at:
-                    type: string
-                    format: date-time
-                  updated_at:
-                    type: string
-                    format: date-time
-                  groups:
-                    type: array
-                    items:
-                      type: string
-                    description: User groups from OPAL RBAC
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                    description: User roles from OPAL RBAC
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                    description: User permissions from OPAL RBAC
-                  organizations:
-                    type: array
-                    items:
-                      type: string
-                    description: Organisations this identity belongs to, where this service owns
-                      membership
-                  rbacUnavailable:
-                    type: boolean
-                    description: Set when what this identity holds could not be resolved — empty is
-                      not the same fact
-                  credentials:
-                    type: object
-                    additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-                  code:
-                    type: string
-                    example: insufficient_scope
-                  reason:
-                    type: string
-                    example: scope_missing:users:recovery
-                  permission:
-                    type: string
-                    example: users:reset_second_factor
-                  missing:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - users:reset_second_factor
-                  missingByScope:
-                    type: object
-                    additionalProperties:
-                      type: array
-                      items:
-                        type: string
-                  grantedBy:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - staff-security
-                      - super_admins
-                  reasons:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - missing_every_org_permissions
-                      - missing_permissions
-                  hint:
-                    type: string
-                    example: "Ask an administrator to add you to one of: staff-security,
-                      super_admins."
-                  stepUp:
-                    type: object
-                    properties:
-                      requiredAal:
-                        type: string
-                        example: aal2
-                  refused:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        role:
-                          type: string
-                        reason:
-                          type: string
-                        grant:
-                          type: object
-                          properties:
-                            id:
-                              type: string
-                            scope:
-                              type: string
-                            app:
-                              type: string
-                            kind:
-                              type: string
-                            name:
-                              type: string
-                        reasons:
-                          type: array
-                          items:
-                            type: string
-                        missing:
-                          type: array
-                          items:
-                            type: string
-                        grantedBy:
-                          type: array
-                          items:
-                            type: string
-        "503":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Service Unavailable
-                  reason:
-                    type: string
-                  message:
-                    type: string
   /api/organizations/{organizationId}/users/{id}:
     get:
       tags:
@@ -17176,190 +17549,6 @@ paths:
                   message:
                     type: string
   /api/organizations/{organizationId}/api-keys:
-    post:
-      tags:
-        - api-keys
-      description: Create an API key (Hydra client_credentials client) for this
-        organization. Returns client_id + client_secret ONCE. organization_id is
-        enforced server-side.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - label
-                - scopes
-              properties:
-                label:
-                  type: string
-                  minLength: 1
-                  maxLength: 200
-                  description: Human label for the key
-                scopes:
-                  type: array
-                  items:
-                    type: string
-                  minItems: 1
-                  description: Requested scopes (validated against the allowed catalog)
-                audience:
-                  type: array
-                  items:
-                    type: string
-                  description: Optional token audience
-                expires_in_days:
-                  type: integer
-                  minimum: 1
-                  maximum: 365
-                  description: Optional expiry in days; absent = never expires
-              additionalProperties: false
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: organizationId
-          required: true
-          description: Organization identifier
-      x-permission: org.keys:write
-      x-scope: org
-      x-org-param: organizationId
-      x-step-up: true
-      responses:
-        "201":
-          description: Returned ONCE on creation. Copy the client_secret now — it cannot
-            be retrieved again.
-          content:
-            application/json:
-              schema:
-                type: object
-                description: Returned ONCE on creation. Copy the client_secret now — it cannot
-                  be retrieved again.
-                properties:
-                  client_id:
-                    type: string
-                  organization_id:
-                    type: string
-                    format: uuid
-                  label:
-                    type: string
-                  scopes:
-                    type: array
-                    items:
-                      type: string
-                  created_by:
-                    type: string
-                    nullable: true
-                  created_at:
-                    type: string
-                    format: date-time
-                    nullable: true
-                  expires_at:
-                    type: string
-                    format: date-time
-                    nullable: true
-                  last_used_at:
-                    type: string
-                    format: date-time
-                    nullable: true
-                    description: Last use, to the minute; null when never seen
-                  created_by_email:
-                    type: string
-                    nullable: true
-                    description: The creator, when you are them or may see users
-                  client_secret:
-                    type: string
-                    description: Shown only once
-        "400":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Bad Request
-                  message:
-                    type: string
-                  details:
-                    type: object
-                    additionalProperties: true
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-                  code:
-                    type: string
-                    example: insufficient_scope
-                  reason:
-                    type: string
-                    example: scope_missing:users:recovery
-                  permission:
-                    type: string
-                    example: users:reset_second_factor
-                  missing:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - users:reset_second_factor
-                  missingByScope:
-                    type: object
-                    additionalProperties:
-                      type: array
-                      items:
-                        type: string
-                  grantedBy:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - staff-security
-                      - super_admins
-                  reasons:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - missing_every_org_permissions
-                      - missing_permissions
-                  hint:
-                    type: string
-                    example: "Ask an administrator to add you to one of: staff-security,
-                      super_admins."
-                  stepUp:
-                    type: object
-                    properties:
-                      requiredAal:
-                        type: string
-                        example: aal2
     get:
       tags:
         - api-keys
@@ -17495,135 +17684,6 @@ paths:
                       requiredAal:
                         type: string
                         example: aal2
-  /api/organizations/{organizationId}/api-keys/scopes:
-    get:
-      tags:
-        - api-keys
-      description: "The scopes an API key of this organization may be given: the
-        permissions required by routes of the sites this organization runs that
-        the caller holds here (site grants and org grants), under
-        API_KEY_ALLOWED_SCOPES when set. Never a wildcard. Sorted by scope, each
-        with the sites that ask for it."
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          in: path
-          name: organizationId
-          required: true
-          description: Organization identifier
-      x-permission: org.keys:read
-      x-scope: org
-      x-org-param: organizationId
-      responses:
-        "200":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  scopes:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        scope:
-                          type: string
-                          description: A permission (resource:verb)
-                        sites:
-                          type: array
-                          items:
-                            type: string
-                          description: The sites whose routes require it
-        "401":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Unauthorized
-                  code:
-                    type: string
-                    example: authentication_required
-                  message:
-                    type: string
-                    example: Valid authentication required. Please provide a valid
-                      ory_kratos_session cookie.
-        "403":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Forbidden
-                  message:
-                    type: string
-                  code:
-                    type: string
-                    example: insufficient_scope
-                  reason:
-                    type: string
-                    example: scope_missing:users:recovery
-                  permission:
-                    type: string
-                    example: users:reset_second_factor
-                  missing:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - users:reset_second_factor
-                  missingByScope:
-                    type: object
-                    additionalProperties:
-                      type: array
-                      items:
-                        type: string
-                  grantedBy:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - staff-security
-                      - super_admins
-                  reasons:
-                    type: array
-                    items:
-                      type: string
-                    example:
-                      - missing_every_org_permissions
-                      - missing_permissions
-                  hint:
-                    type: string
-                    example: "Ask an administrator to add you to one of: staff-security,
-                      super_admins."
-                  stepUp:
-                    type: object
-                    properties:
-                      requiredAal:
-                        type: string
-                        example: aal2
-        "503":
-          description: Default Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Service Unavailable
-                  reason:
-                    type: string
-                  message:
-                    type: string
   /api/organizations/{organizationId}/api-key-policy:
     get:
       tags:
@@ -20493,6 +20553,704 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/organizations/{organizationId}/invitations:
+    get:
+      tags:
+        - organization-users
+      description: This organization's pending invitations (no token), newest first.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      x-permission: org.members:read
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        org:
+                          type: string
+                        email:
+                          type: string
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                        invitedBy:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              nullable: true
+                            email:
+                              type: string
+                        byPlatform:
+                          type: boolean
+                        createdAt:
+                          type: string
+                        expiresAt:
+                          type: string
+                        organizationName:
+                          type: string
+                          nullable: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+    post:
+      tags:
+        - organization-users
+      description: "Invite somebody into this organization by address, whether they
+        have an account or not. They join only by accepting, signed in with that
+        address verified (POST /api/me/invitations/accept). Org roles given on
+        acceptance pass the holding rule now (and again then). The token — and
+        `link` when INVITATION_URL is set — is returned ONCE: send it to them. A
+        pending invitation of the same address here is replaced. 409
+        already_member."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+                roles:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: string
+                    pattern: ^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+          description: Organization identifier
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitation:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      org:
+                        type: string
+                      email:
+                        type: string
+                      roles:
+                        type: array
+                        items:
+                          type: string
+                      invitedBy:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            nullable: true
+                          email:
+                            type: string
+                      byPlatform:
+                        type: boolean
+                      createdAt:
+                        type: string
+                      expiresAt:
+                        type: string
+                      organizationName:
+                        type: string
+                        nullable: true
+                  token:
+                    type: string
+                  link:
+                    type: string
+                    nullable: true
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+                  refused:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:
+                          type: string
+                        reason:
+                          type: string
+                        grant:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            scope:
+                              type: string
+                            app:
+                              type: string
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                        missing:
+                          type: array
+                          items:
+                            type: string
+                        grantedBy:
+                          type: array
+                          items:
+                            type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+        "409":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/organizations/{organizationId}/invitations/{invitationId}:
+    delete:
+      tags:
+        - organization-users
+      description: Take back a pending invitation of this organization.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: organizationId
+          required: true
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: invitationId
+          required: true
+      x-permission: org.members:write
+      x-scope: org
+      x-org-param: organizationId
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+  /api/me/invitations:
+    get:
+      tags:
+        - me
+      description: Pending invitations addressed to the caller's verified address,
+        with each organization's name. Empty while the address is not verified.
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        org:
+                          type: string
+                        email:
+                          type: string
+                        roles:
+                          type: array
+                          items:
+                            type: string
+                        invitedBy:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              nullable: true
+                            email:
+                              type: string
+                        byPlatform:
+                          type: boolean
+                        createdAt:
+                          type: string
+                        expiresAt:
+                          type: string
+                        organizationName:
+                          type: string
+                          nullable: true
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+  /api/me/invitations/accept:
+    post:
+      tags:
+        - me
+      description: "Accept an invitation — by the link's `token`, or by `id` (from GET
+        /api/me/invitations) — signed in with the invited address verified: join
+        the organization, with the org roles the inviter may still hand out
+        (`dropped` names the others)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                token:
+                  type: string
+                  minLength: 16
+                  maxLength: 128
+                id:
+                  type: string
+                  format: uuid
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                        nullable: true
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  dropped:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
+  /api/me/invitations/{invitationId}/decline:
+    post:
+      tags:
+        - me
+      description: Decline an invitation addressed to the caller.
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: invitationId
+          required: true
+      x-access: self
+      responses:
+        "204":
+          description: Default Response
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
   /api/mcp/token-info:
     post:
       tags:

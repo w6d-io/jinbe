@@ -29,34 +29,32 @@ export function isGrantableScope(scope: string): boolean {
 /** What the policy knows about an OAuth2 client (data.api_clients[client_id], published by jinbe). */
 export interface ApiClientRecord {
   org: string
+  /** The permissions its scopes stand for (permissions, site roles and groups expanded: api-key-scopes.ts). */
   scopes: string[]
   /** RFC 3339; absent = no expiry. */
   expires_at?: string
 }
 
+/** The platform's own apps: an org API key is never valid there (rbac.rego `system_apps`). */
+export const KEYLESS_APPS: readonly string[] = ['jinbe', 'kuma', 'global']
+
 /**
- * Whether a machine client may use a route — the twin of the proposed `client_granted` clause.
+ * Whether an org API key may use a route — the twin of rbac.rego's org-key clause (§8b).
  *
- * ALL of: the route carries a permission; a scope the token carries AND the client was registered
- * with IS that permission; the client is not past its expiry; and the route is the client's
- * organization's — named by the route's org param when it has one, otherwise a site that
- * organization runs.
- *
- * Exact: no person stands behind a machine client to be asked what they hold, and its
- * scopes were picked as exact route permissions its creator held (services/api-key-scopes.ts).
+ * ALL of: the client is registered (data.api_clients) and not past its expiry; the app is a site,
+ * not one of the platform's own; the site serves the key's organization; the route carries a
+ * permission that is in the key's expanded scopes, exactly; and on an org row the route's org is the
+ * key's.
  */
 export function clientGranted(
   client: ApiClientRecord | undefined,
-  tokenScopes: readonly string[],
   route: { permission?: string; org?: string | null; app: string },
   sitesOfOrg: (org: string) => readonly string[],
   now: number = Date.now(),
 ): boolean {
-  if (!client || !route.permission) return false
+  if (!client || !route.permission || KEYLESS_APPS.includes(route.app)) return false
   if (client.expires_at && !(Date.parse(client.expires_at) > now)) return false
-  const registered = new Set(client.scopes)
-  const required = route.permission
-  if (!tokenScopes.some((s) => isGrantableScope(s) && registered.has(s) && s === required)) return false
-  if (route.org !== undefined && route.org !== null) return route.org === client.org
-  return sitesOfOrg(client.org).includes(route.app)
+  if (!sitesOfOrg(client.org).includes(route.app)) return false
+  if (!isGrantableScope(route.permission) || !client.scopes.includes(route.permission)) return false
+  return route.org === undefined || route.org === null || route.org === client.org
 }

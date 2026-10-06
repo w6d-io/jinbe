@@ -164,6 +164,12 @@
       "delegable": "never",
       "four_eyes": "prod"
     },
+    "orgs.keys:write": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
     "org.members:read": {
       "scope": "org",
       "step_up": false,
@@ -350,7 +356,9 @@
       "developer": [
         "access:check",
         "groups:read",
+        "orgs.keys:write",
         "orgs:read",
+        "orgs:write",
         "sites.members:write",
         "sites:read",
         "sites:write",
@@ -403,6 +411,7 @@
         "groups.mfa:write",
         "groups:read",
         "groups:write",
+        "orgs.keys:write",
         "orgs.members:write",
         "orgs.owners:write",
         "orgs:delete",
@@ -845,9 +854,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -889,9 +900,59 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/organizations/:id/api-keys",
+          "permission": "orgs:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/organizations/:id/api-keys",
+          "permission": "orgs.keys:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/organizations/:id/api-keys/scopes",
+          "permission": "orgs.keys:write",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -3525,6 +3586,27 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/me/invitations",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/me/invitations/:invitationId/decline",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/me/invitations/accept",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
           "method": "DELETE",
           "path": "/api/me/mcp/connections",
           "reach": {
@@ -3555,6 +3637,13 @@
         {
           "method": "GET",
           "path": "/api/me/organizations",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/me/orgs",
           "reach": {
             "kind": "signed-in"
           }
@@ -3626,22 +3715,6 @@
           }
         },
         {
-          "method": "POST",
-          "path": "/api/organizations/:organizationId/api-keys",
-          "permission": "org.keys:write",
-          "org_param": "organizationId",
-          "reach": {
-            "kind": "org",
-            "orgRoles": [
-              "key_manager",
-              "owner"
-            ],
-            "everyOrg": [
-              "super_admin"
-            ]
-          }
-        },
-        {
           "method": "DELETE",
           "path": "/api/organizations/:organizationId/api-keys/:clientId",
           "permission": "org.keys:revoke",
@@ -3660,24 +3733,6 @@
         {
           "method": "GET",
           "path": "/api/organizations/:organizationId/api-keys/:clientId",
-          "permission": "org.keys:read",
-          "org_param": "organizationId",
-          "reach": {
-            "kind": "org",
-            "orgRoles": [
-              "key_manager",
-              "owner",
-              "viewer"
-            ],
-            "everyOrg": [
-              "security",
-              "super_admin"
-            ]
-          }
-        },
-        {
-          "method": "GET",
-          "path": "/api/organizations/:organizationId/api-keys/scopes",
           "permission": "org.keys:read",
           "org_param": "organizationId",
           "reach": {
@@ -3763,6 +3818,58 @@
         },
         {
           "method": "GET",
+          "path": "/api/organizations/:organizationId/invitations",
+          "permission": "org.members:read",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "auditor",
+              "key_manager",
+              "member_manager",
+              "owner",
+              "viewer"
+            ],
+            "everyOrg": [
+              "security",
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/organizations/:organizationId/invitations",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/organizations/:organizationId/invitations/:invitationId",
+          "permission": "org.members:write",
+          "org_param": "organizationId",
+          "reach": {
+            "kind": "org",
+            "orgRoles": [
+              "member_manager",
+              "owner"
+            ],
+            "everyOrg": [
+              "super_admin"
+            ]
+          }
+        },
+        {
+          "method": "GET",
           "path": "/api/organizations/:organizationId/roles",
           "permission": "org.members:read",
           "org_param": "organizationId",
@@ -3797,22 +3904,6 @@
             ],
             "everyOrg": [
               "security",
-              "super_admin"
-            ]
-          }
-        },
-        {
-          "method": "POST",
-          "path": "/api/organizations/:organizationId/users",
-          "permission": "org.members:write",
-          "org_param": "organizationId",
-          "reach": {
-            "kind": "org",
-            "orgRoles": [
-              "member_manager",
-              "owner"
-            ],
-            "everyOrg": [
               "super_admin"
             ]
           }
@@ -4221,7 +4312,9 @@
           "platform": [
             "access:check",
             "groups:read",
+            "orgs.keys:write",
             "orgs:read",
+            "orgs:write",
             "sites.members:write",
             "sites:read",
             "sites:write",

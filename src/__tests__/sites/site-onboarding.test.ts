@@ -120,7 +120,7 @@ describe('a gate that lets nobody in is refused on every write', () => {
     const res = await app.inject({ method: 'PUT', url: '/sites/payroll/draft', headers: W, payload: { site: noAuth(authenticators) } })
     expect(res.statusCode).toBe(422)
     expect(res.json()).toMatchObject({ error: 'gate_without_authenticator', checks: [{ code: 'gate_without_authenticator', path: 'gates.0.authenticators' }] })
-    expect(redis.hashes.size + redis.strings.size).toBe(0)
+    expect([...redis.hashes.keys()].filter((k) => k !== 'rbac:organisations').length + redis.strings.size).toBe(0)
   })
 
   it('an incomplete draft without that problem is still autosaved', async () => {

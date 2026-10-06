@@ -2,6 +2,7 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import type { Site } from './schemas.js'
 import { signUpStore } from './signup/store.js'
 import { explicitWildcards, render, stableStringify, type Rendered, type SiteCr } from './render.js'
+import { explicitOrganizations } from './organizations.js'
 import { sitesRepository, type SiteDraft, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
 import { kubeSites, type SiteCrObject } from './kube-sites.js'
@@ -67,8 +68,9 @@ export async function expectedOf(record: SiteRecord): Promise<{ site: Site; rend
   if (!record.applied) return null
   const v = await sitesRepository.version(record.site.name, record.applied.version)
   if (!v) return null
-  // A version applied before wildcards were refused renders with them made explicit (render.ts).
-  const site = explicitWildcards({ ...v.site, state: record.site.state })
+  // A version applied before wildcards were refused renders with them made explicit (render.ts), and
+  // one using organizations before their switch existed with organizations on (organizations.ts).
+  const site = explicitOrganizations(explicitWildcards({ ...v.site, state: record.site.state }))
   const rendered = render(site, await loadPlatform())
   return { site, rendered, cr: withVersion(rendered.siteCr, record.applied.version) }
 }
@@ -143,7 +145,7 @@ export async function acceptDrift(name: string, actor: Actor): Promise<{ draft: 
       } else notFolded.push(d.field)
     }
     const u = cr.spec.upstream
-    const upstream = { service: u.service, namespace: u.namespace, port: u.port, ...(u.scheme ? { scheme: u.scheme } : {}), ...(u.preserveHost ? { preserveHost: true } : {}), ...(u.stripPath ? { stripPath: u.stripPath } : {}) }
+    const upstream = { service: u.service, namespace: u.namespace, port: u.port, ...(u.scheme ? { scheme: u.scheme } : {}), ...(u.preserveHost ? { preserveHost: true } : {}), ...(u.stripPath ? { stripPath: u.stripPath } : {}), ...(u.path ? { path: u.path } : {}) }
     if (specDiff(expected.cr.spec.upstream, u, 'u').length > 0) {
       site.upstream = upstream
       folded.push('upstream')

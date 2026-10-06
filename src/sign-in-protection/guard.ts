@@ -109,6 +109,26 @@ function limitedToText(domains: string[]): string {
   return `Sign-ups are limited to ${shown.map((d) => `@${d}`).join(', ')} addresses${more}.`
 }
 
+/**
+ * Whether this registration comes through an invitation into an organization
+ * (services/org-invitations.ts): the flow returns to the invitation link (`?token=` in return_to), the
+ * token is a pending invitation, and it was made for this very address. Only then may the address
+ * register whatever the sign-up policy says — that is how a new person accepts; holding an invitation
+ * opens nothing else. Loaded lazily; a store that cannot answer says no.
+ */
+export async function invitedAddress(email: string | null | undefined, returnTo: string | null | undefined): Promise<boolean> {
+  if (!email || !returnTo) return false
+  try {
+    const token = new URL(returnTo).searchParams.get('token')
+    if (!token) return false
+    const { orgInvitations } = await import('../services/org-invitations.js')
+    const invitation = await orgInvitations.byToken(token)
+    return !!invitation && invitation.email === email.trim().toLowerCase()
+  } catch {
+    return false
+  }
+}
+
 /** The registration policy alone, for one address. null = may sign up. */
 export function registrationVerdict(email: string | null | undefined, policy: SignInProtection['registration']): Decision | null {
   if (policy.mode === 'closed') {
@@ -193,7 +213,7 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
       signUpSite = null // the sites store unreadable: the platform's own policy decides
     }
   }
-  if (input.flow === 'registration' && settings.registration.mode === 'closed' && !signUpSite) {
+  if (input.flow === 'registration' && settings.registration.mode === 'closed' && !signUpSite && !(await invitedAddress(input.email, input.returnTo))) {
     return registrationVerdict(input.email, settings.registration) as Decision
   }
   let traits: Traits | undefined
@@ -220,7 +240,7 @@ async function decide(input: GuardInput, fetchImpl?: typeof fetch): Promise<Deci
 
   if (input.flow === 'registration') {
     const verdict = signUpSite ? await signUpSite.verdict(signUpSite.site, input.email) : registrationVerdict(input.email, settings.registration)
-    if (verdict) return verdict
+    if (verdict && !(await invitedAddress(input.email, input.returnTo))) return verdict
     if (signUpSite && input.email) {
       // Joined once the address is verified (sites/signup onIdentityEvent). A store hiccup must not
       // refuse the sign-up: the person can still use "Continue to <site>" after signing in.

@@ -7,6 +7,7 @@ import { gatekit, type Probe } from './gatekit.client.js'
 import { examplePath } from './patterns.js'
 import { sitesConfig } from './config.js'
 import { liveAddresses } from './address.js'
+import { organisationsById, organisationStoreConfigured } from '../services/organisation-store.js'
 
 /**
  * The checks render cannot make alone because they need the rest of the platform: other services'
@@ -99,6 +100,18 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
     // (publish.ts reconcileGroups) and managed from the site (sites/members.ts).
     if (group.startsWith(`${site.name}-`) || (site.signUp && group === signUpGroupName(site.name))) continue
     if (!groups[group]) checks.push({ level: 'error', code: 'unknown_group', message: `platform group '${group}' does not exist`, path: `groups.platform.${group}` })
+  }
+
+  // The orgs a site serves must exist: a deleted or mistyped one would entitle nothing anybody can see.
+  if (site.orgs.length && organisationStoreConfigured()) {
+    try {
+      const held = new Set((await organisationsById(site.orgs)).map((o) => o.id))
+      site.orgs.forEach((org, i) => {
+        if (!held.has(org)) checks.push({ level: 'error', code: 'unknown_org', message: `organization ${org} does not exist (deleted, or never created)`, path: `orgs.${i}` })
+      })
+    } catch {
+      checks.push({ level: 'warn', code: 'orgs_unchecked', message: 'the organization directory could not be read: the orgs listed were not checked', path: 'orgs' })
+    }
   }
 
   const cfg = sitesConfig()

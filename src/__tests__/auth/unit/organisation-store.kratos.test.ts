@@ -223,16 +223,16 @@ describe('membership on the identity', () => {
     expect(await store.organisationsForSubject(BOB)).toEqual([])
   })
 
-  it('keeps org-scoped roles on the identity, and a role can be given up without leaving', async () => {
+  it('never writes an org role on the identity (org roles are assignments); a legacy one goes with the membership', async () => {
     await store.addMember(ACME, BOB, 'member')
     await store.addMember(ACME, BOB, 'billing-contact')
-    expect(await store.membersOf(ACME)).toEqual([
-      { subjectId: BOB, role: 'billing-contact' },
-      { subjectId: BOB, role: 'member' },
-    ])
+    expect(await store.membersOf(ACME)).toEqual([{ subjectId: BOB, role: 'member' }])
+    expect(h.identities.get(BOB)!.metadata_admin ?? {}).not.toHaveProperty('organization_roles')
     await store.removeMember(ACME, BOB, 'billing-contact')
     expect(await store.membersOf(ACME)).toEqual([{ subjectId: BOB, role: 'member' }])
-    expect(h.identities.get(BOB)!.metadata_admin).not.toHaveProperty('organization_roles')
+    h.identities.set(BOB, { ...h.identities.get(BOB)!, metadata_admin: { ...(h.identities.get(BOB)!.metadata_admin ?? {}), organization_roles: { [ACME]: ['admin'] } } })
+    await store.removeMember(ACME, BOB)
+    expect(h.identities.get(BOB)!.metadata_admin ?? {}).not.toHaveProperty('organization_roles')
   })
 
   it('sets exactly a set, keeping the primary when it stays, and refuses only NEW unknown organisations', async () => {
@@ -370,9 +370,9 @@ describe('moving from postgres', () => {
 
     expect(await store.allOrganisations()).toEqual([{ id: ACME, name: 'Acme', tenant: 'acme', attributes: {} }])
     expect(await store.allEntitlements()).toEqual(new Map([[ACME, ['fleet']]]))
+    // Memberships only: an exported role is not written on the identity (org roles are assignments).
     expect(await store.membersOf(ACME)).toEqual([
       { subjectId: ALICE, role: 'member' },
-      { subjectId: BOB, role: 'admin-contact' },
       { subjectId: BOB, role: 'member' },
     ])
     expect((await store.groupsForSubjects([BOB])).get(BOB)).toEqual(['devs'])

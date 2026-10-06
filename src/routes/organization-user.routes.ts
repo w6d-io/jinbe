@@ -1,11 +1,9 @@
 import { FastifyInstance } from 'fastify'
-import { orgRoleRefusedSchema } from './org-roles.routes.js'
 import { organizationUserController } from '../controllers/organization-user.controller.js'
 import { needs } from '../policy/route-access.js'
 import {
   organizationIdParamJsonSchema,
   organizationUserIdParamJsonSchema,
-  organizationUserCreateBodyJsonSchema,
   organizationUserUpdateBodyJsonSchema,
 } from '../schemas/organization-user.schema.js'
 import {
@@ -29,10 +27,12 @@ const ORG = { org: 'organizationId' }
  *
  * GET    /users     - List users in organization
  * GET    /users/:id - Get user by ID in organization
- * POST   /users     - Create user in organization
  * PUT    /users/:id - Update user in organization
  * DELETE /users/:id - Remove user from organization (membership only; identity kept)
- * PUT    /users/:id/membership - Add an existing user to organization
+ * PUT    /users/:id/membership - Add an existing user to organization (platform callers only)
+ *
+ * Nobody is created into an organization from inside it: people join by invitation, with consent
+ * (org-invitations.routes.ts). Creating accounts is the platform's (users:create, /api/admin/users).
  */
 export async function organizationUserRoutes(fastify: FastifyInstance) {
   // Each route's gate is the org clause for that request, attached by the route-access hook from
@@ -89,26 +89,6 @@ export async function organizationUserRoutes(fastify: FastifyInstance) {
       },
     },
     organizationUserController.getUser.bind(organizationUserController)
-  )
-
-  fastify.post(
-    '/users',
-    {
-      ...needs('org.members:write', ORG),
-      schema: {
-        description: 'Create a new user in this organization',
-        tags: ['organization-users'],
-        params: organizationIdParamJsonSchema,
-        body: organizationUserCreateBodyJsonSchema,
-        response: {
-          201: kratosIdentityJsonSchema,
-          401: unauthorizedResponseSchema,
-          403: orgRoleRefusedSchema,
-          503: serviceUnavailableResponseSchema,
-        },
-      },
-    },
-    organizationUserController.createUser.bind(organizationUserController)
   )
 
   fastify.put(

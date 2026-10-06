@@ -14,6 +14,7 @@ import { getSignInProtection } from '../../sign-in-protection/settings.js'
 import { registrationVerdict } from '../../sign-in-protection/guard.js'
 import { liveSite, liveSiteByHost } from '../login.js'
 import { signUpGroupName, type Site } from '../schemas.js'
+import { organizationsOn } from '../organizations.js'
 import { signUpStore } from './store.js'
 
 /**
@@ -27,6 +28,11 @@ import { signUpStore } from './store.js'
  *      `signUp.orgs`, an organisation.
  *   3. somebody who already has an account: `continueTo` (the "Continue to <site>" step).
  *
+ * On a site with organizations on, every account gets an organization it owns the first time it
+ * enters the site (`continueTo`, or a sign-up) when it belongs to none the site serves — whether or
+ * not the site's sign-up is open — per `signUp.orgs` (personal by default, domain by a verified
+ * claim; `invite` and `none` make none). Never on a site with organizations off.
+ *
  * Joining never asks the holding rule or a step-up: nobody hands anything out, the site's own intent
  * (published by somebody who holds sites:apply, and sites.signup:write to open it) decides what a
  * sign-up gets, and the group can only carry that site's roles (render.ts).
@@ -36,9 +42,12 @@ export const SIGN_UP_ACTOR = { id: null, email: 'jinbe (site sign-up)', type: 's
 
 export type JoinVia = 'sign-up' | 'continue' | 'invite'
 
+export type JoinedOrganization = { id: string; name: string; created: boolean }
+
 export type JoinResult =
-  | { joined: true; site: string; group: string; organization: { id: string; name: string; created: boolean } | null }
-  | { joined: false; site: string; reason: JoinRefusal }
+  | { joined: true; site: string; group: string; organization: JoinedOrganization | null }
+  /** `organization`: not joined to the sign-up, but given (or found) the default organization of a site with organizations on. */
+  | { joined: false; site: string; reason: JoinRefusal; organization?: JoinedOrganization }
 
 export type JoinRefusal = 'site_not_found' | 'sign_up_closed' | 'domain_not_allowed' | 'email_not_verified' | 'no_roles'
 
@@ -130,7 +139,7 @@ async function entitle(org: string, site: string): Promise<void> {
   })
 }
 
-async function personalOrganisation(identity: KratosIdentity, site: string): Promise<{ id: string; name: string; created: boolean }> {
+async function personalOrganisation(identity: KratosIdentity, site: string): Promise<JoinedOrganization> {
   const name = organisationNameFor(identity)
   const created = await createOrganisation({ name, tenant: tenantFor(name), attributes: { createdBy: 'sign-up', site } })
   await entitle(created.id, site)
@@ -140,8 +149,10 @@ async function personalOrganisation(identity: KratosIdentity, site: string): Pro
   return { id: created.id, name, created: true }
 }
 
-async function organisationFor(identity: KratosIdentity, site: Site & { signUp: NonNullable<Site['signUp']> }) {
-  const mode = site.signUp.orgs
+/** The organization a person entering `site` belongs to (found or made), per the site's sign-up org mode; null for none. */
+async function organisationFor(identity: KratosIdentity, site: Site): Promise<JoinedOrganization | null> {
+  if (!organizationsOn(site)) return null
+  const mode = site.signUp?.orgs ?? 'personal'
   if (mode === 'none' || mode === 'invite') return null
   // Already in an org this site serves (an earlier sign-up, an invite, an administrator): nothing to make.
   const orgSites = await redisRbacRepository.getOrgSites()
@@ -181,7 +192,7 @@ export async function joinSite(identityId: string, siteName: string, via: JoinVi
     const groups = (await groupsForSubjects([identity.id])).get(identity.id) ?? []
     const newcomer = !groups.includes(group)
     if (newcomer) await addToGroup(identity.id, group, `sign-up:${site.name}`)
-    const organization = via === 'invite' ? null : await organisationFor(identity, site as Site & { signUp: NonNullable<Site['signUp']> })
+    const organization = via === 'invite' ? null : await organisationFor(identity, site)
     await signUpStore.clearPending(email, site.name)
     await rbacService.notifyBindingsChanged('signup_joined')
     if (newcomer) audit('site.signup.joined', 'create', identity, { site: site.name, group, via, organizationId: organization?.id ?? null }, site.name)
@@ -209,11 +220,28 @@ export async function onIdentityEvent(identityId: string | null, log?: { warn: (
   }
 }
 
-/** The "Continue to <site>" step: a signed-in person joins a site whose sign-up is open. */
+/**
+ * The "Continue to <site>" step: a signed-in person joins a site whose sign-up is open; and on a site
+ * with organizations on, gets their default organization there even when they do not join its sign-up.
+ */
 export async function continueTo(identityId: string, host: string): Promise<JoinResult> {
   const site = await liveSiteByHost(host.toLowerCase())
   if (!site) return { joined: false, site: host, reason: 'site_not_found' }
-  return joinSite(identityId, site.name, 'continue')
+  const result = await joinSite(identityId, site.name, 'continue')
+  if (result.joined || !organizationsOn(site) || site.state === 'paused') return result
+  const organization = await defaultOrganisation(identityId, site)
+  return organization ? { ...result, organization } : result
+}
+
+/** The default organization of somebody entering a site with organizations on (verified address only). */
+async function defaultOrganisation(identityId: string, site: Site): Promise<JoinedOrganization | null> {
+  return withRedisLock(`signup-join:${identityId}`, async () => {
+    const identity = await kratosService.getIdentity(identityId)
+    if (!isVerified(identity)) return null
+    const organization = await organisationFor(identity, site)
+    if (organization?.created) await rbacService.notifyBindingsChanged('default_organization')
+    return organization
+  })
 }
 
 /** Take one person out of a site's sign-up group (their org and account stay). */

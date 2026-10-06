@@ -5,19 +5,14 @@ import { apiKeyScopesController } from '../controllers/api-key-scopes.controller
 import {
   organizationIdParamJsonSchema,
   apiKeyClientIdParamJsonSchema,
-  apiKeyCreateBodyJsonSchema,
-  apiKeySecretViewJsonSchema,
   apiKeyViewJsonSchema,
   apiKeyListResponseJsonSchema,
   apiKeyPolicyJsonSchema,
-  scopeCatalogResponseJsonSchema,
 } from '../schemas/api-key.schema.js'
 import {
-  badRequestResponseSchema,
   forbiddenResponseSchema,
   notFoundResponseSchema,
   unauthorizedResponseSchema,
-  serviceUnavailableResponseSchema,
 } from '../schemas/response-schemas.js'
 
 /** Decided per organisation by this plugin's gate, never by a platform guard (route-access.ts). */
@@ -31,46 +26,18 @@ const ORG = { org: 'organizationId' }
  * every-org map of a platform role. Holding it in another organization counts for nothing.
  * Declared in jinbe's route_map with `org_param` so the gateway draws the same org boundary.
  *
- * POST   /api-keys            - create a key (returns client_secret ONCE)
+ * Keys are created by staff (POST /api/admin/organizations/:id/api-keys, orgs.keys:write,
+ * org-keys-admin.routes.ts); the organization lists and revokes them here.
+ *
  * GET    /api-keys            - list keys (no secrets)
- * GET    /api-keys/scopes     - the scopes a key may be given: permissions of this org's sites the caller holds
  * GET    /api-key-policy      - DEPRECATED: personal keys are no longer org-bound, the value is ignored
  * PUT    /api-key-policy      - allow or forbid them
  * GET    /api-keys/:clientId  - get one key (no secret)
  * DELETE /api-keys/:clientId  - revoke a key
  */
-// The 400 carries WHY (e.g. details.invalid_scopes / details.allowed_scopes): the shared
-// badRequestResponseSchema would strip it on serialization.
-const apiKeyBadRequestResponseSchema = {
-  ...badRequestResponseSchema,
-  properties: { ...badRequestResponseSchema.properties, details: { type: 'object', additionalProperties: true } },
-}
-
 export async function apiKeyRoutes(fastify: FastifyInstance) {
   // Each route's gate is the org clause for its declared permission (org.keys:*), attached by the
   // route-access hook from its `org` declaration.
-
-  fastify.post(
-    '/api-keys',
-    {
-      ...needs('org.keys:write', ORG),
-      schema: {
-        description:
-          'Create an API key (Hydra client_credentials client) for this organization. ' +
-          'Returns client_id + client_secret ONCE. organization_id is enforced server-side.',
-        tags: ['api-keys'],
-        params: organizationIdParamJsonSchema,
-        body: apiKeyCreateBodyJsonSchema,
-        response: {
-          201: apiKeySecretViewJsonSchema,
-          400: apiKeyBadRequestResponseSchema,
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-        },
-      },
-    },
-    apiKeyController.create.bind(apiKeyController)
-  )
 
   fastify.get(
     '/api-keys',
@@ -88,31 +55,6 @@ export async function apiKeyRoutes(fastify: FastifyInstance) {
       },
     },
     apiKeyController.list.bind(apiKeyController)
-  )
-
-  // The console offers these as choices instead of a free-text field it could only correct from a
-  // refused create's details.allowed_scopes. Same guard as every key route: the catalogue is shown to
-  // whoever may create a key in this organization, and is what THEY hold here.
-  fastify.get(
-    '/api-keys/scopes',
-    {
-      ...needs('org.keys:read', ORG),
-      schema: {
-        description:
-          'The scopes an API key of this organization may be given: the permissions required by routes of the sites ' +
-          'this organization runs that the caller holds here (site grants and org grants), under API_KEY_ALLOWED_SCOPES ' +
-          'when set. Never a wildcard. Sorted by scope, each with the sites that ask for it.',
-        tags: ['api-keys'],
-        params: organizationIdParamJsonSchema,
-        response: {
-          200: scopeCatalogResponseJsonSchema,
-          401: unauthorizedResponseSchema,
-          403: forbiddenResponseSchema,
-          503: serviceUnavailableResponseSchema,
-        },
-      },
-    },
-    apiKeyScopesController.catalog.bind(apiKeyScopesController)
   )
 
   fastify.get(

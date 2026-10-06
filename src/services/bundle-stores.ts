@@ -11,6 +11,7 @@ import { JINBE, isStaffGroup } from '../policy/roles.js'
  *   sites          rbac:sites + rbac:sites:versions:<name>    site intents and their history
  *   settings       rbac:config                                 platform settings (sign-in, 2FA, MCP…)
  *   organizations  rbac:organisations                          the organization records
+ *                  jinbe:org_invitations                       pending invitations into them
  *   signup         rbac:signup:org_sites, rbac:org_domains     orgs made by a sign-up, domain claims
  *   metadata       rbac:services:meta, rbac:groups:meta        descriptions, who created what
  *
@@ -30,7 +31,7 @@ export interface StoreSections {
   sites?: SitesSection
   settings?: Record<string, string>
   /** A file from before this rule may carry `deployments` too: ignored (they grant nothing). */
-  organizations?: { registry: Record<string, string> }
+  organizations?: { registry: Record<string, string>; invitations?: Record<string, string> }
   signup?: { orgSites: Record<string, string>; domains: Record<string, string> }
   metadata?: { services: Record<string, string>; groups: Record<string, string> }
 }
@@ -48,6 +49,7 @@ export interface StoresResult {
 
 const CONFIG = 'rbac:config'
 const REGISTRY = 'rbac:organisations'
+const INVITATIONS = 'jinbe:org_invitations'
 const SIGNUP_ORG_SITES = 'rbac:signup:org_sites'
 const ORG_DOMAINS = 'rbac:org_domains'
 const SERVICES_META = 'rbac:services:meta'
@@ -62,13 +64,13 @@ export async function exportStores(): Promise<Required<StoreSections>> {
   const r = redis()
   const records = await sitesRepository.list()
   const versions = Object.fromEntries(await Promise.all(records.map(async (rec) => [rec.site.name, await sitesRepository.versions(rec.site.name)] as const)))
-  const [settings, registry, orgSites, domains, services, groups] = await Promise.all(
-    [CONFIG, REGISTRY, SIGNUP_ORG_SITES, ORG_DOMAINS, SERVICES_META, GROUPS_META].map(async (k) => (await r.hgetall(k)) ?? {}),
+  const [settings, registry, invitations, orgSites, domains, services, groups] = await Promise.all(
+    [CONFIG, REGISTRY, INVITATIONS, SIGNUP_ORG_SITES, ORG_DOMAINS, SERVICES_META, GROUPS_META].map(async (k) => (await r.hgetall(k)) ?? {}),
   )
   return {
     sites: { records, versions },
     settings,
-    organizations: { registry },
+    organizations: { registry, invitations },
     signup: { orgSites, domains },
     metadata: { services: without(services, ownedServiceMeta), groups: without(groups, ownedGroupMeta) },
   }
@@ -83,6 +85,7 @@ export function storeProblems(s: StoreSections): string[] {
   const maps: Array<[string, unknown]> = []
   if (s.settings !== undefined) maps.push(['settings', s.settings])
   if (s.organizations !== undefined) maps.push(['organizations.registry', s.organizations?.registry])
+  if (s.organizations?.invitations !== undefined) maps.push(['organizations.invitations', s.organizations.invitations])
   if (s.signup !== undefined) maps.push(['signup.orgSites', s.signup?.orgSites], ['signup.domains', s.signup?.domains])
   if (s.metadata !== undefined) maps.push(['metadata.services', s.metadata?.services], ['metadata.groups', s.metadata?.groups])
   for (const [where, m] of maps) if (!isStringMap(m)) problems.push(`${where}: must map each name to a string`)
@@ -111,7 +114,7 @@ export function orgsInSnapshot(r: StoreSections & { orgSites?: Record<string, un
   return new Set([...Object.keys(r.orgSites ?? {}), ...Object.keys(r.orgAssignments ?? {}), ...grantOrgs])
 }
 
-/** The org a domain claim belongs to (rbac:org_domains value), or null for an unreadable one. */
+/** The org a domain claim (rbac:org_domains) or an invitation (jinbe:org_invitations) names, or null for an unreadable one. */
 function claimOrg(raw: string): string | null {
   try {
     const org = (JSON.parse(raw) as { org?: unknown }).org
@@ -169,6 +172,10 @@ export async function applyStores(
     progress.addedOrgs.push(...Object.keys(s.organizations.registry).filter((id) => !(id in existing)))
     out.organizations = await writeHash(REGISTRY, s.organizations.registry, false)
     await dropOrganisationCaches()
+    // Invitations are org-scoped: exactly the file's for the snapshot's orgs, every other org's untouched.
+    // A file from before them carries none: nothing is touched.
+    const invitations = s.organizations.invitations
+    if (invitations) await writeHash(INVITATIONS, invitations, replace, (_id, inv) => orgs.has(claimOrg(inv) ?? ''))
   }
   if (want('signup') && s.signup) {
     out.signup = await writeHash(SIGNUP_ORG_SITES, s.signup.orgSites, replace, (org) => orgs.has(org))

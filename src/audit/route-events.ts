@@ -62,7 +62,6 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'DELETE /scim/v2/Users/:id': by('user.deleted'),
 
   // Organisations
-  'POST /api/organizations/:organizationId/users': by('org.member.added'),
   'PUT /api/organizations/:organizationId/users/:id': by('org.member.updated'),
   'DELETE /api/organizations/:organizationId/users/:id': by('org.member.removed'),
   'PUT /api/organizations/:organizationId/users/:id/membership': by(['org.member.added', 'org.member.removed']),
@@ -73,7 +72,7 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'DELETE /api/admin/users/:id/grants/:grantId': by(['user.grant.revoked', 'user.grant.refused']),
   'PUT /api/organizations/:organizationId/users/:id/grants': by(['user.grant.granted', 'user.grant.revoked', 'user.grant.refused']),
   'DELETE /api/organizations/:organizationId/users/:id/grants/:grantId': by(['user.grant.revoked', 'user.grant.refused']),
-  'POST /api/organizations/:organizationId/api-keys': by('apikey.created'),
+  'POST /api/admin/organizations/:id/api-keys': by('apikey.created'),
   'DELETE /api/organizations/:organizationId/api-keys/:clientId': by('apikey.revoked'),
   'PUT /api/organizations/:organizationId/api-key-policy': by('apikey.policy_changed'),
   'POST /api/me/api-keys': by('apikey.created'),
@@ -154,6 +153,10 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/organizations/:organizationId/domains': by('org.domain.claimed'),
   'POST /api/organizations/:organizationId/domains/:domain/verify': by('org.domain.verified'),
   'DELETE /api/organizations/:organizationId/domains/:domain': by('org.domain.removed'),
+  'POST /api/organizations/:organizationId/invitations': by('org.invitation.created'),
+  'DELETE /api/organizations/:organizationId/invitations/:invitationId': by('org.invitation.revoked'),
+  'POST /api/me/invitations/accept': by('org.invitation.accepted'),
+  'POST /api/me/invitations/:invitationId/decline': by('org.invitation.declined'),
   'POST /api/admin/sites/:name/requests': route('site.apply_requested', 'site'),
   'POST /api/admin/sites/requests/:id/approve': route('site.request_approved', 'site'),
   'POST /api/admin/sites/requests/:id/reject': route('site.request_rejected', 'site'),

@@ -27,7 +27,12 @@ vi.mock('../../../services/hydra.service.js', () => {
 })
 vi.mock('../../../authz/opa.js', () => ({ rights: vi.fn(async () => ({ groups: s.groups, roles: [], permissions: [] })) }))
 vi.mock('../../../services/opal-publisher.js', () => ({ opalPublisher: { schedule: s.schedule } }))
-vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: vi.fn(async () => []) }))
+vi.mock('../../../services/api-key-scopes.js', () => ({
+  scopeCatalog: vi.fn(async () => []),
+  // The expansion itself is api-key-scopes.test.ts's: here, a key's scopes as they stand.
+  loadKeyModel: vi.fn(async () => ({})),
+  expandScopes: vi.fn((_m: unknown, _org: string, scopes: string[]) => [...scopes].sort()),
+}))
 // What the holder holds (services/platform-scopes.ts, tested on its own).
 vi.mock('../../../services/platform-scopes.js', () => ({ personalScopeCatalog: s.catalog, platformScopes: s.held }))
 vi.mock('../../../services/kratos.service.js', () => ({ kratosService: { getIdentity: s.identity } }))
@@ -205,7 +210,7 @@ describe('PersonalKeyService.exchange', () => {
 })
 
 describe('data.api_clients', () => {
-  it('lists org keys by client_id with org, sorted scopes and expiry — never personal or org-less clients', async () => {
+  it('lists org keys by client_id with org, expanded scopes and expiry — never personal or org-less clients', async () => {
     s.hydra.listAllClients.mockResolvedValue([
       { client_id: 'ci', scope: 'payroll:write payroll:read', metadata: { organization_id: 'acme', expires_at: '2027-01-01T00:00:00Z' } },
       { client_id: 'pk', scope: 'payroll:read', metadata: { organization_id: 'acme', kind: 'personal', subject: 'u' } },

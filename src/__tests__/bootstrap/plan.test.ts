@@ -224,7 +224,7 @@ describe('the v2 plan over a v1 inventory', () => {
     const del = plan.rules.find((r) => r.method === 'DELETE' && r.path === '/api/admin/users/:id')!
     expect(del).toMatchObject({ class: 'platform', permission: 'users:delete', roles: ['jinbe:super_admin'], groups: ['super_admins'], stepUp: true, delegable: 'never' })
     expect(del.holders).toEqual({ count: 1, emails: ['root@x.io'] })
-    const orgKeys = plan.rules.find((r) => r.method === 'POST' && r.path === '/api/organizations/:organizationId/api-keys')!
+    const orgKeys = plan.rules.find((r) => r.method === 'DELETE' && r.path === '/api/organizations/:organizationId/api-keys/:clientId')!
     expect(orgKeys.class).toBe('org')
     expect(orgKeys.roles).toEqual(['jinbe:key_manager', 'jinbe:owner', 'jinbe:super_admin (every org)'])
   })

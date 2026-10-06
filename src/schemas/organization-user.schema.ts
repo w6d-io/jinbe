@@ -1,4 +1,3 @@
-import { grantRequestJsonSchema, grantRequestSchema } from '../services/direct-grants.service.js'
 import { z } from 'zod'
 
 // Organization ID param
@@ -10,17 +9,6 @@ export const organizationIdParamSchema = z.object({
 export const organizationUserIdParamSchema = z.object({
   organizationId: z.string().uuid('organization_id must be a valid UUID'),
   id: z.string().uuid('Invalid user ID format'),
-})
-
-// Create user in organization
-export const organizationUserCreateBodySchema = z.object({
-  email: z.string().email(),
-  name: z.string().optional(),
-  sendInvite: z.boolean().optional().default(false),
-  // Optional initial org roles (`svc:role`), each under the holding rule (services/org-role-grants.ts).
-  roles: z.array(z.string().regex(/^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$/)).max(32).optional(),
-  // Optional direct grants in this organisation (scope = its id), each under the policy's verdict.
-  grants: z.array(grantRequestSchema).max(32).optional(),
 })
 
 // Update user in organization
@@ -48,7 +36,6 @@ export const organizationUsersQuerySchema = z.object({
 // Type exports
 export type OrganizationIdParam = z.infer<typeof organizationIdParamSchema>
 export type OrganizationUserIdParam = z.infer<typeof organizationUserIdParamSchema>
-export type OrganizationUserCreateBody = z.infer<typeof organizationUserCreateBodySchema>
 export type OrganizationUserUpdateBody = z.infer<typeof organizationUserUpdateBodySchema>
 export type OrganizationUsersQuery = z.infer<typeof organizationUsersQuerySchema>
 
@@ -68,19 +55,6 @@ export const organizationUserIdParamJsonSchema = {
     organizationId: { type: 'string', format: 'uuid', description: 'Organization identifier' },
     id: { type: 'string', format: 'uuid', description: 'User ID' },
   },
-}
-
-export const organizationUserCreateBodyJsonSchema = {
-  type: 'object',
-  required: ['email'],
-  properties: {
-    email: { type: 'string', format: 'email' },
-    name: { type: 'string' },
-    sendInvite: { type: 'boolean', default: false },
-    roles: { type: 'array', maxItems: 32, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*:[a-z0-9][a-z0-9_-]*$' } },
-    grants: { type: 'array', maxItems: 32, items: grantRequestJsonSchema },
-  },
-  additionalProperties: false,
 }
 
 export const organizationUserUpdateBodyJsonSchema = {

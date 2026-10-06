@@ -52,6 +52,11 @@ export const AUDIT_EVENTS = {
   'org.domain.claimed': ['directory', 'create'],
   'org.domain.verified': ['directory', 'update', 'warn'],
   'org.domain.removed': ['directory', 'delete'],
+  // Invitations into an organization (services/org-invitations.ts): the person joins only by accepting.
+  'org.invitation.created': ['directory', 'create'],
+  'org.invitation.revoked': ['directory', 'delete'],
+  'org.invitation.accepted': ['directory', 'create'],
+  'org.invitation.declined': ['directory', 'delete'],
   'org.grants.refused': ['authz', 'update', 'warn'],
   'org.admins.changed': ['authz', 'update'],
   // authz v2: org roles on the identity, and an org's owners named from the platform.

@@ -20,8 +20,9 @@ import {
   serviceUnavailableResponseSchema,
   unauthorizedResponseSchema,
 } from '../schemas/response-schemas.js'
-import { allEntitlements, allOrganisations, deploymentsOf, organisationsById, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
+import { allOrganisations, organisationsById, organisationStoreConfigured, organisationStoreNotConfigured } from '../services/organisation-store.js'
 import { organisationAdminRoutes } from './organisation-admin.routes.js'
+import { orgKeysAdminRoutes } from './org-keys-admin.routes.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { JINBE, qualified } from '../policy/roles.js'
@@ -137,9 +138,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       ...needs('orgs:read'),
       schema: {
         description:
-          'Every organisation the directory holds, with its owners (identity ids holding jinbe:owner there), the sites it is ' +
-          'entitled to (org_sites: jinbe and the sites whose intent lists it) and `applications`, what the directory records as ' +
-          'deployed for it (organisation_deployments — not an access entitlement). Needs orgs:read.',
+          'Every organisation the directory holds, with its owners (identity ids holding jinbe:owner there) and the sites it is ' +
+          'entitled to (org_sites: jinbe and the sites serving it). Needs orgs:read.',
         tags: ['admin'],
         response: {
           200: {
@@ -153,7 +153,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     id: { type: 'string' },
                     name: { type: 'string' },
                     tenant: { type: 'string' },
-                    applications: { type: 'array', items: { type: 'string' } },
                     owners: { type: 'array', items: { type: 'string' } },
                     sites: { type: 'array', items: { type: 'string' } },
                   },
@@ -172,11 +171,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return reply.status(503).send(organisationStoreNotConfigured())
       }
       try {
-        // Which applications each one has, alongside who it is. The screen showing this read a map
-        // from Redis that nothing populates any more and reported "no services bundled" for every
-        // organisation — while the directory held the answer in `organisation_deployments` all along.
-        const [organizations, entitlements, assignments, orgSites] = await Promise.all([
-          allOrganisations(), allEntitlements(), orgRolesRepository.getAll(), redisRbacRepository.getOrgSites(),
+        const [organizations, assignments, orgSites] = await Promise.all([
+          allOrganisations(), orgRolesRepository.getAll(), redisRbacRepository.getOrgSites(),
         ])
         const owner = qualified(JINBE, 'owner')
         return reply.send({
@@ -184,7 +180,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
             id,
             name,
             tenant,
-            applications: entitlements.get(id) ?? [],
             owners: Object.entries(assignments[id] ?? {}).filter(([, roles]) => roles.includes(owner)).map(([subject]) => subject).sort(),
             sites: [...new Set([JINBE, ...(orgSites[id] ?? [])])],
           })),
@@ -208,9 +203,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       ...needs('orgs:read'),
       schema: {
         description:
-          'One organisation: its owners (identity ids holding jinbe:owner there), the sites it is entitled to (org_sites: jinbe ' +
-          'and the sites whose intent lists it) and `applications`, what the organisation directory records as deployed for it ' +
-          '(organisation_deployments — not an access entitlement). Needs orgs:read.',
+          'One organisation: its owners (identity ids holding jinbe:owner there) and the sites it is entitled to (org_sites: jinbe ' +
+          'and the sites serving it). Needs orgs:read.',
         tags: ['admin'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
         response: {
@@ -218,7 +212,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
             type: 'object',
             properties: {
               id: { type: 'string' }, name: { type: 'string' }, tenant: { type: 'string' },
-              applications: { type: 'array', items: { type: 'string' } },
               owners: { type: 'array', items: { type: 'string' } },
               sites: { type: 'array', items: { type: 'string' } },
             },
@@ -235,20 +228,20 @@ export async function adminRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string }
       const [org] = await organisationsById([id])
       if (!org) return reply.status(404).send({ error: 'organisation_not_found', message: `No organisation ${id} is held.` })
-      const [deployments, owners, orgSites] = await Promise.all([
-        deploymentsOf(id), orgRolesRepository.holdersOf(id, qualified(JINBE, 'owner')), redisRbacRepository.getOrgSites(),
+      const [owners, orgSites] = await Promise.all([
+        orgRolesRepository.holdersOf(id, qualified(JINBE, 'owner')), redisRbacRepository.getOrgSites(),
       ])
       return reply.send({
         id, name: org.name, tenant: org.tenant,
-        applications: deployments.filter((d) => d.enabled).map((d) => d.application),
         owners,
         sites: [...new Set([JINBE, ...(orgSites[id] ?? [])])],
       })
     },
   )
 
-  // Creating an organisation: its own file.
+  // Creating an organisation: its own file. Its API keys, made by staff: another.
   await organisationAdminRoutes(fastify)
+  await orgKeysAdminRoutes(fastify)
   // One user's site + org access.
   await userAccessRoutes(fastify)
   // Plug a site: intent, drafts, preview, apply (its own plugin, so its zod-only validation stays local).
@@ -312,7 +305,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Organisation membership (to be merged into PUT /organizations/:o/users/:id/membership).
       ...needs('orgs.members:write'),
       schema: {
-        description: 'Set or remove the organization_id on a user (Kratos JSON Patch)',
+        description: "Set or remove a user's primary organization (organization_id). A new one keeps the old primary as one of their organizations; null removes the primary one.",
         tags: ['admin'],
         params: zodToJsonSchema(userIdParamSchema),
         body: {

@@ -1,7 +1,7 @@
 import { DERIVED_MAX_AGE_MS, type ReadOptions } from '../../cache/swr.js'
 import { KratosApiError, kratosService, type IdentityBinding } from '../kratos.service.js'
 import * as registry from './registry.js'
-import { join, leave, MEMBER, organisationsOn, setAll, setRoles } from './membership.js'
+import { join, leave, MEMBER, organisationsOn, setAll } from './membership.js'
 import {
   OrganisationInUseError,
   OrganisationNotFoundError,
@@ -230,8 +230,9 @@ export async function applyOrganisations(records: readonly OrganisationRecord[])
       for (const current of new Set((await membersOf(record.id, DECIDES)).map((m) => m.subjectId))) {
         if (!wanted.has(current)) await removeMember(record.id, current)
       }
+      // Membership only: an org role is an assignment (rbac:org_assignments), never written on the identity.
       for (const [subjectId, roles] of wanted) {
-        await kratosService.updateAdminState(subjectId, (state) => setRoles(join(state, record.id), record.id, roles))
+        await kratosService.updateAdminState(subjectId, (state) => join(state, record.id))
         members += roles.length
       }
     }

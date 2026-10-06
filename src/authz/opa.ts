@@ -191,6 +191,25 @@ export function orgPermissionsByOrg(email: string, app: string = JINBE_APP): Pro
 }
 
 /**
+ * The caller's own organisations served by `app` (`rbac.orgs_in_app`), each with their org roles of
+ * the app there and what they may do in it: org roles assigned (an owner's derived site role
+ * included) and direct, plus the every-org reach of their platform roles. GET /api/me/orgs reads it.
+ */
+export function orgsInApp(email: string, app: string): Promise<Record<string, { roles: string[]; permissions: string[] }>> {
+  return ask('rbac/orgs_in_app', { email, app }, (r) => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined
+    const out: Record<string, { roles: string[]; permissions: string[] }> = {}
+    for (const [org, v] of Object.entries(r as Record<string, { roles?: unknown; permissions?: unknown }>)) {
+      const roles = strings(v?.roles)
+      const permissions = strings(v?.permissions)
+      if (!roles || !permissions) return undefined
+      out[org] = { roles, permissions }
+    }
+    return out
+  })
+}
+
+/**
  * THE HOLDING RULE's verdict on one grant (`rbac.delegation.*_verdict`): nobody grants what they do
  * not hold. ONE copy of the rule, in the policy, over the data the gateway decides on — jinbe keeps
  * none of its own, so the two cannot drift. Never cached: a grant is asked once and must see the

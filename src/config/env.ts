@@ -449,6 +449,9 @@ export const envSchema = z.object({
 
   // Internal service URLs for bootstrap (Oathkeeper upstream rules)
   LOGIN_UI_URL: z.string().url().optional(),
+  // The page an organization invitation link opens (login-ui), given `?token=<token>`: shown once to the
+  // inviter, who sends it (jinbe has no mailer). Unset: the invitation answers its token alone.
+  INVITATION_URL: z.string().url().optional(),
   ADMIN_UI_URL: z.string().url().optional(),
 
   // Domain configuration (for Oathkeeper rule generation)

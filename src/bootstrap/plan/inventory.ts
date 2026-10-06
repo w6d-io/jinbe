@@ -40,6 +40,8 @@ export interface SiteModel {
   everyOrg: Record<string, string[]>
   /** The orgs the intent entitles. */
   orgs: string[]
+  /** The org role an organisation's owners hold here (organizations on), or null. */
+  ownerRole?: string | null
 }
 
 export interface Inventory {

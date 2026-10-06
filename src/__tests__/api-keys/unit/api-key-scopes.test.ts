@@ -1,37 +1,36 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// The per-org scope catalog: permissions of routes on the sites the org is entitled to, that the
-// caller holds there (platform roles in that site ∪ org roles in that org for that site), under the
-// env ceiling, matched exactly.
+// The per-org catalog of an org API key and its expansion: permissions asked by routes of the sites
+// serving the org (never jinbe, kuma or global), their site roles, and groups binding only those
+// sites' roles — under the env ceiling, matched exactly.
 
 const s = vi.hoisted(() => ({
   env: { API_KEY_ALLOWED_SCOPES: [] as string[] },
   orgSites: {} as Record<string, string[]>,
   routeMaps: {} as Record<string, { rules: { method: string; path: string; permission?: string }[] }>,
-  rights: {} as Record<string, string[]>, // `${email}|${site}` → platform permissions
-  inOrg: {} as Record<string, Record<string, string[]>>, // `${email}|${site}` → org → org permissions
+  roles: {} as Record<string, Record<string, string[]>>,
+  groups: {} as Record<string, Record<string, string[]>>,
 }))
 
 vi.mock('../../../config/index.js', () => ({ env: s.env }))
-vi.mock('../../../authz/opa.js', () => ({
-  rights: vi.fn(async (email: string, app: string) => ({ groups: [], roles: [], permissions: s.rights[`${email}|${app}`] ?? [] })),
-  orgPermissionsByOrg: vi.fn(async (email: string, app: string) => s.inOrg[`${email}|${app}`] ?? {}),
-}))
 vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getOrgSites: vi.fn(async () => s.orgSites),
+    getGroups: vi.fn(async () => s.groups),
+    getRoles: vi.fn(async (svc: string) => s.roles[svc] ?? null),
     getRouteMap: vi.fn(async (svc: string) => s.routeMaps[svc] ?? null),
   },
 }))
 
-import { scopeCatalog } from '../../../services/api-key-scopes.js'
+import { expandScopes, loadKeyModel, scopeCatalog } from '../../../services/api-key-scopes.js'
 
 const ACME = 'acme'
 
 beforeEach(() => {
   s.env.API_KEY_ALLOWED_SCOPES = []
-  s.orgSites = { [ACME]: ['payroll', 'wiki'], globex: ['crm'] }
+  s.orgSites = { [ACME]: ['jinbe', 'payroll', 'wiki'], globex: ['jinbe', 'crm'] }
   s.routeMaps = {
+    jinbe: { rules: [{ method: 'GET', path: '/api/admin/users', permission: 'users:read' }] },
     payroll: { rules: [
       { method: 'GET', path: '/runs', permission: 'payroll.runs:read' },
       { method: 'POST', path: '/runs', permission: 'payroll.runs:write' },
@@ -41,39 +40,66 @@ beforeEach(() => {
     wiki: { rules: [{ method: 'GET', path: '/pages', permission: 'wiki:read' }, { method: 'GET', path: '/runs', permission: 'payroll.runs:read' }] },
     crm: { rules: [{ method: 'GET', path: '/deals', permission: 'crm:read' }] },
   }
-  s.rights = {}
-  s.inOrg = {}
+  s.roles = {
+    jinbe: { super_admin: ['users:read'] },
+    payroll: { admin: ['payroll.runs:read', 'payroll.runs:write'], viewer: ['payroll.runs:read'], wild: ['*'] },
+    wiki: { reader: ['wiki:read'] },
+    crm: { sales: ['crm:read'] },
+  }
+  s.groups = {
+    super_admins: { jinbe: ['super_admin'] },
+    'payroll-ops': { payroll: ['admin'] },
+    'acme-readers': { payroll: ['viewer'], wiki: ['reader'] },
+    mixed: { payroll: ['viewer'], crm: ['sales'] },
+  }
 })
 
 describe('scopeCatalog', () => {
-  it("offers only permissions the caller holds on this org's sites, grouped by site", async () => {
-    // Matched exactly, as the gateway matches a site route: an ancestor held is not the permission.
-    s.rights['ann@x.io|payroll'] = ['payroll:read', 'payroll.runs:read']
-    s.rights['ann@x.io|wiki'] = ['wiki:read', 'payroll.runs:read']
-    expect(await scopeCatalog(ACME, 'ann@x.io')).toEqual([
-      { scope: 'payroll.runs:read', sites: ['payroll', 'wiki'] },
-      { scope: 'wiki:read', sites: ['wiki'] },
+  it("offers the permissions, roles and groups of the org's sites, each with what it stands for", async () => {
+    expect(await scopeCatalog(ACME)).toEqual([
+      { scope: 'group:acme-readers', kind: 'group', sites: ['payroll', 'wiki'], permissions: ['payroll.runs:read', 'wiki:read'] },
+      { scope: 'group:payroll-ops', kind: 'group', sites: ['payroll'], permissions: ['payroll.runs:read', 'payroll.runs:write'] },
+      { scope: 'payroll.runs:read', kind: 'permission', sites: ['payroll', 'wiki'], permissions: ['payroll.runs:read'] },
+      { scope: 'payroll.runs:write', kind: 'permission', sites: ['payroll'], permissions: ['payroll.runs:write'] },
+      { scope: 'role:payroll:admin', kind: 'role', sites: ['payroll'], permissions: ['payroll.runs:read', 'payroll.runs:write'] },
+      { scope: 'role:payroll:viewer', kind: 'role', sites: ['payroll'], permissions: ['payroll.runs:read'] },
+      { scope: 'role:wiki:reader', kind: 'role', sites: ['wiki'], permissions: ['wiki:read'] },
+      { scope: 'wiki:read', kind: 'permission', sites: ['wiki'], permissions: ['wiki:read'] },
     ])
   })
 
-  it('counts org roles held in THIS org, for that site only', async () => {
-    s.inOrg['bob@x.io|payroll'] = { [ACME]: ['payroll.runs:write'] }
-    expect(await scopeCatalog(ACME, 'bob@x.io')).toEqual([{ scope: 'payroll.runs:write', sites: ['payroll'] }])
-    // The same org role counts for nothing in another org.
-    expect(await scopeCatalog('globex', 'bob@x.io')).toEqual([])
-  })
-
-  it('never offers a wildcard; a held `*` grants nothing; nothing for an org with no sites', async () => {
-    s.rights['sam@x.io|payroll'] = ['*', 'payroll.runs:read', 'payroll.runs:write', 'payroll:*']
-    const all = (await scopeCatalog(ACME, 'sam@x.io')).map((e) => e.scope)
-    expect(all).toEqual(['payroll.runs:read', 'payroll.runs:write'])
-    expect(await scopeCatalog('nobody-org', 'sam@x.io')).toEqual([])
+  it("never the platform's own apps, a staff group, a group reaching another site, or a wildcard", async () => {
+    const all = (await scopeCatalog(ACME)).map((e) => e.scope)
+    for (const no of ['users:read', 'role:jinbe:super_admin', 'group:super_admins', 'group:mixed', 'payroll:*', 'role:payroll:wild', 'crm:read']) expect(all).not.toContain(no)
+    expect(await scopeCatalog('nobody-org')).toEqual([])
   })
 
   it('API_KEY_ALLOWED_SCOPES is a ceiling of exact names, never a widening', async () => {
-    s.rights['root@x.io|payroll'] = ['payroll.runs:read', 'payroll.runs:write']
-    s.rights['root@x.io|wiki'] = ['payroll.runs:read', 'wiki:read']
     s.env.API_KEY_ALLOWED_SCOPES = ['payroll.runs:read', 'crm:read']
-    expect(await scopeCatalog(ACME, 'root@x.io')).toEqual([{ scope: 'payroll.runs:read', sites: ['payroll', 'wiki'] }])
+    expect((await scopeCatalog(ACME)).map((e) => [e.scope, e.permissions])).toEqual([
+      ['group:acme-readers', ['payroll.runs:read']],
+      ['group:payroll-ops', ['payroll.runs:read']],
+      ['payroll.runs:read', ['payroll.runs:read']],
+      ['role:payroll:admin', ['payroll.runs:read']],
+      ['role:payroll:viewer', ['payroll.runs:read']],
+    ])
+  })
+})
+
+describe('expandScopes: what the policy decides a key on (data.api_clients[…].scopes)', () => {
+  it('permissions, roles and groups, as the sites define them now', async () => {
+    const m = await loadKeyModel()
+    expect(expandScopes(m, ACME, ['wiki:read', 'role:payroll:viewer', 'group:payroll-ops'])).toEqual(['payroll.runs:read', 'payroll.runs:write', 'wiki:read'])
+    s.roles.payroll.viewer = ['payroll.runs:read', 'payroll.runs:write']
+    expect(expandScopes(await loadKeyModel(), ACME, ['role:payroll:viewer'])).toEqual(['payroll.runs:read', 'payroll.runs:write'])
+  })
+
+  it('a site that stops serving the org takes its part of the key with it; unknown scopes stand for nothing', async () => {
+    s.orgSites[ACME] = ['jinbe', 'wiki']
+    expect(expandScopes(await loadKeyModel(), ACME, ['role:payroll:admin', 'payroll.runs:write', 'wiki:read', 'group:nope', 'role:x', 'users:read'])).toEqual(['wiki:read'])
+  })
+
+  it("another org's key expands over its own sites only", async () => {
+    expect(expandScopes(await loadKeyModel(), 'globex', ['role:payroll:admin', 'crm:read', 'role:crm:sales'])).toEqual(['crm:read'])
   })
 })

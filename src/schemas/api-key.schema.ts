@@ -15,7 +15,7 @@ export const PERSONAL_KEY_MAX_DAYS = 30
 // ── Create body ───────────────────────────────────────────────────────────────
 export const apiKeyCreateBodySchema = z.object({
   label: z.string().min(1, 'label is required').max(200),
-  scopes: z.array(z.string().min(1)).min(1, 'at least one scope is required'),
+  scopes: z.array(z.string().min(1).max(200)).min(1, 'at least one scope is required').max(100),
   audience: z.array(z.string()).optional(),
   /** Optional for an org machine key; absent = no expiry. */
   expires_in_days: z.number().int().min(1).max(ORG_KEY_MAX_DAYS).optional(),
@@ -84,7 +84,8 @@ export const apiKeyCreateBodyJsonSchema = {
       type: 'array',
       items: { type: 'string' },
       minItems: 1,
-      description: 'Requested scopes (validated against the allowed catalog)',
+      maxItems: 100,
+      description: 'Permissions, site roles (role:<site>:<role>) or groups (group:<name>), from the organisation\'s catalog',
     },
     audience: { type: 'array', items: { type: 'string' }, description: 'Optional token audience' },
     expires_in_days: { type: 'integer', minimum: 1, maximum: ORG_KEY_MAX_DAYS, description: 'Optional expiry in days; absent = never expires' },
@@ -119,8 +120,10 @@ export const scopeCatalogResponseJsonSchema = {
       items: {
         type: 'object',
         properties: {
-          scope: { type: 'string', description: 'A permission (resource:verb)' },
-          sites: { type: 'array', items: { type: 'string' }, description: 'The sites whose routes require it' },
+          scope: { type: 'string', description: 'A permission (resource:verb), a site role (role:<site>:<role>) or a group (group:<name>)' },
+          kind: { type: 'string', enum: ['permission', 'role', 'group'] },
+          sites: { type: 'array', items: { type: 'string' }, description: 'The sites where it opens something' },
+          permissions: { type: 'array', items: { type: 'string' }, description: 'What it stands for today' },
         },
       },
     },

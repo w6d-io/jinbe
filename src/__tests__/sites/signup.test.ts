@@ -187,6 +187,41 @@ describe('joining', () => {
   })
 })
 
+describe('the default organization (organizations on)', () => {
+  const host = 'payroll.dev.example.com'
+
+  it('entering a site with organizations on gives an account an org it owns, sign-up open or not', async () => {
+    state.live = payrollSite()
+    const out = await svc.continueTo(ID, host)
+    expect(out).toMatchObject({ joined: false, reason: 'sign_up_closed', organization: { id: 'org-1', created: true } })
+    expect(state.owners).toEqual([['org-1', ID, ['jinbe:owner']]])
+    expect(state.orgSites['org-1']).toEqual(['jinbe', 'payroll'])
+    // Once: the org it owns is served by the site now.
+    state.orgsOf = ['org-1']
+    expect(await svc.continueTo(ID, host)).toMatchObject({ organization: { id: 'org-1', created: false } })
+    expect(state.created).toHaveLength(1)
+  })
+
+  it('through an open sign-up, the same org (no second one)', async () => {
+    expect(await svc.continueTo(ID, host)).toMatchObject({ joined: true, organization: { id: 'org-1', created: true } })
+    expect(state.created).toHaveLength(1)
+  })
+
+  it('never on a site with organizations off; never for an unverified address; not when sign-up says invite or none', async () => {
+    state.live = { ...payrollSite({ organizations: { enabled: false }, orgs: [] }) }
+    expect(await svc.continueTo(ID, host)).not.toHaveProperty('organization')
+    state.live = payrollSite()
+    state.identity = person('jane@client.com', false)
+    expect(await svc.continueTo(ID, host)).not.toHaveProperty('organization')
+    state.identity = person('jane@client.com', true)
+    for (const orgs of ['invite', 'none'] as const) {
+      state.live = payrollSite({ signUp: { mode: 'closed', domains: [], roles: ['viewer'], orgs } })
+      expect(await svc.continueTo(ID, host)).not.toHaveProperty('organization')
+    }
+    expect(state.created).toEqual([])
+  })
+})
+
 describe('the registration guard', () => {
   const reg = (returnTo?: string) => guardFlow({ flow: 'registration', method: 'password', email: 'jane@client.com', traits: { email: 'jane@client.com' }, returnTo })
 
@@ -199,6 +234,17 @@ describe('the registration guard', () => {
     expect(await reg()).toMatchObject({ allow: false, result: 'registration_closed' })
     state.live = open({ mode: 'closed' })
     expect(await reg('https://payroll.dev.example.com/')).toMatchObject({ allow: false, result: 'registration_closed' })
+  })
+
+  it('lets an invited address register whatever the sign-up policy says — only through its invitation link', async () => {
+    const { orgInvitations } = await import('../../services/org-invitations.js')
+    const { token } = await orgInvitations.create({ org: 'org-acme', email: 'jane@client.com', roles: [], invitedBy: { id: null, email: 'admin@acme.io' } })
+    expect(await reg(`https://auth.example.com/invitation?token=${token}`)).toMatchObject({ allow: true })
+    // Holding an invitation opens nothing else: no token, a wrong one, or another address's.
+    expect(await reg()).toMatchObject({ allow: false, result: 'registration_closed' })
+    expect(await reg('https://auth.example.com/invitation?token=nope')).toMatchObject({ allow: false })
+    const other = await orgInvitations.create({ org: 'org-acme', email: 'someone@else.com', roles: [], invitedBy: { id: null, email: 'admin@acme.io' } })
+    expect(await reg(`https://auth.example.com/invitation?token=${other.token}`)).toMatchObject({ allow: false })
   })
 
   it("applies the site's domains", async () => {

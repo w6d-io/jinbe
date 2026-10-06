@@ -1,8 +1,12 @@
 import type { OathkeeperRule, RouteMap } from '../../services/redis-rbac.repository.js'
 
+/** The fixture organization (fixtures.ts ACME), held in the organisation registry so a site may serve it. */
+const ACME_RECORD: [string, string] = ['11111111-1111-1111-1111-111111111111', JSON.stringify({ id: '11111111-1111-1111-1111-111111111111', name: 'Acme', tenant: 'acme', attributes: {} })]
+const registry = () => new Map([['rbac:organisations', new Map([ACME_RECORD])]])
+
 /** Just enough of ioredis for the Sites store. */
 export class InlineRedisMock {
-  hashes = new Map<string, Map<string, string>>()
+  hashes: Map<string, Map<string, string>> = registry()
   strings = new Map<string, string>()
   lists = new Map<string, string[]>()
   sets = new Map<string, Set<string>>()
@@ -34,7 +38,7 @@ export class InlineRedisMock {
     return l.slice(a, b === -1 ? undefined : b + 1)
   }
   clear() {
-    this.hashes.clear()
+    this.hashes = registry()
     this.strings.clear()
     this.lists.clear()
     this.sets.clear()
@@ -53,6 +57,7 @@ export function makeRbacStore() {
     orgMap: {} as Record<string, string[]>,
     orgRoles: {} as Record<string, Record<string, string[]>>,
     everyOrg: {} as Record<string, Record<string, string[]>>,
+    ownerRoles: {} as Record<string, string>,
     accessRules: [] as OathkeeperRule[],
     log: [] as string[],
   }
@@ -88,6 +93,8 @@ export function makeRbacStore() {
     getEveryOrg: async (n: string) => s.everyOrg[n] ?? null,
     setEveryOrg: async (n: string, r: Record<string, string[]>) => { s.log.push(`setEveryOrg:${n}`); s.everyOrg[n] = r },
     deleteEveryOrg: async (n: string) => { delete s.everyOrg[n] },
+    getOrgOwnerRoles: async () => ({ ...s.ownerRoles }),
+    setOrgOwnerRole: async (n: string, r: string | null) => { if (r) s.ownerRoles[n] = r; else delete s.ownerRoles[n] },
     getAccessRules: async () => s.accessRules,
     setAccessRules: async (rules: OathkeeperRule[]) => { s.log.push('setAccessRules'); s.accessRules = rules },
   }
@@ -101,6 +108,7 @@ export function makeRbacStore() {
     s.orgMap = {}
     s.orgRoles = {}
     s.everyOrg = {}
+    s.ownerRoles = {}
     s.accessRules = []
     s.log = []
   }

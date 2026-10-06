@@ -37,7 +37,19 @@ export const PLATFORM_IDENTITY_HEADERS = [
  * — the default — forwards none of them and blanks all three, header-mutator gates included.
  */
 export const ROLE_HEADERS = ['X-User-Groups', 'X-User-Roles', 'X-User-Permissions']
-const ROLE_NAMES = new Set(ROLE_HEADERS.map((h) => h.toLowerCase()))
+
+/**
+ * What a policy gate of a site with organizations on forwards from the decision: on an org row the
+ * route's organization and the caller's org roles of this site there; for an org API key its client
+ * id and its organization, on every row. Empty where the decision says nothing.
+ */
+export const ORG_HEADERS = ['X-Org-Id', 'X-Org-Roles', 'X-Client-Id']
+
+/**
+ * The headers only a decision (or a global header template) may fill: blanked on every gate that
+ * does not set them, header-mutator gates included — a client's copy would otherwise pass through.
+ */
+const DECIDED_NAMES = new Set([...ROLE_HEADERS, ...ORG_HEADERS, 'X-User-Organizations'].map((h) => h.toLowerCase()))
 
 /**
  * The sign-in strength, for apps that run their own step-up: X-User-AAL (aal1 | aal2) and
@@ -118,7 +130,7 @@ const headerMap = (h: Handler): Record<string, unknown> => (isObject(h.config?.h
  */
 export function identityHeaderNames(site: Pick<Site, 'gates'>, platformNames: readonly string[]): string[] {
   const own = site.gates.flatMap((g) => g.mutators.filter((m) => m.handler === 'header').flatMap((m) => Object.keys(headerMap(m))))
-  return [...new Set([...platformNames, ...ROLE_HEADERS.map((h) => h.toLowerCase()), ...Object.keys(SESSION_HEADERS), ...own])]
+  return [...new Set([...platformNames, ...[...ROLE_HEADERS, ...ORG_HEADERS].map((h) => h.toLowerCase()), ...Object.keys(SESSION_HEADERS), ...own])]
 }
 
 /** Headers the gate's authorizer sets from its decision: its own list, else the gateway's for that handler. */
@@ -128,8 +140,8 @@ function authorizerHeaders(authorizer: Handler, forwarded: Record<string, string
 }
 
 /**
- * A header mutator that also sets the SESSION_HEADERS it does not name itself, blanks the role
- * headers in `blankRoles` (neither the gate's authorizer nor a global header template sets them), and
+ * A header mutator that also sets the SESSION_HEADERS it does not name itself, blanks the role and
+ * organization headers in `blankRoles` (neither the gate's authorizer nor a global header template sets them), and
  * sets the stripped Cookie.
  */
 function withSessionHeaders(m: Handler, blankRoles: readonly string[]): Handler {
@@ -161,10 +173,10 @@ export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handle
   const fromDecision = new Set(authorizerHeaders(authorizer, forwarded).map((h) => h.toLowerCase()))
   const first = gate.mutators.findIndex((m) => m.handler === 'header')
   if (first >= 0) {
-    // A role header nothing sets here — no decision forwarding it, no global template — would carry
-    // the client's value: blank it. One a global template fills keeps the template's value.
+    // A role or organization header nothing sets here — no decision forwarding it, no global
+    // template — would carry the client's value: blank it. One a global template fills keeps the template's value.
     const fromTemplate = new Set(templated.map((h) => h.toLowerCase()))
-    const blankRoles = names.filter((n) => ROLE_NAMES.has(n.toLowerCase()) && !fromDecision.has(n.toLowerCase()) && !fromTemplate.has(n.toLowerCase()))
+    const blankRoles = names.filter((n) => DECIDED_NAMES.has(n.toLowerCase()) && !fromDecision.has(n.toLowerCase()) && !fromTemplate.has(n.toLowerCase()))
     return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m, blankRoles) : m.handler === 'header' ? withoutOwnCookie(m) : m))
   }
   const blank = names.filter((n) => !fromDecision.has(n.toLowerCase()) && n.toLowerCase() !== 'cookie')

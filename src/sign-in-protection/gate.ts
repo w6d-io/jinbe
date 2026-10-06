@@ -3,7 +3,7 @@ import { env } from '../config/index.js'
 import { getRedisClient } from '../services/redis-client.service.js'
 import { signInGateDecisions } from '../telemetry/metrics.js'
 import { verifyCaptcha } from './captcha.js'
-import { captchaVerdict, registrationVerdict } from './guard.js'
+import { captchaVerdict, invitedAddress, registrationVerdict } from './guard.js'
 import { getSignInProtection, type CaptchaFlow, type SignInProtection } from './settings.js'
 import { rememberVerified } from './verified-tokens.js'
 
@@ -275,7 +275,7 @@ async function decide(input: GateInput, fetchImpl?: typeof fetch): Promise<GateD
         // the sites store unreadable: the platform's own policy stands
       }
     }
-    if (verdict && !verdict.allow) return refusal(step, verdict.result as GateRefusal, 403, verdict.message.text)
+    if (verdict && !verdict.allow && !(await invitedAddress(address, await input.returnTo?.().catch(() => null)))) return refusal(step, verdict.result as GateRefusal, 403, verdict.message.text)
   }
 
   const limited = await rateLimited(address, input.ip)

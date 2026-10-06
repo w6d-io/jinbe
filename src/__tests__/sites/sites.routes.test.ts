@@ -118,7 +118,7 @@ describe('guards', () => {
   it('a write without sites:write is refused and writes nothing', async () => {
     const res = await save(payrollSite(), {})
     expect(res.statusCode).toBe(403)
-    expect(redis.hashes.size).toBe(0)
+    expect([...redis.hashes.keys()].filter((k) => k !== 'rbac:organisations')).toEqual([])
   })
 
   it('apply without a recent second factor is refused and writes nothing', async () => {
@@ -321,6 +321,13 @@ describe('drafts', () => {
 })
 
 describe('preview', () => {
+  it('refuses an organization the directory does not hold (deleted, or mistyped)', async () => {
+    const ghost = '99999999-9999-4999-8999-999999999999'
+    const body = (await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite({ orgs: [ACME, ghost] }) } })).json()
+    expect(body.checks).toContainEqual(expect.objectContaining({ level: 'error', code: 'unknown_org', path: 'orgs.1' }))
+    expect(body.checks.filter((c: { path?: string }) => c.path === 'orgs.0')).toEqual([])
+  })
+
   it('renders and runs gatekit compile + overlap against every live rule, system ones included', async () => {
     store.s.accessRules = [{ id: 'kuma-api', upstream: { url: 'http://j' }, match: { url: 'http<(s?)>://kuma.dev.example.com/api/<.*>', methods: ['GET'] }, authenticators: [], authorizer: { handler: 'allow' }, mutators: [] }]
     const res = await app.inject({ method: 'POST', url: '/sites/preview', headers: W, payload: { site: payrollSite() } })

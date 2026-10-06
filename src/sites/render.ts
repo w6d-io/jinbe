@@ -7,7 +7,8 @@ import { HTTP_METHODS, SYSTEM_SITES, signUpGroupName, type Access, type Gate, ty
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
 import { placeHost, type Zone } from './host.js'
 import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
-import { PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
+import { ORG_HEADERS, PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
+import { organizationChecks, organizationsOn, ownerRoleOf, tokenGateChecks } from './organizations.js'
 
 /**
  * render(site, platform): every artefact a Site stands for, from its intent alone.
@@ -41,6 +42,8 @@ export interface Platform {
   authorizerHeaders?: Record<string, string[]>
   /** Headers the gateway's global header mutator fills from a template (the session), as spelled there. */
   templatedHeaders?: string[]
+  /** The site operator renders `upstream.path` (SITES_UPSTREAM_PATH); without it such an intent is refused. */
+  upstreamPath?: boolean
 }
 
 export interface Check {
@@ -68,8 +71,8 @@ export interface SiteCr {
   metadata: { name: string; namespace: string; labels: Record<string, string>; annotations: Record<string, string> }
   spec: {
     hosts: string[]
-    /** The operator renders `<scheme>://<service>.<namespace>.svc.cluster.local:<port>`. */
-    upstream: { service: string; namespace: string; port: number; scheme: 'http' | 'https'; preserveHost: boolean; stripPath?: string }
+    /** The operator renders `<scheme>://<service>.<namespace>.svc.cluster.local:<port><path>`. */
+    upstream: { service: string; namespace: string; port: number; scheme: 'http' | 'https'; preserveHost: boolean; stripPath?: string; path?: string }
     gates: SiteCrGate[]
     /** zone: the zone's wildcard Ingress serves the host. vanity: a per-site Ingress. */
     exposure: { mode: 'zone'; tls: 'wildcard' } | { mode: 'vanity'; tls: 'wildcard' | 'per-site' }
@@ -88,6 +91,8 @@ export interface Rendered {
   /** What a site role carries into every org entitled to the site (rbac:every_org:<site>). */
   everyOrg: FlatRolesMap
   orgServiceMap: Record<string, string[]>
+  /** The org role an organization's owners hold here (rbac:org_owner_roles), null with organizations off or no such role. */
+  ownerRole: string | null
   siteCr: SiteCr
   /** The same gates as full Oathkeeper rules — what gatekit compiles and probes. */
   rules: OathkeeperRule[]
@@ -157,6 +162,10 @@ const OPT_IN_HEADERS = new Set(['x-user-roles', 'x-user-permissions'])
 export const rolesForwarded = (gate: Pick<Gate, 'authorizer' | 'passRoles'>, platform: Pick<Platform, 'roleHeaders' | 'decisionUrl'>): boolean =>
   gate.authorizer === 'policy' && gate.passRoles === true && !!platform.roleHeaders && !!platform.decisionUrl
 
+/** Whether a gate forwards the organization headers (ORG_HEADERS): every policy gate of a site with organizations on. */
+export const orgForwarded = (site: Pick<Site, 'organizations'>, gate: Pick<Gate, 'authorizer'>, platform: Pick<Platform, 'decisionUrl'>): boolean =>
+  organizationsOn(site) && gate.authorizer === 'policy' && !!platform.decisionUrl
+
 /** A gate of a 2FA site that never asks the policy, so the second factor is never checked there. */
 export interface SecondFactorGap { gate: string; why: 'anonymous' | 'authorizer'; authorizer: string }
 
@@ -187,9 +196,12 @@ export function secondFactorGaps(site: Pick<Site, 'login' | 'gates' | 'routes'>)
   })
 }
 
-/** The URL the operator renders for an upstream — jinbe builds the same one only for gatekit. */
+/**
+ * The URL the operator renders for an upstream — jinbe builds the same one only for gatekit. Its path
+ * (`upstream.path`) is what Oathkeeper prepends to the request path once `strip_path` is removed.
+ */
 export function upstreamUrl(u: Site['upstream']): string {
-  return `${u.scheme ?? 'http'}://${u.service}.${u.namespace}.svc.cluster.local:${u.port}`
+  return `${u.scheme ?? 'http'}://${u.service}.${u.namespace}.svc.cluster.local:${u.port}${u.path ?? ''}`
 }
 
 export function stableStringify(value: unknown): string {
@@ -395,7 +407,7 @@ export function render(site: Site, platform: Platform): Rendered {
   }
   // Org-grantable entries are the site's org roles: `<site>-x` → org role `x` (assigned as `<site>:x`
   // in one organisation), carrying the permissions of the site roles it names.
-  const orgRoles: FlatRolesMap = {}
+  let orgRoles: FlatRolesMap = {}
   for (const [group, def] of Object.entries(site.groups.orgGrantable)) {
     const problem = orgGrantableProblem(name, group, def.roles, roles)
     if (problem) fail(problem.includes('unknown role') ? 'unknown_role' : 'org_grantable', problem, `groups.orgGrantable.${group}`)
@@ -403,14 +415,19 @@ export function render(site: Site, platform: Platform): Rendered {
     orgRoles[group.slice(name.length + 1)] = [...new Set(def.roles.flatMap((r) => roles[r] ?? []))].sort()
   }
   // What a site role carries into every org entitled to the site: never more than the role holds.
-  const everyOrg: FlatRolesMap = {}
+  let everyOrg: FlatRolesMap = {}
   for (const [role, perms] of Object.entries(site.everyOrg ?? {})) {
     if (!roles[role]) { fail('unknown_role', `everyOrg names unknown role '${role}'`, `everyOrg.${role}`); continue }
     const beyond = perms.filter((p) => !isWildcard(p) && !roles[role].includes(p))
     if (beyond.length) fail('every_org_beyond_role', `everyOrg '${role}' carries ${beyond.join(', ')}, which role '${role}' does not hold`, `everyOrg.${role}`)
     everyOrg[role] = [...new Set(perms.filter((p) => !isWildcard(p)))].sort()
   }
-  const orgServiceMap = Object.fromEntries(site.orgs.map((org) => [org, [name]]))
+  let orgServiceMap: Record<string, string[]> = Object.fromEntries(site.orgs.map((org) => [org, [name]]))
+  checks.push(...organizationChecks(site, orgRoles, Object.keys(platformGroups)))
+  // Off: nothing of organizations is published, whatever the intent still lists (refused above).
+  if (!organizationsOn(site)) [orgRoles, everyOrg, orgServiceMap] = [{}, {}, {}]
+  const ownerRole = ownerRoleOf(site, orgRoles)
+  checks.push(...tokenGateChecks(site))
 
   // ── gates → rules ───────────────────────────────────────────
   const handlerOk = (kind: keyof Platform['enabled'], h: Handler, at: string) => {
@@ -421,6 +438,9 @@ export function render(site: Site, platform: Platform): Rendered {
   const allowListed = platform.upstreamAllow?.includes(`${site.upstream.namespace}/${site.upstream.service}`) ?? false
   if (!allowListed && platform.platformNamespaces?.includes(site.upstream.namespace)) {
     fail('upstream_platform_namespace', `upstream namespace '${site.upstream.namespace}' is a platform namespace`, 'upstream.namespace')
+  }
+  if (site.upstream.path && !platform.upstreamPath) {
+    fail('upstream_path_unsupported', `the site operator of this environment does not render upstream.path yet (SITES_UPSTREAM_PATH): ${site.upstream.path} would be dropped and the upstream would get the wrong path`, 'upstream.path')
   }
   if (FORBIDDEN_SERVICE.test(site.upstream.service)) {
     fail('upstream_forbidden_service', `'${site.upstream.service}' is a platform data service and cannot be exposed`, 'upstream.service')
@@ -449,9 +469,12 @@ export function render(site: Site, platform: Platform): Rendered {
     // other policy gate keeps the gateway's global remote and what its global remote_json forwards
     // (X-User-Groups, as before), minus roles and permissions: the explicit list replaces the global
     // one, so those two stay blanked.
-    const roleHeaders = rolesForwarded(gate, platform)
-      ? { remote: platform.decisionUrl, forward_response_headers_to_upstream: ROLE_HEADERS }
-      : { forward_response_headers_to_upstream: (platform.authorizerHeaders?.remote_json ?? []).filter((h) => !OPT_IN_HEADERS.has(h.toLowerCase())) }
+    // The organization headers likewise, on every policy gate of a site with organizations on.
+    const base = rolesForwarded(gate, platform) ? ROLE_HEADERS : (platform.authorizerHeaders?.remote_json ?? []).filter((h) => !OPT_IN_HEADERS.has(h.toLowerCase()))
+    const org = orgForwarded(site, gate, platform)
+    const roleHeaders = rolesForwarded(gate, platform) || org
+      ? { remote: platform.decisionUrl, forward_response_headers_to_upstream: [...base, ...(org ? ORG_HEADERS : [])] }
+      : { forward_response_headers_to_upstream: base }
     const authorizer: Handler = gate.authorizer === 'policy'
       ? { handler: 'remote_json', config: { payload: platformPayload(name), ...roleHeaders } }
       : gate.authorizer
@@ -545,7 +568,7 @@ export function render(site: Site, platform: Platform): Rendered {
   const u = site.upstream
   const spec: SiteCr['spec'] = {
     hosts: [host],
-    upstream: { service: u.service, namespace: u.namespace, port: u.port, scheme: u.scheme ?? 'http', preserveHost: u.preserveHost ?? false, ...(u.stripPath ? { stripPath: u.stripPath } : {}) },
+    upstream: { service: u.service, namespace: u.namespace, port: u.port, scheme: u.scheme ?? 'http', preserveHost: u.preserveHost ?? false, ...(u.stripPath ? { stripPath: u.stripPath } : {}), ...(u.path ? { path: u.path } : {}) },
     gates: crGates,
     // tls spelled out for zone mode too: the Site CRD defaults it to 'wildcard', so leaving it out made the
     // sync loop see drift on every tick and rewrite every Site CR forever.
@@ -564,5 +587,5 @@ export function render(site: Site, platform: Platform): Rendered {
     spec,
   }
 
-  return { routeMap, roles, groups: { platform: platformGroups }, orgRoles, everyOrg, orgServiceMap, siteCr, rules, checks }
+  return { routeMap, roles, groups: { platform: platformGroups }, orgRoles, everyOrg, orgServiceMap, ownerRole, siteCr, rules, checks }
 }

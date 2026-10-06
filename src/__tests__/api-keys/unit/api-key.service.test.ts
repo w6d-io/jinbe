@@ -27,7 +27,10 @@ const mockState = vi.hoisted(() => {
 })
 
 vi.mock('../../../config/index.js', () => ({ env: mockState.env }))
-vi.mock('../../../services/api-key-scopes.js', () => ({ scopeCatalog: mockState.catalog }))
+vi.mock('../../../services/api-key-scopes.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../services/api-key-scopes.js')>()),
+  scopeCatalog: mockState.catalog,
+}))
 vi.mock('../../../services/api-clients.js', () => ({ apiClientsChanged: mockState.changed }))
 vi.mock('../../../services/api-key-last-used.js', () => ({ forgetApiKeyUse: mockState.forget }))
 vi.mock('../../../services/hydra.service.js', () => ({
@@ -64,11 +67,11 @@ describe('ApiKeyService', () => {
   })
 
   describe('create', () => {
-    it("rejects scopes outside the org's catalog for the caller (400) and never calls Hydra", async () => {
+    it("rejects scopes outside the org's catalog (400) and never calls Hydra", async () => {
       await expect(
         svc.create({ organizationId: ORG, callerEmail: 'a@x.io', body: { label: 'x', scopes: ['payroll:write', 'admin:all'] } })
       ).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['admin:all'], allowed_scopes: ['payroll.runs:read', 'payroll:write'] } })
-      expect(mockState.catalog).toHaveBeenCalledWith(ORG, 'a@x.io')
+      expect(mockState.catalog).toHaveBeenCalledWith(ORG)
       expect(mockState.hydra.createClient).not.toHaveBeenCalled()
     })
 

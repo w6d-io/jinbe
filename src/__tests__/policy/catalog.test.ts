@@ -34,6 +34,8 @@ describe('the catalogue', () => {
       'recert:manage', 'sites.requests:approve', 'users:reset_second_factor', 'groups.mfa:write',
       'settings.signin:write', 'settings.mcp:write', 'zones:write', 'gateway:apply', 'policy.bundle:read', 'audit:export',
       'users.grants:write',
+      // Org API keys: a machine in an organization is made by a person (staff), never through a token.
+      'orgs.keys:write',
       // Site sign-up: exposing a site to the internet and removing people stay with a person.
       'sites.signup:write', 'sites.signup:revoke',
     ].sort())
@@ -96,7 +98,7 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
 
   // The table, pinned (owner decision 2026-10-06): a widening is a visible line here.
   it.each([
-    ['developer', ['access:check', 'groups:read', 'orgs:read', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
+    ['developer', ['access:check', 'groups:read', 'orgs.keys:write', 'orgs:read', 'orgs:write', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
     ['support', ['access:check', 'access:read', 'sessions:read', 'sessions:revoke', 'users:create', 'users:read', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link', 'users:update', 'users:verify']],
     ['ops', ['sites.requests:approve', 'sites.signup:revoke', 'sites.signup:write', 'sites:apply', 'sites:read', 'zones:read', 'zones:write']],
     ['security', ['access:check', 'access:read', 'audit:read', 'groups.members:revoke', 'sessions:read', 'sessions:revoke', 'sites.signup:revoke', 'users.grants:read', 'users:disable', 'users:read', 'users:reset_second_factor']],
@@ -119,7 +121,7 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
   })
 
   it('a staff group whose role needs a recent second factor always requires one', () => {
-    expect([...staffGroupsRequiringSecondFactor()].sort()).toEqual(['staff-ops', 'staff-security', 'staff-support', 'super_admins'])
+    expect([...staffGroupsRequiringSecondFactor()].sort()).toEqual(['staff-developers', 'staff-ops', 'staff-security', 'staff-support', 'super_admins'])
   })
 
   it('roles.jinbe as the bootstrap writes it', () => {

@@ -21,6 +21,23 @@ vi.mock('../../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: { setOrgSites: vi.fn(async (o: string, sites: string[]) => { if (sites.length) rbacStore.orgSites[o] = sites; else delete rbacStore.orgSites[o] }) },
 }))
 vi.mock('../../../services/org-roles.repository.js', () => ({ orgRolesRepository: { forgetOrg: vi.fn(async (o: string) => { rbacStore.forgotten.push(o) }) } }))
+// What else an organisation leaves behind: sign-up entitlements and domains, direct grants, invitations.
+const left = vi.hoisted(() => ({
+  signUp: [] as string[],
+  grants: { 'subject-ann': [{ id: 'g1', scope: '11111111-1111-4111-8111-111111111111' }], 'subject-bob': [{ id: 'g2', scope: 'platform' }] } as Record<string, Array<{ id: string; scope: string }>>,
+  forgotGrants: [] as Array<[string, string]>,
+  invitations: [] as string[],
+  sites: [{ site: { name: 'shop', orgs: ['11111111-1111-4111-8111-111111111111'] } }, { site: { name: 'wiki', orgs: [] } }],
+}))
+vi.mock('../../../sites/signup/store.js', () => ({ signUpStore: { forgetOrg: vi.fn(async (o: string) => { left.signUp.push(o) }) } }))
+vi.mock('../../../services/direct-grants.repository.js', () => ({
+  directGrantsRepository: { getAll: vi.fn(async () => left.grants), forgetOrg: vi.fn(async (s: string, o: string) => { left.forgotGrants.push([s, o]) }) },
+}))
+vi.mock('../../../services/org-invitations.js', () => ({ orgInvitations: { forgetOrg: vi.fn(async (o: string) => { left.invitations.push(o) }) }, invitationLink: () => null }))
+vi.mock('../../../sites/repository.js', () => ({ sitesRepository: { list: vi.fn(async () => left.sites) } }))
+vi.mock('../../../services/rbac.service.js', () => ({ rbacService: { notifyBindingsChanged: vi.fn(async () => {}) } }))
+vi.mock('../../../services/kratos.service.js', async (importOriginal) => ({ ...(await importOriginal<object>()), kratosService: {} }))
+vi.mock('../../../services/org-membership.service.js', () => ({ joinOrganisation: vi.fn() }))
 vi.mock('../../../authz/opa.js', () => ({
   rights: vi.fn(async () => ({ groups: [], roles: [], permissions: s.holds ? ['orgs:write', 'orgs:delete'] : [] })),
 }))
@@ -82,10 +99,11 @@ const patch = (body: unknown, id = ACME) => app.inject({ method: 'PATCH', url: `
 const del = (id = ACME) => app.inject({ method: 'DELETE', url: `/api/admin/organizations/${id}` })
 
 describe('PATCH /api/admin/organizations/:id', () => {
-  it('renames, and sets the applications as a whole set', async () => {
-    const res = await patch({ name: 'Acme Inc', applications: ['fleet', 'fleet', 'billing'] })
+  it('renames; applications are gone (they decided nothing)', async () => {
+    const res = await patch({ name: 'Acme Inc' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ id: ACME, name: 'Acme Inc', tenant: 'acme', applications: ['fleet', 'billing'] })
+    expect(res.json()).toEqual({ id: ACME, name: 'Acme Inc', tenant: 'acme' })
+    expect((await patch({ applications: ['fleet'] })).statusCode).toBe(400)
     expect(s.audits[0]).toMatchObject({ type: 'organization.updated', target: { type: 'organization', id: ACME } })
   })
 
@@ -121,8 +139,13 @@ describe('DELETE /api/admin/organizations/:id', () => {
     expect(res.statusCode).toBe(204)
     expect(s.record).toBeNull()
     expect(s.audits[0]).toMatchObject({ type: 'organization.deleted' })
-    // Its entitlements and org role assignments leave the RBAC store with it.
+    // Its entitlements and org role assignments leave the RBAC store with it, and the rest it left.
     expect(rbacStore.forgotten).toHaveLength(1)
+    expect(left.signUp).toEqual([ACME])
+    expect(left.forgotGrants).toEqual([['subject-ann', ACME]])
+    expect(left.invitations).toEqual([ACME])
+    // Site intents still naming it are flagged.
+    expect(s.audits[0]).toMatchObject({ details: { sitesNamingIt: ['shop'] } })
   })
 
   it('refuses while members remain, and says how many', async () => {

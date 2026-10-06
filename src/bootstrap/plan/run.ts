@@ -93,6 +93,7 @@ export async function readInventory(logger: Logger, builtInRuleIds: ReadonlySet<
     orgRoles: rendered.orgRoles,
     everyOrg: rendered.everyOrg,
     orgs: Object.keys(rendered.orgServiceMap).sort(),
+    ownerRole: rendered.ownerRole,
   }]))
   const sites = Object.keys(siteModels).sort()
   return {

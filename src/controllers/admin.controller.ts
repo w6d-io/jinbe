@@ -640,12 +640,15 @@ export class AdminController {
     const { id } = request.params
     const { organization_id } = request.body
 
-    // Under the identity's lock, and the new primary leaves the list so it is not held twice.
+    // Under the identity's lock. A new primary leaves the list so it is not held twice, and the old
+    // primary stays a membership (listed): making another organisation primary is not leaving this one.
+    // null removes the primary organisation itself, as before.
     const identity = await kratosService.updateAdminState(id, (state) => {
       const listed = Array.isArray(state.metadataAdmin.organizations) ? (state.metadataAdmin.organizations as string[]) : []
-      const rest = listed.filter((o) => o !== organization_id)
+      const kept = organization_id && state.organizationId && state.organizationId !== organization_id ? [state.organizationId] : []
+      const rest = [...new Set([...listed.filter((o) => o !== organization_id), ...kept])]
       const metadataAdmin = { ...state.metadataAdmin }
-      if (rest.length !== listed.length) metadataAdmin.organizations = rest
+      if (rest.length !== listed.length || kept.length) metadataAdmin.organizations = rest
       return { organizationId: organization_id, metadataAdmin }
     })
 

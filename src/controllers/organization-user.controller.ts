@@ -4,34 +4,17 @@ import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { directGrantsRepository } from '../services/direct-grants.repository.js'
-import { orgRoleRefusals } from '../services/org-role-grants.js'
-import { AuthzUnavailableError, holdsInJinbe } from '../authz/opa.js'
-import { directGrantsService, GrantNeedsSecondFactorError, GrantsRefusedError } from '../services/direct-grants.service.js'
-
-/** A grant refusal at creation, as PUT …/users/:id/grants answers it. */
-function grantRefusal(reply: FastifyReply, err: unknown) {
-  if (err instanceof GrantsRefusedError) return reply.status(403).send({ error: 'Forbidden', code: 'grant_exceeds_own', message: err.message, refused: err.refused })
-  if (err instanceof GrantNeedsSecondFactorError) return reply.status(422).send(err.body())
-  if (err instanceof AuthzUnavailableError) return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${err.message}` })
-  if ((err as { statusCode?: number }).statusCode === 400) return reply.status(400).send({ error: 'Bad Request', message: (err as Error).message })
-  throw err
-}
-import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { holdsInJinbe } from '../authz/opa.js'
 import { auditActor } from '../utils/audit-actor.js'
-import {
-  KratosIdentity,
-  KratosIdentityCreate,
-} from '../schemas/admin.schema.js'
+import { KratosIdentity } from '../schemas/admin.schema.js'
 import { notificationService } from '../server.js'
 import {
-  OrganizationUserCreateBody,
   OrganizationUserUpdateBody,
   OrganizationUsersQuery,
-  organizationUserCreateBodySchema,
   organizationUserUpdateBodySchema,
   organizationUsersQuerySchema,
 } from '../schemas/organization-user.schema.js'
-import { addMember, membershipRowsKept, OrganisationStoreUnavailableError } from '../services/organisation-store.js'
+import { OrganisationStoreUnavailableError } from '../services/organisation-store.js'
 import {
   identitiesInOrganisation,
   isMemberOf,
@@ -56,33 +39,6 @@ function storeUnavailable(reply: FastifyReply, err: unknown) {
     error: 'Service Unavailable',
     message: 'The membership could not be changed. Please try again later.',
   })
-}
-
-/**
- * Record an assignment where memberships are kept as rows (the postgres store).
- *
- * Does nothing otherwise: in the kratos store the identity just created already names the
- * organisation, and with a token the set is asserted by its issuer — a record here would be a second
- * answer that nothing reconciles.
- *
- * A failure is reported and never swallowed, but it does not undo the identity: the person exists
- * and can be assigned again, whereas rolling back would delete an account somebody may already have
- * been told about.
- */
-async function recordMembership(
-  organisationId: string,
-  subjectId: string,
-  request: FastifyRequest
-): Promise<void> {
-  if (!membershipRowsKept()) return
-  try {
-    await addMember(organisationId, subjectId, 'member')
-  } catch (err) {
-    request.log.error(
-      { err, organisationId, subjectId },
-      'Created the identity but could not record its membership'
-    )
-  }
 }
 
 export class OrganizationUserController {
@@ -127,111 +83,6 @@ export class OrganizationUserController {
     const identity = await kratosService.getIdentity(id)
     await assertOrganizationMatch(identity, organizationId)
     return reply.send(identity)
-  }
-
-  /**
-   * Create a user in an organization
-   * POST /api/organizations/:organizationId/users
-   */
-  async createUser(
-    request: FastifyRequest<{
-      Params: { organizationId: string }
-      Body: OrganizationUserCreateBody
-    }>,
-    reply: FastifyReply
-  ) {
-    const { organizationId } = request.params
-    const { email, name, sendInvite, roles, grants } = organizationUserCreateBodySchema.parse(
-      request.body
-    )
-    const grantsWanted = grants ?? []
-    const grantOpts = {
-      granteeEmail: email, wanted: grantsWanted, joining: true,
-      actor: { ...auditActor(request), email: request.userContext?.email ?? '' },
-      within: (scope: string) => scope === organizationId,
-    }
-
-    // Org roles given at creation clear the same holding rule as PUT …/users/:id/roles, BEFORE
-    // anything is created: a refused role never leaves a half-provisioned person behind.
-    const wanted = [...new Set(roles ?? [])]
-    let refused
-    try {
-      refused = await orgRoleRefusals(request.userContext?.email ?? '', organizationId, wanted, { email, joining: true })
-    } catch (err) {
-      if (!(err instanceof AuthzUnavailableError)) throw err
-      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: `Unable to verify authorization: ${err.message}` })
-    }
-    if (refused.length > 0) {
-      return reply.status(403).send({ error: 'Forbidden', message: `Not allowed to assign: ${refused.map((r) => r.role).join(', ')}`, refused })
-    }
-    // Direct grants given at creation (this org's only): the same verdicts as PUT …/users/:id/grants, up front.
-    if (grantsWanted.length > 0) {
-      try {
-        await directGrantsService.check({ subjectId: '', ...grantOpts })
-      } catch (err) {
-        return grantRefusal(reply, err)
-      }
-    }
-
-    const kratosBody: KratosIdentityCreate = {
-      schema_id: 'default',
-      state: 'active',
-      traits: { email, ...(name ? { name } : {}) },
-      organization_id: organizationId,
-      // No platform group: what a member may do here comes from their org roles.
-      metadata_admin: { groups: [] },
-    }
-
-    const identity = await kratosService.createIdentity(kratosBody)
-
-    // Where this service owns membership, the assignment is a record here — not something read
-    // back out of the identity's own metadata. Written AFTER the grant check, so a refused
-    // privilege never leaves a membership behind the rollback.
-    await recordMembership(organizationId, identity.id, request)
-    if (wanted.length > 0) await orgRolesRepository.setForMember(organizationId, identity.id, wanted)
-    if (grantsWanted.length > 0) {
-      try {
-        await directGrantsService.replace({ subjectId: identity.id, ...grantOpts })
-      } catch (err) {
-        // Allowed a moment ago: the person exists and is a member; say what did not land.
-        request.log.warn({ err: (err as Error).message, id: identity.id }, 'Created the member, but the direct grants were refused on write')
-        return grantRefusal(reply, err)
-      }
-    }
-
-    if (sendInvite) {
-      try {
-        await kratosService.sendRecoveryEmail(identity.id)
-        request.log.info(
-          { id: identity.id, email },
-          'Recovery email dispatched for organization user'
-        )
-      } catch (err) {
-        request.log.warn(
-          { err, id: identity.id },
-          'Created organization user but failed to send invite'
-        )
-      }
-    }
-
-    kratosService.invalidateGroupsCache()
-    rbacService.notifyBindingsChanged('user_created', auditActor(request)).catch(() => {})
-
-    auditEventService
-      .emit({
-        type: 'organization_user.created',
-        actor: auditActor(request),
-        target: { type: 'user', id: identity.id },
-        details: { email, organizationId, sendInvite },
-        source: 'jinbe-api',
-      })
-      .catch(() => {})
-
-    notificationService.emit({
-      action: 'created', entity_type: 'user',
-      payload: { id: identity.id, organization_id: organizationId, email, display_name: name, status: identity.state, created_at: identity.created_at, updated_at: identity.updated_at },
-    })
-    return reply.status(201).send(identity)
   }
 
   /**

@@ -1,5 +1,6 @@
 import { explicitWildcards, render, stableStringify, type Rendered } from './render.js'
 import { auditSite } from './audit.js'
+import { explicitOrganizations } from './organizations.js'
 import type { Site } from './schemas.js'
 import type { SiteRecord } from './repository.js'
 import { sitesRepository } from './repository.js'
@@ -31,8 +32,9 @@ export async function renderAppliedSites(): Promise<{ models: AppliedSiteModel[]
     try {
       const version = await sitesRepository.version(record.site.name, record.applied.version)
       if (!version) throw new Error(`applied version ${record.applied.version} is gone`)
-      // Explicit roles: a `*` stored before wildcards were refused becomes the permissions it stood for.
-      const site = explicitWildcards({ ...version.site, state: record.site.state })
+      // Explicit roles: a `*` stored before wildcards were refused becomes the permissions it stood for;
+      // and organizations used before their switch existed stay on.
+      const site = explicitOrganizations(explicitWildcards({ ...version.site, state: record.site.state }))
       models.push({ site, rendered: render(site, platform) })
     } catch (err) {
       failed.push({ site: record.site.name, error: (err as Error).message })
@@ -71,7 +73,7 @@ export const EXPLICIT_ROLES_NOTE = "roles made explicit by the authz release (wa
  * were refused. Each would refuse every edit (wildcard_permission) until made explicit.
  */
 export function sitesWithWildcards(records: readonly SiteRecord[]): string[] {
-  return records.filter((r) => stableStringify(explicitWildcards(r.site)) !== stableStringify(r.site)).map((r) => r.site.name).sort()
+  return records.filter((r) => stableStringify(explicitOrganizations(explicitWildcards(r.site))) !== stableStringify(r.site)).map((r) => r.site.name).sort()
 }
 
 /**
@@ -84,7 +86,7 @@ export function sitesWithWildcards(records: readonly SiteRecord[]): string[] {
 export async function persistExplicitRoles(actor: AuditActorInput): Promise<Array<{ site: string; from: number; to: number; applied: boolean }>> {
   const out: Array<{ site: string; from: number; to: number; applied: boolean }> = []
   for (const record of await sitesRepository.list()) {
-    const explicit = explicitWildcards(record.site)
+    const explicit = explicitOrganizations(explicitWildcards(record.site))
     if (stableStringify(explicit) === stableStringify(record.site)) continue
     const saved = await sitesRepository.save(explicit, { by: actor.email ?? 'bootstrap', note: EXPLICIT_ROLES_NOTE, ifMatch: record.etag })
     const wasApplied = record.applied?.version === record.version

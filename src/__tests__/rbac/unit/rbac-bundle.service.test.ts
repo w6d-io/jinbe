@@ -488,11 +488,29 @@ describe('RbacBundleService — import validation, history, rollback', () => {
       expect(Object.keys(await redisMock.hgetall('rbac:org_domains')).sort()).toEqual(['acme-old.test', 'acme.test', 'new.test'])
     })
 
+    it("invitations: the snapshot's orgs' exactly on a full restore, every other org's untouched; a file without them touches none", async () => {
+      const inv = (id: string, org: string) => JSON.stringify({ id, org, email: `${id}@x.io`, roles: [], invitedBy: { id: null, email: 'a@x.io' }, createdAt: '2026-10-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z', tokenHash: 'h' })
+      await redisMock.hset('rbac:organisations', 'acme', ACME)
+      await redisMock.hset('jinbe:org_invitations', 'i-acme-old', inv('i-acme-old', 'acme'))
+      await redisMock.hset('jinbe:org_invitations', 'i-new', inv('i-new', 'new-org'))
+      expect((await rbacBundleService.export()).rbac.organizations?.invitations).toEqual({ 'i-acme-old': inv('i-acme-old', 'acme'), 'i-new': inv('i-new', 'new-org') })
+
+      const b = { ...makeBundle(), version: '2' }
+      Object.assign(b.rbac, { organizations: { registry: { acme: ACME }, invitations: { 'i-acme': inv('i-acme', 'acme'), 'i-sneaky': inv('i-sneaky', 'new-org') } } })
+      await rbacBundleService.import(b)
+      expect(Object.keys(await redisMock.hgetall('jinbe:org_invitations')).sort()).toEqual(['i-acme', 'i-new'])
+
+      const older = { ...makeBundle(), version: '2' }
+      Object.assign(older.rbac, { organizations: { registry: { acme: ACME } } })
+      await rbacBundleService.import(older)
+      expect(Object.keys(await redisMock.hgetall('jinbe:org_invitations')).sort()).toEqual(['i-acme', 'i-new'])
+    })
+
     it('organization deployments are neither in a snapshot nor restored', async () => {
       await redisMock.hset('rbac:organisations', 'acme', ACME)
       await redisMock.hset('rbac:organisation_deployments', 'acme', '{"billing":true}')
       const bundle = await rbacBundleService.export()
-      expect(bundle.rbac.organizations).toEqual({ registry: { acme: ACME } })
+      expect(bundle.rbac.organizations).toEqual({ registry: { acme: ACME }, invitations: {} })
       const older = { ...makeBundle(), version: '2' }
       Object.assign(older.rbac, { organizations: { registry: { acme: ACME }, deployments: { acme: '{"billing":false}' } } })
       await rbacBundleService.import(older)

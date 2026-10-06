@@ -32,7 +32,7 @@ import type { BootstrapLogger } from './types.js'
 export const WIPED_PATTERNS = [
   'rbac:route_map:*', 'rbac:roles:*', 'rbac:org_roles:*', 'rbac:every_org:*', 'rbac:owned:*',
   'rbac:services', 'rbac:services:meta', 'rbac:groups', 'rbac:groups:meta',
-  'rbac:org_admins', 'rbac:org_service_map', 'rbac:org_grants', 'rbac:org_sites',
+  'rbac:org_admins', 'rbac:org_service_map', 'rbac:org_grants', 'rbac:org_sites', 'rbac:org_owner_roles',
   'rbac:oathkeeper:rules',
 ] as const
 

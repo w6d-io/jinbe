@@ -5,14 +5,20 @@ import { auditEventService } from '../services/audit-event.service.js'
 import {
   createOrganisation,
   deleteOrganisation,
-  deploymentsOf,
   organisationStoreConfigured,
   organisationStoreNotConfigured,
-  setDeployments,
   updateOrganisation,
 } from '../services/organisation-store.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
+import { directGrantsRepository } from '../services/direct-grants.repository.js'
+import { joinOrganisation } from '../services/org-membership.service.js'
+import { invitationLink, orgInvitations } from '../services/org-invitations.js'
+import { OWNER } from '../services/org-owner-roles.js'
+import { kratosService } from '../services/kratos.service.js'
+import { rbacService } from '../services/rbac.service.js'
+import { signUpStore } from '../sites/signup/store.js'
+import { sitesRepository } from '../sites/repository.js'
 import { JINBE } from '../policy/roles.js'
 import { auditActor } from '../utils/audit-actor.js'
 import {
@@ -30,19 +36,17 @@ const TENANT = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const createBody = z.object({
   name: z.string().trim().min(1).max(200),
   tenant: z.string().regex(TENANT).optional(),
-})
-
-const APPLICATION = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  /** The owner's address: an account is named owner, an unknown address invited as owner. Never an id. */
+  owner: z.string().trim().toLowerCase().email().max(254),
+}).strict()
 
 const updateBody = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     tenant: z.string().regex(TENANT).optional(),
-    /** The applications this organisation has, as a whole set: absent ones are turned off. */
-    applications: z.array(z.string().regex(APPLICATION)).max(200).optional(),
   })
   .strict()
-  .refine((b) => b.name !== undefined || b.tenant !== undefined || b.applications !== undefined, 'nothing to change')
+  .refine((b) => b.name !== undefined || b.tenant !== undefined, 'nothing to change')
 
 const idParams = z.object({ id: z.string().uuid() })
 
@@ -55,7 +59,6 @@ const organisationResponse = {
     id: { type: 'string', format: 'uuid' },
     name: { type: 'string' },
     tenant: { type: 'string' },
-    applications: { type: 'array', items: { type: 'string' } },
   },
 }
 
@@ -71,12 +74,24 @@ function tenantFrom(name: string): string {
     .replace(/-+$/, '')
 }
 
+/** Who owns a new organisation: an account named owner now, or an address invited as owner. */
+async function seatOwner(organisationId: string, email: string, by: { id: string | null; email: string }) {
+  const account = await kratosService.findByEmail(email)
+  if (account) {
+    await joinOrganisation(account, organisationId)
+    await orgRolesRepository.setForMember(organisationId, account.id, [OWNER])
+    return { owner: { email, id: account.id, status: 'owner' as const } }
+  }
+  const { invitation, token } = await orgInvitations.create({ org: organisationId, email, roles: [OWNER], invitedBy: by, byPlatform: true })
+  return { owner: { email, id: null, status: 'invited' as const }, invitation: { id: invitation.id, token, link: invitationLink(token), expiresAt: invitation.expiresAt } }
+}
+
 /**
  * Organisation writes, mounted inside the admin plugin so they sit behind its guard as well.
  *
- * Creating an organisation takes a name and nothing else. What this replaced tied an organisation to
- * a bundle of services at birth, because membership used to decide site access through that bundle;
- * it no longer does, so there is nothing an organisation must be born with.
+ * An organisation is made for its owner (super_admin and developer: orgs:write): a name and the
+ * owner's address. An account with that address is named owner (jinbe:owner, and so each serving
+ * site's owner role); an address with no account is invited as owner and owns it on accepting.
  */
 export async function organisationAdminRoutes(fastify: FastifyInstance) {
   fastify.post(
@@ -85,11 +100,13 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       ...needs('orgs:write'),
       schema: {
         description:
-          'Create an organisation from a name. No service bundle is required. Needs org:write.',
+          "Create an organisation for its owner: a name and the owner's address (never an id). An account with that address " +
+          'is named owner at once; an address with no account is invited as owner — the token (and `link` when INVITATION_URL ' +
+          'is set) is returned ONCE, to send them. Needs orgs:write.',
         tags: ['admin'],
         body: {
           type: 'object',
-          required: ['name'],
+          required: ['name', 'owner'],
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 200 },
             tenant: {
@@ -97,6 +114,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
               pattern: TENANT.source,
               description: 'Namespace-shaped label; derived from the name when omitted.',
             },
+            owner: { type: 'string', format: 'email', maxLength: 254, description: "The owner's address" },
           },
           additionalProperties: false,
         },
@@ -107,8 +125,9 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
               id: { type: 'string', format: 'uuid' },
               name: { type: 'string' },
               tenant: { type: 'string' },
-              applications: { type: 'array', items: { type: 'string' } },
               sites: { type: 'array', items: { type: 'string' } },
+              owner: { type: 'object', properties: { email: { type: 'string' }, id: { type: 'string', nullable: true }, status: { type: 'string', enum: ['owner', 'invited'] } } },
+              invitation: { type: 'object', properties: { id: { type: 'string' }, token: { type: 'string' }, link: { type: 'string', nullable: true }, expiresAt: { type: 'string' } } },
             },
           },
           400: badRequestResponseSchema,
@@ -123,7 +142,7 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({ error: 'Bad Request', message: parsed.error.issues[0]?.message })
       }
-      const { name } = parsed.data
+      const { name, owner } = parsed.data
       const tenant = parsed.data.tenant ?? tenantFrom(name)
       if (!tenant) {
         return reply.status(400).send({
@@ -137,10 +156,12 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       }
 
       let created
+      let seated
       try {
         created = await createOrganisation({ name, tenant })
         // An org is entitled to jinbe from birth: without it in org_sites the policy refuses its org routes.
         await redisRbacRepository.setOrgSites(created.id, [JINBE])
+        seated = await seatOwner(created.id, owner, { id: request.userContext?.id ?? null, email: request.userContext?.email ?? '' })
       } catch (err) {
         request.log.error({ err }, 'The organisation could not be created')
         return reply.status(503).send({
@@ -148,29 +169,29 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
           message: 'The organisation directory could not be written.',
         })
       }
+      rbacService.notifyBindingsChanged('organization_created', auditActor(request)).catch(() => {})
 
       auditEventService
         .emit({
           type: 'organization.created',
           actor: auditActor(request),
           target: { type: 'organization', id: created.id },
-          details: { name, tenant },
+          details: { name, tenant, owner, ownerStatus: seated.owner.status },
           source: 'jinbe-api',
         })
         .catch(() => {})
 
-      return reply.status(201).send({ id: created.id, name, tenant, applications: [], sites: [JINBE] })
+      return reply.status(201).send({ id: created.id, name, tenant, sites: [JINBE], ...seated })
     },
   )
 
-  // Rename, re-tenant, or set which applications an organisation has. Only what is sent changes.
+  // Rename or re-tenant an organisation. Only what is sent changes.
   fastify.patch(
     '/organizations/:id',
     {
       ...needs('orgs:write'),
       schema: {
-        description:
-          'Change an organisation: name, tenant, and/or the whole set of applications it has. Needs org:write.',
+        description: 'Change an organisation: its name and/or tenant. Needs orgs:write.',
         tags: ['admin'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
         body: {
@@ -178,7 +199,6 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 200 },
             tenant: { type: 'string', pattern: TENANT.source },
-            applications: { type: 'array', items: { type: 'string', pattern: APPLICATION.source }, maxItems: 200 },
           },
           additionalProperties: false,
         },
@@ -204,25 +224,20 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       if (!organisationStoreConfigured()) return reply.status(503).send(organisationStoreNotConfigured())
 
       const { id } = params.data
-      const { applications, ...change } = parsed.data
       // Not-found and outages are answered by the error handler (404 organisation_not_found, 503).
-      const updated = await updateOrganisation(id, change)
-      if (applications) {
-        await setDeployments(id, [...new Set(applications)].map((application) => ({ application, enabled: true })))
-      }
-      const enabled = (await deploymentsOf(id)).filter((d) => d.enabled).map((d) => d.application)
+      const updated = await updateOrganisation(id, parsed.data)
 
       auditEventService
         .emit({
           type: 'organization.updated',
           actor: auditActor(request),
           target: { type: 'organization', id },
-          details: { ...change, ...(applications ? { applications } : {}) },
+          details: parsed.data,
           source: 'jinbe-api',
         })
         .catch(() => {})
 
-      return reply.send({ id, name: updated.name, tenant: updated.tenant, applications: enabled })
+      return reply.send({ id, name: updated.name, tenant: updated.tenant })
     },
   )
 
@@ -233,7 +248,10 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
     {
       ...needs('orgs:delete'),
       schema: {
-        description: 'Delete an organisation that has no members left. Needs org:delete and a recent second factor.',
+        description:
+          'Delete an organisation that has no members left, with everything kept about it: its sites (org_sites and the ' +
+          'sign-up entitlements), its domains, org roles, direct grants and pending invitations. Site intents still naming it ' +
+          'are listed in the audit event and refused at their next preview and publish (unknown_org). Needs orgs:delete and a recent second factor.',
         tags: ['admin'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
         response: {
@@ -251,17 +269,31 @@ export async function organisationAdminRoutes(fastify: FastifyInstance) {
       const params = idParams.safeParse(request.params)
       if (!params.success) return reply.status(400).send({ error: 'Bad Request', message: 'id: must be a UUID' })
       if (!organisationStoreConfigured()) return reply.status(503).send(organisationStoreNotConfigured())
+      const { id } = params.data
 
-      await deleteOrganisation(params.data.id)
-      // Nothing of the org stays in the RBAC store: its entitlements and its org role assignments.
-      await redisRbacRepository.setOrgSites(params.data.id, [])
-      await orgRolesRepository.forgetOrg(params.data.id)
+      await deleteOrganisation(id)
+      // Nothing of the org stays: its entitlements (the sign-up ones too) and domains, its org role
+      // assignments, its direct grants, its invitations.
+      await redisRbacRepository.setOrgSites(id, [])
+      await signUpStore.forgetOrg(id)
+      await orgRolesRepository.forgetOrg(id)
+      for (const [subject, held] of Object.entries(await directGrantsRepository.getAll())) {
+        if (held.some((g) => g.scope === id)) await directGrantsRepository.forgetOrg(subject, id)
+      }
+      await orgInvitations.forgetOrg(id)
+      rbacService.notifyBindingsChanged('organization_deleted', auditActor(request)).catch(() => {})
+      const sitesNamingIt = (await sitesRepository.list().catch(() => []))
+        .filter((r) => r.site.orgs.includes(id))
+        .map((r) => r.site.name)
+        .sort()
+      if (sitesNamingIt.length) request.log.warn({ organizationId: id, sites: sitesNamingIt }, 'Deleted an organisation that site intents still name')
 
       auditEventService
         .emit({
           type: 'organization.deleted',
           actor: auditActor(request),
-          target: { type: 'organization', id: params.data.id },
+          target: { type: 'organization', id },
+          details: { sitesNamingIt },
           source: 'jinbe-api',
         })
         .catch(() => {})

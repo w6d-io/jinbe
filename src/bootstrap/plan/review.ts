@@ -157,6 +157,7 @@ export function afterModel(inv: Inventory, migration: Migration): StoredModel & 
     everyOrg: { ...bySite((m) => m.everyOrg), [JINBE]: everyOrgDefinitions() },
     routeMap: { ...bySite((m) => ({ rules: m.routeMap })), [JINBE]: { rules: [...GENERATED_ROUTE_MAP] } },
     orgSites: migration.orgSites,
+    ownerRoles: Object.fromEntries(sites.flatMap(([svc, m]) => (m.ownerRole ? [[svc, m.ownerRole]] : []))),
     assignments: migration.assignments,
   }
 }

@@ -3,6 +3,7 @@ import { KratosSessionService, kratosSessionService } from '../services/kratos-s
 import { queryOpa } from '../services/opa-client.js'
 import type { Site } from './schemas.js'
 import { twoFactorOn } from './render.js'
+import { explicitOrganizations } from './organizations.js'
 import { sitesRepository } from './repository.js'
 import { liveAddresses } from './address.js'
 import { siteLoginStore, type SiteLogin, type StoredLogo } from './login-store.js'
@@ -26,11 +27,12 @@ export function siteLoginOf(site: Pick<Site, 'login'>): SiteLogin | null {
   return { min_aal: 'aal2', scope: tf.scope, routes: tf.routes ?? [], clients: tf.clients }
 }
 
-/** The applied intent of an applied site, or null. */
+/** The applied intent of an applied site, or null — organizations used before their switch existed on, as it renders. */
 export async function liveSite(name: string): Promise<Site | null> {
   const record = await sitesRepository.get(name)
   if (!record?.applied) return null
-  return (await sitesRepository.version(name, record.applied.version))?.site ?? null
+  const site = (await sitesRepository.version(name, record.applied.version))?.site
+  return site ? explicitOrganizations(site) : null
 }
 
 // By the host the applied version serves: a saved, not yet applied, address change moves nothing here.

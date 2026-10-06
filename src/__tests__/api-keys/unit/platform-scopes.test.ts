@@ -116,6 +116,6 @@ describe('personalScopeCatalog', () => {
   })
 
   it('an org machine key keeps its site catalog: jinbe permissions are not offered there', async () => {
-    await expect(apiKeyService.validateScopes(ORG, ROOT, ['users:read'])).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['users:read'] } })
+    await expect(apiKeyService.validateScopes(ORG, ['users:read'])).rejects.toMatchObject({ statusCode: 400, details: { invalid_scopes: ['users:read'] } })
   })
 })

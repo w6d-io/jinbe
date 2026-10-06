@@ -38,8 +38,8 @@ export interface RoleSpec {
 export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   developer: {
     group: 'staff-developers',
-    label: "Build sites: routes, gates, roles and permissions, the site's groups and who is in them, sign-up drafts; check access. Publishing is ops'",
-    permissions: ['sites:read', 'sites:write', 'sites.members:write', 'zones:read', 'groups:read', 'orgs:read', 'access:check'],
+    label: "Build sites: routes, gates, roles and permissions, the site's groups and who is in them, sign-up drafts; organisations for their owners and their API keys; check access. Publishing is ops'",
+    permissions: ['sites:read', 'sites:write', 'sites.members:write', 'zones:read', 'groups:read', 'orgs:read', 'orgs:write', 'orgs.keys:write', 'access:check'],
   },
   support: {
     group: 'staff-support',
@@ -88,7 +88,7 @@ export type OrgRole = 'owner' | 'member_manager' | 'key_manager' | 'auditor' | '
 export const ORG_ROLES: Readonly<Record<OrgRole, { label: string; permissions: readonly Permission[] }>> = {
   owner: { label: 'Owner: everything in this organisation', permissions: ORG_PERMISSIONS },
   member_manager: { label: 'Invite and remove members, assign their roles', permissions: ['org.members:read', 'org.members:write'] },
-  key_manager: { label: 'API keys and the key policy', permissions: ['org.keys:read', 'org.keys:write', 'org.keys:revoke', 'org.members:read'] },
+  key_manager: { label: 'See and revoke API keys, the key policy', permissions: ['org.keys:read', 'org.keys:write', 'org.keys:revoke', 'org.members:read'] },
   auditor: { label: 'Read the audit events and the members', permissions: ['org.audit:read', 'org.members:read'] },
   viewer: { label: 'See members and keys', permissions: ['org.members:read', 'org.keys:read'] },
 }

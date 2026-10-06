@@ -66,6 +66,20 @@ describe('republishAppliedSites', () => {
     expect(out.failed).toEqual([{ site: 'wiki', error: 'applied version 3 is gone' }])
   })
 
+  it('a version applied before the organizations switch existed keeps its org roles, orgs and owner role', async () => {
+    const legacy = payrollSite({ organizations: undefined, groups: { platform: {}, orgGrantable: { 'payroll-admin': { label: 'Admins', roles: ['admin'] } } } })
+    s.records = [{ site: { name: 'payroll', state: 'active' }, applied: { version: 1 } }]
+    s.versions.set('payroll@1', { site: legacy })
+    await republishAppliedSites({ email: 'x' })
+    const perms = s.published[0].perms as unknown as { orgRoles: object; orgServiceMap: object; ownerRole: string | null }
+    expect(perms.orgRoles).toEqual({ admin: ['payslips:create', 'payslips:read'] })
+    expect(Object.keys(perms.orgServiceMap)).toEqual([ACME])
+    expect(perms.ownerRole).toBe('admin')
+    // And the stored intent is made explicit with the wildcards, so its next edit saves.
+    s.records = [{ site: legacy, applied: { version: 1 } } as never]
+    expect(sitesWithWildcards(s.records as never)).toEqual(['payroll'])
+  })
+
   it('renderAppliedSites is the same model the plan reads', async () => {
     s.records = [{ site: { name: 'payroll', state: 'active' }, applied: { version: 1 } }]
     s.versions.set('payroll@1', { site: payrollSite() })
