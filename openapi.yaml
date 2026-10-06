@@ -21095,6 +21095,103 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/me/invitations/by-token:
+    get:
+      tags:
+        - me
+      description: "The invitation behind a link's token, for the page that offers
+        Accept: its organization, roles and expiry, with whether the caller may
+        accept it now. 404 for an unknown, used or expired token; 403
+        invitation_other_address when it was made for another address. The
+        caller's address need not be verified yet (`verified` says so)."
+      parameters:
+        - schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+          in: query
+          name: token
+          required: true
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitation:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      org:
+                        type: string
+                      email:
+                        type: string
+                      roles:
+                        type: array
+                        items:
+                          type: string
+                      invitedBy:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            nullable: true
+                          email:
+                            type: string
+                      byPlatform:
+                        type: boolean
+                      createdAt:
+                        type: string
+                      expiresAt:
+                        type: string
+                      organizationName:
+                        type: string
+                        nullable: true
+                  verified:
+                    type: boolean
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
   /api/me/invitations/accept:
     post:
       tags:

@@ -168,6 +168,32 @@ export async function selfInvitationRoutes(fastify: FastifyInstance) {
     return reply.send({ invitations: mine.map((i) => ({ ...viewOf(i), organizationName: names.get(i.org) ?? null })) })
   })
 
+  fastify.get('/invitations/by-token', {
+    ...open('self'),
+    schema: {
+      description:
+        "The invitation behind a link's token, for the page that offers Accept: its organization, roles and expiry, with " +
+        'whether the caller may accept it now. 404 for an unknown, used or expired token; 403 invitation_other_address when it ' +
+        "was made for another address. The caller's address need not be verified yet (`verified` says so).",
+      tags: ['me'],
+      querystring: { type: 'object', required: ['token'], properties: { token: { type: 'string', minLength: 16, maxLength: 128 } } },
+      response: {
+        200: { type: 'object', properties: { invitation: invitationSchema, verified: { type: 'boolean' } } },
+        401: errorSchema, 403: errorSchema, 404: errorSchema,
+      },
+    },
+  }, async (request, reply) => {
+    const me = await caller(request.userContext?.id)
+    if (!me) return reply.status(401).send({ error: 'Unauthorized', message: 'Authentication required' })
+    const { token } = request.query as { token: string }
+    const invitation = await orgInvitations.byToken(token)
+    if (!invitation) return reply.status(404).send({ error: 'Not Found', code: 'invitation_not_found', message: 'This invitation does not exist, was taken back, or has expired' })
+    // Only the invited address learns what the invitation holds: a forwarded link shows nothing.
+    if (invitation.email !== me.email) return reply.status(403).send({ error: 'Forbidden', code: 'invitation_other_address', message: "This invitation is for another address: sign in with the address it was sent to" })
+    const [org] = await organisationsById([invitation.org]).catch(() => [])
+    return reply.send({ invitation: { ...viewOf(invitation), organizationName: org?.name ?? null }, verified: me.verified })
+  })
+
   fastify.post('/invitations/accept', {
     ...open('self'),
     schema: {
@@ -189,7 +215,7 @@ export async function selfInvitationRoutes(fastify: FastifyInstance) {
     const invitation = 'token' in parsed.data ? await orgInvitations.byToken(parsed.data.token) : await orgInvitations.byId(parsed.data.id)
     if (!invitation) return reply.status(404).send({ error: 'Not Found', code: 'invitation_not_found', message: 'This invitation does not exist, was taken back, or has expired' })
     // Consent: the invited address itself, proven. A link forwarded to somebody else opens nothing.
-    if (invitation.email !== me.email) return reply.status(403).send({ error: 'Forbidden', code: 'invitation_other_address', message: `This invitation is for another address; sign in as ${invitation.email}` })
+    if (invitation.email !== me.email) return reply.status(403).send({ error: 'Forbidden', code: 'invitation_other_address', message: "This invitation is for another address: sign in with the address it was sent to" })
     if (!me.verified) return reply.status(403).send({ error: 'Forbidden', code: 'email_not_verified', message: 'Verify your address first, then accept the invitation' })
 
     let refused

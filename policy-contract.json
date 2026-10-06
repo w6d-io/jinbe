@@ -3607,6 +3607,13 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/me/invitations/by-token",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
           "method": "DELETE",
           "path": "/api/me/mcp/connections",
           "reach": {

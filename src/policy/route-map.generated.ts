@@ -205,6 +205,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"GET","path":"/api/me/invitations"},
   {"method":"POST","path":"/api/me/invitations/:invitationId/decline"},
   {"method":"POST","path":"/api/me/invitations/accept"},
+  {"method":"GET","path":"/api/me/invitations/by-token"},
   {"method":"DELETE","path":"/api/me/mcp/connections"},
   {"method":"GET","path":"/api/me/mcp/connections"},
   {"method":"DELETE","path":"/api/me/mcp/connections/:clientId"},

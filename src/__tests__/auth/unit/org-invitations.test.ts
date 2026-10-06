@@ -152,6 +152,24 @@ describe('accepting (consent)', () => {
     expect(h.members.size).toBe(0)
   })
 
+  it('by-token shows the invitation to its own address only, before accepting, verified or not', async () => {
+    const { token } = (await invite({ email: 'ann@x.io', roles: ['shop:member'] })).json()
+    const peek = (as: string, t = token) => app.inject({ url: `/api/me/invitations/by-token?token=${encodeURIComponent(t)}`, headers: { 'x-id': as } })
+    person('ann', 'ann@x.io', false)
+    const res = await peek('ann')
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ invitation: { org: ORG, organizationName: 'Acme', roles: ['shop:member'] }, verified: false })
+    expect(res.json().invitation.tokenHash).toBeUndefined()
+    person('eve', 'eve@x.io')
+    const other = await peek('eve')
+    expect(other.statusCode).toBe(403)
+    expect(other.json()).toMatchObject({ code: 'invitation_other_address' })
+    // A forwarded link never reveals who it was sent to.
+    expect(JSON.stringify(other.json())).not.toContain('ann@x.io')
+    expect((await peek('ann', 'x'.repeat(32))).statusCode).toBe(404)
+    expect(h.members.size).toBe(0)
+  })
+
   it('roles the inviter lost meanwhile are dropped, the membership stands', async () => {
     const { token } = (await invite({ email: 'ann@x.io', roles: ['shop:admin', 'shop:member'] })).json()
     h.refusedFor['admin@acme.io'] = ['shop:admin']
