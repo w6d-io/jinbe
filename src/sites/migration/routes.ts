@@ -22,7 +22,7 @@ const dualrunBody = z.object({ action: z.enum(['start', 'stop']) }).strict()
 const cutoverBody = z.object({ note: z.string().max(280).optional() }).strict()
 
 export async function migrationRoutes(fastify: FastifyInstance) {
-  fastify.get('', doc('sites:read', 'Migration state: legacy rule count, proposed groups, parity, dual run, cut-over, rollback window'),
+  fastify.get('', doc('sites:read', 'Migration state: legacy rules to migrate (built-ins counted apart), whether sites can be applied now, proposed groups, parity, dual run, cut-over, rollback window'),
     handle(async () => migration.getMigration()))
 
   fastify.post('/preview', { ...doc('sites:write', 'Convert the live legacy rules into proposed Sites / system sites (1:1); opt-in fixes and decisions per group/rule') },
@@ -36,7 +36,7 @@ export async function migrationRoutes(fastify: FastifyInstance) {
   fastify.post('/dualrun', { ...doc('sites:write', 'Start or stop the dual run') },
     handle(async (request) => migration.dualrun(parse(dualrunBody, request.body).action, actorOf(request))))
 
-  fastify.post('/cutover', { ...doc('sites:apply', 'Create the Site CRs and wait for RulesLoaded; then new sites may be applied. 202, follow GET /migration') },
+  fastify.post('/cutover', { ...doc('sites:apply', 'Create the Site CRs and wait for RulesLoaded; then new sites may be applied. 202, follow GET /migration. 409 on a mixed gateway or when a converted rule would share a URL with a rule that stays served') },
     handle(async (request, reply) => reply.status(202).send(await migration.cutover(actorOf(request), parse(cutoverBody, request.body ?? {}).note))))
 
   fastify.post('/rollback', { ...doc('sites:apply', 'Within the rollback window: restore the frozen legacy rules and pause the migrated Site CRs') },

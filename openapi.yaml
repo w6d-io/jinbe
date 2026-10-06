@@ -9055,7 +9055,8 @@ paths:
     get:
       tags: &a7
         - sites
-      description: "Migration state: legacy rule count, proposed groups, parity, dual
+      description: "Migration state: legacy rules to migrate (built-ins counted
+        apart), whether sites can be applied now, proposed groups, parity, dual
         run, cut-over, rollback window"
       x-permission: sites:read
       x-scope: platform
@@ -9103,7 +9104,8 @@ paths:
     post:
       tags: *a7
       description: Create the Site CRs and wait for RulesLoaded; then new sites may be
-        applied. 202, follow GET /migration
+        applied. 202, follow GET /migration. 409 on a mixed gateway or when a
+        converted rule would share a URL with a rule that stays served
       x-permission: sites:apply
       x-scope: platform
       x-step-up: true

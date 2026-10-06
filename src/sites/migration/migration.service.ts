@@ -7,8 +7,10 @@ import { kubeSites } from '../kube-sites.js'
 import { siteError } from '../checks.js'
 import { sitesConfig } from '../config.js'
 import { auditSite, type Actor } from '../audit.js'
+import { gatekit } from '../gatekit.client.js'
+import { BUILT_IN_RULE_IDS } from '../../bootstrap/build-rules.js'
 import { blocksOf, convertLegacy, type Decision, type Fix, type MigrationGroup } from './convert.js'
-import { runParity, type ParityDiff, type ParityReport } from './parity.js'
+import { probesOf, runParity, type ParityDiff, type ParityReport } from './parity.js'
 
 /**
  * The one-time migration from the legacy rules source (Redis `rbac:oathkeeper:rules`, bootstrap
@@ -17,10 +19,16 @@ import { runParity, type ParityDiff, type ParityReport } from './parity.js'
  *   not-started → previewed → dual-run → (cut-over running) → cut-over → done (rollback window over)
  *                                                          ↘ rolled-back
  *
- * Until the cut-over no new site is applied (there is never a mixed gateway). The cut-over creates
- * the converted Site CRs and waits for RulesLoaded on each; switching Oathkeeper's rule source is
- * the chart's job (both files mounted, C-2). Rollback, for SITES_MIGRATION_ROLLBACK_DAYS, restores
- * the frozen legacy rules and pauses the migrated Site CRs.
+ * Until the cut-over no new site is applied, unless the gateway loads both rule files
+ * (SITES_MIXED_GATEWAY). The cut-over creates the converted Site CRs and waits for RulesLoaded on
+ * each; switching Oathkeeper's rule source is the chart's job (both files mounted, C-2). It is
+ * refused on a mixed gateway, and while a converted rule matches a URL a rule that stays in the
+ * legacy source also matches: the built-ins, which the bootstrap writes again on every start, and
+ * the rules not carried over. Rollback, for SITES_MIGRATION_ROLLBACK_DAYS, restores the frozen
+ * legacy rules and pauses the migrated Site CRs.
+ *
+ * Built-ins are the platform's own rules (login, Kratos, kuma, jinbe, MCP): they are counted apart
+ * and are never "rules to migrate".
  *
  *   rbac:sites:migration           → String: JSON(MigrationDoc)
  *   rbac:sites:migration:snapshot  → String: JSON(legacy rules at cut-over)
@@ -57,16 +65,25 @@ const save = (doc: MigrationDoc) => getRedisClient().set(KEY, JSON.stringify(doc
 const windowOver = (doc: MigrationDoc, now = Date.now()) => doc.state === 'cut-over' && !!doc.rollbackUntil && now > new Date(doc.rollbackUntil).getTime()
 const shownState = (doc: MigrationDoc) => (windowOver(doc) ? 'done' : doc.cutover?.state === 'running' ? 'cutting-over' : doc.state)
 
-/** New sites are applied only after the cut-over (or where there never were legacy rules). */
-export async function assertApplyAllowed(): Promise<void> {
-  const doc = await load()
-  if (doc.state === 'cut-over') return
-  if (doc.state === 'rolled-back') throw siteError(409, 'migration_rolled_back', 'The migration was rolled back; the gateway reads the legacy rules again, so sites cannot be applied')
+const builtInIds = new Set(BUILT_IN_RULE_IDS)
+const isBuiltIn = (rule: { id: string }) => builtInIds.has(rule.id)
+
+type ApplyBlock = { code: string; message: string }
+
+/** Why new sites cannot be applied now, or null when they can. */
+function applyBlock(doc: MigrationDoc, legacy: OathkeeperRule[]): ApplyBlock | null {
+  if (doc.state === 'cut-over') return null
+  if (doc.state === 'rolled-back') return { code: 'migration_rolled_back', message: 'The migration was rolled back; the gateway reads the legacy rules again, so sites cannot be applied' }
   // The gateway loads both rule files: sites coexist with the legacy rules (preview still refuses any overlap).
-  if (sitesConfig().SITES_MIXED_GATEWAY) return
-  if ((await redisRbacRepository.getAccessRules()).length > 0) {
-    throw siteError(409, 'migration_pending', 'The gateway still reads the legacy rules; sites can be applied once the migration is cut over')
-  }
+  if (sitesConfig().SITES_MIXED_GATEWAY) return null
+  if (legacy.length > 0) return { code: 'migration_pending', message: 'The gateway still reads the legacy rules; sites can be applied once the migration is cut over' }
+  return null
+}
+
+/** New sites are applied only after the cut-over, on a mixed gateway, or where there never were legacy rules. */
+export async function assertApplyAllowed(): Promise<void> {
+  const block = applyBlock(await load(), await redisRbacRepository.getAccessRules())
+  if (block) throw siteError(409, block.code, block.message)
 }
 
 /** Site CRs the migration created, which the sync loop keeps in place after the cut-over. */
@@ -107,9 +124,16 @@ function dualrunView(doc: MigrationDoc) {
 
 export async function getMigration() {
   const doc = await load()
+  const legacy = await redisRbacRepository.getAccessRules()
+  const block = applyBlock(doc, legacy)
   return {
     state: shownState(doc),
-    legacyRules: (await redisRbacRepository.getAccessRules()).length,
+    // Rules to migrate; the built-ins are counted apart.
+    legacyRules: legacy.filter((r) => !isBuiltIn(r)).length,
+    builtIn: legacy.filter(isBuiltIn).length,
+    mixedGateway: sitesConfig().SITES_MIXED_GATEWAY,
+    applyAllowed: !block,
+    ...(block ? { applyBlocked: block } : {}),
     groups: doc.groups ?? [],
     ...(doc.parity ? { parity: doc.parity } : {}),
     ...(doc.dualrun ? { dualrun: dualrunView(doc) } : {}),
@@ -201,12 +225,44 @@ function mark(s: CutoverStage, state: CutoverStage['state'], detail?: string) {
   if (detail) s.detail = detail
 }
 
+/**
+ * Converted rules that match a URL a rule staying in the legacy source also matches. Parity takes the
+ * converted legacy rules as gone; the built-ins are not (the bootstrap writes them again on every
+ * start), nor are the rules not carried over. Two rules on one URL and Oathkeeper fails the request.
+ */
+async function cutoverOverlaps(groups: MigrationGroup[]): Promise<string[]> {
+  const legacy = await redisRbacRepository.getAccessRules()
+  const converted = new Set(groups.flatMap((g) => g.legacyRuleIds))
+  const staying = legacy.filter((r) => isBuiltIn(r) || !converted.has(r.id))
+  const rendered = groups.flatMap((g) => g.renderedRules)
+  if (staying.length === 0 || rendered.length === 0) return []
+  const candidate = new Set(rendered.map((r) => r.id))
+  const hosts = [...new Set(groups.flatMap((g) => g.siteCr?.spec.hosts ?? []))]
+  const probes = [...new Map([...staying, ...rendered].flatMap(probesOf).map((p) => [`${p.method} ${p.url}`, p])).values()]
+  const result = await gatekit.overlap([...staying, ...rendered], probes, hosts)
+  // One line per pair of rules, with the first request both match.
+  const pairs = new Map<string, string>()
+  for (const o of result.overlaps.filter((x) => candidate.has(x.a) !== candidate.has(x.b))) {
+    const [site, old] = candidate.has(o.a) ? [o.a, o.b] : [o.b, o.a]
+    if (!pairs.has(`${site} ${old}`)) pairs.set(`${site} ${old}`, `${site} and ${old} (${o.method} ${o.exampleUrl})`)
+  }
+  return [...pairs.values()]
+}
+
 export async function cutover(actor: Actor, note?: string) {
   const doc = await load()
   assertNotCutOver(doc)
+  if (sitesConfig().SITES_MIXED_GATEWAY) {
+    throw siteError(409, 'mixed_gateway', 'The gateway loads the legacy rules and the site rules side by side, so the cut-over would serve both copies of every converted rule. Sites can already be applied here; cut over once the gateway reads the site rules only')
+  }
   const view = dualrunView(doc)
   if (!view?.eligible) throw siteError(409, 'dualrun_not_eligible', 'The dual run must run for its minimum duration with no regression first')
   const groups = (doc.groups ?? []).filter((g) => g.kind !== 'unassigned' && g.siteCr)
+  const overlaps = await cutoverOverlaps(groups)
+  if (overlaps.length > 0) {
+    const shown = overlaps.slice(0, 5).join('; ')
+    throw siteError(409, 'cutover_overlap', `${overlaps.length} pair(s) of rules: a converted rule matches the same requests as a rule that stays in the legacy source (the built-in platform rules are written again on every start); the gateway would fail those requests: ${shown}${overlaps.length > 5 ? '; …' : ''}`)
+  }
   const kube = kubeSites()
   await kube.ping()
 

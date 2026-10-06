@@ -8,7 +8,8 @@ import type { OathkeeperRule } from '../../services/redis-rbac.repository.js'
 
 // S-5: the one-time migration of legacy rules (rbac:oathkeeper:rules + bootstrap built-ins) into
 // Sites and system sites: preview → parity → dual run → cut-over → (rollback within 7 days).
-// New sites may not be applied before the cut-over.
+// New sites may not be applied before the cut-over (unless the gateway loads both rule files), and the
+// cut-over is refused while a converted rule would share a URL with a rule that stays served.
 
 const h = vi.hoisted(() => ({ emit: vi.fn(), mfa: vi.fn() }))
 
@@ -77,7 +78,12 @@ async function gatekitFetch(url: URL | string, init: { body: string }) {
   } else if (path === '/compile') {
     answer = { results: body.patterns.map((p: { id: string }) => ({ id: p.id, ok: true })) }
   } else if (path === '/overlap') {
-    answer = { overlaps: [] }
+    const overlaps: Array<{ a: string; b: string; method: string; exampleUrl: string }> = []
+    for (const p of body.probes as Array<{ method: string; url: string }>) {
+      const matched = (body.rules as OathkeeperRule[]).filter((r) => r.match.methods.includes(p.method) && oathkeeperRegex(r.match.url).test(p.url))
+      for (let i = 0; i < matched.length; i++) for (let j = i + 1; j < matched.length; j++) overlaps.push({ a: matched[i].id, b: matched[j].id, method: p.method, exampleUrl: p.url })
+    }
+    answer = { overlaps }
   }
   return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } })
 }
@@ -132,9 +138,34 @@ async function cutOver() {
   return stepCutover()
 }
 
+const withMixedGateway = async (fn: () => Promise<void>) => {
+  process.env.SITES_MIXED_GATEWAY = 'true'
+  resetSitesConfig()
+  try {
+    await fn()
+  } finally {
+    delete process.env.SITES_MIXED_GATEWAY
+    resetSitesConfig()
+  }
+}
+
 describe('state', () => {
-  it('starts not-started with the legacy rule count', async () => {
-    expect(await state()).toMatchObject({ state: 'not-started', legacyRules: builtIns.length + 2 })
+  it('starts not-started with the rules to migrate, the built-ins counted apart', async () => {
+    expect(await state()).toMatchObject({ state: 'not-started', legacyRules: 2, builtIn: builtIns.length })
+  })
+
+  it('a deployment whose only legacy rules are the built-ins has nothing to migrate', async () => {
+    store.s.accessRules = [...builtIns]
+    expect(await state()).toMatchObject({ legacyRules: 0, builtIn: builtIns.length })
+  })
+
+  it('says whether sites can be applied now, and why not', async () => {
+    expect(await state()).toMatchObject({ mixedGateway: false, applyAllowed: false, applyBlocked: { code: 'migration_pending' } })
+    await withMixedGateway(async () => {
+      const s = await state()
+      expect(s).toMatchObject({ mixedGateway: true, applyAllowed: true })
+      expect(s.applyBlocked).toBeUndefined()
+    })
   })
 })
 
@@ -225,16 +256,34 @@ describe('cut-over and rollback', () => {
   })
 
   it('a mixed gateway (both rule files loaded) applies sites before the cut-over', async () => {
-    process.env.SITES_MIXED_GATEWAY = 'true'
-    resetSitesConfig()
-    try {
+    await withMixedGateway(async () => {
       const res = await applyNewSite()
       expect(res.json().error).not.toBe('migration_pending')
       expect(res.statusCode).toBeLessThan(300)
-    } finally {
-      delete process.env.SITES_MIXED_GATEWAY
-      resetSitesConfig()
-    }
+    })
+  })
+
+  it('refuses the cut-over on a mixed gateway: it would serve both copies of every converted rule', async () => {
+    store.s.accessRules = [expenses, stray]
+    await toDualRun()
+    await withMixedGateway(async () => {
+      const res = await app.inject({ method: 'POST', url: '/sites/migration/cutover', headers: WM, payload: {} })
+      expect(res.statusCode).toBe(409)
+      expect(res.json().error).toBe('mixed_gateway')
+    })
+    expect(cluster.crs.size).toBe(0)
+    // Preview, parity and the dual run still work there.
+    expect((await state()).state).toBe('dual-run')
+  })
+
+  it('refuses the cut-over while a converted rule shares a URL with a built-in, which the bootstrap keeps writing', async () => {
+    await toDualRun()
+    const res = await app.inject({ method: 'POST', url: '/sites/migration/cutover', headers: WM, payload: {} })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error).toBe('cutover_overlap')
+    expect(res.json().message).toContain('site-sign-in-selfservice-root and selfservice-root (GET https://auth.dev.example.com/)')
+    expect(cluster.crs.size).toBe(0)
+    expect((await state()).state).toBe('dual-run')
   })
 
   it('refuses a mixed gateway on a production environment', () => {
@@ -257,10 +306,10 @@ describe('cut-over and rollback', () => {
   })
 
   it('creates the Site CRs, waits for RulesLoaded, then opens applies of new sites', async () => {
+    store.s.accessRules = [expenses, stray]
     const done = await cutOver()
     expect(done.state).toBe('cut-over')
-    expect([...cluster.crs.keys()].sort()).toEqual(['expenses', 'jinbe', 'kuma', 'sign-in'])
-    expect(cluster.crs.get('kuma')!.spec.system).toBe(true)
+    expect([...cluster.crs.keys()]).toEqual(['expenses'])
     expect(cluster.crs.get('expenses')!.spec.system).toBeUndefined()
     const s = await state()
     expect(s.state).toBe('cut-over')
@@ -270,6 +319,7 @@ describe('cut-over and rollback', () => {
   })
 
   it('removes what it created when the rules do not load in time', async () => {
+    store.s.accessRules = [expenses, stray]
     await toDualRun()
     vi.useFakeTimers({ toFake: ['Date'] })
     await app.inject({ method: 'POST', url: '/sites/migration/cutover', headers: WM, payload: {} })
@@ -281,17 +331,19 @@ describe('cut-over and rollback', () => {
   })
 
   it('rollback restores the frozen legacy rules and pauses the migrated sites, within the window only', async () => {
+    store.s.accessRules = [expenses, stray]
     await cutOver()
     store.s.accessRules = []
     const res = await app.inject({ method: 'POST', url: '/sites/migration/rollback', headers: WM })
     expect(res.statusCode).toBe(200)
-    expect(store.s.accessRules.map((r) => r.id)).toContain('kuma-api')
-    expect(cluster.crs.get('kuma')!.spec.paused).toBe(true)
+    expect(store.s.accessRules.map((r) => r.id)).toContain('expenses-oathkeeper')
+    expect(cluster.crs.get('expenses')!.spec.paused).toBe(true)
     expect((await state()).state).toBe('rolled-back')
     expect((await applyNewSite()).statusCode).toBe(409)
   })
 
   it('rollback after the window is refused', async () => {
+    store.s.accessRules = [expenses, stray]
     await cutOver()
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(Date.now() + 8 * 86_400_000)

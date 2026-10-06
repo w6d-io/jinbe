@@ -40,6 +40,14 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } fr
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
 export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as']
 
+/** Every id the builders below produce: the platform's own rules, written again by the bootstrap on every start. */
+export const BUILT_IN_RULE_IDS: readonly string[] = [
+  'selfservice-root', 'selfservice-ui', 'kratos-public',
+  'kuma-api-preflight', 'kuma-api', 'kuma-settings', 'kuma-app',
+  'jinbe-preflight', 'jinbe-public', 'jinbe-api',
+  ...OPTIONAL_BUILT_IN_RULE_IDS,
+]
+
 export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null }): OathkeeperRule[] {
   const { domains, urls } = input
   const rules: OathkeeperRule[] = []

@@ -13,6 +13,7 @@ import {
   buildMcpRule,
   buildMcpOAuthAsRule,
   OPTIONAL_BUILT_IN_RULE_IDS,
+  BUILT_IN_RULE_IDS,
 } from '../../bootstrap/build-rules.js'
 
 const URLS = {
@@ -262,5 +263,14 @@ describe('bootstrap/build-rules', () => {
       expect(buildMcpOAuthAsRule('not a url', URLS.jinbeInternal)).toBeNull()
       expect(buildBuiltInRules({ domains: DOMAINS, urls: URLS })).toEqual(buildBuiltInRules({ domains: DOMAINS, urls: URLS, mcpOAuthIssuer: null }))
     })
+  })
+
+  it('BUILT_IN_RULE_IDS lists every id the builders produce (the migration counts them apart)', () => {
+    const all = [
+      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS, signInGate: true, mcp: { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' }, mcpOAuthIssuer: 'https://hydra.example.com' }),
+      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS }),
+      buildJinbePublicRule('jinbe.example.com', URLS.jinbeInternal),
+    ]
+    expect(new Set(all.map((r) => r.id))).toEqual(new Set(BUILT_IN_RULE_IDS))
   })
 })
