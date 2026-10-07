@@ -22,7 +22,7 @@ const requestBody = z.object({ version: z.number().int().min(1), note: z.string(
 const verifyBody = z.object({ waf: z.boolean().optional() }).strict()
 const approveBody = z.object({ acknowledge: acknowledgeSchema.optional() }).strict()
 const rejectBody = z.object({ reason: z.string().max(280).optional() }).strict()
-const requestsQuery = z.object({ state: z.enum(['pending', 'applied', 'rejected']).optional(), site: z.string().max(40).optional() })
+const requestsQuery = z.object({ state: z.enum(['pending', 'applied', 'rejected', 'superseded']).optional(), site: z.string().max(40).optional() })
 const SSE_POLL_MS = 500
 
 async function events(request: FastifyRequest, reply: FastifyReply) {

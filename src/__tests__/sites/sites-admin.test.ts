@@ -189,6 +189,20 @@ describe('static reads', () => {
   it('/requests lists requests', async () => {
     expect((await app.inject({ method: 'GET', url: '/sites/requests' })).json()).toEqual([])
   })
+
+  it('asking again for the same version answers the pending request (a double click makes one), and an applied newer version supersedes it', async () => {
+    const v = await saveAs(ADMIN)
+    const ask = () => app.inject({ method: 'POST', url: '/sites/payroll/requests', headers: ADMIN, payload: { version: v, acknowledge: ACK } })
+    const [a, b, c] = await Promise.all([ask(), ask(), ask()])
+    expect(new Set([a.json().id, b.json().id, c.json().id]).size).toBe(1)
+    const pending = () => app.inject({ method: 'GET', url: '/sites/requests?state=pending' }).then((r) => r.json())
+    expect(await pending()).toHaveLength(1)
+    // The same version applied directly: nothing is left to approve.
+    expect((await app.inject({ method: 'POST', url: '/sites/payroll/apply', headers: SUPER, payload: { version: v, acknowledge: ACK } })).statusCode).toBe(200)
+    expect(await pending()).toEqual([])
+    const all = (await app.inject({ method: 'GET', url: '/sites/requests' })).json()
+    expect(all).toEqual([expect.objectContaining({ state: 'superseded', reason: `version ${v} is applied` })])
+  })
 })
 
 describe('deleted sites and restore', () => {

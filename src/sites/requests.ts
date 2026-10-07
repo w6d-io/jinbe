@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getRedisClient } from '../services/redis-client.service.js'
+import { withRedisLock } from '../services/redis-lock.js'
 import { riskOf, type Risk } from './diff.js'
 import type { SiteRecord } from './repository.js'
 import { appliedRender, getRecord } from './sites.service.js'
@@ -17,10 +18,15 @@ import { auditSite, type Actor } from './audit.js'
  * be applied through a request approved by ANOTHER super_admin; `all` — every version. With it off,
  * requests still work and anyone allowed to apply may approve, the requester included.
  *
+ * One pending request per site and saved version: asking again (a double click, a retry) answers
+ * the pending one. A pending request whose version was saved over, or overtaken by an applied one, is
+ * closed as `superseded` — on the next request for the site and whenever requests are listed — so the
+ * queue never shows versions nobody can approve any more.
+ *
  *   rbac:sites:requests → Hash: { id: JSON(ApplyRequest) }
  */
 
-export type RequestState = 'pending' | 'applied' | 'rejected'
+export type RequestState = 'pending' | 'applied' | 'rejected' | 'superseded'
 
 export interface ApplyRequest {
   id: string
@@ -69,33 +75,64 @@ async function load(id: string): Promise<ApplyRequest> {
 
 const store = (r: ApplyRequest) => getRedisClient().hset(KEY, r.id, JSON.stringify(r))
 
+const allRequests = async (): Promise<ApplyRequest[]> => Object.values(await getRedisClient().hgetall(KEY)).map((raw) => JSON.parse(raw) as ApplyRequest)
+
+/** Why a pending request can no longer be approved, or null while it can. */
+function staleness(r: ApplyRequest, record: SiteRecord | null): string | null {
+  if (!record) return 'the site is gone'
+  if (record.applied && record.applied.version >= r.version) return `version ${record.applied.version} is applied`
+  if (record.etag !== r.etag || record.version !== r.version) return `version ${record.version} was saved since`
+  return null
+}
+
+/** Closes the pending requests of these requests' sites that can no longer be approved; returns them all, updated. */
+async function closeStale(requests: ApplyRequest[]): Promise<ApplyRequest[]> {
+  const sites = [...new Set(requests.filter((r) => r.state === 'pending').map((r) => r.site))]
+  const records = new Map(await Promise.all(sites.map(async (site) => [site, await getRecord(site).catch(() => null)] as const)))
+  const now = new Date().toISOString()
+  return Promise.all(requests.map(async (r) => {
+    if (r.state !== 'pending' || !records.has(r.site)) return r
+    const why = staleness(r, records.get(r.site) ?? null)
+    if (!why) return r
+    const closed: ApplyRequest = { ...r, state: 'superseded', decidedBy: 'jinbe', decidedAt: now, reason: why }
+    await store(closed)
+    return closed
+  }))
+}
+
 export async function createRequest(name: string, body: { version: number; note?: string; acknowledge?: string[] }, actor: Actor): Promise<ApplyRequest> {
   assertNotSystem(name)
   const record = await getRecord(name)
   if (body.version !== record.version) throw siteError(409, 'version_mismatch', `Version ${record.version} is the saved one; request that`)
   // A request nobody could approve is refused now, not at approval.
   await assertAcknowledged(record, body.acknowledge ?? [])
-  const risk = await riskFor(record)
-  const request: ApplyRequest = {
-    id: randomUUID(),
-    site: name,
-    version: record.version,
-    etag: record.etag,
-    ...(body.note ? { note: body.note } : {}),
-    ...(body.acknowledge?.length ? { acknowledge: [...new Set(body.acknowledge)] } : {}),
-    requestedBy: actor.email ?? 'unknown',
-    requestedAt: new Date().toISOString(),
-    state: 'pending',
-    risk,
-    needsSecondApprover: fourEyesRequired(risk),
-  }
-  await store(request)
-  auditSite('request', name, actor, `asked to apply version ${record.version}`, { requestId: request.id, risk: risk.level, ...(request.acknowledge ? { acknowledged: request.acknowledge } : {}) })
-  return request
+  return withRedisLock(`site-requests:${name}`, async () => {
+    const mine = await closeStale((await allRequests()).filter((r) => r.site === name))
+    // Asked again (a double click, a retry): the pending request for this very version answers.
+    const same = mine.find((r) => r.state === 'pending' && r.version === record.version && r.etag === record.etag)
+    if (same) return same
+    const risk = await riskFor(record)
+    const request: ApplyRequest = {
+      id: randomUUID(),
+      site: name,
+      version: record.version,
+      etag: record.etag,
+      ...(body.note ? { note: body.note } : {}),
+      ...(body.acknowledge?.length ? { acknowledge: [...new Set(body.acknowledge)] } : {}),
+      requestedBy: actor.email ?? 'unknown',
+      requestedAt: new Date().toISOString(),
+      state: 'pending',
+      risk,
+      needsSecondApprover: fourEyesRequired(risk),
+    }
+    await store(request)
+    auditSite('request', name, actor, `asked to apply version ${record.version}`, { requestId: request.id, risk: risk.level, ...(request.acknowledge ? { acknowledged: request.acknowledge } : {}) })
+    return request
+  })
 }
 
 export async function listRequests(filter: { state?: string; site?: string }): Promise<ApplyRequest[]> {
-  const all = Object.values(await getRedisClient().hgetall(KEY)).map((raw) => JSON.parse(raw) as ApplyRequest)
+  const all = await closeStale(await allRequests())
   return all
     .filter((r) => (!filter.state || r.state === filter.state) && (!filter.site || r.site === filter.site))
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
