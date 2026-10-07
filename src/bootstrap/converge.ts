@@ -1,4 +1,6 @@
 import { getRedisClient } from '../services/redis-client.service.js'
+import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { forgetGroupMembers, pruneRetiredGroups } from '../services/group-cascade.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { rbacOwnedDrift } from '../telemetry/metrics.js'
 import { env } from '../config/env.js'
@@ -26,6 +28,10 @@ export async function convergeJinbe(logger: Logger): Promise<ConvergeResult> {
     }).catch(() => {})
   }
   if (result.drifted.length) logger.warn({ drifted: result.drifted }, 'RBAC owned by jinbe was edited outside jinbe — converged back')
+  // A staff group removed from code leaves nobody holding it; the ones retired before this existed, once.
+  const retiredNow = (result.removed ?? []).filter((slot) => slot.startsWith('rbac:groups#')).map((slot) => slot.slice('rbac:groups#'.length))
+  if (retiredNow.length) await forgetGroupMembers(retiredNow)
+  await pruneRetiredGroups(await redisRbacRepository.getGroups()).catch((err) => logger.warn({ err }, 'retired groups not pruned from their members yet'))
   if (result.created.length || result.updated.length || result.removed?.length) {
     logger.info({ created: result.created, updated: result.updated, removed: result.removed ?? [] }, 'RBAC owned by jinbe written')
   }

@@ -1,3 +1,4 @@
+import { forgetGroupMembers } from './group-cascade.js'
 import { randomUUID } from 'node:crypto'
 import { redisRbacRepository, type FlatRolesMap, type RouteMap, type ImportHistoryEntry, type ImportHistoryReason } from './redis-rbac.repository.js'
 import { auditEventService, type AuditActorInput, type AuditFlag } from './audit-event.service.js'
@@ -309,9 +310,10 @@ class RbacBundleService {
     if (want('groups')) {
       if (isFull) {
         const existingGroups = await redisRbacRepository.getGroups()
-        for (const name of Object.keys(existingGroups)) {
-          if (!(name in groups) && !isStaffGroup(name)) await redisRbacRepository.deleteGroup(name)
-        }
+        const pruned = Object.keys(existingGroups).filter((name) => !(name in groups) && !isStaffGroup(name))
+        for (const name of pruned) await redisRbacRepository.deleteGroup(name)
+        // A group the snapshot does not have leaves nobody holding it (group-cascade.ts).
+        await forgetGroupMembers(pruned)
       }
       for (const [name, def] of Object.entries(groups)) {
         await redisRbacRepository.setGroup(name, def)

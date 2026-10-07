@@ -1,3 +1,4 @@
+import { forgetGroupMembers } from '../services/group-cascade.js'
 import { redisRbacRepository, type GroupDefinition } from '../services/redis-rbac.repository.js'
 import { withRedisLock } from '../services/redis-lock.js'
 import { rbacService } from '../services/rbac.service.js'
@@ -69,6 +70,8 @@ export async function unpublishPermissions(name: string, actor: AuditActorInput)
 }
 
 async function reconcileGroups(name: string, perms: Permissions): Promise<void> {
+  // Groups of this site the new version no longer defines: deleted here, taken off their members after.
+  const dropped: string[] = []
   await withRedisLock('groups', async () => {
     const groups = await redisRbacRepository.getGroups()
     const wanted: Record<string, GroupDefinition> = { ...perms.groups.platform }
@@ -85,11 +88,13 @@ async function reconcileGroups(name: string, perms: Permissions): Promise<void> 
       if (Object.keys(rest).length === 0 && group.startsWith(`${name}-`)) {
         await redisRbacRepository.deleteGroup(group)
         await redisRbacRepository.deleteGroupMetadata(group)
+        dropped.push(group)
       } else {
         await redisRbacRepository.setGroup(group, rest)
       }
     }
   })
+  if (dropped.length) await forgetGroupMembers(dropped)
 }
 
 /**
