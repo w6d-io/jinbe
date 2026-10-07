@@ -153,6 +153,8 @@ describe('the per-group "Members must use 2FA" switch (one flag: sign-in at aal2
     expect(defaultRequired('staff-auditors', { global: ['viewer'] }, { global: h.roles.global })).toBe(false)
     expect(defaultRequired('other-auditors', { global: ['auditor'] }, { global: h.roles.global })).toBe(true) // audit:export writes
     expect(defaultRequired('users', {}, {})).toBe(false)
+    // A group giving site roles only: the site's own two-step rule decides, the default is off.
+    expect(defaultRequired('enrollment_users', { 'enrollment-service': ['user'] }, { 'enrollment-service': { user: ['enrollment-service.me:use'] } })).toBe(false)
   })
 
   it('a stored value overrides the default either way', async () => {

@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { needs } from '../policy/route-access.js'
 import { kratosService } from '../services/kratos.service.js'
-import { redisRbacRepository } from '../services/redis-rbac.repository.js'
+import { redisRbacRepository, type GroupDefinition } from '../services/redis-rbac.repository.js'
+import { KEYLESS_APPS } from '../services/authorization-resolution.js'
 import { rbacService } from '../services/rbac.service.js'
 import { auditEventService } from '../services/audit-event.service.js'
 import { addToGroup, groupsForSubjects, membersOfGroup, removeFromGroup } from '../services/organisation-store.js'
@@ -41,16 +42,21 @@ export function siteGroupsOf(site: Site): Record<string, string[]> {
 }
 
 /**
- * Whether `group` is one site's own group (siteGroupsOf its published intent) binding that site and
- * nothing else: whoever holds sites.members:write may hand it out anywhere a group is given (a new
- * user, Users → groups, bulk), as from the site's page.
+ * Whether a group definition gives roles on published sites only — no platform app (jinbe, kuma,
+ * global). Such a group opens nothing beyond those sites' own routes, whose roles their published
+ * intents define: whoever holds sites.members:write may define it and hand it out anywhere a group
+ * is given (create_group, a new user, Users → groups, bulk), as from a site's page. A group binding
+ * a platform role stays under the holding rule.
  */
-export async function isOwnSiteGroup(group: string): Promise<boolean> {
-  const def = (await redisRbacRepository.getGroups())[group]
-  const apps = def ? Object.keys(def) : []
-  if (apps.length !== 1) return false
-  const site = await liveSite(apps[0])
-  return !!site && group in siteGroupsOf(site)
+export async function isSiteOnlyDefinition(def: GroupDefinition | null | undefined): Promise<boolean> {
+  const apps = Object.keys(def ?? {})
+  if (apps.length === 0 || apps.some((app) => KEYLESS_APPS.includes(app))) return false
+  return (await Promise.all(apps.map((app) => liveSite(app)))).every((site) => !!site)
+}
+
+/** The same, for a group as the model holds it now. */
+export async function isSiteOnlyGroup(group: string): Promise<boolean> {
+  return isSiteOnlyDefinition((await redisRbacRepository.getGroups())[group])
 }
 
 /** The published group, only when it binds this site and nothing else. */

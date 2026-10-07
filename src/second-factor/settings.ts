@@ -3,6 +3,7 @@ import { staffGroupsRequiringSecondFactor } from '../policy/roles.js'
 import { opalPublisher } from '../services/opal-publisher.js'
 import { withRedisLock } from '../services/redis-lock.js'
 import { flatten, groupGrants, loadRoles, type RolesByScope } from '../services/grant-subset.js'
+import { KEYLESS_APPS } from '../services/authorization-resolution.js'
 
 /**
  * "Members must use 2FA" — ONE switch per group (owner decision 2026-09-30), and it drives both:
@@ -75,11 +76,17 @@ export function parseFlags(raw: string | undefined): Record<string, boolean> {
   }
 }
 
-/** The default: on for a group that can change anything or holds `*` (and REQUIRED_GROUPS), off for a read-only one. */
+/**
+ * The default: on for a group that can change anything on the platform or holds `*` there (and
+ * REQUIRED_GROUPS), off for a read-only one — and off for a group giving site roles only: a site's
+ * own two-step rule (its login.twoFactor) decides there, and a site's users are not staff.
+ */
 export function defaultRequired(name: string, definition: GroupDefinition | undefined, roles: RolesByScope): boolean {
   if (REQUIRED_GROUPS.includes(name)) return true
   if (READ_ONLY_GROUPS.includes(name)) return false
-  return flatten(groupGrants(definition, roles)).some((p) => !READ_VERBS.has(p.split(':')[1] ?? ''))
+  const grants = groupGrants(definition, roles)
+  const platform = Object.fromEntries(Object.entries(grants).filter(([app]) => KEYLESS_APPS.includes(app)))
+  return flatten(platform).some((p) => !READ_VERBS.has(p.split(':')[1] ?? ''))
 }
 
 async function compute(): Promise<{ flags: Map<string, GroupFlag>; stored: Record<string, boolean> }> {

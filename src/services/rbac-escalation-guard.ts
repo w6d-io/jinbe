@@ -125,6 +125,7 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
     case 'group': {
       if (isStaffGroup(change.name)) refuseDefinedInCode(`Group '${change.name}'`, change, actor)
       if (!change.after) return
+      if (await maySiteOnly(change.after, actor.email)) return
       const v = await ask({ kind: 'define_group', actor: actor.email, definition: change.after })
       if (!v.allow) refuseVerdict(v, `Group '${change.name}'`, change, actor)
       return
@@ -152,23 +153,28 @@ export async function assertNoSelfEscalation(change: RbacChange, actor?: AuditAc
 }
 
 /**
+ * A group giving roles on published sites only (sites/members.ts isSiteOnlyDefinition) follows the
+ * site-members rule instead of the holding rule: sites.members:write in jinbe, whatever the actor
+ * holds on those sites. A platform role in it keeps the holding rule.
+ */
+async function maySiteOnly(definition: GroupDefinition | null | undefined, email: string): Promise<boolean> {
+  const { isSiteOnlyDefinition } = await import('../sites/members.js')
+  if (!(await isSiteOnlyDefinition(definition))) return false
+  try {
+    return await holdsInJinbe(email, 'sites.members:write')
+  } catch (err) {
+    unavailable(err)
+  }
+}
+
+/**
  * Handing out a group (PUT /api/admin/users/:email/groups, the bulk add): the policy's
- * `add_to_group` verdict. A group nothing defines is refused earlier, as not in the model. A site's
- * own group (`<site>-…`, its sign-up group) follows the site-members rule instead (sites/members.ts):
- * sites.members:write in jinbe, whatever the actor holds on that site.
+ * `add_to_group` verdict. A group nothing defines is refused earlier, as not in the model. A group
+ * giving site roles only follows the site-members rule instead (maySiteOnly).
  */
 export async function assertMayAssignGroup(group: string, actor?: AuditActorInput): Promise<void> {
   authenticated(actor)
-  const { isOwnSiteGroup } = await import('../sites/members.js')
-  if (await isOwnSiteGroup(group)) {
-    let may: boolean
-    try {
-      may = await holdsInJinbe(actor.email, 'sites.members:write')
-    } catch (err) {
-      unavailable(err)
-    }
-    if (may) return
-  }
+  if (await maySiteOnly((await redisRbacRepository.getGroups())[group], actor.email)) return
   const v = await ask({ kind: 'add_to_group', actor: actor.email, group })
   if (!v.allow) refuseVerdict(v, `Group '${group}'`, { kind: 'group', name: group, after: null }, actor)
 }

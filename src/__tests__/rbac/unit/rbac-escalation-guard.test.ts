@@ -173,9 +173,9 @@ describe('fails closed', () => {
   })
 })
 
-describe("a site's own group", () => {
+describe('a group giving site roles only', () => {
   beforeEach(() => {
-    store.groups = { ...store.groups, 'shop-users': { shop: ['reader'] }, 'shop-viewers': { shop: ['viewer'] }, 'shop-wide': { shop: ['viewer'], billing: ['viewer'] } }
+    store.groups = { ...store.groups, 'shop-users': { shop: ['reader'] }, 'shop-viewers': { shop: ['viewer'] }, 'shop-wide': { shop: ['viewer'], billing: ['viewer'] }, enrollment_users: { shop: ['reader'] }, 'shop-staff': { shop: ['reader'], jinbe: ['viewer'] } }
     opaWorld.verdict = () => refused({ reasons: ['missing_permissions'], missing: { shop: ['shop:read'] }, grantedBy: ['shop-users'] })
   })
 
@@ -190,5 +190,20 @@ describe("a site's own group", () => {
     expect((await refusal(assertMayAssignGroup('shop-users', ADMIN)))?.code).toBe('grant_exceeds_own')
     opaWorld.permissions[ADMIN.email] = ['sites.members:write']
     expect((await refusal(assertMayAssignGroup('shop-wide', ADMIN)))?.code).toBe('grant_exceeds_own')
+  })
+
+  it('whatever its name (create_group enrollment_users): handed out and defined by sites.members:write', async () => {
+    opaWorld.permissions[ADMIN.email] = ['sites.members:write']
+    expect(await refusal(assertMayAssignGroup('enrollment_users', ADMIN))).toBeNull()
+    expect(await refusal(assertNoSelfEscalation({ kind: 'group', name: 'enrollment_users', after: { shop: ['reader'] } }, ADMIN))).toBeNull()
+    expect(grantVerdict).not.toHaveBeenCalled()
+  })
+
+  it('a platform role in it, or no sites.members:write, keeps the holding rule for defining it too', async () => {
+    opaWorld.permissions[ADMIN.email] = ['sites.members:write']
+    expect((await refusal(assertMayAssignGroup('shop-staff', ADMIN)))?.code).toBe('grant_exceeds_own')
+    expect((await refusal(assertNoSelfEscalation({ kind: 'group', name: 'shop-staff', after: { shop: ['reader'], jinbe: ['viewer'] } }, ADMIN)))?.code).toBe('grant_exceeds_own')
+    opaWorld.permissions[ADMIN.email] = []
+    expect((await refusal(assertNoSelfEscalation({ kind: 'group', name: 'enrollment_users', after: { shop: ['reader'] } }, ADMIN)))?.code).toBe('grant_exceeds_own')
   })
 })
