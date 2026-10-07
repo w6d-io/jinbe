@@ -1,4 +1,6 @@
 import { explicitWildcards, render, stableStringify, type Rendered } from './render.js'
+import { nestingContext } from './nesting.js'
+import { liveAddresses } from './address.js'
 import { auditSite } from './audit.js'
 import { explicitOrganizations } from './organizations.js'
 import type { Site } from './schemas.js'
@@ -27,6 +29,8 @@ export async function renderAppliedSites(): Promise<{ models: AppliedSiteModel[]
   const platform = await loadPlatform()
   const models: AppliedSiteModel[] = []
   const failed: Array<{ site: string; error: string }> = []
+  // Each site leaves out the sites nested under it on its host (nesting.ts), from one read of the addresses.
+  const live = await liveAddresses(records)
   for (const record of records) {
     if (!record.applied) continue
     try {
@@ -35,7 +39,7 @@ export async function renderAppliedSites(): Promise<{ models: AppliedSiteModel[]
       // Explicit roles: a `*` stored before wildcards were refused becomes the permissions it stood for;
       // and organizations used before their switch existed stay on.
       const site = explicitOrganizations(explicitWildcards({ ...version.site, state: record.site.state }))
-      models.push({ site, rendered: render(site, platform) })
+      models.push({ site, rendered: render(site, platform, await nestingContext(site, records, [], live)) })
     } catch (err) {
       failed.push({ site: record.site.name, error: (err as Error).message })
     }

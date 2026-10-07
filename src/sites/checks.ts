@@ -46,10 +46,11 @@ export function assertGatesAuthenticated(site: unknown): void {
 }
 
 /** Every rule the gateway serves today: the legacy/system rules and each applied site's rules. */
-export async function liveRules(except?: string, records?: SiteRecord[]): Promise<OathkeeperRule[]> {
+export async function liveRules(except?: string, records?: readonly SiteRecord[], override?: ReadonlyMap<string, OathkeeperRule[]>): Promise<OathkeeperRule[]> {
   const legacy = await redisRbacRepository.getAccessRules()
   const sites = (records ?? (await sitesRepository.list())).filter((r) => r.site.name !== except && r.applied)
-  return [...legacy, ...sites.flatMap((r) => r.applied!.rules)]
+  // `override`: an enclosing site as it will be applied again around the candidate (nesting.ts).
+  return [...legacy, ...sites.flatMap((r) => override?.get(r.site.name) ?? r.applied!.rules)]
 }
 
 /**
@@ -62,11 +63,13 @@ export function pinnedHostsOf(records: SiteRecord[], candidate: Site, live?: Map
   return hosts
 }
 
-const prefixesOverlap = (a?: string, b?: string) => !a || !b || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
+// Nested prefixes share a host (the longest prefix wins, nesting.ts); only the same prefix collides.
+const samePrefix = (a?: string, b?: string) => (a ?? '') === (b ?? '')
 
 /**
- * The other site already serving this host (and path prefix), if any. A site holds both its saved
- * address and, until a move is applied, the one it still serves (`live`): neither may be taken.
+ * The other site already serving this host at this very path prefix, if any. A site holds both its
+ * saved address and, until a move is applied, the one it still serves (`live`): neither may be taken.
+ * A prefix nested in another site's (or the root) is not taken: the enclosing site leaves it out.
  */
 export function hostOwner(host: string, prefix: string | undefined, except: string | undefined, records: SiteRecord[], live?: Map<string, Site['address']>): { owner?: string; sharedWith: string[]; moving?: boolean } {
   const h = host.toLowerCase()
@@ -77,7 +80,7 @@ export function hostOwner(host: string, prefix: string | undefined, except: stri
       ...(held && (held.host !== r.site.address.host || held.pathPrefix !== r.site.address.pathPrefix) && held.host === h ? [{ name: r.site.name, prefix: held.pathPrefix, moving: true }] : []),
     ]
   })
-  const owner = claims.find((c) => prefixesOverlap(prefix, c.prefix))
+  const owner = claims.find((c) => samePrefix(prefix, c.prefix))
   const sharedWith = [...new Set(claims.filter((c) => c.name !== owner?.name).map((c) => c.name))]
   return { owner: owner?.name, sharedWith, ...(owner?.moving ? { moving: true } : {}) }
 }
@@ -124,7 +127,7 @@ export async function contextChecks(site: Site, rendered: Rendered, records?: Si
 }
 
 /** gatekit: every generated pattern compiles, and no request matches two rules gateway-wide. Throws 503 when gatekit cannot answer. */
-export async function gatekitChecks(site: Site, rendered: Rendered, records?: SiteRecord[]): Promise<Check[]> {
+export async function gatekitChecks(site: Site, rendered: Rendered, records?: SiteRecord[], override?: ReadonlyMap<string, OathkeeperRule[]>): Promise<Check[]> {
   const checks: Check[] = []
   const compiled = await gatekit.compile(rendered.rules.map((r) => ({ id: r.id, url: r.match.url, methods: r.match.methods })))
   for (const result of compiled.filter((c) => !c.ok)) {
@@ -137,7 +140,7 @@ export async function gatekitChecks(site: Site, rendered: Rendered, records?: Si
   if (rendered.rules.some((r) => r.match.methods.includes('OPTIONS'))) {
     probes.push({ method: 'OPTIONS', url: `https://${host}${site.address.pathPrefix ?? ''}/` })
   }
-  const result = await gatekit.overlap([...(await liveRules(site.name, records)), ...rendered.rules], dedupe(probes), [host])
+  const result = await gatekit.overlap([...(await liveRules(site.name, records, override)), ...rendered.rules], dedupe(probes), [host])
   for (const o of result.overlaps.filter((x) => candidate.has(x.a) || candidate.has(x.b))) {
     checks.push({ level: 'error', code: 'rule_overlap', message: `${o.method} ${o.exampleUrl} is matched by both ${o.a} and ${o.b}`, path: 'routes' })
   }

@@ -3,6 +3,7 @@ import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
 import { render, type Platform, type Rendered } from './render.js'
+import { nestingContext, renderEnclosing, renderNested, rulesOverride } from './nesting.js'
 import { DELETED_TTL_SECONDS, draftEtagOf, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
@@ -230,7 +231,7 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
   if (!record?.applied) return null
   const v = await sitesRepository.version(record.site.name, record.applied.version)
   if (!v) return null
-  return { site: v.site, rendered: render(v.site, await loadPlatform()) }
+  return { site: v.site, rendered: await renderNested(v.site, await loadPlatform()) }
 }
 
 /** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
@@ -272,9 +273,15 @@ export async function preview(candidate: Site) {
   // A site not saved yet previews as its first save will store it.
   const site = records.some((r) => r.site.name === candidate.name) ? candidate : withCreateDefaults(candidate)
   const platform = await loadPlatform()
-  const rendered = render(site, platform)
+  const rendered = render(site, platform, await nestingContext(site, records))
+  // The sites enclosing it as they will be written once it is applied: they leave its prefix out.
+  const served = (await liveAddresses(records)).get(site.name)
+  const around = [site.address, ...(served ? [served] : [])]
+  const enclosing = await renderEnclosing(site.name, around, platform, records, around)
+  const override = rulesOverride(enclosing)
+  const nesting = enclosing.flatMap((e) => errorsOf(e.rendered.checks).map((c) => ({ ...c, message: `site '${e.record.site.name}': ${c.message}`, path: c.path ?? 'address' })))
   // gatekit first: when it cannot answer there is no preview at all (no JS approximation).
-  const gk = await gatekitChecks(site, rendered, records)
+  const gk = await gatekitChecks(site, rendered, records, override)
   const ctx = await contextChecks(site, rendered, records)
   const record = records.find((r) => r.site.name === site.name) ?? null
   const before = await appliedRender(record)
@@ -282,7 +289,7 @@ export async function preview(candidate: Site) {
   // A move of a live site: what the move costs (old URL, landing page, zone, certificate) and the
   // moment the operator rewrites the Rules one by one, asked of gatekit on both addresses.
   const moved = addressChecks(before?.site ?? null, site, platform.zones ?? [], { allowedParents: sitesConfig().SITES_ZONE_ALLOWED_PARENTS })
-  const swap = before && record?.applied ? await swapChecks({ site: before.site, rules: record.applied.rules }, site, rendered, await liveRules(site.name, records)) : []
+  const swap = before && record?.applied ? await swapChecks({ site: before.site, rules: record.applied.rules }, site, rendered, await liveRules(site.name, records, override)) : []
   const { checks, ...artefacts } = rendered
   // The landing page left on the old host: said once, by the address check that carries the fix.
   const own = moved.some((c) => c.code === 'return_url_old_address') ? checks.filter((c) => c.code !== 'return_url_host') : checks
@@ -290,11 +297,11 @@ export async function preview(candidate: Site) {
   const routes = routeCollisions(site.address.host, gatewayOfHost(site.address.host, platform.zones ?? []), await clusterGatewayObjects())
   const suggested = await suggestFor(site.address.host, platform.zones ?? [], { ingresses })
   // What apply refuses on (render, context, gatekit, swap), then the security findings.
-  const findings = [...blockingFindings([...checks, ...ctx, ...gk, ...swap]), ...(await findingsFor(site, rendered, platform))]
+  const findings = [...blockingFindings([...checks, ...nesting, ...ctx, ...gk, ...swap]), ...(await findingsFor(site, rendered, platform))]
   const resolvedGates = await resolvedGatesOf(site, rendered)
   return {
     resolvedGates,
-    artefacts, checks: [...moved, ...own, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...routes, ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
+    artefacts, checks: [...moved, ...own, ...nesting, ...ctx, ...collisionChecks(site.address.host, site.name, ingresses), ...routes, ...gk, ...swap], risk, words: risk.flags.map((f) => f.message),
     // Security findings: what publishing it needs fixed (error) or acknowledged (confirm).
     findings, publish: publishState(findings),
     // Outside every zone: the zone the wizard can offer to create.
@@ -313,7 +320,7 @@ export async function diff(name: string, candidate?: Site) {
   if (!site) throw siteError(404, 'not_found', `Site not found: ${name}`)
   if (site.name !== name) throw siteError(400, 'name_mismatch', `body names '${site.name}', not '${name}'`)
   const before = await appliedRender(record)
-  const after = render(site, await loadPlatform())
+  const after = await renderNested(site, await loadPlatform())
   const risk = riskOf(before?.site ?? null, site)
   return { artefacts: diffArtefacts(name, before?.rendered ?? null, after), risk, words: risk.flags.map((f) => f.message) }
 }
@@ -324,7 +331,7 @@ export async function save(name: string, candidate: Site, opts: { note?: string;
   assertGatesAuthenticated(candidate)
   const current = await sitesRepository.get(name)
   const site = current ? candidate : withCreateDefaults(candidate)
-  const rendered = render(site, await loadPlatform())
+  const rendered = await renderNested(site, await loadPlatform())
   const errors = errorsOf(rendered.checks)
   if (errors.length > 0) throw siteError(422, 'invalid_site', 'This version cannot be saved as it is', rendered.checks)
   if (!current?.applied && (await redisRbacRepository.serviceExists(name))) {
@@ -424,7 +431,8 @@ export async function match(body: { method: string; url: string; against: 'draft
   const host = url.hostname.toLowerCase()
   const draft = body.against === 'draft' && body.site ? body.site : null
   const platform = await loadPlatform()
-  const rules = [...(await liveRules(draft?.name, records)), ...(draft ? render(draft, platform).rules : [])]
+  const enclosing = draft ? await renderEnclosing(draft.name, [draft.address], platform, records, [draft.address]) : []
+  const rules = [...(await liveRules(draft?.name, records, rulesOverride(enclosing))), ...(draft ? render(draft, platform, await nestingContext(draft, records)).rules : [])]
   const result = await gatekit.match(rules, body.method, body.url)
   const site = draft && draft.address.host === host ? draft : records.find((r) => r.site.address.host === host)?.site
   const rows = site ? (draft === site ? render(site, platform).routeMap : (await redisRbacRepository.getRouteMap(site.name))?.rules ?? render(site, platform).routeMap) : []

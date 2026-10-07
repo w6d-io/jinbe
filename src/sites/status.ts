@@ -2,6 +2,8 @@ import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import type { Site } from './schemas.js'
 import { signUpStore } from './signup/store.js'
 import { explicitWildcards, render, stableStringify, type Rendered, type SiteCr } from './render.js'
+import { nestingContext } from './nesting.js'
+import { liveAddresses } from './address.js'
 import { explicitOrganizations } from './organizations.js'
 import { sitesRepository, type SiteDraft, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
@@ -71,7 +73,8 @@ export async function expectedOf(record: SiteRecord): Promise<{ site: Site; rend
   // A version applied before wildcards were refused renders with them made explicit (render.ts), and
   // one using organizations before their switch existed with organizations on (organizations.ts).
   const site = explicitOrganizations(explicitWildcards({ ...v.site, state: record.site.state }))
-  const rendered = render(site, await loadPlatform())
+  // Its live address, nested sites left out: what apply (or an enclosing site's apply) wrote.
+  const rendered = render(site, await loadPlatform(), await nestingContext({ ...site, address: (await liveAddresses([record])).get(record.site.name) ?? site.address }))
   return { site, rendered, cr: withVersion(rendered.siteCr, record.applied.version) }
 }
 

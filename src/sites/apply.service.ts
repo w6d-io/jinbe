@@ -1,6 +1,7 @@
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { render } from './render.js'
+import { nestingContext, renderEnclosing, renderNested, rulesOverride, type EnclosingRender } from './nesting.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { loadPlatform } from './platform.js'
 import { assertNotSystem, contextChecks, errorsOf, gatekitChecks, liveRules, pinnedHostsOf, siteError } from './checks.js'
@@ -51,7 +52,7 @@ export async function apply(name: string, version: number, actor: Actor, acknowl
  */
 export async function assertAcknowledged(record: SiteRecord, acknowledge: readonly string[]): Promise<void> {
   const platform = await loadPlatform()
-  assertPublishable(await findingsFor(record.site, render(record.site, platform), platform), acknowledge)
+  assertPublishable(await findingsFor(record.site, await renderNested(record.site, platform), platform), acknowledge)
 }
 
 export async function applyRecord(record: SiteRecord, actor: Actor, verb: string, details: Record<string, unknown> = {}) {
@@ -59,17 +60,23 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
   await assertApplyAllowed()
   await assertMayWidenSignUp(record.site, actor)
   const records = await sitesRepository.list()
-  const rendered = render(site, await loadPlatform())
+  const platform = await loadPlatform()
+  const rendered = render(site, platform, await nestingContext(site, records))
   if (errorsOf(rendered.checks).length > 0) throw siteError(422, 'invalid_site', 'This version does not render', rendered.checks)
 
-  const gk = await gatekitChecks(site, rendered, records)
-  const ctx = await contextChecks(site, rendered, records)
   // A move: the version live now, and the moment the operator rewrites its Rules one by one.
   const before = record.applied ? (await sitesRepository.version(site.name, record.applied.version))?.site ?? null : null
-  const swap = before ? await swapChecks({ site: before, rules: record.applied!.rules }, site, rendered, await liveRules(site.name, records)) : []
-  const blocking = errorsOf([...ctx, ...gk, ...swap])
-  if (blocking.length > 0) throw siteError(409, 'checks_failed', blocking.map((c) => c.message).join('; '), [...ctx, ...gk, ...swap])
   const live = await liveAddresses(records)
+  // The sites enclosing this one leave its prefix out — the new one, and the old one until it is moved.
+  const served = live.get(site.name)
+  const enclosing = await renderEnclosing(site.name, [site.address, ...(served ? [served] : [])], platform, records, [site.address, ...(served ? [served] : [])])
+  const override = rulesOverride(enclosing)
+  const nesting = enclosingChecks(enclosing)
+  const gk = await gatekitChecks(site, rendered, records, override)
+  const ctx = await contextChecks(site, rendered, records)
+  const swap = before ? await swapChecks({ site: before, rules: record.applied!.rules }, site, rendered, await liveRules(site.name, records, override)) : []
+  const blocking = errorsOf([...nesting, ...ctx, ...gk, ...swap])
+  if (blocking.length > 0) throw siteError(409, 'checks_failed', blocking.map((c) => c.message).join('; '), [...nesting, ...ctx, ...gk, ...swap])
 
   const kube = kubeSites()
   await kube.ping()
@@ -92,6 +99,8 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
   setStage(timeline, 'permissions', 'done')
   setStage(timeline, 'accepted', 'running')
   try {
+    // The enclosing sites first: the gateway never holds their old catch-all and this site's rules at once.
+    await applyEnclosing(enclosing, actor, `leaves ${addressUrl(site.address)} to ${site.name}`)
     await kube.apply(withVersion(rendered.siteCr, version))
   } catch (err) {
     // Permissions are ahead of the rules: new routes stay refused until a retry writes the CR.
@@ -109,8 +118,32 @@ export async function applyRecord(record: SiteRecord, actor: Actor, verb: string
       version, fromVersion: record.applied!.version, applyId: timeline.id, address: { from: before.address, to: site.address },
     }, 'applied')
   }
+  // Moved: the old prefix is no longer this site's, the sites enclosing it serve it again.
+  if (served && !sameAddress(served, site.address)) await releaseEnclosing(site.name, served, actor)
   watchApply(site.name, timeline.id)
   return { applyId: timeline.id, version, rules: rendered.rules.map((r) => r.id), site: rendered.siteCr.metadata.name }
+}
+
+/** An enclosing site that cannot leave the prefix out (one of its own routes reaches into it) refuses the apply. */
+function enclosingChecks(enclosing: readonly EnclosingRender[]) {
+  return enclosing.flatMap((e) => errorsOf(e.rendered.checks).map((c) => ({ ...c, message: `site '${e.record.site.name}': ${c.message}`, path: c.path ?? 'address' })))
+}
+
+/** Write the enclosing sites whose rules changed (same applied version, new nested prefixes). */
+async function applyEnclosing(enclosing: readonly EnclosingRender[], actor: Actor, why: string): Promise<void> {
+  const kube = kubeSites()
+  for (const e of enclosing.filter((x) => x.changed)) {
+    await kube.apply(withVersion(e.rendered.siteCr, e.version))
+    await sitesRepository.markApplied(e.record.site.name, { version: e.version, by: e.record.applied!.by, rules: e.rendered.rules })
+    auditSite('apply', e.record.site.name, actor, `rules written again (version ${e.version}): ${why}`, { version: e.version, rules: e.rendered.rules.map((r) => r.id), nested: true }, 'applied')
+  }
+}
+
+/** After a site left `address` (moved or deleted): the sites enclosing it serve that prefix again. */
+async function releaseEnclosing(name: string, address: Site['address'], actor: Actor): Promise<void> {
+  const records = await sitesRepository.list()
+  const enclosing = await renderEnclosing(name, [address], await loadPlatform(), records)
+  await applyEnclosing(enclosing, actor, `${addressUrl(address)} released by ${name}`)
 }
 
 export async function rollback(name: string, toVersion: number, actor: Actor, note?: string) {
@@ -131,7 +164,7 @@ export async function setPaused(name: string, paused: boolean, actor: Actor) {
   const state = paused ? 'paused' : 'active'
   if (record.applied) {
     const applied = await sitesRepository.version(name, record.applied.version)
-    const rendered = render({ ...(applied?.site ?? record.site), state }, await loadPlatform())
+    const rendered = await renderNested({ ...(applied?.site ?? record.site), state }, await loadPlatform())
     const kube = kubeSites()
     await kube.ping()
     await kube.apply(withVersion(rendered.siteCr, record.applied.version))
@@ -144,12 +177,15 @@ export async function setPaused(name: string, paused: boolean, actor: Actor) {
 export async function remove(name: string, actor: Actor, opts: { approvedRequest?: string } = {}) {
   assertNotSystem(name)
   const record = await getRecord(name)
+  const served = record.applied ? (await liveAddresses([record])).get(name) : undefined
   const kube = kubeSites()
   await kube.ping()
   await kube.delete(name)
   if (record.applied) await unpublishPermissions(name, actor)
   await siteLoginStore.set(name, null)
   await sitesRepository.remove(name, actor.email ?? 'unknown')
+  // Its prefix goes back to the sites enclosing it.
+  if (served) await releaseEnclosing(name, served, actor)
   // Its expiry goes with it (a restored site is permanent), and so do requests to delete it.
   await ephemeralStore.clear(name)
   const cancelled = await deletionStore.cancelPending(name, actor.email ?? 'unknown', 'site deleted', opts.approvedRequest)

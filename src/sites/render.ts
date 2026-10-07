@@ -103,6 +103,7 @@ const DEFAULT_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 /** Site CRD `match.url` MaxLength (site-operator api/v1alpha1/site_types.go). */
 export const MATCH_URL_MAX = 4096
 const DENY_GATE = 'deny'
+const ANY_PATH = ':any*'
 const CATCH_ALL_ID = 'catch-all'
 // Static paths under /api/admin/sites and the migrated system sites: a site by that name would be shadowed.
 /**
@@ -290,13 +291,24 @@ function rowsFor(route: Pick<Route, 'id' | 'methods' | 'path' | 'orgParam'>, acc
   }))
 }
 
-export function render(site: Site, platform: Platform): Rendered {
+/**
+ * What a site's rules depend on beyond its own intent. `nested`: the path prefixes of the other sites on
+ * the same host that sit strictly under this site's prefix (under any prefix for a site at the root).
+ * The longest prefix wins: this site's catch-all leaves them out, and a route of its own reaching into
+ * one is refused (two rules would match it, a 500 at the gateway). nesting.ts computes it.
+ */
+export interface RenderContext {
+  nested?: readonly string[]
+}
+
+export function render(site: Site, platform: Platform, context: RenderContext = {}): Rendered {
   const checks: Check[] = []
   const fail = (code: string, message: string, path?: string) => checks.push({ level: 'error', code, message, path })
   const warn = (code: string, message: string, path?: string) => checks.push({ level: 'warn', code, message, path })
   const name = site.name
   const host = site.address.host.toLowerCase()
   const prefix = site.address.pathPrefix
+  const nested = [...new Set(context.nested ?? [])].sort()
 
   if ((SYSTEM_SITES as readonly string[]).includes(name)) fail('system_site', `'${name}' is a system service and cannot be managed as a site`, 'name')
   if (RESERVED_NAMES.includes(name)) fail('reserved_name', `'${name}' is reserved (an API path or a system site)`, 'name')
@@ -322,6 +334,8 @@ export function render(site: Site, platform: Platform): Rendered {
     if (prefix && route.path !== prefix && !route.path.startsWith(`${prefix}/`)) {
       fail('outside_prefix', `${route.path} is outside the site prefix ${prefix}`, at)
     }
+    const into = nested.find((n) => pathsOverlap(route.path, `${n}/${ANY_PATH}`))
+    if (into) fail('route_in_nested_site', `${route.path} reaches into ${into}, which another site on ${host} serves`, at)
     const gateId = route.access.kind === 'deny' ? DENY_GATE : route.gate
     const gate = gates.get(route.gate)
     if (route.access.kind !== 'deny') {
@@ -524,7 +538,8 @@ export function render(site: Site, platform: Platform): Rendered {
     }
   }
   if (catchAllGate) {
-    const excluded = enumerated.flatMap(([, routes]) => routes.map((r) => r.path))
+    // The nested sites' prefixes are theirs, for every method (the longest prefix wins).
+    const excluded = [...enumerated.flatMap(([, routes]) => routes.map((r) => r.path)), ...nested.map((n) => `${n}/${ANY_PATH}`)]
     gateRule(catchAllGate, catchAllMatchUrl(host, prefix, excluded), catchAllMethods)
     // A path carved out for another gate is carved out for every method: the ones that gate does not
     // handle reach no rule and are refused (404) at the gateway. Fail-closed, but worth saying.

@@ -246,8 +246,11 @@ describe('check-host while a move is pending', () => {
   it('hostOwner: saved and live addresses both claim, prefixes still share', () => {
     const rec = { site: echo({ address: { host: 'new.dev.example.com' } }), version: 2, etag: 'e', savedAt: 't', savedBy: 's', applied: { version: 1, at: 't', by: 's', rules: [] } } as SiteRecord
     const live = new Map([['echo', { host: 'old.dev.example.com', pathPrefix: '/app' }]])
-    expect(hostOwner('old.dev.example.com', undefined, 'x', [rec], live)).toEqual({ owner: 'echo', sharedWith: [], moving: true })
+    expect(hostOwner('old.dev.example.com', '/app', 'x', [rec], live)).toEqual({ owner: 'echo', sharedWith: [], moving: true })
     expect(hostOwner('old.dev.example.com', '/other', 'x', [rec], live)).toEqual({ owner: undefined, sharedWith: ['echo'] })
+    // Nested prefixes share the host (the longest prefix wins): the root, and /app/v2 under /app.
+    expect(hostOwner('old.dev.example.com', undefined, 'x', [rec], live)).toEqual({ owner: undefined, sharedWith: ['echo'] })
+    expect(hostOwner('old.dev.example.com', '/app/v2', 'x', [rec], live)).toEqual({ owner: undefined, sharedWith: ['echo'] })
     expect(hostOwner('new.dev.example.com', undefined, 'x', [rec], live).owner).toBe('echo')
     expect(hostOwner('old.dev.example.com', undefined, 'echo', [rec], live).owner).toBeUndefined()
   })

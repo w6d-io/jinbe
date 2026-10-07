@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getRedisClient } from '../services/redis-client.service.js'
-import { render, type SiteCr } from './render.js'
+import type { SiteCr } from './render.js'
+import { renderNested } from './nesting.js'
 import { sitesRepository, type SiteRecord } from './repository.js'
 import { loadPlatform, loadZones } from './platform.js'
 import { placeHost } from './host.js'
@@ -218,7 +219,7 @@ async function rollBack(a: ApplyRecord): Promise<void> {
     if (!prev) throw new Error(`version ${a.previous.version} of ${a.site} is gone`)
     const current = await sitesRepository.get(a.site)
     const site = { ...prev.site, state: current?.site.state ?? prev.site.state }
-    const rendered = render(site, await loadPlatform())
+    const rendered = await renderNested(site, await loadPlatform())
     await publishPermissions(a.site, rendered, { description: site.description ?? site.displayName, pinnedHosts: pinnedHostsOf(await sitesRepository.list(), site), actor: SYSTEM_ACTOR })
     await siteLoginStore.set(a.site, siteLoginOf(site))
     await kube.apply(withVersion(rendered.siteCr, a.previous.version))
