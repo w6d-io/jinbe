@@ -3,7 +3,7 @@ import { routeSpecificity } from '../policy/route-ties.js'
 import type { RouteRule } from '../services/redis-rbac.repository.js'
 import { siteSchema, type Site } from './schemas.js'
 import { render, type Platform, type Rendered } from './render.js'
-import { nestingContext, renderEnclosing, renderNested, rulesOverride } from './nesting.js'
+import { enclosingSites, nestingContext, renderEnclosing, renderNested, rulesOverride } from './nesting.js'
 import { DELETED_TTL_SECONDS, draftEtagOf, sitesRepository, type SiteRecord, type SiteDraft } from './repository.js'
 import { sitesConfig } from './config.js'
 import { loadPlatform, loadZones } from './platform.js'
@@ -236,8 +236,18 @@ export async function appliedRender(record: SiteRecord | null): Promise<{ site: 
 
 /** The security findings on a site (findings.ts), with the groups and the WAF state of the platform now. */
 export async function findingsFor(site: Site, rendered: Pick<Rendered, 'roles'>, platform?: Pick<Platform, 'roleHeaders' | 'decisionUrl'>): Promise<Finding[]> {
-  const [groups, protectionOf, orgsRemoved, p] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site), platform ?? loadPlatform()])
-  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved, roleHeaders: !!p.roleHeaders && !!p.decisionUrl })
+  const [groups, protectionOf, orgsRemoved, p, enclosedBy] = await Promise.all([redisRbacRepository.getGroups(), protectionLookup(), orgsLeaving(site), platform ?? loadPlatform(), enclosingNames(site)])
+  return securityFindings(site, rendered, { groups, protection: protectionOf(site.address.host), orgsRemoved, roleHeaders: !!p.roleHeaders && !!p.decisionUrl, enclosedBy })
+}
+
+/** The applied sites enclosing the site's address on its host (nesting.ts); none when the store cannot say. */
+async function enclosingNames(site: Site): Promise<string[]> {
+  try {
+    const records = await sitesRepository.list()
+    return enclosingSites(site.address, site.name, records, await liveAddresses(records)).map((r) => r.site.name).sort()
+  } catch {
+    return []
+  }
 }
 
 /**

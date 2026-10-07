@@ -41,6 +41,8 @@ export interface FindingContext {
   roleHeaders?: boolean
   /** Orgs that have the site now (org_service_map) but are not in its `orgs`: publishing takes it from them. */
   orgsRemoved?: ReadonlyArray<{ id: string; name?: string }>
+  /** Applied sites whose address encloses this one on the same host (nesting.ts): publishing takes the prefix from them. */
+  enclosedBy?: readonly string[]
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -54,6 +56,14 @@ const grants = (held: string, needed: string) => held === needed
 export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, ctx: FindingContext): Finding[] {
   const out: Finding[] = []
   const add = (level: FindingLevel, code: string, message: string, fix: string, path?: string) => out.push({ code, level, message, fix, ...(path ? { path } : {}) })
+
+  // A prefix carved out of another site: requests there stop being decided by that site's routes and
+  // catch-all (its protection) and follow this site's instead — said, and confirmed, before it happens.
+  if (ctx.enclosedBy?.length) {
+    const at = `${site.address.host}${site.address.pathPrefix ?? '/'}`
+    add('confirm', 'nested_in_site', `${at} is inside ${ctx.enclosedBy.map((n) => `'${n}'`).join(', ')}: publishing takes this prefix from ${ctx.enclosedBy.length > 1 ? 'them' : 'it'}, and requests there follow this site's access instead`,
+      `Check that this site protects ${at} at least as well as ${ctx.enclosedBy.join(', ')} did, then acknowledge nested_in_site`, 'address')
+  }
 
   // ── gates ───────────────────────────────────────────────────
   site.gates.forEach((gate, i) => {

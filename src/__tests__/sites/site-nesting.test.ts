@@ -219,6 +219,19 @@ describe('nested sites through save, preview and apply', () => {
     expect(shellRules.some((r) => oathkeeperRegex(r.match.url).test(`https://${HOST}/cab/x`))).toBe(false)
   })
 
+  it('taking a prefix from another site is said and must be confirmed (nested_in_site), naming that site', async () => {
+    await apply(shell())
+    const findings = (await preview(cab())).json().findings as Array<{ code: string; level: string; message: string }>
+    expect(findings.find((f) => f.code === 'nested_in_site')).toMatchObject({ level: 'confirm', message: expect.stringContaining("'shell'") })
+    await app.inject({ method: 'PUT', url: '/sites/cab', headers: W, payload: { site: cab() } })
+    const without = ACK.filter((c) => c !== 'nested_in_site')
+    const res = await app.inject({ method: 'POST', url: '/sites/cab/apply', headers: W, payload: { version: 1, acknowledge: without } })
+    expect(res.statusCode).toBe(422)
+    expect(JSON.stringify(res.json())).toContain('nested_in_site')
+    // The enclosing site at the root is inside nobody: no such finding for it.
+    expect(((await preview(shell())).json().findings as Array<{ code: string }>).some((f) => f.code === 'nested_in_site')).toBe(false)
+  })
+
   it('applying a nested site writes the enclosing site again first, then its own rules', async () => {
     await apply(shell())
     expect(matching(lastCr('shell'), '/cab/x')).not.toEqual([])
