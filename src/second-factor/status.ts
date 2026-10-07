@@ -59,18 +59,12 @@ export async function secondFactorStatus(cookieHeader: string | undefined): Prom
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.status
 
-  let required: boolean
-  try {
-    required = await secondFactorRequired(session.email)
-  } catch {
-    throw statusError(503, POLICY_UNAVAILABLE, 'The sign-in requirements cannot be checked right now')
-  }
-  let methods: MfaMethod[]
-  try {
-    methods = await kratosService.mfaMethodsOf(session.identityId)
-  } catch {
-    throw statusError(503, 'identity_unavailable', 'Your second factors cannot be read right now')
-  }
+  // The policy and Kratos are asked at once: one round trip of the slower, not their sum.
+  const [policy, factors] = await Promise.allSettled([secondFactorRequired(session.email), kratosService.mfaMethodsOf(session.identityId)])
+  if (policy.status === 'rejected') throw statusError(503, POLICY_UNAVAILABLE, 'The sign-in requirements cannot be checked right now')
+  if (factors.status === 'rejected') throw statusError(503, 'identity_unavailable', 'Your second factors cannot be read right now')
+  let required: boolean = policy.value
+  const methods: MfaMethod[] = factors.value
 
   // Waiting groups: required now; applied as soon as a factor is enrolled (also done by the settings hook).
   let awaitingGroups: string[] = []
