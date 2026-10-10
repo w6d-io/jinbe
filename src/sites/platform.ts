@@ -103,6 +103,7 @@ export async function loadPlatform(): Promise<Platform> {
     ...(cfg.SITES_ACCESS_URL ? { accessUrl: cfg.SITES_ACCESS_URL } : {}),
     ...(cfg.SITES_ROLE_HEADERS ? { roleHeaders: true } : {}),
     ...(cfg.SITES_UPSTREAM_PATH ? { upstreamPath: true } : {}),
+    ...(env.SITES_SESSION_ZONES.length > 0 ? { sessionZones: env.SITES_SESSION_ZONES } : {}),
     ...(await loadIdentity()),
   }
 }

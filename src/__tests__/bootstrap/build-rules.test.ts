@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { oathkeeperRegex } from '../sites/fixtures.js'
 import {
   buildBuiltInRules,
   buildSelfserviceUiRule,
@@ -12,6 +13,7 @@ import {
   buildJinbeApiRule,
   buildMcpRule,
   buildMcpOAuthAsRule,
+  buildKratosSessionRule,
   OPTIONAL_BUILT_IN_RULE_IDS,
   BUILT_IN_RULE_IDS,
 } from '../../bootstrap/build-rules.js'
@@ -123,6 +125,58 @@ describe('bootstrap/build-rules', () => {
       expect(r.authenticators[1].handler).toBe('noop')
       expect(r.authorizer.handler).toBe('remote_json')
       expect(r.match.methods).not.toContain('OPTIONS')
+    })
+  })
+
+  describe('kratos-session (SITES_SESSION_ZONES)', () => {
+    const DOMAINS = { auth: 'auth.dev.example.com', app: 'kuma.dev.example.com', api: 'kuma.dev.example.com' }
+    const ruleOf = (zones: string[]) => buildBuiltInRules({ domains: DOMAINS, urls: URLS, sessionZones: zones }).find((r) => r.id === 'kratos-session')
+
+    it('is not emitted without zones', () => {
+      expect(ruleOf([])).toBeUndefined()
+      expect(buildKratosSessionRule([], [], URLS.kratosPublic)).toBeNull()
+    })
+
+    it('GET of the two session paths on any site host one label under a zone, to Kratos, untouched', () => {
+      const r = ruleOf(['dev.example.com', 'qualif.example.com'])!
+      expect(r.upstream.url).toBe(URLS.kratosPublic)
+      expect(r.match.methods).toEqual(['GET'])
+      expect(r.authenticators).toEqual([{ handler: 'noop' }])
+      expect(r.authorizer).toEqual({ handler: 'allow' })
+      expect(r.mutators).toEqual([{ handler: 'noop' }])
+      const re = oathkeeperRegex(r.match.url)
+      for (const url of ['https://superadmin.dev.example.com/sessions/whoami', 'https://superadmin.qualif.example.com/self-service/logout/browser', 'http://a-1.dev.example.com/sessions/whoami']) {
+        expect(re.test(url), url).toBe(true)
+      }
+      for (const url of [
+        'https://superadmin.dev.example.com/sessions/whoami/x',
+        'https://superadmin.dev.example.com/sessions',
+        'https://superadmin.dev.example.com/self-service/login/browser',
+        'https://superadmin.dev.example.com/self-service/logout',
+        'https://a.b.dev.example.com/sessions/whoami',
+        'https://superadmin.prod.example.com/sessions/whoami',
+        'https://dev.example.com/sessions/whoami',
+      ]) {
+        expect(re.test(url), url).toBe(false)
+      }
+    })
+
+    it('leaves the platform hosts to their own rules (two matching rules are a 500)', () => {
+      const r = buildBuiltInRules({
+        domains: DOMAINS,
+        urls: URLS,
+        mcp: { publicUrl: 'https://mcp.dev.example.com/mcp', upstream: 'http://auth-mcp:3100' },
+        mcpOAuthIssuer: 'https://hydra.dev.example.com/',
+        sessionZones: ['dev.example.com'],
+      }).find((x) => x.id === 'kratos-session')!
+      const re = oathkeeperRegex(r.match.url)
+      for (const host of ['auth', 'kuma', 'mcp', 'hydra']) expect(re.test(`https://${host}.dev.example.com/sessions/whoami`), host).toBe(false)
+      expect(re.test('https://authx.dev.example.com/sessions/whoami')).toBe(true)
+    })
+
+    it('is an optional built-in id, dropped when the zones are emptied', () => {
+      expect(OPTIONAL_BUILT_IN_RULE_IDS).toContain('kratos-session')
+      expect(BUILT_IN_RULE_IDS).toContain('kratos-session')
     })
   })
 
@@ -269,7 +323,7 @@ describe('bootstrap/build-rules', () => {
 
   it('BUILT_IN_RULE_IDS lists every id the builders produce (the migration counts them apart)', () => {
     const all = [
-      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS, signInGate: true, mcp: { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' }, mcpOAuthIssuer: 'https://hydra.example.com' }),
+      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS, signInGate: true, mcp: { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' }, mcpOAuthIssuer: 'https://hydra.example.com', sessionZones: ['example.com'] }),
       ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS }),
       buildJinbePublicRule('jinbe.example.com', URLS.jinbeInternal),
     ]

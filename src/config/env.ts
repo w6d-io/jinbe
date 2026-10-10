@@ -458,6 +458,15 @@ export const envSchema = z.object({
   AUTH_DOMAIN: fqdnSchema.optional(),
   APP_DOMAIN: fqdnSchema.optional(),
   API_DOMAIN: fqdnSchema.optional(),
+  // Zones (suffixes, e.g. dev.example.com) whose site hosts answer the session check on their own origin,
+  // as a single-page app behind a site expects: bootstrap routes GET /sessions/whoami and GET
+  // /self-service/logout/browser on every host one label under them to Kratos (rule `kratos-session`,
+  // cookie untouched), and a site at the root of such a host leaves both paths to it. Empty: neither.
+  SITES_SESSION_ZONES: z
+    .string()
+    .default('')
+    .transform((v) => [...new Set(v.split(',').map((s) => s.trim().toLowerCase().replace(/^\.+/, '')).filter(Boolean))])
+    .pipe(z.array(z.string().regex(/^([a-z0-9-]+\.)+[a-z]{2,63}$/, 'a domain'))),
 
 
   // Oathkeeper enabled handler sets (comma-separated → string[]). These are the

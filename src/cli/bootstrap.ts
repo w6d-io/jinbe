@@ -93,6 +93,7 @@ function configFromEnv(): BootstrapConfig {
     signInGate: env.SIGN_IN_GATE_ENABLED,
     mcp: env.MCP_PUBLIC_URL && env.MCP_UPSTREAM_URL ? { publicUrl: env.MCP_PUBLIC_URL, upstream: env.MCP_UPSTREAM_URL } : null,
     mcpOAuthIssuer: env.MCP_OAUTH_ISSUER || null,
+    sessionZones: env.SITES_SESSION_ZONES,
     admin: env.ADMIN_EMAIL && env.ADMIN_PASSWORD ? { email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD, name: env.ADMIN_NAME } : null,
   }
 }
@@ -108,7 +109,7 @@ async function plan(logger: pino.Logger): Promise<number> {
   const config = configFromEnv()
   let builtInRuleIds = new Set<string>(OPTIONAL_BUILT_IN_RULE_IDS)
   try {
-    const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer })
+    const rules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer, sessionZones: config.sessionZones })
     builtInRuleIds = new Set([...rules.map((r) => r.id), ...OPTIONAL_BUILT_IN_RULE_IDS])
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'plan: built-in rules could not be built from the environment — every rule id is listed')
@@ -143,7 +144,7 @@ async function apply(logger: pino.Logger): Promise<number> {
   }
   try {
     const config = configFromEnv()
-    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer })
+    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer, sessionZones: config.sessionZones })
     const previous = await readMarker()
     const result = await applyModel({
       logger, expect, firstRun: false, builtInRules, gitSha: env.COMMIT_SHA || 'unknown',

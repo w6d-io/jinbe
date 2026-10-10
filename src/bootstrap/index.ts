@@ -80,7 +80,7 @@ export async function runBootstrap(opts: RunBootstrapOptions): Promise<RunBootst
     }
 
     const existing = await readMarker()
-    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer })
+    const builtInRules = buildBuiltInRules({ domains: config.domains, urls: config.urls, signInGate: config.signInGate, mcp: config.mcp, mcpOAuthIssuer: config.mcpOAuthIssuer, sessionZones: config.sessionZones })
     const currentBuiltInsHash = {
       rules: canonicalHash(builtInRules),
       routeMap: canonicalHash(GENERATED_ROUTE_MAP),
