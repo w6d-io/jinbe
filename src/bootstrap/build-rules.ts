@@ -38,7 +38,7 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } fr
  */
 
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
-export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as']
+export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as', 'kratos-session']
 
 /** Every id the builders below produce: the platform's own rules, written again by the bootstrap on every start. */
 export const BUILT_IN_RULE_IDS: readonly string[] = [
@@ -48,7 +48,7 @@ export const BUILT_IN_RULE_IDS: readonly string[] = [
   ...OPTIONAL_BUILT_IN_RULE_IDS,
 ]
 
-export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null }): OathkeeperRule[] {
+export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null; sessionZones?: readonly string[] }): OathkeeperRule[] {
   const { domains, urls } = input
   const rules: OathkeeperRule[] = []
 
@@ -95,7 +95,42 @@ export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: Boot
     if (!served.includes(host) && host !== mcpHost) rules.push(as)
   }
 
+  // Every host the rules above serve keeps its own (kratos-public already answers the auth domain).
+  const platformHosts = [...served, ...(mcp ? [new URL(input.mcp!.publicUrl).host] : []), ...(as ? [new URL(input.mcpOAuthIssuer!).host] : [])]
+  const session = buildKratosSessionRule(input.sessionZones ?? [], platformHosts, urls.kratosPublic)
+  if (session) rules.push(session)
+
   return rules
+}
+
+/** What a single-page app behind a site asks Kratos on its own origin: who is signed in, and a logout link. */
+export const SESSION_PATHS: readonly string[] = ['/sessions/whoami', '/self-service/logout/browser']
+
+/**
+ * The session check on the site hosts of `zones` (SITES_SESSION_ZONES): GET of SESSION_PATHS on any host
+ * exactly one label under a zone, straight to Kratos, cookie untouched. A site gate's header mutator
+ * strips the Kratos cookie before its upstream, and the operator refuses an upstream in the platform
+ * namespace, so no site can serve these itself; a site at the root of such a host leaves them to this
+ * rule (render.ts). GET only: every self-service submit stays on the auth domain, behind the sign-in gate.
+ * Null without zones.
+ */
+export function buildKratosSessionRule(zones: readonly string[], platformHosts: readonly string[], kratosPublicUrl: string): OathkeeperRule | null {
+  if (zones.length === 0) return null
+  const hosts = [...new Set(platformHosts.filter(Boolean).map((h) => h.toLowerCase()))].sort().map(escapeRegex)
+  const notPlatform = hosts.length > 0 ? `(?!(?:${hosts.join('|')})/)` : ''
+  const suffixes = [...zones].sort().map(escapeRegex).join('|')
+  const paths = SESSION_PATHS.map((p) => escapeRegex(p.slice(1))).join('|')
+  return {
+    id: 'kratos-session',
+    upstream: { url: kratosPublicUrl, preserve_host: true },
+    match: {
+      url: `http<(s?)>://<${notPlatform}[a-z0-9-]+\\.(?:${suffixes})/(?:${paths})>`,
+      methods: ['GET'],
+    },
+    authenticators: [{ handler: 'noop' }],
+    authorizer: { handler: 'allow' },
+    mutators: [{ handler: 'noop' }],
+  }
 }
 
 /**

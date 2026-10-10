@@ -44,6 +44,8 @@ export interface BootstrapConfig {
   signInGate?: boolean
   /** Route auth-mcp's host through Oathkeeper (rule `mcp`). */
   mcp?: BootstrapMcp | null
+  /** Site hosts that answer the session check on their own origin (SITES_SESSION_ZONES): rule `kratos-session`. */
+  sessionZones?: readonly string[]
   /** Browser sign-in for MCP clients: Hydra's issuer (MCP_OAUTH_ISSUER) — rule `mcp-oauth-as` on its host. */
   mcpOAuthIssuer?: string | null
   admin: BootstrapAdmin | null

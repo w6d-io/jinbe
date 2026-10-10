@@ -197,6 +197,38 @@ describe('render with nested sites', () => {
   })
 })
 
+describe('render on a session zone (SITES_SESSION_ZONES)', () => {
+  const sessionPlatform = { ...platform, sessionZones: ['dev.example.com'] }
+
+  it('a site at the root leaves the session check to the platform, and only it', () => {
+    const r = render(shell(), sessionPlatform, { nested: ['/cab'] })
+    expect(r.checks.filter((c) => c.level === 'error')).toEqual([])
+    const cr = r.siteCr as unknown as Cr
+    expect(matching(cr, '/sessions/whoami')).toEqual([])
+    expect(matching(cr, '/self-service/logout/browser')).toEqual([])
+    expect(matching(cr, '/sessions/whoami/x')).not.toEqual([])
+    expect(matching(cr, '/sessions')).not.toEqual([])
+    expect(matching(cr, '/self-service/login/browser')).not.toEqual([])
+    expect(matching(cr, '/cab/x')).toEqual([])
+  })
+
+  it('a route of its own taking a session path is refused', () => {
+    const s = shell()
+    s.routes.items = [{ id: 'sessions', methods: ['GET'], path: '/sessions/:any*', gate: 'public', access: { kind: 'public' }, source: 'manual' }]
+    const errors = render(s, sessionPlatform).checks.filter((c) => c.level === 'error')
+    expect(errors.map((c) => c.code)).toEqual(['route_on_session_path'])
+    expect(errors[0].message).toContain('/sessions/whoami')
+  })
+
+  it('a prefixed site, a host outside the zones or deeper than one label: nothing changes', () => {
+    expect(render(cab(), sessionPlatform).siteCr).toEqual(render(cab(), platform).siteCr)
+    const elsewhere = { ...platform, sessionZones: ['qualif.example.com'] }
+    expect(render(shell(), elsewhere).siteCr).toEqual(render(shell(), platform).siteCr)
+    const deep = payrollSite({ name: 'deep', address: { host: 'a.b.dev.example.com' } })
+    expect(render(deep, sessionPlatform).siteCr).toEqual(render(deep, platform).siteCr)
+  })
+})
+
 describe('nested sites through save, preview and apply', () => {
   it('a nested prefix is not host_taken; the same prefix still is', async () => {
     await apply(shell())

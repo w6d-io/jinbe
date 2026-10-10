@@ -5,6 +5,7 @@ import { GENERATED_ROUTE_MAP } from '../policy/route-map.generated.js'
 import { defaultServiceRoles } from '../services/rbac-defaults.js'
 import { HTTP_METHODS, SYSTEM_SITES, signUpGroupName, type Access, type Gate, type Handler, type Route, type Site } from './schemas.js'
 import { catchAllMatchUrl, enumeratedMatchUrl, pathsOverlap } from './patterns.js'
+import { SESSION_PATHS } from '../bootstrap/build-rules.js'
 import { placeHost, type Zone } from './host.js'
 import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
 import { ORG_HEADERS, PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
@@ -44,6 +45,8 @@ export interface Platform {
   templatedHeaders?: string[]
   /** The site operator renders `upstream.path` (SITES_UPSTREAM_PATH); without it such an intent is refused. */
   upstreamPath?: boolean
+  /** Zones whose hosts leave SESSION_PATHS to the platform's kratos-session rule (SITES_SESSION_ZONES). */
+  sessionZones?: string[]
 }
 
 export interface Check {
@@ -309,6 +312,11 @@ export function render(site: Site, platform: Platform, context: RenderContext = 
   const host = site.address.host.toLowerCase()
   const prefix = site.address.pathPrefix
   const nested = [...new Set(context.nested ?? [])].sort()
+  // On a session zone's host the platform answers the session check (bootstrap rule kratos-session): a
+  // site at the root leaves those paths out of its catch-all, and no route of its own may take one.
+  const sessionPaths = !prefix && (platform.sessionZones ?? []).some((z) => host.endsWith(`.${z}`) && !host.slice(0, -(z.length + 1)).includes('.'))
+    ? SESSION_PATHS
+    : []
 
   if ((SYSTEM_SITES as readonly string[]).includes(name)) fail('system_site', `'${name}' is a system service and cannot be managed as a site`, 'name')
   if (RESERVED_NAMES.includes(name)) fail('reserved_name', `'${name}' is reserved (an API path or a system site)`, 'name')
@@ -336,6 +344,8 @@ export function render(site: Site, platform: Platform, context: RenderContext = 
     }
     const into = nested.find((n) => pathsOverlap(route.path, `${n}/${ANY_PATH}`))
     if (into) fail('route_in_nested_site', `${route.path} reaches into ${into}, which another site on ${host} serves`, at)
+    const session = sessionPaths.find((p) => pathsOverlap(route.path, p))
+    if (session) fail('route_on_session_path', `${route.path} takes ${session}, which the platform serves on ${host} (the session check)`, at)
     const gateId = route.access.kind === 'deny' ? DENY_GATE : route.gate
     const gate = gates.get(route.gate)
     if (route.access.kind !== 'deny') {
@@ -539,7 +549,7 @@ export function render(site: Site, platform: Platform, context: RenderContext = 
   }
   if (catchAllGate) {
     // The nested sites' prefixes are theirs, for every method (the longest prefix wins).
-    const excluded = [...enumerated.flatMap(([, routes]) => routes.map((r) => r.path)), ...nested.map((n) => `${n}/${ANY_PATH}`)]
+    const excluded = [...enumerated.flatMap(([, routes]) => routes.map((r) => r.path)), ...nested.map((n) => `${n}/${ANY_PATH}`), ...sessionPaths]
     gateRule(catchAllGate, catchAllMatchUrl(host, prefix, excluded), catchAllMethods)
     // A path carved out for another gate is carved out for every method: the ones that gate does not
     // handle reach no rule and are refused (404) at the gateway. Fail-closed, but worth saying.
