@@ -136,7 +136,7 @@ export async function signInGateRoutes(fastify: FastifyInstance, opts: GateRoute
 
     if (!decision.allow) {
       // Hashes only: the address and the IP never reach the log.
-      request.log.info({ flow, step: decision.step, result: decision.result, ip: ip ? hashForLog(ip) : null }, 'Sign-in gate refused a self-service submit')
+      request.log.info({ flow, step: decision.step, result: decision.result, ...(decision.detail ? { codes: decision.detail.codes, expectedAction: decision.detail.expected_action } : {}), ip: ip ? hashForLog(ip) : null }, 'Sign-in gate refused a self-service submit')
       if (decision.retryAfter !== undefined) reply.header('retry-after', String(decision.retryAfter))
       reply.header('cache-control', 'no-store')
       return reply.status(decision.status).send(gateRefusalBody(decision))

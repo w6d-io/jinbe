@@ -42,7 +42,17 @@ export type GateFlow = CaptchaFlow | 'settings'
 
 export type GateDecision =
   | { allow: true; step: GateStep; result: 'passed' | 'allowed' | 'flow_pass' | 'fail_open' | 'not_guarded' | 'session' }
-  | { allow: false; step: GateStep; result: GateRefusal; status: 403 | 429 | 503; message: string; retryAfter?: number }
+  | { allow: false; step: GateStep; result: GateRefusal; status: 403 | 429 | 503; message: string; retryAfter?: number; detail?: CaptchaDetail }
+
+/**
+ * Why a bot-check token was refused, for the client that sent it: the provider's codes and ours
+ * (`action-mismatch`, `hostname-mismatch`, `timeout-or-duplicate`…) and the action this flow expects.
+ * Nothing secret: the token, the address and the IP never appear.
+ */
+export interface CaptchaDetail {
+  codes: string[]
+  expected_action: string
+}
 
 export const GATE_FLOWS: readonly GateFlow[] = ['login', 'registration', 'recovery', 'verification', 'settings']
 
@@ -249,8 +259,12 @@ async function decide(input: GateInput, fetchImpl?: typeof fetch): Promise<GateD
     } else if (await usePass(input.flowId, input.token, step, address)) {
       result = 'flow_pass'
     } else {
-      const verdict = captchaVerdict(await verifyCaptcha(input.token, { action: toggle, remoteIp: input.ip }, fetchImpl), settings.captcha.failMode)
-      if (verdict && !verdict.allow) return refusal(step, verdict.result as GateRefusal, 403, verdict.message.text)
+      const checked = await verifyCaptcha(input.token, { action: toggle, remoteIp: input.ip }, fetchImpl)
+      const verdict = captchaVerdict(checked, settings.captcha.failMode)
+      if (verdict && !verdict.allow) {
+        const codes = checked.ok ? [] : (checked.codes ?? []).filter((c) => /^[a-z0-9_-]{1,64}$/i.test(c)).slice(0, 8)
+        return { allow: false, step, result: verdict.result as GateRefusal, status: 403, message: verdict.message.text, detail: { codes, expected_action: toggle } }
+      }
       result = verdict?.result === 'fail_open' ? 'fail_open' : 'allowed'
       if (result === 'allowed' && input.token) {
         await rememberVerified(input.token, toggle)
@@ -306,6 +320,7 @@ export function gateRefusalBody(decision: GateDecision & { allow: false }) {
       reason: decision.message,
       message: decision.message,
       ...(decision.retryAfter !== undefined ? { retry_after: decision.retryAfter } : {}),
+      ...(decision.detail ? { details: decision.detail } : {}),
     },
   }
 }

@@ -48,7 +48,7 @@ vi.mock('../../sites/signup/service.js', () => ({
 }))
 
 import { signInGateRoutes } from '../../sign-in-protection/gate-routes.js'
-import { classifySubmit, gateSubmit, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
+import { classifySubmit, gateRefusalBody, gateSubmit, parseSubmitBody, submitToken, type GateFlow } from '../../sign-in-protection/gate.js'
 import { clientIp } from '../../utils/client-ip.js'
 import { guardFlow } from '../../sign-in-protection/guard.js'
 import { SIGN_IN_PROTECTION_KEY, defaultSignInProtection, resetSignInProtectionCache, type CaptchaFlow } from '../../sign-in-protection/settings.js'
@@ -155,6 +155,18 @@ describe('gate decisions', () => {
     expect(await gateSubmit(send({ flow: 'registration', token: null, fields: { method: 'profile', traits: { email: 'a@corp.io' } } }), ok())).toMatchObject({ allow: false, result: 'captcha_missing' })
     expect(await gateSubmit(send({ flow: 'recovery', token: null, fields: { method: 'link', email: 'a@corp.io' } }), ok())).toMatchObject({ allow: false, result: 'captcha_missing' })
     expect(await gateSubmit(send(), siteverify({ success: false, 'error-codes': ['invalid-input-response'] }))).toMatchObject({ allow: false, result: 'captcha_invalid' })
+  })
+
+  it('says why a token was refused and which action the flow expects: a sign-in token on a sign-up is action-mismatch', async () => {
+    // A real secret: the provider's test keys answer without an action, so jinbe does not check it with them.
+    h.env = { ...h.env, CAPTCHA_SECRET_KEY: '0x4AAAAAAA-real-looking-secret-0000000' }
+    const solvedForLogin = siteverify({ success: true, action: 'login' })
+    const d = await gateSubmit(send({ flow: 'registration', fields: { method: 'profile', traits: { email: 'a@corp.io' } } }), solvedForLogin)
+    expect(d).toMatchObject({ allow: false, status: 403, result: 'captcha_invalid', detail: { codes: ['action-mismatch'], expected_action: 'registration' } })
+    expect(gateRefusalBody(d as Extract<typeof d, { allow: false }>).error).toMatchObject({ id: 'captcha_invalid', details: { codes: ['action-mismatch'], expected_action: 'registration' } })
+    expect(await gateSubmit(send(), spent())).toMatchObject({ detail: { codes: ['timeout-or-duplicate'], expected_action: 'login' } })
+    // A missing token: no code to explain, the action the widget must be rendered with all the same.
+    expect(await gateSubmit(send({ token: null }), ok())).toMatchObject({ result: 'captcha_missing', detail: { codes: [], expected_action: 'login' } })
   })
 
   it('a solved check sends one code; the code typed after it rides on the pass; the guard hook takes the gate’s word once', async () => {
