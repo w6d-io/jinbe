@@ -265,3 +265,25 @@ describe('passRoles', () => {
     expect(runWith(tidy(), false)).toEqual([])
   })
 })
+
+describe('groups a sign-up adds newcomers to', () => {
+  const withGroups = (groups: string[]): Site => ({ ...tidy(), signUp: { mode: 'open', domains: [], roles: ['viewer'], orgs: 'none', groups } } as Site)
+  const defs = { driver_onboarding: { backend: ['user'], persons: ['user'] }, sneaky: { persons: ['user'], jinbe: ['viewer'] } }
+  const codes = (f: ReturnType<typeof run>) => f.map((x) => `${x.level}:${x.code}`)
+
+  it('a group giving site roles is confirmed, naming the sites it opens', () => {
+    const f = run(withGroups(['driver_onboarding']), defs)
+    expect(f.find((x) => x.code === 'sign_up_groups')).toMatchObject({ level: 'confirm', message: expect.stringContaining('backend, persons') })
+  })
+
+  it('an unknown group, a staff group or one giving a platform role refuses the publish', () => {
+    expect(codes(run(withGroups(['gone']), defs))).toContain('error:sign_up_group_unknown')
+    expect(codes(run(withGroups(['sneaky']), defs))).toContain('error:sign_up_group_platform')
+    expect(codes(run(withGroups(['super_admins']), { ...defs, super_admins: { jinbe: ['super_admin'] } }))).toContain('error:sign_up_group_platform')
+  })
+
+  it('a closed sign-up adds nobody: nothing to confirm', () => {
+    const closed = { ...withGroups(['driver_onboarding']), signUp: { mode: 'closed', domains: [], roles: ['viewer'], orgs: 'none', groups: ['driver_onboarding'] } } as Site
+    expect(codes(run(closed, defs)).some((c) => c.includes('sign_up_group'))).toBe(false)
+  })
+})

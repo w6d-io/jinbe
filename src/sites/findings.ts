@@ -4,6 +4,7 @@ import { secondFactorGaps, type Check, type Rendered } from './render.js'
 import type { ProtectionStatus } from './protection.js'
 import { WHO, WHO_LABEL, isBareBearer, whoOf, type WhoPreset } from './presets.js'
 import { siteError } from './checks.js'
+import { isStaffGroup } from '../policy/roles.js'
 
 /**
  * Security findings on a site: what it lets in, and who can reach what — beside the checks render
@@ -46,6 +47,8 @@ export interface FindingContext {
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+/** The platform's own apps: a group giving a role there is never a sign-up's. */
+const PLATFORM_APPS = new Set(['jinbe', 'kuma', 'global'])
 /** Mutators that hand the caller's identity to the app: headers, an enrichment, or a signed token/cookie. */
 const IDENTITY_MUTATORS = new Set(['header', 'hydrator', 'id_token', 'cookie'])
 const presetList = (Object.keys(WHO) as WhoPreset[]).map((k) => `${k} (${WHO[k].map((h) => h.handler).join(' → ')})`).join('; ')
@@ -56,6 +59,26 @@ const grants = (held: string, needed: string) => held === needed
 export function securityFindings(site: Site, rendered: Pick<Rendered, 'roles'>, ctx: FindingContext): Finding[] {
   const out: Finding[] = []
   const add = (level: FindingLevel, code: string, message: string, fix: string, path?: string) => out.push({ code, level, message, fix, ...(path ? { path } : {}) })
+
+  // Groups a sign-up adds newcomers to beside the site's own: each must exist and give site roles only;
+  // what they open on other sites is said and confirmed, since one site's sign-up then grants those.
+  const extraGroups = site.signUp && site.signUp.mode !== 'closed' ? site.signUp.groups ?? [] : []
+  const opened = new Set<string>()
+  extraGroups.forEach((g, i) => {
+    const at = `signUp.groups.${i}`
+    const def = ctx.groups[g]
+    if (!def) { add('error', 'sign_up_group_unknown', `sign-up adds people to '${g}', which does not exist`, 'Create the group first, or remove it from the sign-up', at); return }
+    const apps = Object.keys(def)
+    if (isStaffGroup(g) || apps.some((a) => PLATFORM_APPS.has(a))) {
+      add('error', 'sign_up_group_platform', `sign-up would add anyone who registers to '${g}', which gives platform (${apps.filter((a) => PLATFORM_APPS.has(a)).join(', ') || 'staff'}) roles`, 'A sign-up may only add groups giving roles on sites: remove it', at)
+      return
+    }
+    apps.filter((a) => a !== site.name).forEach((a) => opened.add(a))
+  })
+  if (opened.size > 0) {
+    add('confirm', 'sign_up_groups', `anyone who signs up through ${site.name} also joins ${extraGroups.map((g) => `'${g}'`).join(', ')}, opening ${[...opened].sort().join(', ')}`,
+      'Check that every newcomer should reach those sites, then acknowledge sign_up_groups', 'signUp.groups')
+  }
 
   // A prefix carved out of another site: requests there stop being decided by that site's routes and
   // catch-all (its protection) and follow this site's instead — said, and confirmed, before it happens.

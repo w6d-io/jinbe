@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   created: [] as Array<{ name: string; tenant: string }>,
   owners: [] as Array<[string, string, string[]]>,
   joined: [] as Array<[string, string]>,
+  rbacGroups: {} as Record<string, Record<string, string[]>>,
   registration: { mode: 'closed', allowEmails: [] as string[], allowDomains: [] as string[], denyDomains: [] as string[], blockDisposable: false },
 }))
 
@@ -39,6 +40,7 @@ vi.mock('../../services/org-roles.repository.js', () => ({
 vi.mock('../../services/redis-rbac.repository.js', () => ({
   redisRbacRepository: {
     getOrgSites: async () => state.orgSites,
+    getGroups: async () => state.rbacGroups,
     setOrgSites: async (org: string, sites: string[]) => { state.orgSites[org] = sites },
   },
 }))
@@ -70,6 +72,7 @@ beforeEach(() => {
   state.live = open()
   state.identity = person('jane@client.com', true, { name: 'Jane Doe' })
   state.groups = new Map()
+  state.rbacGroups = {}
   state.orgSites = {}
   state.orgsOf = []
   state.created = []
@@ -110,6 +113,8 @@ describe('widening sign-up needs sites.signup:write', () => {
     ['one domain fewer', s('domains', ['a.com', 'b.com']), s('domains', ['a.com']), false],
     ['one more role', s('open'), s('open', [], ['user', 'editor']), true],
     ['open → closed', s('open'), s('closed'), false],
+    ['one more group', s('open'), { ...s('open'), groups: ['driver_onboarding'] }, true],
+    ['one group fewer', { ...s('open'), groups: ['driver_onboarding'] }, s('open'), false],
   ])('%s', (_label, before, after, widens) => {
     expect(signUpWidens(before, after)).toBe(widens)
   })
@@ -135,6 +140,16 @@ describe('joining', () => {
     expect(state.orgSites['org-1']).toEqual(['jinbe', 'payroll'])
     expect(state.owners).toEqual([['org-1', ID, ['jinbe:owner']]])
     expect(await signUpStore.orgsOf('payroll')).toEqual(['org-1'])
+  })
+
+  it('also joins the sign-up\'s extra groups — never a staff group, one giving a platform role, or one that does not exist', async () => {
+    state.rbacGroups = { driver_onboarding: { backend: ['user'], persons: ['user'] }, sneaky: { persons: ['user'], jinbe: ['viewer'] } }
+    state.live = { ...state.live!, signUp: { ...state.live!.signUp!, groups: ['driver_onboarding', 'sneaky', 'super_admins', 'gone'] } }
+    await svc.joinSite(ID, 'payroll', 'sign-up')
+    expect(state.groups.get(ID)).toEqual(['payroll-users', 'driver_onboarding'])
+    // Once: a second join adds nothing.
+    await svc.joinSite(ID, 'payroll', 'sign-up')
+    expect(state.groups.get(ID)).toEqual(['payroll-users', 'driver_onboarding'])
   })
 
   it('is idempotent and makes no second org for somebody already in one the site serves', async () => {

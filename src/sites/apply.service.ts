@@ -245,5 +245,6 @@ export function signUpWidens(before: Site['signUp'] | undefined, after: Site['si
   const b = before!, a = after!
   if (a.mode === 'open' && b.mode === 'domains') return true
   if (a.mode === 'domains' && a.domains.some((d) => !b.domains.includes(d))) return true
+  if ((a.groups ?? []).some((g) => !(b.groups ?? []).includes(g))) return true
   return a.roles.some((r) => !b.roles.includes(r))
 }

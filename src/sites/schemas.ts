@@ -106,6 +106,12 @@ export const signUpSchema = z
     domains: z.array(z.string().toLowerCase().regex(SIGN_UP_DOMAIN, 'a domain like example.com')).max(100).default([]),
     roles: z.array(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/)).max(20),
     orgs: z.enum(SIGN_UP_ORGS),
+    /**
+     * Existing platform groups a newcomer joins too, beside the site's own `<site>-users` (e.g. a
+     * `driver_onboarding` group opening several sites). Only groups giving site roles — never a staff
+     * group or a platform role (findings.ts `sign_up_group_*`); adding one widens the sign-up.
+     */
+    groups: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/)).max(10).default([]),
   })
   .strict()
   .superRefine((s, ctx) => {

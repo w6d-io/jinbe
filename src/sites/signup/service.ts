@@ -8,7 +8,8 @@ import { rbacService } from '../../services/rbac.service.js'
 import { orgRolesRepository } from '../../services/org-roles.repository.js'
 import { addToGroup, createOrganisation, groupsForSubjects, removeFromGroup } from '../../services/organisation-store.js'
 import { joinOrganisation, organisationsOf } from '../../services/org-membership.service.js'
-import { JINBE, qualified } from '../../policy/roles.js'
+import { JINBE, isStaffGroup, qualified } from '../../policy/roles.js'
+import { KEYLESS_APPS } from '../../services/authorization-resolution.js'
 import type { KratosIdentity } from '../../schemas/admin.schema.js'
 import { getSignInProtection } from '../../sign-in-protection/settings.js'
 import { registrationVerdict } from '../../sign-in-protection/guard.js'
@@ -176,6 +177,20 @@ async function organisationFor(identity: KratosIdentity, site: Site): Promise<Jo
  * place. `invite`: somebody an org owner invited into an org made by this site's sign-up — no new org,
  * and the site's sign-up may be closed since (the org already belongs to the site).
  */
+/**
+ * The sign-up's extra groups a newcomer may join now: defined, not a staff group, and giving roles on
+ * sites only (no jinbe, kuma or global role). Anything else is left out.
+ */
+export async function joinableSignUpGroups(names: readonly string[]): Promise<string[]> {
+  if (names.length === 0) return []
+  const defs = await redisRbacRepository.getGroups()
+  return names.filter((g) => {
+    const def = defs[g]
+    const apps = def ? Object.keys(def) : []
+    return apps.length > 0 && !isStaffGroup(g) && !apps.some((a) => KEYLESS_APPS.includes(a))
+  })
+}
+
 export async function joinSite(identityId: string, siteName: string, via: JoinVia): Promise<JoinResult> {
   return withRedisLock(`signup-join:${identityId}`, async () => {
     const site = await liveSite(siteName)
@@ -192,10 +207,15 @@ export async function joinSite(identityId: string, siteName: string, via: JoinVi
     const groups = (await groupsForSubjects([identity.id])).get(identity.id) ?? []
     const newcomer = !groups.includes(group)
     if (newcomer) await addToGroup(identity.id, group, `sign-up:${site.name}`)
+    // The extra groups the sign-up names: joined once, never a staff group or one giving a platform role
+    // (the publish refuses those; re-checked here against the model as it is now).
+    const extra = await joinableSignUpGroups(site.signUp.groups ?? [])
+    const joined = extra.filter((g) => !groups.includes(g))
+    for (const g of joined) await addToGroup(identity.id, g, `sign-up:${site.name}`)
     const organization = via === 'invite' ? null : await organisationFor(identity, site)
     await signUpStore.clearPending(email, site.name)
     await rbacService.notifyBindingsChanged('signup_joined')
-    if (newcomer) audit('site.signup.joined', 'create', identity, { site: site.name, group, via, organizationId: organization?.id ?? null }, site.name)
+    if (newcomer || joined.length) audit('site.signup.joined', 'create', identity, { site: site.name, group, ...(joined.length ? { groups: joined } : {}), via, organizationId: organization?.id ?? null }, site.name)
     return { joined: true, site: site.name, group, organization }
   })
 }
