@@ -4,7 +4,7 @@ import { env } from '../config/env.js'
 import { auditEventService, type AuditEvent } from '../services/audit-event.service.js'
 import type { AuditEventType } from '../audit/v1/catalog.js'
 import { kratosService } from '../services/kratos.service.js'
-import { onIdentityEvent } from '../sites/signup/service.js'
+import { gatewayKnows, onIdentityEvent } from '../sites/signup/service.js'
 import { applyAwaiting } from '../second-factor/awaiting-apply.js'
 
 /**
@@ -175,7 +175,12 @@ export class WebhookController {
     // A sign-up through a site joins it once the address is verified: right at registration for a
     // code sign-up (the code proved the address), else when the verification flow completes.
     if (!failed && (flowType === 'registration' || flowType === 'verification')) {
-      await onIdentityEvent(identityId, request.log)
+      const joined = await onIdentityEvent(identityId, request.log)
+      // Kratos waits for this hook before it hands the session out (registration: response.ignore false):
+      // hold the answer until the gateway knows the new groups, so the first call with it passes.
+      if (joined?.added.length && !(await gatewayKnows(joined.email, joined.added))) {
+        request.log.warn({ groups: joined.added }, 'Gateway did not learn the sign-up groups in time; the first calls may be refused for a moment')
+      }
     }
     // A second factor just enrolled: the groups that waited for it (second-factor/awaiting.ts) apply now.
     if (!failed && !removed && flowType === 'settings' && method && MFA_METHODS.has(method)) {

@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   owners: [] as Array<[string, string, string[]]>,
   joined: [] as Array<[string, string]>,
   rbacGroups: {} as Record<string, Record<string, string[]>>,
+  opa: [] as Array<string[] | Error>,
   registration: { mode: 'closed', allowEmails: [] as string[], allowDomains: [] as string[], denyDomains: [] as string[], blockDisposable: false },
 }))
 
@@ -44,6 +45,9 @@ vi.mock('../../services/redis-rbac.repository.js', () => ({
     setOrgSites: async (org: string, sites: string[]) => { state.orgSites[org] = sites },
   },
 }))
+vi.mock('../../services/opa-client.js', () => ({
+  queryOpaAdhoc: async () => { const next = state.opa.length > 1 ? state.opa.shift()! : state.opa[0]; if (next instanceof Error) throw next; return next },
+}))
 vi.mock('../../services/rbac.service.js', () => ({ rbacService: { notifyBindingsChanged: async () => {} } }))
 vi.mock('../../services/audit-event.service.js', () => ({ auditEventService: { emit: async () => {} } }))
 vi.mock('../../sign-in-protection/settings.js', async (orig) => ({
@@ -73,6 +77,7 @@ beforeEach(() => {
   state.identity = person('jane@client.com', true, { name: 'Jane Doe' })
   state.groups = new Map()
   state.rbacGroups = {}
+  state.opa = []
   state.orgSites = {}
   state.orgsOf = []
   state.created = []
@@ -150,6 +155,13 @@ describe('joining', () => {
     // Once: a second join adds nothing.
     await svc.joinSite(ID, 'payroll', 'sign-up')
     expect(state.groups.get(ID)).toEqual(['payroll-users', 'driver_onboarding'])
+  })
+
+  it('reports the groups it just added (the sign-up group and the extra ones), none on a second join', async () => {
+    state.rbacGroups = { driver_onboarding: { backend: ['user'] } }
+    state.live = { ...state.live!, signUp: { ...state.live!.signUp!, groups: ['driver_onboarding'] } }
+    expect(await svc.joinSite(ID, 'payroll', 'sign-up')).toMatchObject({ joined: true, added: ['payroll-users', 'driver_onboarding'] })
+    expect(await svc.joinSite(ID, 'payroll', 'sign-up')).toMatchObject({ joined: true, added: [] })
   })
 
   it('is idempotent and makes no second org for somebody already in one the site serves', async () => {
@@ -267,3 +279,19 @@ describe('the registration guard', () => {
     expect(await reg('https://payroll.dev.example.com/')).toMatchObject({ allow: false, result: 'registration_not_allowed' })
   })
 })
+
+describe('waiting for the gateway to know the new groups', () => {
+  const noSleep = async () => {}
+  it('answers at once when OPA already holds them, after a few tries when it catches up', async () => {
+    state.opa = [['payroll-users', 'driver_onboarding']]
+    expect(await svc.gatewayKnows('jane@client.com', ['payroll-users', 'driver_onboarding'], 1000, noSleep)).toBe(true)
+    state.opa = [[], new Error('opa down'), ['payroll-users']]
+    expect(await svc.gatewayKnows('jane@client.com', ['payroll-users'], 1000, noSleep)).toBe(true)
+  })
+  it('gives up at the deadline, and waits for nothing when no group was added', async () => {
+    state.opa = [[]]
+    expect(await svc.gatewayKnows('jane@client.com', ['payroll-users'], 0, noSleep)).toBe(false)
+    expect(await svc.gatewayKnows('jane@client.com', [], 0, noSleep)).toBe(true)
+  })
+})
+

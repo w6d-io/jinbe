@@ -21,6 +21,13 @@ vi.mock('../../../services/audit-event.service.js', () => ({
 const awaiting = vi.hoisted(() => ({ apply: vi.fn(async () => 'none') }))
 vi.mock('../../../second-factor/awaiting-apply.js', () => ({ applyAwaiting: awaiting.apply }))
 
+// A sign-up through a site: the groups it joined, and the wait for the gateway to know them.
+const signup = vi.hoisted(() => ({
+  onIdentityEvent: vi.fn(async (): Promise<{ email: string; added: string[] } | null> => null),
+  gatewayKnows: vi.fn(async () => true),
+}))
+vi.mock('../../../sites/signup/service.js', () => signup)
+
 import { webhookController, verifyKratosWebhookAuth } from '../../../controllers/webhook.controller.js'
 import { auditEventService, type AuditEvent } from '../../../services/audit-event.service.js'
 import { legacyToV1 } from '../../../audit/v1/legacy-map.js'
@@ -159,5 +166,17 @@ describe('Kratos webhook — the chart body carries the actor (AUD-0b)', () => {
     await hook({ flow: 'settings', method: 'totp', outcome: 'removed', ...chart })
     await hook({ flow: 'login', method: 'totp', ...chart })
     expect(awaiting.apply).not.toHaveBeenCalled()
+  })
+
+  it('a registration that joined groups answers once the gateway knows them; nothing to wait for otherwise', async () => {
+    const hookAs = (body: Record<string, unknown>) => webhookController.kratos(mockRequest({ headers: { 'x-kratos-webhook-secret': 'top-secret-value' }, body }), mockReply() as never)
+    signup.onIdentityEvent.mockResolvedValueOnce({ email: 'new@x.io', added: ['enrollment-service-users', 'driver_onboarding'] })
+    await hookAs({ flow: 'registration', method: 'code', identity_id: 'i-1', identity_email: 'new@x.io' })
+    expect(signup.gatewayKnows).toHaveBeenCalledWith('new@x.io', ['enrollment-service-users', 'driver_onboarding'])
+    signup.gatewayKnows.mockClear()
+    signup.onIdentityEvent.mockResolvedValueOnce({ email: 'old@x.io', added: [] })
+    await hookAs({ flow: 'registration', method: 'code', identity_id: 'i-2', identity_email: 'old@x.io' })
+    await hookAs({ flow: 'login', method: 'code', identity_id: 'i-2', identity_email: 'old@x.io' })
+    expect(signup.gatewayKnows).not.toHaveBeenCalled()
   })
 })

@@ -17,6 +17,7 @@ import { liveSite, liveSiteByHost } from '../login.js'
 import { signUpGroupName, type Site } from '../schemas.js'
 import { organizationsOn } from '../organizations.js'
 import { signUpStore } from './store.js'
+import { queryOpaAdhoc } from '../../services/opa-client.js'
 
 /**
  * Public sign-up through one site (the intent's `signUp`).
@@ -46,7 +47,7 @@ export type JoinVia = 'sign-up' | 'continue' | 'invite'
 export type JoinedOrganization = { id: string; name: string; created: boolean }
 
 export type JoinResult =
-  | { joined: true; site: string; group: string; organization: JoinedOrganization | null }
+  | { joined: true; site: string; group: string; organization: JoinedOrganization | null; added?: string[] }
   /** `organization`: not joined to the sign-up, but given (or found) the default organization of a site with organizations on. */
   | { joined: false; site: string; reason: JoinRefusal; organization?: JoinedOrganization }
 
@@ -216,7 +217,7 @@ export async function joinSite(identityId: string, siteName: string, via: JoinVi
     await signUpStore.clearPending(email, site.name)
     await rbacService.notifyBindingsChanged('signup_joined')
     if (newcomer || joined.length) audit('site.signup.joined', 'create', identity, { site: site.name, group, ...(joined.length ? { groups: joined } : {}), via, organizationId: organization?.id ?? null }, site.name)
-    return { joined: true, site: site.name, group, organization }
+    return { joined: true, site: site.name, group, organization, added: [...(newcomer ? [group] : []), ...joined] }
   })
 }
 
@@ -225,18 +226,48 @@ export async function joinSite(identityId: string, siteName: string, via: JoinVi
  * through, once its address is verified; and somebody invited into an org a sign-up made joins that
  * site too. Never throws: the hook answers 200 whatever happens here.
  */
-export async function onIdentityEvent(identityId: string | null, log?: { warn: (o: object, m: string) => void }): Promise<void> {
-  if (!identityId) return
+export async function onIdentityEvent(identityId: string | null, log?: { warn: (o: object, m: string) => void }): Promise<{ email: string; added: string[] } | null> {
+  if (!identityId) return null
   try {
     const identity = await kratosService.getIdentity(identityId)
     const email = emailOf(identity)
-    if (!email || !isVerified(identity, email)) return
-    for (const p of await signUpStore.pending(email)) await joinSite(identityId, p.site, 'sign-up')
+    if (!email || !isVerified(identity, email)) return null
+    const added: string[] = []
+    const take = (r: JoinResult) => { if (r.joined && r.added) added.push(...r.added) }
+    for (const p of await signUpStore.pending(email)) take(await joinSite(identityId, p.site, 'sign-up'))
     const bySignUp = await signUpStore.orgSites()
     const sites = new Set((await organisationsOf(identity)).flatMap((o) => bySignUp[o] ?? []))
-    for (const site of sites) await joinSite(identityId, site, 'invite')
+    for (const site of sites) take(await joinSite(identityId, site, 'invite'))
+    return { email, added: [...new Set(added)] }
   } catch (err) {
     log?.warn({ err, identityId }, 'Site sign-up join did not complete')
+    return null
+  }
+}
+
+/** How long a registration waits for the gateway to know the groups it just joined (gatewayKnows). */
+export const GATEWAY_READY_TIMEOUT_MS = 3_000
+const GATEWAY_READY_STEP_MS = 150
+
+/**
+ * Waits until the policy the gateway decides on holds these groups for this address (OPAL pushes
+ * jinbe's memberships to OPA a moment after a join). The registration webhook waits on it, so Kratos
+ * hands the new session out only once the first call with it passes — instead of a 403 the app has to
+ * retry. Never throws, never longer than `timeoutMs`: false means the gateway was not told in time,
+ * and the sign-up goes on as before.
+ */
+export async function gatewayKnows(email: string, groups: readonly string[], timeoutMs = GATEWAY_READY_TIMEOUT_MS, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<boolean> {
+  if (groups.length === 0) return true
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const held = await queryOpaAdhoc<string[]>('x := data.bindings.group_membership[input.email]', { email })
+      if (Array.isArray(held) && groups.every((g) => held.includes(g))) return true
+    } catch {
+      /* OPA unreachable: try again until the deadline */
+    }
+    if (Date.now() + GATEWAY_READY_STEP_MS > deadline) return false
+    await sleep(GATEWAY_READY_STEP_MS)
   }
 }
 
