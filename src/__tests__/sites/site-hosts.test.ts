@@ -94,7 +94,7 @@ describe('GET /hosts', () => {
   })
 })
 
-describe('GET /hosts/:host', () => {
+describe('GET /hosts/detail?host=', () => {
   it('gives each route and the catch-all with the path its backend receives', async () => {
     h.records = [record(at('earnings', undefined, { upstream: { service: 'earning-service', namespace: 'stairling', port: 80, stripPath: '/api/v1', path: '/api/external' } }))]
     const one = await getHost(HOST.toUpperCase())
@@ -107,7 +107,7 @@ describe('GET /hosts/:host', () => {
     await expect(getHost('nope.dev.example.com')).rejects.toMatchObject({ statusCode: 404 })
   })
 
-  it('the routes ask sites:read and validate the host', async () => {
+  it('the routes ask sites:read; the host is a query parameter (a path ending in .com is refused by the WAF)', async () => {
     const { sitesRoutes } = await import('../../sites/routes.js')
     const { declaredRoutes, resetDeclaredRoutes } = await import('../../policy/declared-routes.js')
     const { installRouteAccess } = await import('../../policy/route-access.js')
@@ -118,7 +118,8 @@ describe('GET /hosts/:host', () => {
     await app.ready()
     const perm = (path: string) => declaredRoutes().find((r) => r.method === 'GET' && r.path === `/api/admin/sites${path}`)?.permission
     expect(perm('/hosts')).toBe('sites:read')
-    expect(perm('/hosts/:host')).toBe('sites:read')
+    expect(perm('/hosts/detail')).toBe('sites:read')
+    expect(perm('/hosts/:host')).toBeUndefined()
     await app.close()
   })
 })

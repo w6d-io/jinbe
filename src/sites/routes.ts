@@ -37,7 +37,7 @@ import { sitesConfig } from './config.js'
  */
 
 const TAGS = ['sites']
-const hostParamsSchema = z.object({ host: z.string().toLowerCase().regex(/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, 'a host name') }).strict()
+const hostQuerySchema = z.object({ host: z.string().toLowerCase().regex(/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, 'a host name') }).strict()
 const doc = (permission: Permission, description: string, body?: ZodSchema) => ({
   config: { permission },
   schema: {
@@ -95,8 +95,10 @@ export async function sitesRoutes(fastify: FastifyInstance) {
 
   fastify.get('/hosts', doc('sites:read', 'The sites grouped by the host they are saved on: per host, every service mounted on it (path prefix, enclosing service, backend, page or API, access summary, status, waiting draft or apply request, other sites on the same backend). A reading only: nothing is merged'),
     handle(async () => hosts.listHosts()))
-  fastify.get('/hosts/:host', doc('sites:read', 'One host: its services, each with its routes and the path the backend receives for each (strip_path removed, upstream.path prepended); 404 when no site is on it'),
-    handle(async (request) => hosts.getHost(parse(hostParamsSchema, request.params).host)))
+  // The host travels in the query, never as the last path segment: a URL ending in `.com` is refused by
+  // the WAF (OWASP CRS 920440, restricted file extensions) before it reaches jinbe.
+  fastify.get('/hosts/detail', doc('sites:read', 'One host (?host=): its services, each with its routes and the path the backend receives for each (strip_path removed, upstream.path prepended); 404 when no site is on it'),
+    handle(async (request) => hosts.getHost(parse(hostQuerySchema, request.query).host)))
   fastify.get('/deleted', doc('sites:read', 'Deleted sites whose snapshot is kept (30 days)'), handle(async () => sites.deletedSites()))
 
   fastify.post('/match', { ...doc('sites:read', 'Which gateway rule and which route a request would hit, live or with a draft (gatekit)', matchBodySchema) },

@@ -7190,20 +7190,14 @@ paths:
       responses:
         "200":
           description: Default Response
-  /api/admin/sites/hosts/{host}:
+  /api/admin/sites/hosts/detail:
     get:
       tags: *a2
-      description: "One host: its services, each with its routes and the path the
-        backend receives for each (strip_path removed, upstream.path prepended);
-        404 when no site is on it"
+      description: "One host (?host=): its services, each with its routes and the path
+        the backend receives for each (strip_path removed, upstream.path
+        prepended); 404 when no site is on it"
       x-permission: sites:read
       x-scope: platform
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: host
-          required: true
       responses:
         "200":
           description: Default Response
