@@ -2322,6 +2322,42 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/admin/sites/hosts",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/sites/hosts/:host",
+          "permission": "sites:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "developer",
+              "ops",
+              "super_admin"
+            ],
+            "groups": [
+              "staff-developers",
+              "staff-ops",
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "POST",
           "path": "/api/admin/sites/match",
           "permission": "sites:read",

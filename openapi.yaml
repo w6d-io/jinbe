@@ -7178,6 +7178,35 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/admin/sites/hosts:
+    get:
+      tags: *a2
+      description: "The sites grouped by the host they are saved on: per host, every
+        service mounted on it (path prefix, enclosing service, backend, page or
+        API, access summary, status, waiting draft or apply request, other sites
+        on the same backend). A reading only: nothing is merged"
+      x-permission: sites:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+  /api/admin/sites/hosts/{host}:
+    get:
+      tags: *a2
+      description: "One host: its services, each with its routes and the path the
+        backend receives for each (strip_path removed, upstream.path prepended);
+        404 when no site is on it"
+      x-permission: sites:read
+      x-scope: platform
+      parameters:
+        - schema:
+            type: string
+          in: path
+          name: host
+          required: true
+      responses:
+        "200":
+          description: Default Response
   /api/admin/sites/deleted:
     get:
       tags: *a2

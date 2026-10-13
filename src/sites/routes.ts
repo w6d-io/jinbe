@@ -10,6 +10,8 @@ import * as zones from './zones.service.js'
 import * as gateways from './gateways.service.js'
 import * as sites from './sites.service.js'
 import * as ops from './apply.service.js'
+import * as hosts from './hosts.js'
+import { z } from 'zod'
 import { actorOf, handle, nameOf, parse } from './http.js'
 import { assertGatesAuthenticated } from './checks.js'
 import { siteOpsRoutes } from './ops.routes.js'
@@ -35,6 +37,7 @@ import { sitesConfig } from './config.js'
  */
 
 const TAGS = ['sites']
+const hostParamsSchema = z.object({ host: z.string().toLowerCase().regex(/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, 'a host name') }).strict()
 const doc = (permission: Permission, description: string, body?: ZodSchema) => ({
   config: { permission },
   schema: {
@@ -90,6 +93,10 @@ export async function sitesRoutes(fastify: FastifyInstance) {
   fastify.get('/platform', doc('sites:read', 'This environment: name, production flag, four-eyes mode, expected rule-load time, zones'),
     handle(async () => sites.platformView()))
 
+  fastify.get('/hosts', doc('sites:read', 'The sites grouped by the host they are saved on: per host, every service mounted on it (path prefix, enclosing service, backend, page or API, access summary, status, waiting draft or apply request, other sites on the same backend). A reading only: nothing is merged'),
+    handle(async () => hosts.listHosts()))
+  fastify.get('/hosts/:host', doc('sites:read', 'One host: its services, each with its routes and the path the backend receives for each (strip_path removed, upstream.path prepended); 404 when no site is on it'),
+    handle(async (request) => hosts.getHost(parse(hostParamsSchema, request.params).host)))
   fastify.get('/deleted', doc('sites:read', 'Deleted sites whose snapshot is kept (30 days)'), handle(async () => sites.deletedSites()))
 
   fastify.post('/match', { ...doc('sites:read', 'Which gateway rule and which route a request would hit, live or with a draft (gatekit)', matchBodySchema) },
