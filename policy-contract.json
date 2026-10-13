@@ -2341,7 +2341,7 @@
         },
         {
           "method": "GET",
-          "path": "/api/admin/sites/hosts/:host",
+          "path": "/api/admin/sites/hosts/detail",
           "permission": "sites:read",
           "reach": {
             "kind": "platform",

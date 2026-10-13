@@ -119,7 +119,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"GET","path":"/api/admin/sites/deletion-requests/pending","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/sites/gateways","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/sites/hosts","permission":"sites:read"},
-  {"method":"GET","path":"/api/admin/sites/hosts/:host","permission":"sites:read"},
+  {"method":"GET","path":"/api/admin/sites/hosts/detail","permission":"sites:read"},
   {"method":"POST","path":"/api/admin/sites/match","permission":"sites:read"},
   {"method":"GET","path":"/api/admin/sites/migration","permission":"sites:read"},
   {"method":"POST","path":"/api/admin/sites/migration/cutover","permission":"sites:apply"},
