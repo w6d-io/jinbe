@@ -213,9 +213,11 @@ export const envSchema = z.object({
   SIGN_IN_GATE_CODES_PER_ADDRESS: z.coerce.number().int().positive().default(5),
   SIGN_IN_GATE_CODES_PER_IP: z.coerce.number().int().positive().default(20),
   SIGN_IN_GATE_WINDOW_S: z.coerce.number().int().positive().default(900),
-  // How long a token the gate verified stays good for the Kratos guard hook of the same flow (the
-  // provider answers a second siteverify of one token with timeout-or-duplicate).
-  SIGN_IN_GATE_VERIFIED_TTL_S: z.coerce.number().int().positive().max(3600).default(300),
+  // How long a flow's pass and a token the gate verified (for the Kratos guard hook of the same flow)
+  // stay good: the provider answers a second siteverify of one token with timeout-or-duplicate. As
+  // long as the emailed code (Kratos code lifespan, 15m) and the login/registration flow lifespans, so
+  // a code typed late is never refused for the bot check.
+  SIGN_IN_GATE_VERIFIED_TTL_S: z.coerce.number().int().positive().max(3600).default(900),
 
   // ─── Protected identity traits (sign-in-protection/protected-traits.ts) ───
   // Kratos traits only an administrator (or jinbe, through the admin API) may set, comma-separated.

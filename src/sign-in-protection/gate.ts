@@ -19,7 +19,8 @@ import { rememberVerified } from './verified-tokens.js'
  *
  * For a flow whose bot check is on, EVERY submit needs a bot-check token (X-Captcha-Token):
  *   - a token checked with the provider now (spent: the provider allows one use), or
- *   - the pass that token earned on this flow (same Kratos flow id, ten minutes, a few uses): it
+ *   - the pass that token earned on this flow (same Kratos flow id, SIGN_IN_GATE_VERIFIED_TTL_S —
+ *     fifteen minutes, as long as the emailed code —, a few uses): it
  *     covers the next steps about the SAME address (the code typed after it was sent, the code sent
  *     after the sign-up details) and at most one email. A new address, or a second email, needs a
  *     new solve — so no lookup and no email happens without a solved check.
