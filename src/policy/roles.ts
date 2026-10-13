@@ -38,8 +38,8 @@ export interface RoleSpec {
 export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   developer: {
     group: 'staff-developers',
-    label: "Build sites: routes, gates, roles and permissions, the site's groups and who is in them, sign-up drafts; organisations for their owners and their API keys; check access. Publishing is ops'",
-    permissions: ['sites:read', 'sites:write', 'sites.members:write', 'zones:read', 'groups:read', 'orgs:read', 'orgs:write', 'orgs.keys:write', 'access:check'],
+    label: "Build sites: routes, gates, roles and permissions, the site's groups and who is in them, groups for their sites and their members, sign-up drafts; organisations for their owners and their API keys; check access. Publishing is ops'",
+    permissions: ['sites:read', 'sites:write', 'sites.members:write', 'zones:read', 'groups:read', 'groups:write', 'groups.members:write', 'orgs:read', 'orgs:write', 'orgs.keys:write', 'access:check'],
   },
   support: {
     group: 'staff-support',

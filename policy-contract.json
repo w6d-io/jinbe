@@ -355,7 +355,9 @@
     "jinbe": {
       "developer": [
         "access:check",
+        "groups.members:write",
         "groups:read",
+        "groups:write",
         "orgs.keys:write",
         "orgs:read",
         "orgs:write",
@@ -593,9 +595,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -607,9 +611,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -1149,9 +1155,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -1163,9 +1171,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -1177,9 +1187,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -1307,9 +1319,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -1339,9 +1353,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -2730,9 +2746,11 @@
           "reach": {
             "kind": "platform",
             "roles": [
+              "developer",
               "super_admin"
             ],
             "groups": [
+              "staff-developers",
               "super_admins"
             ]
           }
@@ -4334,7 +4352,9 @@
         "expect": {
           "platform": [
             "access:check",
+            "groups.members:write",
             "groups:read",
+            "groups:write",
             "orgs.keys:write",
             "orgs:read",
             "orgs:write",

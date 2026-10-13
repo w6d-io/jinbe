@@ -98,7 +98,7 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
 
   // The table, pinned (owner decision 2026-10-06): a widening is a visible line here.
   it.each([
-    ['developer', ['access:check', 'groups:read', 'orgs.keys:write', 'orgs:read', 'orgs:write', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
+    ['developer', ['access:check', 'groups.members:write', 'groups:read', 'groups:write', 'orgs.keys:write', 'orgs:read', 'orgs:write', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
     ['support', ['access:check', 'access:read', 'sessions:read', 'sessions:revoke', 'users:create', 'users:read', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link', 'users:update', 'users:verify']],
     ['ops', ['sites.requests:approve', 'sites.signup:revoke', 'sites.signup:write', 'sites:apply', 'sites:read', 'zones:read', 'zones:write']],
     ['security', ['access:check', 'access:read', 'audit:read', 'groups.members:revoke', 'sessions:read', 'sessions:revoke', 'sites.signup:revoke', 'users.grants:read', 'users:disable', 'users:read', 'users:reset_second_factor']],
@@ -106,10 +106,10 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
     expect([...ROLES[role].permissions].sort()).toEqual([...perms].sort())
   })
 
-  it('only super admins see settings, the gateway, the bundle, the access model, deletions, recertification and audit export', () => {
+  it('only super admins see settings, the gateway, the bundle, the 2FA switch, deletions, recertification and audit export (developers also edit groups and who is in them: owner, 2026-10-13)', () => {
     const held = new Set(STAFF_ROLES.filter((r) => r !== 'super_admin').flatMap((r) => [...ROLES[r].permissions]))
     for (const p of ['settings:read', 'settings.signin:write', 'settings.mcp:write', 'gateway:read', 'gateway:apply', 'policy.bundle:read', 'policy.bundle:write',
-      'groups:write', 'groups.members:write', 'groups.mfa:write', 'users.grants:write', 'users:delete', 'sites:delete', 'zones:delete', 'orgs:delete',
+      'groups.mfa:write', 'users.grants:write', 'users:delete', 'sites:delete', 'zones:delete', 'orgs:delete',
       'recert:read', 'recert:manage', 'recert:delete', 'audit:export', 'stats:read', 'users:update_email'] as const) expect(held.has(p), p).toBe(false)
   })
 
