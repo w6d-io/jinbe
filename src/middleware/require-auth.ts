@@ -33,6 +33,10 @@ const PUBLIC_ROUTES = [
   // request itself — the impersonation cookie and the administrator's own Kratos session — and
   // answers 401 to anything else (impersonation/check.ts); the identity above is not consulted.
   '/api/oathkeeper/impersonation',
+  // The auth host's /sessions/whoami for a browser carrying the impersonation cookie (the edge sends
+  // it here): Kratos' own answer relayed, or the impersonated session for a site's page. It reads
+  // the request's cookies itself (impersonation/whoami.ts).
+  '/api/public/impersonation',
   // [P0-1] Narrowed from '/api/webhooks' (a startsWith prefix that made every
   // sub-path public) to the EXACT Kratos webhook path. The handler still
   // self-authenticates via a shared secret; this only lifts the session gate.

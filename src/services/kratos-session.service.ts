@@ -269,6 +269,32 @@ export class KratosSessionService {
   }
 
   /**
+   * Kratos' own answer to /sessions/whoami for these credentials, relayed as it is: status, content
+   * type and body, never read and never cached. For a caller that stands in front of Kratos
+   * (impersonation/whoami.ts) and owes its own caller exactly what Kratos would have said. Throws
+   * when Kratos cannot be reached within KRATOS_REQUEST_TIMEOUT_MS.
+   */
+  async whoamiRaw(credentials: { cookie?: string | null; sessionToken?: string; authorization?: string }, query = ''): Promise<{ status: number; contentType: string | null; body: string; identityId: string | null }> {
+    const headers: Record<string, string> = {}
+    if (credentials.cookie) headers.Cookie = credentials.cookie
+    if (credentials.sessionToken) headers['X-Session-Token'] = credentials.sessionToken
+    if (credentials.authorization) headers.Authorization = credentials.authorization
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), env.KRATOS_REQUEST_TIMEOUT_MS)
+    try {
+      const response = await fetch(`${this.publicUrl}/sessions/whoami${query}`, { method: 'GET', headers, signal: controller.signal })
+      return {
+        status: response.status,
+        contentType: response.headers.get('content-type'),
+        body: await response.text(),
+        identityId: response.headers.get('x-kratos-authenticated-identity-id'),
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
    * The session cookies to hand to Kratos, as `name=value[; name=value]`. The cookie's name is
    * Kratos' own setting (session.cookie.name — e.g. ory_kratos_session_sandbox), so every
    * `ory_kratos_session*` cookie is forwarded and Kratos picks the one it issued. Other cookies

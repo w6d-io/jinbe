@@ -22413,6 +22413,19 @@ paths:
     put: *a10
     patch: *a10
     delete: *a10
+  /api/public/impersonation/whoami:
+    get:
+      tags:
+        - public
+      description: "The auth host's /sessions/whoami while the browser carries the
+        impersonation cookie (routed here by the edge): Kratos' own answer
+        relayed unchanged, or — for a site's page, while the impersonation is
+        valid — the impersonated session. Never cacheable; sets no cookie."
+      x-access: machine
+      x-edge: false
+      responses:
+        "200":
+          description: Default Response
   /api/public/sites/by-host/{host}:
     get:
       tags:

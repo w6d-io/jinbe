@@ -560,6 +560,8 @@ An administrator holding `users:impersonate` (support, super admins) browses the
 | `IMPERSONATION_COOKIE_NAME` | `platform_impersonation` | Must not start with `ory_kratos_session`. Set on `SITES_COOKIE_DOMAIN`, `HttpOnly; Secure; SameSite=Lax`. |
 | `IMPERSONATION_MAX_MINUTES` | `30` | The longest (and default) duration of one impersonation; 5 to 60. |
 
+Site front ends that ask the auth host who is signed in follow it too: the edge sends the auth host's `GET /sessions/whoami` to `GET /api/public/impersonation/whoami` when the request carries the impersonation cookie. A page of a published site (by its `Origin`) is told the impersonated user while the impersonation is valid; every other caller — the console, the login UI, a request without an `Origin` — gets Kratos' own answer, relayed unchanged. CORS on that route is the edge's.
+
 #### Dev / debugging (never enable in production)
 
 | Variable | Default | Notes |

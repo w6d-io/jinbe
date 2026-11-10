@@ -35,6 +35,7 @@ import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
 import { impersonationCheckRoutes, impersonationRoutes } from './impersonation/routes.js'
+import { impersonationWhoamiRoutes } from './impersonation/whoami.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
@@ -211,6 +212,7 @@ export async function buildServer() {
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
       await api.register(impersonationCheckRoutes, { prefix: '/oathkeeper' }) // the gateway: who an impersonation cookie stands for (checks both cookies itself)
+      await api.register(impersonationWhoamiRoutes, { prefix: '/public/impersonation' }) // the edge: the auth host's /sessions/whoami while an impersonation cookie is present
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
       await api.register(oauthProviderRoutes, { prefix: '/public/oauth2' }) // login-ui: Hydra login/consent provider for MCP clients (visitor's cookies)
