@@ -29,6 +29,10 @@ const PUBLIC_ROUTES = [
   // It holds nothing private: a collector address reaches the browser either way.
   '/api/telemetry',
   '/api/oathkeeper/rules',
+  // The gateway asking who an impersonation cookie stands for. It reads the two cookies of the
+  // request itself — the impersonation cookie and the administrator's own Kratos session — and
+  // answers 401 to anything else (impersonation/check.ts); the identity above is not consulted.
+  '/api/oathkeeper/impersonation',
   // [P0-1] Narrowed from '/api/webhooks' (a startsWith prefix that made every
   // sub-path public) to the EXACT Kratos webhook path. The handler still
   // self-authenticates via a shared secret; this only lifts the session gate.

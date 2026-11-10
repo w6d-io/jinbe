@@ -80,6 +80,12 @@
       "delegable": "direct",
       "four_eyes": false
     },
+    "users:impersonate": {
+      "scope": "platform",
+      "step_up": true,
+      "delegable": "never",
+      "four_eyes": false
+    },
     "access:read": {
       "scope": "platform",
       "step_up": false,
@@ -372,6 +378,7 @@
         "sessions:read",
         "sessions:revoke",
         "users:create",
+        "users:impersonate",
         "users:read",
         "users:recovery",
         "users:reset_second_factor",
@@ -444,6 +451,7 @@
         "users:create",
         "users:delete",
         "users:disable",
+        "users:impersonate",
         "users:read",
         "users:recovery",
         "users:reset_second_factor",
@@ -835,6 +843,20 @@
               "staff-security",
               "super_admins"
             ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/admin/impersonation",
+          "reach": {
+            "kind": "signed-in"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/impersonation",
+          "reach": {
+            "kind": "signed-in"
           }
         },
         {
@@ -2939,6 +2961,22 @@
               "super_admin"
             ],
             "groups": [
+              "super_admins"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/users/:id/impersonate",
+          "permission": "users:impersonate",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-support",
               "super_admins"
             ]
           }

@@ -104,6 +104,7 @@ export async function loadPlatform(): Promise<Platform> {
     ...(cfg.SITES_ROLE_HEADERS ? { roleHeaders: true } : {}),
     ...(cfg.SITES_UPSTREAM_PATH ? { upstreamPath: true } : {}),
     ...(env.SITES_SESSION_ZONES.length > 0 ? { sessionZones: env.SITES_SESSION_ZONES } : {}),
+    ...(env.IMPERSONATION_ENABLED && env.IMPERSONATION_CHECK_URL ? { impersonation: { cookie: env.IMPERSONATION_COOKIE_NAME, checkUrl: env.IMPERSONATION_CHECK_URL } } : {}),
     ...(await loadIdentity()),
   }
 }

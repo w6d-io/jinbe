@@ -17,7 +17,8 @@ type Op = Record<string, unknown>
 const HIDDEN: Record<string, string> = {
   'POST /api/public/sign-in-protection/gate/self-service/:flow': "the gateway's proxy in front of Kratos, not an API",
 }
-const METHODS = ['get', 'post', 'put', 'patch', 'delete']
+// `options`: the gateway's impersonation check answers every method a site request may have.
+const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'options']
 const spec = parse(readFileSync(new URL('../../../openapi.yaml', import.meta.url), 'utf8')) as { paths: Record<string, Record<string, Op>> }
 
 /** `/api/x/{id}/` → `/api/x/:id` (the policy strips trailing slashes; swagger writes some). */

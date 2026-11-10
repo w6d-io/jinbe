@@ -62,6 +62,17 @@ export const SESSION_HEADERS: Record<string, string> = {
   'x-user-2fa-at': '{{ $at := "" }}{{ if .Extra }}{{ range .Extra.authentication_methods }}{{ if .aal }}{{ if eq (print .aal) "aal2" }}{{ $at = print .completed_at }}{{ end }}{{ end }}{{ end }}{{ end }}{{ $at }}',
 }
 
+/**
+ * Who is behind an impersonated request (src/impersonation): the administrator's identity id and
+ * address, read from the `impersonator` the impersonation check puts in .Extra; empty for everybody
+ * else. Only on a platform with impersonation configured: set on every gate that passes identity and
+ * blanked on the others, like every identity header.
+ */
+export const IMPERSONATOR_HEADERS: Record<string, string> = {
+  'x-impersonator-id': '{{ if .Extra }}{{ if .Extra.impersonator }}{{ print .Extra.impersonator.id }}{{ end }}{{ end }}',
+  'x-impersonator-email': '{{ if .Extra }}{{ if .Extra.impersonator }}{{ print .Extra.impersonator.email }}{{ end }}{{ end }}',
+}
+
 /** The platform session cookie: ory_kratos_session, and every variant (ory_kratos_session_sandbox…). */
 export const SESSION_COOKIE_PREFIX = 'ory_kratos_session'
 
@@ -77,8 +88,17 @@ const BT = '`'
  * order. sprig (regexReplaceAll, trimPrefix, trim) is in Oathkeeper's template functions. Set on
  * every gate of every site, whatever its own mutators say.
  */
-export const STRIPPED_COOKIE_HEADER: Record<string, string> = {
-  Cookie: `{{ $c := .MatchContext.Header.Get "Cookie" }}{{ $c = regexReplaceAll ${BT}(^|;)\\s*${SESSION_COOKIE_PREFIX}[A-Za-z0-9_-]*=[^;]*${BT} $c "" }}{{ trimPrefix ";" $c | trim }}`,
+const strippedCookie = (names: string): Record<string, string> => ({
+  Cookie: `{{ $c := .MatchContext.Header.Get "Cookie" }}{{ $c = regexReplaceAll ${BT}(^|;)\\s*${names}=[^;]*${BT} $c "" }}{{ trimPrefix ";" $c | trim }}`,
+})
+export const STRIPPED_COOKIE_HEADER: Record<string, string> = strippedCookie(`${SESSION_COOKIE_PREFIX}[A-Za-z0-9_-]*`)
+
+/**
+ * The same, also removing the impersonation cookie (by its exact name) on a platform that has one:
+ * a site app must not receive it any more than the session cookie.
+ */
+export function strippedCookieHeader(impersonationCookie?: string): Record<string, string> {
+  return impersonationCookie ? strippedCookie(`(?:${SESSION_COOKIE_PREFIX}[A-Za-z0-9_-]*|${impersonationCookie})`) : STRIPPED_COOKIE_HEADER
 }
 
 const withoutCookie = (headers: Record<string, unknown>) => Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== 'cookie'))
@@ -128,9 +148,10 @@ const headerMap = (h: Handler): Record<string, unknown> => (isObject(h.config?.h
  * Every identity header name for a site: the platform's, the gateway config's, and what the site's
  * own header mutators set. Exact spellings are kept (see above); duplicates by exact name dropped.
  */
-export function identityHeaderNames(site: Pick<Site, 'gates'>, platformNames: readonly string[]): string[] {
+export function identityHeaderNames(site: Pick<Site, 'gates'>, platformNames: readonly string[], impersonation = false): string[] {
   const own = site.gates.flatMap((g) => g.mutators.filter((m) => m.handler === 'header').flatMap((m) => Object.keys(headerMap(m))))
-  return [...new Set([...platformNames, ...[...ROLE_HEADERS, ...ORG_HEADERS].map((h) => h.toLowerCase()), ...Object.keys(SESSION_HEADERS), ...own])]
+  const impersonator = impersonation ? Object.keys(IMPERSONATOR_HEADERS) : []
+  return [...new Set([...platformNames, ...[...ROLE_HEADERS, ...ORG_HEADERS].map((h) => h.toLowerCase()), ...Object.keys(SESSION_HEADERS), ...impersonator, ...own])]
 }
 
 /** Headers the gate's authorizer sets from its decision: its own list, else the gateway's for that handler. */
@@ -140,16 +161,17 @@ function authorizerHeaders(authorizer: Handler, forwarded: Record<string, string
 }
 
 /**
- * A header mutator that also sets the SESSION_HEADERS it does not name itself, blanks the role and
- * organization headers in `blankRoles` (neither the gate's authorizer nor a global header template sets them), and
+ * A header mutator that also sets the SESSION_HEADERS it does not name itself (and, with an
+ * impersonation cookie configured, the IMPERSONATOR_HEADERS), blanks the role and organization
+ * headers in `blankRoles` (neither the gate's authorizer nor a global header template sets them), and
  * sets the stripped Cookie.
  */
-function withSessionHeaders(m: Handler, blankRoles: readonly string[]): Handler {
+function withSessionHeaders(m: Handler, blankRoles: readonly string[], impersonationCookie?: string): Handler {
   const own = withoutCookie(headerMap(m))
   const named = new Set(Object.keys(own).map((k) => k.toLowerCase()))
-  const add = Object.entries(SESSION_HEADERS).filter(([k]) => !named.has(k))
+  const add = Object.entries({ ...SESSION_HEADERS, ...(impersonationCookie ? IMPERSONATOR_HEADERS : {}) }).filter(([k]) => !named.has(k))
   const blanks = blankRoles.filter((n) => !named.has(n.toLowerCase())).map((n) => [n, ''])
-  return { ...m, config: { ...(m.config ?? {}), headers: { ...own, ...Object.fromEntries(add), ...Object.fromEntries(blanks), ...STRIPPED_COOKIE_HEADER } } }
+  return { ...m, config: { ...(m.config ?? {}), headers: { ...own, ...Object.fromEntries(add), ...Object.fromEntries(blanks), ...strippedCookieHeader(impersonationCookie) } } }
 }
 
 /** A later header mutator of the gate: it may not set Cookie (the last Header.Set would win). */
@@ -168,8 +190,11 @@ function withoutOwnCookie(m: Handler): Handler {
  * `templated`: the headers the gateway's global header mutator fills from a template (the session,
  * a trusted source). On a header-mutator gate that template still runs, so such a role header — the
  * global x-user-groups some gateways set — is left to it rather than blanked.
+ *
+ * `impersonationCookie`: set on a platform with impersonation configured — the cookie is stripped
+ * with the session cookie, and the first header mutator also says who is impersonating.
  */
-export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handler, names: readonly string[], forwarded: Record<string, string[]>, templated: readonly string[] = []): Handler[] {
+export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handler, names: readonly string[], forwarded: Record<string, string[]>, templated: readonly string[] = [], impersonationCookie?: string): Handler[] {
   const fromDecision = new Set(authorizerHeaders(authorizer, forwarded).map((h) => h.toLowerCase()))
   const first = gate.mutators.findIndex((m) => m.handler === 'header')
   if (first >= 0) {
@@ -177,9 +202,9 @@ export function guardedMutators(gate: Pick<Gate, 'mutators'>, authorizer: Handle
     // template — would carry the client's value: blank it. One a global template fills keeps the template's value.
     const fromTemplate = new Set(templated.map((h) => h.toLowerCase()))
     const blankRoles = names.filter((n) => DECIDED_NAMES.has(n.toLowerCase()) && !fromDecision.has(n.toLowerCase()) && !fromTemplate.has(n.toLowerCase()))
-    return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m, blankRoles) : m.handler === 'header' ? withoutOwnCookie(m) : m))
+    return gate.mutators.map((m, i) => (i === first ? withSessionHeaders(m, blankRoles, impersonationCookie) : m.handler === 'header' ? withoutOwnCookie(m) : m))
   }
   const blank = names.filter((n) => !fromDecision.has(n.toLowerCase()) && n.toLowerCase() !== 'cookie')
   const rest = gate.mutators.filter((m) => m.handler !== 'noop')
-  return [{ handler: 'header', config: { headers: { ...Object.fromEntries(blank.map((n) => [n, ''])), ...STRIPPED_COOKIE_HEADER } } }, ...rest]
+  return [{ handler: 'header', config: { headers: { ...Object.fromEntries(blank.map((n) => [n, ''])), ...strippedCookieHeader(impersonationCookie) } } }, ...rest]
 }

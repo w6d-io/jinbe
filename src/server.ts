@@ -34,6 +34,7 @@ import { requireSecondFactor } from './second-factor/gate.js'
 import { rbacBundleRoutes } from './routes/rbac-bundle.routes.js'
 import { authConfigRoutes } from './routes/auth-config.routes.js'
 import { oathkeeperRoutes } from './routes/oathkeeper.routes.js'
+import { impersonationCheckRoutes, impersonationRoutes } from './impersonation/routes.js'
 import { auditApiRoutes } from './routes/audit-api.routes.js'
 import { webhookRoutes } from './routes/webhook.routes.js'
 import { signInProtectionPublicRoutes, signInProtectionSettingsRoutes } from './sign-in-protection/routes.js'
@@ -181,6 +182,7 @@ export async function buildServer() {
       await api.register(userManagementRoutes, { prefix: '/admin' }) // users/sessions, one permission per action
       await api.register(userAddressRoutes, { prefix: '/admin' }) // change a user's address, resend verification
       await api.register(mcpConnectionsAdminRoutes, { prefix: '/admin' }) // disconnect a person's MCP sign-ins (sessions:revoke)
+      await api.register(impersonationRoutes, { prefix: '/admin' }) // browse the sites as a user, read-only (users:impersonate); 404 unless IMPERSONATION_ENABLED
       await api.register(bulkRoutes, { prefix: '/admin/bulk' }) // plan / execute many changes of one kind; each op declares its permission
       await api.register(adminRoutes, { prefix: '/admin' })
       await api.register(rbacOpalRoutes, { prefix: '/admin/rbac' })  // OPAL data endpoints (OPAL client token)
@@ -208,6 +210,7 @@ export async function buildServer() {
       await api.register(mcpRoutes, { prefix: '/mcp' }) // auth-mcp: token-info + key exchange; actor only; 404 unless DELEGATED_TOKENS_ENABLED, 403 mcp_disabled when switched off
       await api.register(mcpStatusRoutes, { prefix: '/mcp' }) // kuma: is MCP on + server URL; any signed-in person (checks the session itself)
       await api.register(oathkeeperRoutes, { prefix: '/oathkeeper' })
+      await api.register(impersonationCheckRoutes, { prefix: '/oathkeeper' }) // the gateway: who an impersonation cookie stands for (checks both cookies itself)
       await api.register(publicSitesRoutes, { prefix: '/public/sites' }) // login-ui: branding, logo, access-reason
       await api.register(secondFactorPublicRoutes, { prefix: '/public/second-factor' }) // login-ui: must this visitor enrol/step up?
       await api.register(oauthProviderRoutes, { prefix: '/public/oauth2' }) // login-ui: Hydra login/consent provider for MCP clients (visitor's cookies)

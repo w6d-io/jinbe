@@ -25,6 +25,13 @@ export const AUDIT_EVENTS = {
   'auth.session.revoked': ['auth', 'revoke'],
   'auth.session.revoked_all': ['auth', 'revoke'],
   'auth.logout': ['auth', 'logout'],
+  // Impersonation (src/impersonation): an administrator browsing the sites as a user, read-only. The
+  // administrator is the actor, the user the target. `used`: the first request of a grant on a host,
+  // then at most one per ten minutes there; `write_refused`: a method other than GET/HEAD/OPTIONS.
+  'impersonation.started': ['auth', 'impersonate', 'high'],
+  'impersonation.stopped': ['auth', 'impersonate'],
+  'impersonation.used': ['access', 'access', 'warn'],
+  'impersonation.write_refused': ['access', 'access', 'warn'],
 
   'user.created': ['directory', 'create'],
   'user.updated': ['directory', 'update'],

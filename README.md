@@ -85,6 +85,7 @@ Every identity header is set by the gateway or blanked, never passed through fro
 | `X-User-Groups` (opt-in, see below) | the caller's groups: a **JSON array**, e.g. `["staff-support"]` |
 | `X-User-Roles`, `X-User-Permissions` (opt-in, see below) | the caller's roles and permissions **in this site's app only** (platform grants, direct grants included; never another org's): **JSON arrays**, e.g. `["support"]`, `["orgs:read","users:read"]`; `[]` when none |
 | `X-User-AAL`, `X-User-2FA-At` | the session's sign-in strength and when it last proved a second factor |
+| `X-Impersonator-Id`, `X-Impersonator-Email` (only with `IMPERSONATION_ENABLED`) | empty, except while an administrator browses the site as the user (read-only): then the administrator's identity id and address, and `X-User-*` are the user's |
 
 Parse the arrays as JSON, not as comma-separated lists. `X-User-Groups`, `X-User-Roles` and `X-User-Permissions` are blank by default. They are sent only on a gate with `passRoles: true` whose "Who may pass" is the policy, and only when the platform sets `SITES_ROLE_HEADERS=true`. Those gates ask the decision endpoint (`SITES_AUTHZ_DECISION_URL`, or the gateway's remote_json remote with `/allow` → `/decision`), and the decision proxy must emit them (opa-authz-proxy ≥ v0.5.0). Otherwise they arrive blank.
 
@@ -547,6 +548,17 @@ See [machine-to-machine auth](#machine-to-machine-auth) for the full setup — i
 | `HYDRA_ADMIN_URL` | `http://auth-hydra-admin:4445` | Private Hydra Admin API backing per-org `client_credentials` API keys. Never expose publicly. |
 | `HYDRA_ADMIN_TOKEN` / `KRATOS_ADMIN_TOKEN` | unset | Sent as `Authorization: Bearer` on every Hydra / Kratos admin call, for admin APIs behind the chart's token sidecar (`hydra.adminAuth`, `kratos.adminAuth`). Unset ⇒ no header. |
 | `API_KEY_ALLOWED_SCOPES` | `api:read,api:write` | Scope catalog validated server-side when an API key is created. |
+
+#### Impersonation (optional)
+
+An administrator holding `users:impersonate` (support, super admins) browses the sites behind the gateway as one user, read-only (`GET`/`HEAD`/`OPTIONS`), for a bounded time; the console and Jinbe keep seeing the administrator. Every site gate that takes the session cookie is rendered with a second `cookie_session` authenticator that asks Jinbe when the request carries the impersonation cookie. Turning it on or off re-renders every site (the rule names change).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `IMPERSONATION_ENABLED` | `false` | Off: the start route answers 404 and nothing is rendered for it. |
+| `IMPERSONATION_CHECK_URL` | unset | Required when enabled: the in-cluster URL the gateway asks, Jinbe's own service followed by `/api/oathkeeper/impersonation/session`. |
+| `IMPERSONATION_COOKIE_NAME` | `platform_impersonation` | Must not start with `ory_kratos_session`. Set on `SITES_COOKIE_DOMAIN`, `HttpOnly; Secure; SameSite=Lax`. |
+| `IMPERSONATION_MAX_MINUTES` | `30` | The longest (and default) duration of one impersonation; 5 to 60. |
 
 #### Dev / debugging (never enable in production)
 

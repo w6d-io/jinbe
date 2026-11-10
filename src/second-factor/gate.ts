@@ -43,6 +43,7 @@ export const SECOND_FACTOR_EXEMPT: ReadonlyArray<{ prefix: string; reason: strin
   { prefix: '/api/webhooks/kratos', reason: 'Kratos after-hooks, authenticated by a shared secret, not a session' },
   { prefix: '/api/mcp', reason: 'auth-mcp introspecting tokens and exchanging keys with its ServiceAccount token, not a session' },
   { prefix: '/api/oathkeeper/rules', reason: 'the gateway fetching its rules; no session' },
+  { prefix: '/api/oathkeeper/impersonation', reason: "the gateway's impersonation check; it requires the administrator's session at aal2 itself" },
   { prefix: '/api/admin/rbac/opal', reason: 'OPAL data sources, guarded by the OPAL client token, not a session' },
   { prefix: '/api/admin/rbac/bindings', reason: 'OPAL data source (identity bindings), guarded by the OPAL client token' },
   { prefix: '/api/admin/rbac/develop/', reason: 'compat path of the OPAL data sources, guarded by the OPAL client token' },

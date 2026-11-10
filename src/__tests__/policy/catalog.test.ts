@@ -38,6 +38,8 @@ describe('the catalogue', () => {
       'orgs.keys:write',
       // Site sign-up: exposing a site to the internet and removing people stay with a person.
       'sites.signup:write', 'sites.signup:revoke',
+      // Impersonation starts from a browser session with a fresh second factor, never through a token.
+      'users:impersonate',
     ].sort())
   })
 
@@ -99,7 +101,7 @@ describe('the roles in code (authz-v2-design §1.1, §2.2, §2.4)', () => {
   // The table, pinned (owner decision 2026-10-06): a widening is a visible line here.
   it.each([
     ['developer', ['access:check', 'groups.members:write', 'groups:read', 'groups:write', 'orgs.keys:write', 'orgs:read', 'orgs:write', 'sites.members:write', 'sites:read', 'sites:write', 'zones:read']],
-    ['support', ['access:check', 'access:read', 'sessions:read', 'sessions:revoke', 'users:create', 'users:read', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link', 'users:update', 'users:verify']],
+    ['support', ['access:check', 'access:read', 'sessions:read', 'sessions:revoke', 'users:create', 'users:impersonate', 'users:read', 'users:recovery', 'users:reset_second_factor', 'users:send_login_link', 'users:update', 'users:verify']],
     ['ops', ['sites.requests:approve', 'sites.signup:revoke', 'sites.signup:write', 'sites:apply', 'sites:read', 'zones:read', 'zones:write']],
     ['security', ['access:check', 'access:read', 'audit:read', 'groups.members:revoke', 'sessions:read', 'sessions:revoke', 'sites.signup:revoke', 'users.grants:read', 'users:disable', 'users:read', 'users:reset_second_factor']],
   ] as const)('%s holds exactly its job', (role, perms) => {

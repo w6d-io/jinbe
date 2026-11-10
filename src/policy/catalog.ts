@@ -79,6 +79,9 @@ export const CATALOG = {
   'users:reset_second_factor': p('users', "Remove a user's second factors", 'critical', { stepUp: true, delegable: 'never' }),
   'sessions:read': p('users', "See a user's sessions", 'medium'),
   'sessions:revoke': p('users', "End a user's sessions", 'medium', { stepUp: true }),
+  // Browse the sites behind the gateway as the user, read-only, for a bounded time (src/impersonation).
+  // A browser session with a fresh second factor only: never a key, never a machine.
+  'users:impersonate': p('users', 'Browse the sites as a user, read-only (impersonation)', 'critical', { stepUp: true, delegable: 'never' }),
 
   // ── Access model ───────────────────────────────────────────────────────────────────────────────
   'access:read': p('access', 'See who can reach what: one user\'s access, the access review', 'medium'),

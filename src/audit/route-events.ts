@@ -54,6 +54,14 @@ export const WRITE_ROUTE_AUDIT: Record<string, RouteAudit> = {
   'POST /api/admin/users/:id/recovery-email': by('user.recovery_sent'),
   'DELETE /api/admin/users/:id/sessions': by(['auth.session.revoked_all', 'mcp.oauth.revoked_all']),
   'DELETE /api/admin/sessions/:sessionId': by('auth.session.revoked'),
+  'POST /api/admin/users/:id/impersonate': by(['impersonation.started', 'impersonation.stopped']),
+  'DELETE /api/admin/impersonation': by('impersonation.stopped'),
+  // The gateway's check answers every method (it is asked with the method of the request it decides);
+  // none changes anything here, and a write is refused and recorded as such (impersonation/check.ts).
+  'POST /api/oathkeeper/impersonation/session': by('impersonation.write_refused'),
+  'PUT /api/oathkeeper/impersonation/session': by('impersonation.write_refused'),
+  'PATCH /api/oathkeeper/impersonation/session': by('impersonation.write_refused'),
+  'DELETE /api/oathkeeper/impersonation/session': by('impersonation.write_refused'),
   'PUT /api/admin/users/:email/groups': by('rbac.user_groups.changed'),
   'POST /api/webhooks/kratos': by(['auth.login.succeeded', 'auth.registration.succeeded', 'auth.password.changed', 'auth.profile.updated', 'auth.mfa.enrolled', 'auth.mfa.removed', 'auth.recovery.used', 'auth.verification.succeeded']),
   'POST /scim/v2/Users': by('user.created'),

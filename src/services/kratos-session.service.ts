@@ -80,6 +80,8 @@ export interface ValidatedSession {
   secondFactorAt: Date | null // when aal2 was last proven; null when never
   /** The methods this session was proven with (password, totp, webauthn…), for an OAuth login's `amr`. */
   methods?: string[]
+  /** The same, as Kratos lists them (method, aal, completed_at): what an impersonated session shows a site. */
+  authenticationMethods?: KratosAuthenticationMethod[]
 }
 
 /**
@@ -257,6 +259,7 @@ export class KratosSessionService {
           authenticatedAt: new Date(session.authenticated_at),
           secondFactorAt: secondFactorProvenAt(session),
           methods: [...new Set((session.authentication_methods ?? []).map((m) => m.method).filter((m): m is string => typeof m === 'string' && m !== ''))],
+          authenticationMethods: session.authentication_methods ?? [],
         },
       }
     } catch (error) {

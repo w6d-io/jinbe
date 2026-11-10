@@ -331,6 +331,29 @@ export const envSchema = z.object({
     .pipe(z.number().int().nonnegative())
     .default('60000'),
 
+  // ── Impersonation (support staff browse the sites as a user, read-only) ───
+  // Off by default. On, every site gate that takes the session cookie also asks jinbe
+  // (IMPERSONATION_CHECK_URL) when the request carries IMPERSONATION_COOKIE_NAME: jinbe answers as
+  // the user an administrator chose in the console, for GET/HEAD/OPTIONS only, while that
+  // administrator's own session is still valid at aal2 (src/impersonation). The console and jinbe
+  // never read the cookie: there the administrator stays themselves.
+  IMPERSONATION_ENABLED: z
+    .string()
+    .transform((val) => val === 'true')
+    .default('false'),
+  // Never a name the session cookie matcher takes (`ory_kratos_session*`): Kratos would be handed it,
+  // and the gateway's session authenticator would claim the request.
+  IMPERSONATION_COOKIE_NAME: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/, 'IMPERSONATION_COOKIE_NAME: letters, digits, _ and - only')
+    .refine((v) => !v.startsWith('ory_kratos_session'), 'IMPERSONATION_COOKIE_NAME must not start with ory_kratos_session')
+    .default('platform_impersonation'),
+  // Where the gateway asks, from inside the cluster: jinbe's own service URL followed by
+  // /api/oathkeeper/impersonation/session. Required when enabled (checkedEnvSchema).
+  IMPERSONATION_CHECK_URL: z.string().url().optional(),
+  // The longest an administrator may ask for, in minutes (a request asks 5 to this many; default 30).
+  IMPERSONATION_MAX_MINUTES: z.coerce.number().int().min(5).max(60).default(30),
+
 
   // Application name for OPAL fine-grained authorization
   APP_NAME: z.string().min(1, 'APP_NAME is required for OPAL authorization').default('jinbe'),
@@ -543,10 +566,18 @@ export const envSchema = z.object({
   BACKUP_RESTORE_ON_FIRST_INIT: z.enum(['auto', 'true', 'false']).default('auto'),
 })
 
+/** What one variable cannot say alone. Kept beside the schema, which stays a plain object (`.shape`). */
+export const checkedEnvSchema = envSchema.superRefine((v, ctx) => {
+  // Enabled without the URL, every gate would be rendered asking nobody: say so at boot.
+  if (v.IMPERSONATION_ENABLED && !v.IMPERSONATION_CHECK_URL) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['IMPERSONATION_CHECK_URL'], message: 'IMPERSONATION_CHECK_URL is required when IMPERSONATION_ENABLED is true' })
+  }
+})
+
 // Parse and validate environment variables
 const parseEnv = () => {
   try {
-    return envSchema.parse(process.env)
+    return checkedEnvSchema.parse(process.env)
   } catch (error) {
     if (error instanceof z.ZodError) {
       // One JSON line, written by hand: the logger reads its level and base fields from this very

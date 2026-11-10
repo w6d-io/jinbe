@@ -10,6 +10,7 @@ import { placeHost, type Zone } from './host.js'
 import { errorHandlerProblems, errorHandlers } from './error-handlers.js'
 import { ORG_HEADERS, PLATFORM_IDENTITY_HEADERS, ROLE_HEADERS, guardedMutators, identityHeaderNames } from './identity-headers.js'
 import { organizationChecks, organizationsOn, ownerRoleOf, tokenGateChecks } from './organizations.js'
+import { withImpersonation, type PlatformImpersonation } from './impersonation.js'
 
 /**
  * render(site, platform): every artefact a Site stands for, from its intent alone.
@@ -47,6 +48,11 @@ export interface Platform {
   upstreamPath?: boolean
   /** Zones whose hosts leave SESSION_PATHS to the platform's kratos-session rule (SITES_SESSION_ZONES). */
   sessionZones?: string[]
+  /**
+   * Impersonation is on (IMPERSONATION_ENABLED): every gate taking the session cookie also asks jinbe
+   * when the request carries this cookie (sites/impersonation.ts). Absent: nothing is rendered for it.
+   */
+  impersonation?: PlatformImpersonation
 }
 
 export interface Check {
@@ -474,8 +480,8 @@ export function render(site: Site, platform: Platform, context: RenderContext = 
     ...(site.upstream.preserveHost ? { preserve_host: true } : {}),
     ...(site.upstream.stripPath ? { strip_path: site.upstream.stripPath } : {}),
   }
-  const identity = identityHeaderNames(site, platform.identityHeaders ?? PLATFORM_IDENTITY_HEADERS)
-  const guard = (gate: Pick<Gate, 'mutators'>, authorizer: Handler) => guardedMutators(gate, authorizer, identity, platform.authorizerHeaders ?? {}, platform.templatedHeaders ?? [])
+  const identity = identityHeaderNames(site, platform.identityHeaders ?? PLATFORM_IDENTITY_HEADERS, !!platform.impersonation)
+  const guard = (gate: Pick<Gate, 'mutators'>, authorizer: Handler) => guardedMutators(gate, authorizer, identity, platform.authorizerHeaders ?? {}, platform.templatedHeaders ?? [], platform.impersonation?.cookie)
   const enumerated = [...byGate.entries()].filter(([id]) => id !== catchAllGate?.id)
   const rules: OathkeeperRule[] = []
   const crGates: SiteCrGate[] = []
@@ -516,7 +522,9 @@ export function render(site: Site, platform: Platform, context: RenderContext = 
     if (gate.expert?.matchUrl) warn('expert_match_url', `gate '${gate.id}' uses a raw match URL; only gatekit checks it`, at)
     emit(gate.id, {
       match: { methods: methods.filter((m) => !gate.preflight || m !== 'OPTIONS'), url: matchUrl },
-      authenticators: gate.authenticators,
+      // A render-time addition, never part of the intent: the gate's own authenticators stay what the
+      // editor (and the preset detection) sees.
+      authenticators: withImpersonation(gate.authenticators, platform.impersonation),
       authorizer,
       mutators,
       ...(errors ? { errors } : {}),

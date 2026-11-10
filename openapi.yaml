@@ -4329,6 +4329,291 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/admin/impersonation:
+    get:
+      tags:
+        - admin
+      description: "Impersonation, for the caller: whether the platform has it on,
+        whether the caller holds users:impersonate, and what is running on this
+        session. Any signed-in person."
+      x-access: self
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  allowed:
+                    type: boolean
+                  maxMinutes:
+                    type: integer
+                  active:
+                    type: object
+                    properties:
+                      target:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          email:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                          - id
+                          - email
+                          - name
+                        additionalProperties: false
+                      reason:
+                        type: string
+                      startedAt:
+                        type: string
+                        format: date-time
+                      expiresAt:
+                        type: string
+                        format: date-time
+                      mode:
+                        type: string
+                        enum:
+                          - read
+                    required:
+                      - target
+                      - reason
+                      - startedAt
+                      - expiresAt
+                      - mode
+                    additionalProperties: false
+                    nullable: true
+                required:
+                  - enabled
+                  - allowed
+                  - maxMinutes
+                  - active
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+    delete:
+      tags:
+        - admin
+      description: Stop the impersonation running on this session and clear its
+        cookie. Succeeds with nothing running.
+      x-access: self
+      responses:
+        "204":
+          description: Stopped
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+  /api/admin/users/{id}/impersonate:
+    post:
+      tags:
+        - admin
+      description: "Browse the sites behind the gateway as this user, read-only (GET,
+        HEAD, OPTIONS), until it expires or is stopped. Sets the impersonation
+        cookie; the console and this API keep seeing the caller. Needs
+        users:impersonate, a browser session and a second factor of your own
+        proven within 15 minutes. Never yourself, a super administrator, a
+        machine or an inactive identity. One at a time per session: starting
+        another replaces it."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 5
+                  maxLength: 2000
+                  description: Why, 5 to 500 characters once trimmed; kept in the audit trail.
+                minutes:
+                  type: integer
+                  minimum: 5
+                  maximum: 60
+                  description: How long; at most IMPERSONATION_MAX_MINUTES, which is also the
+                    default.
+              additionalProperties: false
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: path
+          name: id
+          required: true
+      x-permission: users:impersonate
+      x-scope: platform
+      x-step-up: true
+      responses:
+        "201":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: object
+                    properties:
+                      target:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          email:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                          - id
+                          - email
+                          - name
+                        additionalProperties: false
+                      reason:
+                        type: string
+                      startedAt:
+                        type: string
+                        format: date-time
+                      expiresAt:
+                        type: string
+                        format: date-time
+                      mode:
+                        type: string
+                        enum:
+                          - read
+                    required:
+                      - target
+                      - reason
+                      - startedAt
+                      - expiresAt
+                      - mode
+                    additionalProperties: false
+                required:
+                  - active
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    example: impersonation_disabled
+                  message:
+                    type: string
   /api/admin/bulk/sites.routes.upsert/plan:
     post:
       tags: &a1
@@ -22110,6 +22395,24 @@ paths:
       responses:
         "200":
           description: Default Response
+  /api/oathkeeper/impersonation/session:
+    get: &a10
+      tags:
+        - oathkeeper
+      description: "Asked by the gateway for a request carrying the impersonation
+        cookie: 200 with a session-shaped body for the impersonated user, or 401
+        with the reason. Not reachable through the gateway."
+      x-access: machine
+      x-edge: false
+      responses:
+        "200":
+          description: Default Response
+    head: *a10
+    options: *a10
+    post: *a10
+    put: *a10
+    patch: *a10
+    delete: *a10
   /api/public/sites/by-host/{host}:
     get:
       tags:

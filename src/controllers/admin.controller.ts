@@ -20,6 +20,7 @@ import { keyStepUpVerdict } from '../middleware/delegated-step-up.js'
 import { componentLogger } from '../telemetry/logger.js'
 import { revokeAllConnectionsQuietly } from '../oauth/connections.js'
 import { oauthAudit } from '../oauth/audit.js'
+import { impersonationStore } from '../impersonation/store.js'
 
 /**
  * Identity with RBAC information resolved directly from Kratos + Git
@@ -682,6 +683,8 @@ export class AdminController {
   ) {
     const { sessionId } = request.params
     await kratosService.revokeSession(sessionId)
+    // An impersonation started from that session ends with it (the gateway check refuses it anyway).
+    await impersonationStore.endForSession(sessionId).catch(() => null)
     // Session end is auditable here (logout is NOT hookable in Kratos — A5).
     auditEventService.emit({
       category: 'auth', kind: 'auth', verb: 'revoke', target: `session:${sessionId}`,

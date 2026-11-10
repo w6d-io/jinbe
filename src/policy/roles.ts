@@ -43,10 +43,10 @@ export const ROLES: Readonly<Record<StaffRole, RoleSpec>> = {
   },
   support: {
     group: 'staff-support',
-    label: 'Help a person: find them, fix their profile, invite, verify, recovery and sign-in links, sign them out, reset a lost second factor, explain why they cannot get in',
+    label: 'Help a person: find them, fix their profile, invite, verify, recovery and sign-in links, sign them out, reset a lost second factor, explain why they cannot get in, see a site as they see it (read-only)',
     permissions: [
       'users:read', 'users:create', 'users:update', 'users:verify', 'users:recovery', 'users:send_login_link',
-      'users:reset_second_factor', 'sessions:read', 'sessions:revoke', 'access:read', 'access:check',
+      'users:reset_second_factor', 'users:impersonate', 'sessions:read', 'sessions:revoke', 'access:read', 'access:check',
     ],
   },
   ops: {
