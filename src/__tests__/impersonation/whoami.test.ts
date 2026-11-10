@@ -278,9 +278,7 @@ describe('everybody else gets Kratos\' own answer', () => {
     await whoami(null, 'theme=dark', app, { 'x-session-token': 'tok', authorization: 'Bearer abc' })
     await app.inject({ url: `${URL_}?tokenize_as=jwt`, headers: { cookie: cookies() } })
     expect(s.whoami).toEqual([
-      // The server's own identity extraction (kept a few seconds for reads), then the relay — which
-      // asks again on every request.
-      { url: `${KRATOS_PUBLIC}/sessions/whoami`, headers: { Cookie: 'ory_kratos_session=cookie-support' } },
+      // One call per request: the relay's. The server's identity extraction skips this path.
       { url: `${KRATOS_PUBLIC}/sessions/whoami`, headers: { Cookie: 'ory_kratos_session=cookie-support' } },
       { url: `${KRATOS_PUBLIC}/sessions/whoami`, headers: { 'X-Session-Token': 'tok', Authorization: 'Bearer abc' } },
       { url: `${KRATOS_PUBLIC}/sessions/whoami?tokenize_as=jwt`, headers: { Cookie: 'ory_kratos_session=cookie-support' } },
@@ -292,6 +290,33 @@ describe('everybody else gets Kratos\' own answer', () => {
     const res = await whoami(null, 'theme=dark', app, { 'x-session-token': 'tok' })
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-kratos-authenticated-identity-id']).toBe(SUPPORT)
+  })
+})
+
+describe('the common case: no impersonation cookie', () => {
+  it('goes straight to Kratos: one call, no look at the sites, the grants or the policy', async () => {
+    s.sitesDown = true
+    const list = vi.spyOn((await import('../../sites/repository.js')).sitesRepository, 'list')
+    const reads = vi.spyOn(impersonationStore, 'byToken')
+    for (const origin of [SITE, 'https://kuma.dev.example.com', null]) {
+      const res = await whoami(origin, cookies({ imp: null }))
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual(kratosSession(s.sessions['cookie-support']))
+    }
+    expect(s.whoami).toHaveLength(3)
+    expect(list).not.toHaveBeenCalled()
+    expect(reads).not.toHaveBeenCalled()
+    list.mockRestore()
+    reads.mockRestore()
+  })
+
+  it('is the path the identity extraction leaves alone', async () => {
+    const { WHOAMI_RELAY_PATH } = await import('../../middleware/identity-extractor.js')
+    expect(WHOAMI_RELAY_PATH).toBe(URL_)
+    // A bearer credential on this path is Kratos' to judge, not this service's.
+    const res = await app.inject({ url: URL_, headers: { authorization: 'Bearer some.jwt.token' } })
+    expect(res.statusCode).toBe(401)
+    expect(s.whoami).toEqual([{ url: `${KRATOS_PUBLIC}/sessions/whoami`, headers: { Authorization: 'Bearer some.jwt.token' } }])
   })
 })
 

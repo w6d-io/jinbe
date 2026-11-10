@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { open } from '../policy/route-access.js'
 import { KratosSessionService, kratosSessionService } from '../services/kratos-session.service.js'
 import { checkImpersonation } from './check.js'
-import { impersonationEnabled } from './service.js'
+import { impersonationEnabled, impersonationToken } from './service.js'
 import { siteOriginHost } from './site-origins.js'
 
 /**
@@ -10,9 +10,10 @@ import { siteOriginHost } from './site-origins.js'
  *
  * Site front ends ask the auth host who is signed in, cross-origin, with the browser's cookies. The
  * gateway already serves an impersonating administrator the site as the user; without this the page
- * around it still greeted the administrator. The edge sends `GET /sessions/whoami` here (path
- * rewritten) only when the request carries the impersonation cookie; every other request goes to
- * Kratos as before and never reaches jinbe.
+ * around it still greeted the administrator. With impersonation on, the gateway sends the auth
+ * host's `GET /sessions/whoami` here (built-in rule `impersonation-whoami`, bootstrap/build-rules.ts)
+ * — every one of them, so a request without the impersonation cookie costs one call to Kratos and
+ * nothing else (the server's identity extraction skips this path: WHOAMI_RELAY_PATH).
  *
  * The answer is Kratos' OWN, relayed unchanged (status and body), unless both hold:
  *   - the request's Origin is a site's (site-origins.ts) — never the console, the login UI or any
@@ -42,7 +43,9 @@ async function withoutOwnCors<T>(_request: FastifyRequest, reply: FastifyReply, 
 
 /** The impersonated session for this request, or null: anything short of a clear yes. */
 async function impersonated(request: FastifyRequest) {
-  if (!impersonationEnabled()) return null
+  // Every browser's whoami on the auth host comes through here, nearly all of them without the
+  // impersonation cookie: those go straight to Kratos, with no lookup of sites or grants.
+  if (!impersonationEnabled() || !impersonationToken(request.headers.cookie)) return null
   const host = await siteOriginHost(request.headers.origin)
   if (!host) return null
   try {

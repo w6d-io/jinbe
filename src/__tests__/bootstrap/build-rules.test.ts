@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, it, expect } from 'vitest'
 import { oathkeeperRegex } from '../sites/fixtures.js'
 import {
@@ -256,6 +257,87 @@ describe('bootstrap/build-rules', () => {
     })
   })
 
+  describe('impersonation-whoami (IMPERSONATION_ENABLED)', () => {
+    const DOMAINS = { auth: 'auth.example.com', app: 'app.example.com', api: 'api.example.com' }
+    const FULL = { domains: DOMAINS, urls: URLS, mcp: { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' }, mcpOAuthIssuer: 'https://hydra.example.com', sessionZones: ['dev.example.com'] }
+    const sha = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
+    /** The ids of the rules matching one request, as Oathkeeper decides it: method and URL without the query. */
+    const matching = (rules: ReturnType<typeof buildBuiltInRules>, method: string, path: string) =>
+      rules.filter((r) => r.match.methods.includes(method) && oathkeeperRegex(r.match.url).test(`https://auth.example.com${path}`)).map((r) => r.id)
+
+    it('off: the built-in rules are byte for byte what they were before the rule existed', () => {
+      // sha256 of JSON.stringify(buildBuiltInRules(FULL + signInGate)) computed on develop before this rule was written.
+      expect(sha(buildBuiltInRules({ ...FULL, signInGate: false }))).toBe('753e9d4db986534ddfe219f438a9152fd1cdd8afafc3b599d15bcb4cbd534f5a')
+      expect(sha(buildBuiltInRules({ ...FULL, signInGate: true }))).toBe('ef5cbc94752bac6a058de850038fe9a719ed5ac6f20094d93d12ef97fe7947ee')
+      for (const signInGate of [false, true]) {
+        expect(JSON.stringify(buildBuiltInRules({ ...FULL, signInGate, impersonation: false }))).toBe(JSON.stringify(buildBuiltInRules({ ...FULL, signInGate })))
+        expect(buildBuiltInRules({ ...FULL, signInGate }).map((r) => r.id)).not.toContain('impersonation-whoami')
+      }
+      expect(buildKratosPublicRule('auth.example.com', URLS.kratosPublic).match.url).toBe('http<(s?)>://auth.example.com/<(\\.well-known|self-service|sessions|schemas)(.*)>')
+    })
+
+    it('on: GET /sessions/whoami, exactly, goes to jinbe, which receives /api/public/impersonation/whoami', () => {
+      const rule = buildBuiltInRules({ domains: DOMAINS, urls: URLS, impersonation: true }).find((r) => r.id === 'impersonation-whoami')!
+      expect(rule).toEqual({
+        id: 'impersonation-whoami',
+        upstream: { url: 'http://jinbe:8080/api/public/impersonation/whoami', preserve_host: true, strip_path: '/sessions/whoami' },
+        match: { url: 'http<(s?)>://auth.example.com/sessions/whoami', methods: ['GET'] },
+        authenticators: [{ handler: 'noop' }],
+        authorizer: { handler: 'allow' },
+        mutators: [{ handler: 'noop' }],
+      })
+      // Oathkeeper: the upstream's path in front of the request's, then the first strip_path removed.
+      const forwarded = (new URL(rule.upstream.url).pathname + '/sessions/whoami').replace(rule.upstream.strip_path!, '')
+      expect(forwarded).toBe('/api/public/impersonation/whoami')
+      expect(OPTIONAL_BUILT_IN_RULE_IDS).toContain('impersonation-whoami')
+      expect(BUILT_IN_RULE_IDS).toContain('impersonation-whoami')
+    })
+
+    it('on: kratos-public leaves out that one path and nothing else', () => {
+      for (const post of [true, false]) {
+        const r = buildKratosPublicRule('auth.example.com', URLS.kratosPublic, { post, whoami: false })
+        expect(r.match.url).toBe('http<(s?)>://auth.example.com/<(?!sessions/whoami$)(\\.well-known|self-service|sessions|schemas)(.*)>')
+        expect(r.match.methods).toEqual(buildKratosPublicRule('auth.example.com', URLS.kratosPublic, { post }).match.methods)
+      }
+    })
+
+    it.each([false, true])('on (sign-in gate %s): every request matches exactly the rule it should, never two', (signInGate) => {
+      const rules = buildBuiltInRules({ ...FULL, signInGate, impersonation: true })
+      expect(matching(rules, 'GET', '/sessions/whoami')).toEqual(['impersonation-whoami'])
+      for (const path of ['/sessions/whoami/', '/sessions/whoamix', '/sessions', '/sessions/abc', '/self-service/login/browser', '/.well-known/jwks.json', '/schemas/default', '/sessions/whoami/extra']) {
+        expect(matching(rules, 'GET', path), `GET ${path}`).toEqual(['kratos-public'])
+        for (const method of ['PUT', 'DELETE', 'OPTIONS']) expect(matching(rules, method, path), `${method} ${path}`).toEqual(['kratos-public'])
+      }
+      // The path is left out for every method of kratos-public: these reach no rule.
+      for (const method of ['PUT', 'DELETE', 'OPTIONS']) expect(matching(rules, method, '/sessions/whoami'), method).toEqual([])
+      // No request on the auth host matches two rules.
+      for (const method of ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']) {
+        for (const path of ['/', '/login', '/sessions/whoami', '/sessions/whoami/', '/sessions', '/self-service/login', '/self-service/methods/oidc/callback/x', '/.well-known/jwks.json']) {
+          expect(matching(rules, method, path).length, `${method} ${path}`).toBeLessThanOrEqual(1)
+        }
+      }
+    })
+
+    it('on: POST is what it was with the sign-in gate on; with it off, POST on exactly that path reaches no rule', () => {
+      const on = buildBuiltInRules({ ...FULL, signInGate: true, impersonation: true })
+      const before = buildBuiltInRules({ ...FULL, signInGate: true })
+      for (const path of ['/sessions/whoami', '/sessions', '/self-service/login', '/self-service/registration', '/self-service/methods/oidc/callback/x', '/.well-known/jwks.json', '/other']) {
+        expect(matching(on, 'POST', path), path).toEqual(matching(before, 'POST', path))
+      }
+      for (const id of ['selfservice-gate', 'selfservice-kratos-post']) expect(on.find((r) => r.id === id)).toEqual(before.find((r) => r.id === id))
+      const gateOff = buildBuiltInRules({ ...FULL, impersonation: true })
+      expect(matching(gateOff, 'POST', '/sessions/whoami')).toEqual([])
+      expect(matching(gateOff, 'POST', '/sessions/abc')).toEqual(['kratos-public'])
+    })
+
+    it('on: only the auth domain gets the rule, and none without one', () => {
+      expect(buildBuiltInRules({ domains: { ...DOMAINS, auth: '' }, urls: URLS, impersonation: true }).map((r) => r.id)).not.toContain('impersonation-whoami')
+      const rules = buildBuiltInRules({ ...FULL, impersonation: true })
+      // The site hosts' own session check (kratos-session) is untouched.
+      expect(rules.find((r) => r.id === 'kratos-session')).toEqual(buildBuiltInRules(FULL).find((r) => r.id === 'kratos-session'))
+    })
+  })
+
   describe('mcp (auth-mcp behind Oathkeeper)', () => {
     const toRegex = (u: string) =>
       new RegExp(`^${u.split(/(<[^>]*>)/).map((part) => (part.startsWith('<') ? part.slice(1, -1) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`)
@@ -324,7 +406,7 @@ describe('bootstrap/build-rules', () => {
   it('BUILT_IN_RULE_IDS lists every id the builders produce (the migration counts them apart)', () => {
     const all = [
       ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS, signInGate: true, mcp: { publicUrl: 'https://mcp.example.com/mcp', upstream: 'http://auth-mcp:3100' }, mcpOAuthIssuer: 'https://hydra.example.com', sessionZones: ['example.com'] }),
-      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS }),
+      ...buildBuiltInRules({ domains: { auth: 'auth.example.com', app: 'kuma.example.com', api: 'jinbe.example.com' }, urls: URLS, impersonation: true }),
       buildJinbePublicRule('jinbe.example.com', URLS.jinbeInternal),
     ]
     expect(new Set(all.map((r) => r.id))).toEqual(new Set(BUILT_IN_RULE_IDS))

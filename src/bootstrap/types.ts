@@ -42,6 +42,8 @@ export interface BootstrapConfig {
   urls: BootstrapUrls
   /** Self-service submits go through jinbe's sign-in gate (SIGN_IN_GATE_ENABLED). */
   signInGate?: boolean
+  /** The auth domain's GET /sessions/whoami goes through jinbe (IMPERSONATION_ENABLED): rule `impersonation-whoami`. */
+  impersonation?: boolean
   /** Route auth-mcp's host through Oathkeeper (rule `mcp`). */
   mcp?: BootstrapMcp | null
   /** Site hosts that answer the session check on their own origin (SITES_SESSION_ZONES): rule `kratos-session`. */

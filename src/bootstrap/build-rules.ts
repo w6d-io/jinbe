@@ -25,6 +25,11 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } fr
  *   - selfservice-kratos-post — the other POSTs Kratos serves (social callbacks, FedCM, sessions):
  *                               straight to Kratos. Any other POST matches no rule (404).
  *
+ * With impersonation on (`impersonation`: IMPERSONATION_ENABLED), one more rule on the auth domain:
+ *   - impersonation-whoami — GET /sessions/whoami, exactly, to jinbe (impersonation/whoami.ts), which
+ *                            relays Kratos' own answer or, for a site's page during an impersonation,
+ *                            answers as the user. kratos-public then leaves that one path out.
+ *
  * With the MCP server deployed (`mcp`: MCP_PUBLIC_URL + MCP_UPSTREAM_URL), one more rule on its host:
  *   - mcp — the MCP endpoint and its protected-resource metadata, passed through untouched. auth-mcp
  *           checks every token itself (with jinbe) and answers 401 with resource_metadata, which an
@@ -38,7 +43,7 @@ import type { OathkeeperRule, BootstrapDomains, BootstrapMcp, BootstrapUrls } fr
  */
 
 /** Built-in ids that exist only with some inputs: dropped from Redis when the builder stops emitting them. */
-export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as', 'kratos-session']
+export const OPTIONAL_BUILT_IN_RULE_IDS: readonly string[] = ['selfservice-gate', 'selfservice-kratos-post', 'mcp', 'mcp-oauth-as', 'kratos-session', 'impersonation-whoami']
 
 /** Every id the builders below produce: the platform's own rules, written again by the bootstrap on every start. */
 export const BUILT_IN_RULE_IDS: readonly string[] = [
@@ -48,20 +53,22 @@ export const BUILT_IN_RULE_IDS: readonly string[] = [
   ...OPTIONAL_BUILT_IN_RULE_IDS,
 ]
 
-export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null; sessionZones?: readonly string[] }): OathkeeperRule[] {
+export function buildBuiltInRules(input: { domains: BootstrapDomains; urls: BootstrapUrls; signInGate?: boolean; mcp?: BootstrapMcp | null; mcpOAuthIssuer?: string | null; sessionZones?: readonly string[]; impersonation?: boolean }): OathkeeperRule[] {
   const { domains, urls } = input
   const rules: OathkeeperRule[] = []
 
   if (domains.auth) {
     rules.push(buildSelfserviceRootRule(domains.auth, urls.loginUi))
     rules.push(buildSelfserviceUiRule(domains.auth, urls.loginUi))
+    const whoami = input.impersonation === true
     if (input.signInGate) {
-      rules.push(buildKratosPublicRule(domains.auth, urls.kratosPublic, { post: false }))
+      rules.push(buildKratosPublicRule(domains.auth, urls.kratosPublic, { post: false, whoami: !whoami }))
       rules.push(buildSelfserviceGateRule(domains.auth, urls.jinbeInternal))
       rules.push(buildKratosPublicPostRule(domains.auth, urls.kratosPublic))
     } else {
-      rules.push(buildKratosPublicRule(domains.auth, urls.kratosPublic))
+      rules.push(buildKratosPublicRule(domains.auth, urls.kratosPublic, { whoami: !whoami }))
     }
+    if (whoami) rules.push(buildImpersonationWhoamiRule(domains.auth, urls.jinbeInternal))
   }
 
   if (domains.app) {
@@ -222,13 +229,48 @@ export function buildSelfserviceRootRule(authDomain: string, loginUiUrl: string)
   }
 }
 
-export function buildKratosPublicRule(authDomain: string, kratosPublicUrl: string, opts: { post?: boolean } = {}): OathkeeperRule {
+/**
+ * `whoami: false` (impersonation on): /sessions/whoami — that path exactly, nothing under or beside
+ * it — is left to the impersonation-whoami rule, because two rules matching one request is a 500 for
+ * every such request. The path is left out for EVERY method of this rule, which is what makes the
+ * two rules disjoint whatever their method lists become: GET goes to jinbe, and OPTIONS, PUT and
+ * DELETE on exactly /sessions/whoami match no rule (404). Nothing sends those: a browser's CORS
+ * pre-flight is answered by the edge before the gateway. POST is not this rule's with the sign-in
+ * gate on (selfservice-kratos-post keeps POST /sessions/whoami).
+ */
+export function buildKratosPublicRule(authDomain: string, kratosPublicUrl: string, opts: { post?: boolean; whoami?: boolean } = {}): OathkeeperRule {
+  const notWhoami = opts.whoami === false ? `(?!${escapeRegex(WHOAMI_PATH.slice(1))}$)` : ''
   return {
     id: 'kratos-public',
     upstream: { url: kratosPublicUrl, preserve_host: true },
     match: {
-      url: `http<(s?)>://${authDomain}/<(\\.well-known|self-service|sessions|schemas)(.*)>`,
+      url: `http<(s?)>://${authDomain}/<${notWhoami}(\\.well-known|self-service|sessions|schemas)(.*)>`,
       methods: opts.post === false ? ['GET', 'PUT', 'DELETE', 'OPTIONS'] : ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    },
+    authenticators: [{ handler: 'noop' }],
+    authorizer: { handler: 'allow' },
+    mutators: [{ handler: 'noop' }],
+  }
+}
+
+const WHOAMI_PATH = '/sessions/whoami'
+
+/**
+ * Who is signed in, asked of the auth domain by a browser: through jinbe, which relays Kratos' own
+ * answer unless a site's page asks during a valid impersonation (impersonation/whoami.ts). Oathkeeper
+ * puts the upstream's path in front of the request's and then removes the first `strip_path` from the
+ * result: /api/public/impersonation/whoami + /sessions/whoami, minus /sessions/whoami — jinbe
+ * receives exactly /api/public/impersonation/whoami, with the query string as sent. GET only, and
+ * only that path: everything else under /sessions stays Kratos' (kratos-public leaves this path out).
+ * Client headers (Cookie, Origin) pass through untouched: nothing here authenticates or mutates.
+ */
+export function buildImpersonationWhoamiRule(authDomain: string, jinbeInternalUrl: string): OathkeeperRule {
+  return {
+    id: 'impersonation-whoami',
+    upstream: { url: `${jinbeInternalUrl.replace(/\/+$/, '')}/api/public/impersonation/whoami`, preserve_host: true, strip_path: WHOAMI_PATH },
+    match: {
+      url: `http<(s?)>://${authDomain}${WHOAMI_PATH}`,
+      methods: ['GET'],
     },
     authenticators: [{ handler: 'noop' }],
     authorizer: { handler: 'allow' },

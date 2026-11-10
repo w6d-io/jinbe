@@ -74,6 +74,9 @@ declare module 'fastify' {
   }
 }
 
+/** The auth host's /sessions/whoami as jinbe receives it (impersonation/whoami.ts): judged by Kratos, not here. */
+export const WHOAMI_RELAY_PATH = '/api/public/impersonation/whoami'
+
 /** `Authorization: Bearer <token>` → token, or null. */
 function extractBearerToken(header?: string): string | null {
   if (!header) return null
@@ -124,6 +127,11 @@ export async function extractIdentity(
   request: FastifyRequest,
   _reply: FastifyReply,
 ) {
+  // The whoami relay hands the request's credentials to Kratos itself and relays the answer; it
+  // reads no identity from here. Validating them here as well would ask Kratos twice for every
+  // whoami of every browser on the auth host.
+  if ((request.url || '').split('?')[0] === WHOAMI_RELAY_PATH) return
+
   // DEV ONLY: bypass auth for local development.
   if (env.NODE_ENV === 'development' && env.DEV_BYPASS_AUTH) {
     const devEmail = env.DEV_USER_EMAIL || 'dev@localhost'
