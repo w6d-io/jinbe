@@ -6409,6 +6409,156 @@ paths:
                     type: string
                   message:
                     type: string
+  /api/admin/users/{id}/reachable-sites:
+    get:
+      tags:
+        - admin
+      description: "The sites this user can open in a browser, as the gateway would
+        decide a GET of each entry page (at aal2): `role` when they open it on
+        something they hold, `signed-in` when any signed-in person may.
+        Published, unpaused, non-system sites with pages only; public entry
+        pages and sites they cannot open are left out. `role` first, then by
+        title. Answers may be 30 s old. Needs access:read."
+      parameters:
+        - schema:
+            type: string
+            maxLength: 128
+          in: path
+          name: id
+          required: true
+      x-permission: access:read
+      x-scope: platform
+      responses:
+        "200":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        title:
+                          type: string
+                        url:
+                          type: string
+                          format: uri
+                        access:
+                          type: string
+                          enum:
+                            - role
+                            - signed-in
+                      required:
+                        - name
+                        - title
+                        - url
+                        - access
+                      additionalProperties: false
+                required:
+                  - sites
+                additionalProperties: false
+        "401":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Unauthorized
+                  code:
+                    type: string
+                    example: authentication_required
+                  message:
+                    type: string
+                    example: Valid authentication required. Please provide a valid
+                      ory_kratos_session cookie.
+        "403":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Forbidden
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    example: insufficient_scope
+                  reason:
+                    type: string
+                    example: scope_missing:users:recovery
+                  permission:
+                    type: string
+                    example: users:reset_second_factor
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - users:reset_second_factor
+                  missingByScope:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                  grantedBy:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - staff-security
+                      - super_admins
+                  reasons:
+                    type: array
+                    items:
+                      type: string
+                    example:
+                      - missing_every_org_permissions
+                      - missing_permissions
+                  hint:
+                    type: string
+                    example: "Ask an administrator to add you to one of: staff-security,
+                      super_admins."
+                  stepUp:
+                    type: object
+                    properties:
+                      requiredAal:
+                        type: string
+                        example: aal2
+        "404":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "503":
+          description: Default Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Service Unavailable
+                  reason:
+                    type: string
+                  message:
+                    type: string
   /api/admin/users/{id}/access:
     get:
       tags:

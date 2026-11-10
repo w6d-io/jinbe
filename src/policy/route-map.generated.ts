@@ -163,6 +163,7 @@ export const GENERATED_ROUTE_MAP: readonly RouteRule[] = [
   {"method":"DELETE","path":"/api/admin/users/:id/mcp-connections","permission":"sessions:revoke"},
   {"method":"PATCH","path":"/api/admin/users/:id/metadata","permission":"users.metadata:write"},
   {"method":"PATCH","path":"/api/admin/users/:id/organization","permission":"orgs.members:write"},
+  {"method":"GET","path":"/api/admin/users/:id/reachable-sites","permission":"access:read"},
   {"method":"POST","path":"/api/admin/users/:id/recovery-email","permission":"users:recovery"},
   {"method":"GET","path":"/api/admin/users/:id/second-factors","permission":"users:read"},
   {"method":"POST","path":"/api/admin/users/:id/second-factors/reset","permission":"users:reset_second_factor"},

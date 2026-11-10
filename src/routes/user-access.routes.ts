@@ -6,6 +6,8 @@ import { directGrantsRepository, isActive, type DirectGrant } from '../services/
 import { orgRolesRepository } from '../services/org-roles.repository.js'
 import { redisRbacRepository } from '../services/redis-rbac.repository.js'
 import { needs } from '../policy/route-access.js'
+import { POLICY_UNAVAILABLE } from '../authz/policy-unavailable.js'
+import { reachableSites } from '../sites/reachable.js'
 import { orgPermissionsByOrg, rights } from '../authz/opa.js'
 import { getSecondFactorSetting } from '../second-factor/settings.js'
 import { userSecondFactor, type UserSecondFactor } from '../second-factor/requirements.js'
@@ -72,6 +74,64 @@ const directView = (g: DirectGrant) => ({
 })
 
 export async function userAccessRoutes(fastify: FastifyInstance) {
+  fastify.get('/users/:id/reachable-sites', {
+    ...needs('access:read'),
+    schema: {
+      description:
+        'The sites this user can open in a browser, as the gateway would decide a GET of each entry page (at aal2): ' +
+        '`role` when they open it on something they hold, `signed-in` when any signed-in person may. Published, unpaused, ' +
+        'non-system sites with pages only; public entry pages and sites they cannot open are left out. `role` first, then ' +
+        'by title. Answers may be 30 s old. Needs access:read.',
+      tags: ['admin'],
+      params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 128 } } },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            sites: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  title: { type: 'string' },
+                  url: { type: 'string', format: 'uri' },
+                  access: { type: 'string', enum: ['role', 'signed-in'] },
+                },
+                required: ['name', 'title', 'url', 'access'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['sites'],
+          additionalProperties: false,
+        },
+        401: unauthorizedResponseSchema,
+        403: forbiddenResponseSchema,
+        404: notFoundResponseSchema,
+        503: serviceUnavailableResponseSchema,
+      },
+    },
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    let identity
+    try {
+      identity = await kratosService.getIdentity(id)
+    } catch (err) {
+      if ((err as { statusCode?: number })?.statusCode === 404) {
+        return reply.status(404).send({ error: 'Not Found', message: 'User not found' })
+      }
+      throw err
+    }
+    try {
+      // As the RBAC bindings key it: OPA is asked with this, never a lowercased copy.
+      return reply.send({ sites: await reachableSites(String(identity.traits?.email ?? '')) })
+    } catch (err) {
+      request.log.warn({ err: (err as Error).message, id }, '[reachable-sites] the policy could not be asked')
+      return reply.status(503).send({ error: POLICY_UNAVAILABLE, message: 'Access cannot be checked right now. Please try again shortly.' })
+    }
+  })
+
   fastify.get('/users/:id/access', {
     ...needs('access:read'),
     schema: {

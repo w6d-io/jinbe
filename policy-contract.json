@@ -3044,6 +3044,24 @@
           }
         },
         {
+          "method": "GET",
+          "path": "/api/admin/users/:id/reachable-sites",
+          "permission": "access:read",
+          "reach": {
+            "kind": "platform",
+            "roles": [
+              "security",
+              "super_admin",
+              "support"
+            ],
+            "groups": [
+              "staff-security",
+              "staff-support",
+              "super_admins"
+            ]
+          }
+        },
+        {
           "method": "POST",
           "path": "/api/admin/users/:id/recovery-email",
           "permission": "users:recovery",
